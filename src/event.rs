@@ -29,19 +29,21 @@ impl EventHandler {
                     .unwrap_or_else(|| Duration::from_secs(0));
 
                 if event::poll(timeout).expect("failed to poll new events") {
-                    match event::read().expect("failed to read event") {
-                        CrosstermEvent::Key(e) => sender.send(Event::Key(e)),
-                        CrosstermEvent::Mouse(e) => sender.send(Event::Mouse(e)),
-                        CrosstermEvent::Resize(w, h) => sender.send(Event::Resize(w, h)),
-                        CrosstermEvent::FocusGained => Ok(()),
-                        CrosstermEvent::FocusLost => Ok(()),
-                        CrosstermEvent::Paste(_) => Ok(()),
+                    let e = match event::read().expect("failed to read event") {
+                        CrosstermEvent::Key(e) => Event::Key(e),
+                        CrosstermEvent::Mouse(e) => Event::Mouse(e),
+                        CrosstermEvent::Resize(w, h) => Event::Resize(w, h),
+                        _ => continue,
+                    };
+                    if sender.send(e).is_err() {
+                        break;
                     }
-                    .expect("failed to send event");
                 }
 
                 if last_tick.elapsed() >= tick_rate {
-                    sender.send(Event::Tick).expect("failed to send tick event");
+                    if sender.send(Event::Tick).is_err() {
+                        break;
+                    }
                     last_tick = Instant::now();
                 }
             }

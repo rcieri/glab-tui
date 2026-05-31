@@ -19,13 +19,6 @@ pub struct MergeRequest {
 
 pub async fn list_mrs(client: &GitlabClient, project_path: &str) -> Result<Vec<MergeRequest>> {
     let encoded_path = project_path.replace("/", "%2F");
-    let url = format!(
-        "https://{}/api/v4/projects/{}/merge_requests?state=opened",
-        client.host, encoded_path
-    );
-
-    let res = client.client.get(&url).send().await?;
-    let mrs: Vec<MergeRequest> = res.json().await?;
-    
-    Ok(mrs)
+    let endpoint = format!("/projects/{}/merge_requests?state=opened", encoded_path);
+    client.fetch_api(&endpoint).await
 }

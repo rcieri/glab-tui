@@ -1,40 +1,34 @@
 use anyhow::{Context, Result};
-use reqwest::Client;
-use std::process::Command;
+use tokio::process::Command;
 
 #[derive(Debug, Clone)]
-pub struct GitlabClient {
-    pub client: Client,
-    pub host: String,
-    pub token: String,
-}
+pub struct GitlabClient;
 
 impl GitlabClient {
     pub async fn new() -> Result<Self> {
-        let host = get_gitlab_host()?;
-        let token = get_gitlab_token(&host).await?;
+        Ok(Self)
+    }
 
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "PRIVATE-TOKEN",
-            reqwest::header::HeaderValue::from_str(&token)?,
-        );
+    pub async fn fetch_api<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+        let output = Command::new("glab")
+            .args(["api", endpoint])
+            .output()
+            .await
+            .context("Failed to execute glab api command")?;
 
-        let client = Client::builder()
-            .default_headers(headers)
-            .build()?;
+        if !output.status.success() {
+            let err_msg = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("glab api failed: {}", err_msg);
+        }
 
-        Ok(Self {
-            client,
-            host,
-            token,
-        })
+        let data: T = serde_json::from_slice(&output.stdout)?;
+        Ok(data)
     }
 }
 
 pub async fn get_project_context() -> Result<String> {
     // Execute `git remote get-url origin`
-    let output = Command::new("git")
+    let output = std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()
         .context("Failed to execute git command")?;
@@ -46,7 +40,6 @@ pub async fn get_project_context() -> Result<String> {
     let url = String::from_utf8(output.stdout)?.trim().to_string();
     
     // Parse url to extract namespace/repo
-    // git@gitlab.com:namespace/repo.git or https://gitlab.com/namespace/repo.git
     let path = if url.starts_with("git@") {
         url.split(':').nth(1).unwrap_or("unknown/unknown")
     } else if url.starts_with("http") {
@@ -63,45 +56,4 @@ pub async fn get_project_context() -> Result<String> {
     Ok(path.trim_end_matches(".git").to_string())
 }
 
-fn get_gitlab_host() -> Result<String> {
-    // Try to get from git remote first
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .context("Failed to execute git command")?;
 
-    if output.status.success() {
-        let url = String::from_utf8(output.stdout)?.trim().to_string();
-        if url.starts_with("git@") {
-            if let Some(host_part) = url.split(':').next() {
-                if let Some(host) = host_part.split('@').nth(1) {
-                    return Ok(host.to_string());
-                }
-            }
-        } else if url.starts_with("http") {
-            let parts: Vec<&str> = url.split('/').collect();
-            if parts.len() > 2 {
-                return Ok(parts[2].to_string());
-            }
-        }
-    }
-    
-    // Default to gitlab.com
-    Ok("gitlab.com".to_string())
-}
-
-async fn get_gitlab_token(host: &str) -> Result<String> {
-    let output = Command::new("glab")
-        .args(["config", "get", "token", "-h", host])
-        .output()
-        .context("Failed to execute glab command")?;
-
-    if output.status.success() {
-        let token = String::from_utf8(output.stdout)?.trim().to_string();
-        if !token.is_empty() {
-            return Ok(token);
-        }
-    }
-    
-    anyhow::bail!("Could not find GitLab token for host {}", host)
-}

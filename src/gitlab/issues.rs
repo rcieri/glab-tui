@@ -19,13 +19,6 @@ pub struct Issue {
 
 pub async fn list_issues(client: &GitlabClient, project_path: &str) -> Result<Vec<Issue>> {
     let encoded_path = project_path.replace("/", "%2F");
-    let url = format!(
-        "https://{}/api/v4/projects/{}/issues?state=opened",
-        client.host, encoded_path
-    );
-
-    let res = client.client.get(&url).send().await?;
-    let issues: Vec<Issue> = res.json().await?;
-    
-    Ok(issues)
+    let endpoint = format!("/projects/{}/issues?state=opened", encoded_path);
+    client.fetch_api(&endpoint).await
 }

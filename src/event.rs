@@ -1,6 +1,9 @@
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::mpsc;
+
+pub static PAUSED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -31,6 +34,12 @@ impl EventHandler {
         tokio::spawn(async move {
             let mut last_tick = Instant::now();
             loop {
+                if PAUSED.load(Ordering::Relaxed) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    last_tick = Instant::now();
+                    continue;
+                }
+
                 let timeout = tick_rate
                     .checked_sub(last_tick.elapsed())
                     .unwrap_or_else(|| Duration::from_secs(0));

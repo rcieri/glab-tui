@@ -16,13 +16,14 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Write};
 
 fn prompt_user(prompt: &str) -> Option<String> {
+    crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
     disable_raw_mode().unwrap();
     execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture).unwrap();
     
     print!("{}", prompt);
     io::stdout().flush().unwrap();
     let mut input = String::new();
-    if io::stdin().read_line(&mut input).is_ok() {
+    let res = if io::stdin().read_line(&mut input).is_ok() {
         let input = input.trim().to_string();
         enable_raw_mode().unwrap();
         execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture).unwrap();
@@ -31,10 +32,13 @@ fn prompt_user(prompt: &str) -> Option<String> {
         enable_raw_mode().unwrap();
         execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture).unwrap();
         None
-    }
+    };
+    crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
+    res
 }
 
 async fn run_glab_cmd(args: &[&str]) {
+    crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
     disable_raw_mode().unwrap();
     execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture).unwrap();
     
@@ -52,6 +56,7 @@ async fn run_glab_cmd(args: &[&str]) {
     
     enable_raw_mode().unwrap();
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture).unwrap();
+    crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 async fn run_glab_update(entity_type: &str, id: u64, args: &[&str]) {
@@ -428,6 +433,7 @@ async fn main() -> Result<()> {
                                                     } else if let Some(_) = &app.gitlab_client {
                                                         let _ = std::fs::write(&temp_file, "Trace will be here");
                                                     }
+                                                    crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
                                                     disable_raw_mode().unwrap();
                                                     execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture).unwrap();
                                                     let mut cmd = std::process::Command::new("hx");
@@ -441,6 +447,7 @@ async fn main() -> Result<()> {
                                                     enable_raw_mode().unwrap();
                                                     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture).unwrap();
                                                     terminal.clear().unwrap();
+                                                    crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
                                                 }
                                                 _ => {}
                                             }

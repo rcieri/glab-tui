@@ -182,14 +182,26 @@ pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(title, chunks[0]);
 
     // Middle: Sidebar | Main Area | Preview Area
-    let middle_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(22),
-            Constraint::Min(0),
-            Constraint::Length(45),
-        ])
-        .split(chunks[1]);
+    let can_zoom = app.active_tab != Tab::Pipelines || app.selected_pipeline_jobs.is_some();
+    let middle_chunks = if app.details_zoomed && can_zoom {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(0),
+                Constraint::Length(0),
+                Constraint::Min(0),
+            ])
+            .split(chunks[1])
+    } else {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(22),
+                Constraint::Min(0),
+                Constraint::Length(45),
+            ])
+            .split(chunks[1])
+    };
 
     // Sidebar Navigation & Commands Layout
     let sidebar_chunks = Layout::default()
@@ -201,10 +213,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .split(middle_chunks[0]);
 
     // Sidebar: Tabs
+    let is_github = app.gitlab_client.as_ref().map(|c| c.is_github).unwrap_or(false);
     let sidebar_items: Vec<ListItem> = Tab::ALL
         .iter()
         .map(|t| {
-            let title = format!("  {}  ", t.title().to_uppercase());
+            let title = format!("  {}  ", t.title(is_github).to_uppercase());
             if *t == app.active_tab {
                 ListItem::new(title)
                     .style(Style::default().bg(THEME.border_focused).fg(THEME.bg).add_modifier(Modifier::BOLD))
@@ -232,11 +245,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .title_style(Style::default().fg(THEME.text_muted).add_modifier(Modifier::BOLD));
 
     let mut commands_text = Vec::new();
+    let pr_suffix = if is_github { "PR" } else { "MR" };
     match app.active_tab {
         Tab::Issues => {
             add_cmd(&mut commands_text, "e", "Edit params");
             add_cmd(&mut commands_text, "f", "Search");
             add_cmd(&mut commands_text, "n", "New Issue");
+            add_cmd(&mut commands_text, "c", "Close Issue");
             add_cmd(&mut commands_text, "J/K", "Scroll Desc");
             add_cmd(&mut commands_text, "C-r", "Refresh");
             add_cmd(&mut commands_text, "q", "Quit");
@@ -244,9 +259,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Tab::MergeRequests => {
             add_cmd(&mut commands_text, "e", "Edit params");
             add_cmd(&mut commands_text, "f", "Search");
-            add_cmd(&mut commands_text, "n", "New MR");
-            add_cmd(&mut commands_text, "m", "Merge MR");
-            add_cmd(&mut commands_text, "a", "Approve MR");
+            add_cmd(&mut commands_text, "n", &format!("New {}", pr_suffix));
+            add_cmd(&mut commands_text, "m", &format!("Merge {}", pr_suffix));
+            add_cmd(&mut commands_text, "a", &format!("Approve {}", pr_suffix));
             add_cmd(&mut commands_text, "v", "Diff/Changes");
             add_cmd(&mut commands_text, "o", "View Browser");
             add_cmd(&mut commands_text, "s", "Toggle Draft");
@@ -269,7 +284,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             } else {
                 add_cmd(&mut commands_text, "Ent", "View Jobs");
                 add_cmd(&mut commands_text, "r", "Retry Pipe");
-                add_cmd(&mut commands_text, "p", "Run MR Pipe");
+                add_cmd(&mut commands_text, "p", &format!("Run {} Pipe", pr_suffix));
                 add_cmd(&mut commands_text, "c", "Cancel Pipe");
                 add_cmd(&mut commands_text, "o", "View Browser");
                 add_cmd(&mut commands_text, "f", "Search");
@@ -301,9 +316,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     // Main Area Title
     let tab_title = if app.loading_tabs.contains(&app.active_tab) {
-        format!(" {} (loading...) ", app.active_tab.title())
+        format!(" {} (loading...) ", app.active_tab.title(is_github))
     } else {
-        format!(" {} ", app.active_tab.title())
+        format!(" {} ", app.active_tab.title(is_github))
     };
     let main_block = Block::default()
         .borders(Borders::ALL)
@@ -912,7 +927,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .title_style(Style::default().fg(THEME.red).add_modifier(Modifier::BOLD))
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
-            .style(Style::default().fg(THEME.red).bg(THEME.bg));
+            .style(Style::default().fg(THEME.red).bg(Color::Reset));
         let paragraph = Paragraph::new(err.clone())
             .block(block)
             .alignment(Alignment::Center);
@@ -928,7 +943,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .title_style(Style::default().fg(THEME.header_fg).add_modifier(Modifier::BOLD))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.border_focused))
-            .style(Style::default().bg(THEME.bg));
+            .style(Style::default().bg(Color::Reset));
             
         let area = centered_rect(50, 45, size);
         
@@ -949,7 +964,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         
         let list = List::new(items)
             .block(block)
-            .style(Style::default().bg(THEME.bg));
+            .style(Style::default().bg(Color::Reset));
             
         f.render_widget(Clear, area);
         let mut state = menu.state.clone();
@@ -963,7 +978,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .title_style(Style::default().fg(THEME.header_fg).add_modifier(Modifier::BOLD))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.border_focused))
-            .style(Style::default().bg(THEME.bg));
+            .style(Style::default().bg(Color::Reset));
             
         let area = centered_rect(50, 60, size);
         
@@ -1049,7 +1064,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     ])
                 }).collect();
                 
-                let list = List::new(items).style(Style::default().bg(THEME.bg));
+                let list = List::new(items).style(Style::default().bg(Color::Reset));
                 let mut state = selector.state.clone();
                 f.render_stateful_widget(list, chunks[1], &mut state);
                 selector.state = state;
@@ -1064,7 +1079,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .title_style(Style::default().fg(THEME.header_fg).add_modifier(Modifier::BOLD))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.border_focused))
-            .style(Style::default().bg(THEME.bg));
+            .style(Style::default().bg(Color::Reset));
             
         let area = centered_rect(40, 15, size);
         

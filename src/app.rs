@@ -20,10 +20,10 @@ impl Tab {
         Tab::Releases,
     ];
 
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self, is_github: bool) -> &'static str {
         match self {
             Tab::Issues => "Issues",
-            Tab::MergeRequests => "MRs",
+            Tab::MergeRequests => if is_github { "PRs" } else { "MRs" },
             Tab::Pipelines => "Pipelines",
             Tab::Runners => "Runners",
             Tab::Releases => "Releases",
@@ -83,7 +83,6 @@ pub enum TextInputAction {
         field_type: String,
     },
     CreateIssue,
-    CreateMr,
 }
 
 #[derive(Clone, Debug)]
@@ -123,6 +122,7 @@ pub struct App {
     pub mrs_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
+    pub details_zoomed: bool,
 }
 
 impl Default for App {
@@ -156,6 +156,7 @@ impl Default for App {
             mrs_scroll: 0,
             selected_pipelines: std::collections::HashSet::new(),
             selected_jobs: std::collections::HashSet::new(),
+            details_zoomed: false,
         }
     }
 }
@@ -177,6 +178,7 @@ impl App {
         self.active_tab = Tab::ALL[next_index];
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
+        self.details_zoomed = false;
         self.update_filter_selection();
     }
 
@@ -190,6 +192,7 @@ impl App {
         self.active_tab = Tab::ALL[prev_index];
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
+        self.details_zoomed = false;
         self.update_filter_selection();
     }
 

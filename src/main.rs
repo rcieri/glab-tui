@@ -140,16 +140,312 @@ async fn apply_field_text_change(
     }
 }
 
+fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
+    if args.is_empty() {
+        return vec![];
+    }
+    let mut gh_args = vec![];
+    let cmd = args[0];
+    match cmd {
+        "issue" => {
+            gh_args.push("issue".to_string());
+            if args.len() > 1 && args[1] == "create" {
+                gh_args.push("create".to_string());
+                let mut title = None;
+                for i in 2..args.len() {
+                    if args[i] == "--title" && i + 1 < args.len() {
+                        title = Some(args[i+1]);
+                    }
+                }
+                if let Some(t) = title {
+                    gh_args.push("--title".to_string());
+                    gh_args.push(t.to_string());
+                }
+                gh_args.push("--body".to_string());
+                gh_args.push("".to_string());
+            } else if args.len() > 1 && args[1] == "update" {
+                gh_args.push("edit".to_string());
+                if args.len() > 2 {
+                    gh_args.push(args[2].to_string());
+                }
+                let mut i = 3;
+                while i < args.len() {
+                    match args[i] {
+                        "--title" => {
+                            if i + 1 < args.len() {
+                                gh_args.push("--title".to_string());
+                                gh_args.push(args[i+1].to_string());
+                                i += 2;
+                            } else { i += 1; }
+                        }
+                        "--label" => {
+                            if i + 1 < args.len() {
+                                gh_args.push("--label".to_string());
+                                gh_args.push(args[i+1].to_string());
+                                i += 2;
+                            } else { i += 1; }
+                        }
+                        "--unlabel" => {
+                            if i + 1 < args.len() && args[i+1] == "all" {
+                                if i + 2 < args.len() && args[i+2] == "--label" {
+                                    // skip
+                                } else {
+                                    gh_args.push("--label".to_string());
+                                    gh_args.push("".to_string());
+                                }
+                                i += 2;
+                            } else { i += 1; }
+                        }
+                        "--assignee" => {
+                            if i + 1 < args.len() {
+                                gh_args.push("--assignee".to_string());
+                                gh_args.push(args[i+1].to_string());
+                                i += 2;
+                            } else { i += 1; }
+                        }
+                        "--unassign" => {
+                            gh_args.push("--assignee".to_string());
+                            gh_args.push("".to_string());
+                            i += 1;
+                        }
+                        "--milestone" => {
+                            if i + 1 < args.len() {
+                                gh_args.push("--milestone".to_string());
+                                let ms = if args[i+1] == "0" { "" } else { args[i+1] };
+                                gh_args.push(ms.to_string());
+                                i += 2;
+                            } else { i += 1; }
+                        }
+                        "-d" => {
+                            if i + 1 < args.len() && args[i+1] == "-" {
+                                gh_args.push("--body-file".to_string());
+                                gh_args.push("-".to_string());
+                                i += 2;
+                            } else { i += 1; }
+                        }
+                        _ => { i += 1; }
+                    }
+                }
+            } else {
+                for arg in &args[1..] {
+                    gh_args.push(arg.to_string());
+                }
+            }
+        }
+        "mr" => {
+            gh_args.push("pr".to_string());
+            if args.len() > 1 {
+                match args[1] {
+                    "create" => {
+                        gh_args.push("create".to_string());
+                        let mut issue_id = None;
+                        let mut i = 2;
+                        while i < args.len() {
+                            if (args[i] == "-i" || args[i] == "--related-issue") && i + 1 < args.len() {
+                                issue_id = Some(args[i+1]);
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        gh_args.push("--fill".to_string());
+                        if let Some(id) = issue_id {
+                            gh_args.push("--body".to_string());
+                            gh_args.push(format!("Resolves #{}", id));
+                        }
+                    }
+                    "update" => {
+                        gh_args.push("edit".to_string());
+                        if args.len() > 2 {
+                            gh_args.push(args[2].to_string());
+                        }
+                        let mut i = 3;
+                        while i < args.len() {
+                            match args[i] {
+                                "--title" => {
+                                    if i + 1 < args.len() {
+                                        gh_args.push("--title".to_string());
+                                        gh_args.push(args[i+1].to_string());
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                "--label" => {
+                                    if i + 1 < args.len() {
+                                        gh_args.push("--label".to_string());
+                                        gh_args.push(args[i+1].to_string());
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                "--unlabel" => {
+                                    if i + 1 < args.len() && args[i+1] == "all" {
+                                        if i + 2 < args.len() && args[i+2] == "--label" {
+                                            // skip
+                                        } else {
+                                            gh_args.push("--label".to_string());
+                                            gh_args.push("".to_string());
+                                        }
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                "--assignee" => {
+                                    if i + 1 < args.len() {
+                                        gh_args.push("--assignee".to_string());
+                                        gh_args.push(args[i+1].to_string());
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                "--unassign" => {
+                                    gh_args.push("--assignee".to_string());
+                                    gh_args.push("".to_string());
+                                    i += 1;
+                                }
+                                "--reviewer" => {
+                                    if i + 1 < args.len() {
+                                        gh_args.push("--reviewer".to_string());
+                                        gh_args.push(args[i+1].to_string());
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                "--milestone" => {
+                                    if i + 1 < args.len() {
+                                        gh_args.push("--milestone".to_string());
+                                        let ms = if args[i+1] == "0" { "" } else { args[i+1] };
+                                        gh_args.push(ms.to_string());
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                "--target-branch" => {
+                                    if i + 1 < args.len() {
+                                        gh_args.push("--base".to_string());
+                                        gh_args.push(args[i+1].to_string());
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                "-d" => {
+                                    if i + 1 < args.len() && args[i+1] == "-" {
+                                        gh_args.push("--body-file".to_string());
+                                        gh_args.push("-".to_string());
+                                        i += 2;
+                                    } else { i += 1; }
+                                }
+                                _ => { i += 1; }
+                            }
+                        }
+                    }
+                    "approve" => {
+                        gh_args.push("review".to_string());
+                        if args.len() > 2 {
+                            gh_args.push(args[2].to_string());
+                        }
+                        gh_args.push("--approve".to_string());
+                    }
+                    "merge" => {
+                        gh_args.push("merge".to_string());
+                        if args.len() > 2 {
+                            gh_args.push(args[2].to_string());
+                        }
+                        gh_args.push("--delete-branch".to_string());
+                        gh_args.push("--squash".to_string());
+                    }
+                    "diff" => {
+                        gh_args.push("diff".to_string());
+                        if args.len() > 2 {
+                            gh_args.push(args[2].to_string());
+                        }
+                    }
+                    "view" => {
+                        gh_args.push("view".to_string());
+                        if args.len() > 2 {
+                            gh_args.push(args[2].to_string());
+                        }
+                        gh_args.push("--web".to_string());
+                    }
+                    _ => {
+                        for arg in &args[1..] {
+                            gh_args.push(arg.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        "ci" => {
+            gh_args.push("run".to_string());
+            if args.len() > 1 && args[1] == "view" {
+                gh_args.push("view".to_string());
+                if args.len() > 2 {
+                    gh_args.push(args[2].to_string());
+                }
+                gh_args.push("--web".to_string());
+            } else {
+                for arg in &args[1..] {
+                    gh_args.push(arg.to_string());
+                }
+            }
+        }
+        "job" => {
+            gh_args.push("run".to_string());
+            if args.len() > 1 {
+                if args[1] == "view" {
+                    gh_args.push("view".to_string());
+                    if args.len() > 2 {
+                        gh_args.push(args[2].to_string());
+                    }
+                    gh_args.push("--web".to_string());
+                } else if args[1] == "artifact" {
+                    gh_args.push("download".to_string());
+                }
+            }
+        }
+        "release" => {
+            gh_args.push("release".to_string());
+            if args.len() > 1 && args[1] == "view" {
+                gh_args.push("view".to_string());
+                if args.len() > 2 {
+                    gh_args.push(args[2].to_string());
+                }
+                gh_args.push("--web".to_string());
+            } else {
+                for arg in &args[1..] {
+                    gh_args.push(arg.to_string());
+                }
+            }
+        }
+        _ => {
+            for arg in args {
+                gh_args.push(arg.to_string());
+            }
+        }
+    }
+    gh_args
+}
+
 async fn run_glab_cmd(args: &[&str], terminal: &mut AppTerminal) {
     crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     disable_raw_mode().unwrap();
     execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture).unwrap();
     
-    let mut cmd = std::process::Command::new("glab");
-    for arg in args {
-        cmd.arg(arg);
-    }
+    let is_github = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("github.com"))
+        .unwrap_or(false);
+
+    let mut cmd = if is_github {
+        let gh_args = translate_glab_to_gh(args);
+        let mut c = std::process::Command::new("gh");
+        for arg in gh_args {
+            c.arg(arg);
+        }
+        c
+    } else {
+        let mut c = std::process::Command::new("glab");
+        for arg in args {
+            c.arg(arg);
+        }
+        c
+    };
+
     cmd.stdin(std::process::Stdio::inherit());
     cmd.stdout(std::process::Stdio::inherit());
     cmd.stderr(std::process::Stdio::inherit());
@@ -346,8 +642,9 @@ fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
 
+            let pr_suffix = if app.gitlab_client.as_ref().map(|c| c.is_github).unwrap_or(false) { "PR" } else { "MR" };
             app.edit_menu = Some(crate::app::EditMenu {
-                title: format!("Edit MR #{}", mr.iid),
+                title: format!("Edit {} #{}", pr_suffix, mr.iid),
                 fields: vec![
                     ("Title".to_string(), mr.title.clone()),
                     ("Labels".to_string(), labels),
@@ -693,14 +990,6 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    crate::app::TextInputAction::CreateMr => {
-                                        if !value.trim().is_empty() {
-                                            run_glab_cmd(&["mr", "create", "-i", &value, "--copy-issue-labels", "--create-source-branch", "--squash-before-merge"], &mut terminal).await;
-                                            if let Some(client) = &app.gitlab_client {
-                                                spawn_refresh_active_tab(client, &app.project_context, app.active_tab, events.sender());
-                                            }
-                                        }
-                                    }
                                 }
                             }
                             _ => {
@@ -798,9 +1087,42 @@ async fn main() -> Result<()> {
                                     app.selector = Some(selector);
                                 }
                                 KeyCode::Enter => {
+                                    let field_type = selector.field_type.clone();
+                                    if field_type == "create_mr" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val = selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val = Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        
+                                        if let Some(item) = selected_val {
+                                            let mut id_val = item.clone();
+                                            if id_val.starts_with("+ Create \"") {
+                                                id_val = selector.search_query.trim().to_string();
+                                            }
+                                            
+                                            let parsed_iid = if id_val.starts_with('#') {
+                                                id_val.strip_prefix('#')
+                                                    .and_then(|s| s.split(':').next())
+                                                    .and_then(|s| s.trim().parse::<u64>().ok())
+                                            } else {
+                                                id_val.trim().parse::<u64>().ok()
+                                            };
+
+                                            if let Some(issue_iid) = parsed_iid {
+                                                app.selector = None;
+                                                run_glab_cmd(&["mr", "create", "-i", &issue_iid.to_string(), "--copy-issue-labels", "--create-source-branch", "--squash-before-merge"], &mut terminal).await;
+                                                if let Some(client) = &app.gitlab_client {
+                                                    app.loading_tabs.insert(app.active_tab);
+                                                    spawn_refresh_active_tab(client, &app.project_context, app.active_tab, events.sender());
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    
                                     let entity_type = selector.entity_type.clone();
                                     let entity_iid = selector.entity_iid;
-                                    let field_type = selector.field_type.clone();
                                     let selected_list: Vec<String> = selector.selected_items.iter().cloned().collect();
                                     
                                     apply_selector_changes(&mut app, &entity_type, entity_iid, &field_type, selected_list, &mut terminal).await;
@@ -1076,23 +1398,52 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                 }
+                                KeyCode::Char('c') => {
+                                    if let Some(selected_idx) = app.issues.state.selected() {
+                                        let filtered = app.filtered_issues();
+                                        if let Some(issue) = filtered.get(selected_idx) {
+                                            let issue_iid = issue.iid;
+                                            run_glab_cmd(&["issue", "close", &issue_iid.to_string()], &mut terminal).await;
+                                            if let Some(pos) = app.issues.items.iter().position(|i| i.iid == issue_iid) {
+                                                app.issues.items.remove(pos);
+                                            }
+                                            app.update_filter_selection();
+                                            if let Some(client) = &app.gitlab_client {
+                                                spawn_refresh_active_tab(client, &app.project_context, app.active_tab, events.sender());
+                                            }
+                                        }
+                                    }
+                                }
                                 _ => handled = false,
                             }
                         }
                         app::Tab::MergeRequests => {
-                            if let Some(selected_idx) = app.mrs.state.selected() {
+                            if key_event.code == KeyCode::Char('n') {
+                                let issue_options: Vec<String> = app.issues.items.iter()
+                                    .map(|issue| format!("#{} : {}", issue.iid, issue.title))
+                                    .collect();
+                                
+                                let pr_suffix = if app.gitlab_client.as_ref().map(|c| c.is_github).unwrap_or(false) { "PR" } else { "MR" };
+                                
+                                app.selector = Some(crate::app::Selector {
+                                    title: format!(" Select Issue for New {} ", pr_suffix),
+                                    all_items: issue_options,
+                                    selected_items: std::collections::HashSet::new(),
+                                    cursor_idx: 0,
+                                    search_query: String::new(),
+                                    is_filtering: true,
+                                    is_loading: false,
+                                    entity_iid: 0,
+                                    entity_type: "mr".to_string(),
+                                    field_type: "create_mr".to_string(),
+                                    multi_select: false,
+                                    state: { let mut s = ListState::default(); s.select(Some(0)); s },
+                                });
+                            } else if let Some(selected_idx) = app.mrs.state.selected() {
                                 let filtered = app.filtered_mrs();
                                 let mr_info = filtered.get(selected_idx).map(|item| (item.iid, item.title.clone()));
                                 if let Some((mr_iid, mr_title)) = mr_info {
                                     match key_event.code {
-                                        KeyCode::Char('n') => {
-                                            app.text_input = Some(crate::app::TextInput {
-                                                title: " Enter Issue ID for New MR ".to_string(),
-                                                value: String::new(),
-                                                cursor_idx: 0,
-                                                action: crate::app::TextInputAction::CreateMr,
-                                            });
-                                        }
                                         KeyCode::Char('e') => {
                                             let mr = filtered.get(selected_idx).unwrap();
                                             let labels = if mr.labels.is_empty() { "None".to_string() } else { mr.labels.join(", ") };
@@ -1108,8 +1459,9 @@ async fn main() -> Result<()> {
                                                 mr.reviewers.iter().map(|r| format!("@{}", r.username)).collect::<Vec<_>>().join(", ")
                                             };
                                             let draft_status = if mr.draft { "Draft" } else { "Ready" };
+                                            let pr_suffix = if app.gitlab_client.as_ref().map(|c| c.is_github).unwrap_or(false) { "PR" } else { "MR" };
                                             app.edit_menu = Some(crate::app::EditMenu {
-                                                title: format!("Edit MR #{}", mr.iid),
+                                                title: format!("Edit {} #{}", pr_suffix, mr.iid),
                                                 fields: vec![
                                                     ("Title".to_string(), mr.title.clone()),
                                                     ("Labels".to_string(), labels),
@@ -1118,7 +1470,7 @@ async fn main() -> Result<()> {
                                                     ("Milestone".to_string(), milestone),
                                                     ("Target Branch".to_string(), mr.target_branch.clone()),
                                                     ("Status (Draft/Ready)".to_string(), draft_status.to_string()),
-                                                                    ("Description".to_string(), mr.description.clone().unwrap_or_default()),
+                                                    ("Description".to_string(), mr.description.clone().unwrap_or_default()),
                                                 ],
                                                 selected_idx: 0,
                                                 entity_iid: mr.iid,
@@ -1162,17 +1514,7 @@ async fn main() -> Result<()> {
                                     handled = false;
                                 }
                             } else {
-                                match key_event.code {
-                                    KeyCode::Char('n') => {
-                                        app.text_input = Some(crate::app::TextInput {
-                                            title: " Enter Issue ID for New MR ".to_string(),
-                                            value: String::new(),
-                                            cursor_idx: 0,
-                                            action: crate::app::TextInputAction::CreateMr,
-                                        });
-                                    }
-                                    _ => handled = false,
-                                }
+                                handled = false;
                             }
                         }
                         app::Tab::Pipelines => {
@@ -1417,7 +1759,13 @@ async fn main() -> Result<()> {
 
                     if !handled {
                         match key_event.code {
-                            KeyCode::Char('q') => app.quit(),
+                            KeyCode::Char('q') => {
+                                if app.details_zoomed {
+                                    app.details_zoomed = false;
+                                } else {
+                                    app.quit();
+                                }
+                            }
                             KeyCode::Char('J') => {
                                 match app.active_tab {
                                     app::Tab::Issues => {
@@ -1441,7 +1789,9 @@ async fn main() -> Result<()> {
                                 }
                             }
                             KeyCode::Esc | KeyCode::Backspace => {
-                                if app.active_tab == app::Tab::Pipelines && app.selected_pipeline_jobs.is_some() {
+                                if app.details_zoomed {
+                                    app.details_zoomed = false;
+                                } else if app.active_tab == app::Tab::Pipelines && app.selected_pipeline_jobs.is_some() {
                                     if app.job_trace.is_some() {
                                         app.job_trace = None;
                                     } else {
@@ -1459,12 +1809,15 @@ async fn main() -> Result<()> {
                             KeyCode::Enter => {
                                 match app.active_tab {
                                     app::Tab::Pipelines => {
-                                        if let Some(jobs) = &app.selected_pipeline_jobs {
+                                        if app.job_trace.is_some() {
+                                            app.details_zoomed = !app.details_zoomed;
+                                        } else if let Some(jobs) = &app.selected_pipeline_jobs {
                                             if let Some(idx) = app.selected_job_index {
                                                 if let Some(job) = jobs.get(idx) {
                                                     if let Some(client) = &app.gitlab_client {
                                                         if let Ok(trace) = gitlab::pipelines::get_job_trace(client, &app.project_context, job.id).await {
                                                             app.job_trace = Some(trace);
+                                                            app.details_zoomed = true;
                                                         } else {
                                                             app.error_message = Some("Failed to fetch job trace".to_string());
                                                         }
@@ -1490,18 +1843,9 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    app::Tab::Releases => {
-                                        if let Some(idx) = app.releases.state.selected() {
-                                            if let Some(r) = app.filtered_releases().get(idx) {
-                                                run_glab_cmd(&["release", "view", &r.tag_name], &mut terminal).await;
-                                                if let Some(client) = &app.gitlab_client {
-                                                    app.loading_tabs.insert(app.active_tab);
-                                                    spawn_refresh_active_tab(client, &app.project_context, app.active_tab, events.sender());
-                                                }
-                                            }
-                                        }
+                                    _ => {
+                                        app.details_zoomed = !app.details_zoomed;
                                     }
-                                    _ => {}
                                 }
                             }
                             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
@@ -1604,3 +1948,43 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_translate_glab_to_gh_issue_close() {
+        let glab_args = vec!["issue", "close", "123"];
+        let gh_args = translate_glab_to_gh(&glab_args);
+        assert_eq!(gh_args, vec!["issue".to_string(), "close".to_string(), "123".to_string()]);
+    }
+
+    #[test]
+    fn test_translate_glab_to_gh_issue_create() {
+        let glab_args = vec!["issue", "create", "--title", "Bug report"];
+        let gh_args = translate_glab_to_gh(&glab_args);
+        assert_eq!(gh_args, vec![
+            "issue".to_string(),
+            "create".to_string(),
+            "--title".to_string(),
+            "Bug report".to_string(),
+            "--body".to_string(),
+            "".to_string()
+        ]);
+    }
+
+    #[test]
+    fn test_translate_glab_to_gh_mr_create_with_issue() {
+        let glab_args = vec!["mr", "create", "-i", "123", "--copy-issue-labels"];
+        let gh_args = translate_glab_to_gh(&glab_args);
+        assert_eq!(gh_args, vec![
+            "pr".to_string(),
+            "create".to_string(),
+            "--fill".to_string(),
+            "--body".to_string(),
+            "Resolves #123".to_string()
+        ]);
+    }
+}
+

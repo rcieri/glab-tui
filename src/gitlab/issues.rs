@@ -38,3 +38,9 @@ pub async fn list_issues(client: &GitlabClient, project_path: &str) -> Result<Ve
     client.fetch_api(&endpoint).await
 }
 
+pub async fn get_issue(client: &GitlabClient, project_path: &str, iid: u64) -> Result<Issue> {
+    let encoded_path = project_path.replace("/", "%2F");
+    let endpoint = format!("/projects/{}/issues/{}", encoded_path, iid);
+    client.fetch_api(&endpoint).await
+}
+

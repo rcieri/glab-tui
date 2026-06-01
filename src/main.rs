@@ -432,25 +432,19 @@ async fn handle_entity_update(app: &mut App, entity_type: &str, iid: u64, code: 
             }
         }
         KeyCode::Char('d') => {
-            let current_desc = if entity_type == "issue" {
-                app.issues.items.iter().find(|i| i.iid == iid)
-                    .and_then(|i| i.description.clone())
-                    .unwrap_or_default()
-            } else {
-                app.mrs.items.iter().find(|m| m.iid == iid)
-                    .and_then(|m| m.description.clone())
-                    .unwrap_or_default()
-            };
-
-            if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
-                run_glab_update(entity_type, iid, &["--description", &new_desc], terminal).await;
+            run_glab_update(entity_type, iid, &["-d", "-"], terminal).await;
+            if let Some(client) = &app.gitlab_client {
                 if entity_type == "issue" {
-                    if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                        item.description = Some(new_desc);
+                    if let Ok(updated) = gitlab::issues::get_issue(client, &app.project_context, iid).await {
+                        if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
+                            *item = updated;
+                        }
                     }
                 } else if entity_type == "mr" {
-                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                        item.description = Some(new_desc);
+                    if let Ok(updated) = gitlab::mr::get_mr(client, &app.project_context, iid).await {
+                        if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                            *item = updated;
+                        }
                     }
                 }
             }

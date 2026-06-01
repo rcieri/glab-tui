@@ -47,3 +47,9 @@ pub async fn list_mrs(client: &GitlabClient, project_path: &str) -> Result<Vec<M
     client.fetch_api(&endpoint).await
 }
 
+pub async fn get_mr(client: &GitlabClient, project_path: &str, iid: u64) -> Result<MergeRequest> {
+    let encoded_path = project_path.replace("/", "%2F");
+    let endpoint = format!("/projects/{}/merge_requests/{}", encoded_path, iid);
+    client.fetch_api(&endpoint).await
+}
+

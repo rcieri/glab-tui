@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Tab};
-use crate::utils::format::{truncate, time_ago};
+use crate::utils::format::{truncate, time_ago, format_ref};
 
 struct Theme {
     bg: Color,
@@ -607,7 +607,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Cell::from(format!("{}#{}", id_prefix, p.id)),
                             Cell::from(status_text).style(Style::default().fg(status_color).bg(bg_color).add_modifier(Modifier::BOLD)),
                             Cell::from(stages_dots),
-                            Cell::from(truncate(&p.r#ref, 40)).style(Style::default().fg(THEME.purple)),
+                            Cell::from(truncate(&format_ref(&p.r#ref), 40)).style(Style::default().fg(THEME.purple)),
                             Cell::from(time_ago(&p.updated_at)).style(Style::default().fg(THEME.yellow)),
                         ]).height(1)
                     });
@@ -643,7 +643,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             ]));
                             text.push(Line::from(vec![
                                 Span::styled("Ref:         ", Style::default().fg(THEME.text_muted)),
-                                Span::styled(&p.r#ref, Style::default().fg(THEME.purple)),
+                                Span::styled(format_ref(&p.r#ref), Style::default().fg(THEME.purple)),
                             ]));
                             
                             let (status_text, status_color) = match p.status.as_str() {

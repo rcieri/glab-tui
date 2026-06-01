@@ -54,6 +54,10 @@ pub async fn list_pipeline_jobs(client: &GitlabClient, project_path: &str, pipel
             }
         }
     }
+    Ok(process_pipeline_jobs(all_jobs))
+}
+
+pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
     let mut stage_min_id = std::collections::HashMap::new();
     for j in all_jobs.iter() {
         let entry = stage_min_id.entry(j.stage.clone()).or_insert(j.id);
@@ -61,6 +65,17 @@ pub async fn list_pipeline_jobs(client: &GitlabClient, project_path: &str, pipel
             *entry = j.id;
         }
     }
+
+    // Deduplicate jobs by name, keeping only the one with the maximum ID (latest retry)
+    let mut deduplicated: std::collections::HashMap<String, Job> = std::collections::HashMap::new();
+    for job in all_jobs {
+        let entry = deduplicated.entry(job.name.clone()).or_insert_with(|| job.clone());
+        if job.id > entry.id {
+            *entry = job;
+        }
+    }
+    let mut all_jobs: Vec<Job> = deduplicated.into_values().collect();
+
     all_jobs.sort_by(|a, b| {
         let min_a = stage_min_id.get(&a.stage).cloned().unwrap_or(0);
         let min_b = stage_min_id.get(&b.stage).cloned().unwrap_or(0);
@@ -72,11 +87,74 @@ pub async fn list_pipeline_jobs(client: &GitlabClient, project_path: &str, pipel
             a.id.cmp(&b.id)
         }
     });
-    Ok(all_jobs)
+    
+    all_jobs
 }
 
 pub async fn get_job_trace(client: &GitlabClient, project_path: &str, job_id: u64) -> Result<String> {
     let encoded_path = project_path.replace("/", "%2F");
     let endpoint = format!("/projects/{}/jobs/{}/trace", encoded_path, job_id);
     client.fetch_raw_api(&endpoint).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_process_pipeline_jobs() {
+        let input_jobs = vec![
+            Job {
+                id: 101,
+                status: "success".to_string(),
+                stage: "build".to_string(),
+                name: "compile-code".to_string(),
+            },
+            Job {
+                id: 102,
+                status: "failed".to_string(),
+                stage: "test".to_string(),
+                name: "run-tests".to_string(),
+            },
+            // A retry of the failed job in the "test" stage
+            Job {
+                id: 103,
+                status: "success".to_string(),
+                stage: "test".to_string(),
+                name: "run-tests".to_string(),
+            },
+            // A retry of the build job (which was already success but let's say retried anyway)
+            Job {
+                id: 104,
+                status: "running".to_string(),
+                stage: "build".to_string(),
+                name: "compile-code".to_string(),
+            },
+        ];
+
+        let processed = process_pipeline_jobs(input_jobs);
+
+        // Deduplication check:
+        // We expect only 2 jobs, because 'compile-code' (id 101 and 104) and 'run-tests' (id 102 and 103) were deduplicated.
+        assert_eq!(processed.len(), 2);
+
+        // Maximum ID (latest retry) check:
+        // For 'compile-code', the latest is ID 104 (status: running)
+        // For 'run-tests', the latest is ID 103 (status: success)
+        let build_job = processed.iter().find(|j| j.name == "compile-code").unwrap();
+        assert_eq!(build_job.id, 104);
+        assert_eq!(build_job.status, "running");
+
+        let test_job = processed.iter().find(|j| j.name == "run-tests").unwrap();
+        assert_eq!(test_job.id, 103);
+        assert_eq!(test_job.status, "success");
+
+        // Stage ordering check:
+        // The first run ID for 'build' stage is 101.
+        // The first run ID for 'test' stage is 102.
+        // Therefore, 'build' (101) < 'test' (102).
+        // The processed jobs should be ordered by stage: build then test.
+        assert_eq!(processed[0].stage, "build");
+        assert_eq!(processed[1].stage, "test");
+    }
 }

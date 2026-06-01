@@ -1439,6 +1439,7 @@ async fn main() -> Result<()> {
                                                 if let Some(p) = app.filtered_pipelines().get(idx) {
                                                     if let Some(client) = &app.gitlab_client {
                                                         if let Ok(jobs) = gitlab::pipelines::list_pipeline_jobs(client, &app.project_context, p.id).await {
+                                                            app.pipeline_jobs.insert(p.id, jobs.clone());
                                                             app.selected_pipeline_jobs = Some(jobs);
                                                             app.selected_job_index = Some(0);
                                                             app.jobs_list_state.select(Some(0));

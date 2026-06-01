@@ -128,7 +128,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(3),
             Constraint::Min(0),
-            Constraint::Length(3),
         ])
         .split(size);
 
@@ -154,11 +153,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let middle_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(15),
-            Constraint::Percentage(55),
-            Constraint::Percentage(30),
+            Constraint::Length(22),
+            Constraint::Min(0),
+            Constraint::Length(45),
         ])
         .split(chunks[1]);
+
+    // Sidebar Navigation & Commands Layout
+    let sidebar_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(7), // Tabs list (5 items + 2 borders)
+            Constraint::Min(0),    // Commands list
+        ])
+        .split(middle_chunks[0]);
 
     // Sidebar: Tabs
     let sidebar_items: Vec<ListItem> = Tab::ALL
@@ -182,7 +190,210 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .title(" Navigation ")
             .title_style(Style::default().fg(THEME.header_fg).add_modifier(Modifier::BOLD))
         );
-    f.render_widget(sidebar, middle_chunks[0]);
+    f.render_widget(sidebar, sidebar_chunks[0]);
+
+    // Render Commands sidebar block
+    let commands_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(THEME.border))
+        .title(" Commands ")
+        .title_style(Style::default().fg(THEME.header_fg).add_modifier(Modifier::BOLD));
+
+    let mut commands_text = Vec::new();
+    match app.active_tab {
+        Tab::Issues => {
+            commands_text.push(Line::from(vec![
+                Span::styled(" e  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Edit params", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" f  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Search", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" n  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("New Issue", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" F5 ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Refresh", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" q  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Quit", Style::default().fg(THEME.text_normal)),
+            ]));
+        }
+        Tab::MergeRequests => {
+            commands_text.push(Line::from(vec![
+                Span::styled(" e  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Edit params", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" f  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Search", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" n  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("New MR", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" m  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Merge MR", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" a  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Approve MR", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" v  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Diff/Changes", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" o  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("View Browser", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" s  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Toggle Draft", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" F5 ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Refresh", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" q  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Quit", Style::default().fg(THEME.text_normal)),
+            ]));
+        }
+        Tab::Pipelines => {
+            if app.job_trace.is_some() {
+                commands_text.push(Line::from(vec![
+                    Span::styled(" j/k ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Scroll Trace", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" Esc ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Close Trace", Style::default().fg(THEME.text_normal)),
+                ]));
+            } else if app.selected_pipeline_jobs.is_some() {
+                commands_text.push(Line::from(vec![
+                    Span::styled(" Ent ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("View Trace", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" Spc ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Toggle Select", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" r   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Retry Job(s)", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" d   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Download Art", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" o   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("View Browser", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" e   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("View Helix", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" Esc ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Back to Pipes", Style::default().fg(THEME.text_normal)),
+                ]));
+            } else {
+                commands_text.push(Line::from(vec![
+                    Span::styled(" Ent ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("View Jobs", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" r   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Retry Pipe", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" p   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Run MR Pipe", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" c   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Cancel Pipe", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" o   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("View Browser", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" f   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Search", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" F5  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Refresh", Style::default().fg(THEME.text_normal)),
+                ]));
+                commands_text.push(Line::from(vec![
+                    Span::styled(" q   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                    Span::styled("Quit", Style::default().fg(THEME.text_normal)),
+                ]));
+            }
+        }
+        Tab::Runners => {
+            commands_text.push(Line::from(vec![
+                Span::styled(" p  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Pause", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" r  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Resume", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" e  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Edit Desc", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" f  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Search", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" F5 ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Refresh", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" q  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Quit", Style::default().fg(THEME.text_normal)),
+            ]));
+        }
+        Tab::Releases => {
+            commands_text.push(Line::from(vec![
+                Span::styled(" Ent ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("View Notes", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" o   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("View Browser", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" f   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Search", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" F5  ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Refresh", Style::default().fg(THEME.text_normal)),
+            ]));
+            commands_text.push(Line::from(vec![
+                Span::styled(" q   ", Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD)),
+                Span::styled("Quit", Style::default().fg(THEME.text_normal)),
+            ]));
+        }
+    }
+
+    let commands_para = Paragraph::new(commands_text)
+        .block(commands_block)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    f.render_widget(commands_para, sidebar_chunks[1]);
 
     // Main Area Title
     let tab_title = if app.loading_tabs.contains(&app.active_tab) {
@@ -784,27 +995,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
     }
 
-    // Bottom: Help Bar
-    let help_text = match app.active_tab {
-        Tab::Issues => "  h/l: Tabs • j/k: Nav • f: Search • n: New • e: Edit • F5: Refresh • Enter: View • q: Quit  ",
-        Tab::MergeRequests => "  h/l: Tabs • j/k: Nav • f: Search • n: New • e: Edit • a: Approve • m: Merge • v: Diff • s: Draft Toggle • F5: Refresh • q: Quit  ",
-        Tab::Pipelines => {
-            if app.job_trace.is_some() {
-                "  j/k: Scroll Trace • Esc: Close Trace  "
-            } else if app.selected_pipeline_jobs.is_some() {
-                "  j/k: Nav • Space: Select • Enter: View Trace • r: Retry • d: Artifacts • o: Browser • e: Helix • Esc: Back  "
-            } else {
-                "  h/l: Tabs • j/k: Nav • f: Search • p: Run MR Pipe • r: Retry • d: Cancel/Download • o: Browser • e: Helix • F5: Refresh • q: Quit  "
-            }
-        }
-        Tab::Runners => "  h/l: Tabs • j/k: Nav • f: Search • p: Pause • r: Resume • e: Edit Desc • F5: Refresh • q: Quit  ",
-        Tab::Releases => "  h/l: Tabs • j/k: Nav • f: Search • o: Browser • Enter: Notes • F5: Refresh • q: Quit  ",
-    };
-    let help = Paragraph::new(help_text)
-        .style(Style::default().fg(THEME.text_normal).bg(THEME.highlight_bg).add_modifier(Modifier::BOLD))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::NONE));
-    f.render_widget(help, chunks[2]);
+
 
     // Error Popup overlay
     if let Some(err) = &app.error_message {

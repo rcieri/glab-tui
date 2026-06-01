@@ -74,18 +74,18 @@ fn get_stages_summary(jobs: &[crate::gitlab::pipelines::Job]) -> Vec<StageSummar
     for stage in stage_names {
         if let Some(statuses) = stage_jobs.get(&stage) {
             let total = statuses.len();
-            let success = statuses.iter().filter(|s| *s == "success").count();
+            let success = statuses.iter().filter(|s| *s == "success" || *s == "skipped").count();
             let percent = if total > 0 { (success * 100) / total } else { 0 };
             
             let stage_status = if statuses.iter().any(|s| s == "failed") {
                 "failed".to_string()
             } else if statuses.iter().any(|s| s == "running") {
                 "running".to_string()
-            } else if statuses.iter().any(|s| s == "pending") {
+            } else if statuses.iter().any(|s| s == "pending" || s == "preparing" || s == "waiting_for_resource") {
                 "pending".to_string()
             } else if statuses.iter().any(|s| s == "canceled") {
                 "canceled".to_string()
-            } else if statuses.iter().all(|s| s == "success") {
+            } else if statuses.iter().any(|s| s == "success") {
                 "success".to_string()
             } else {
                 "skipped".to_string()
@@ -1098,4 +1098,59 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gitlab::pipelines::Job;
+
+    #[test]
+    fn test_get_stages_summary() {
+        // Test case 1: Stage with mixed success and skipped jobs
+        // This stage should be reported as "success" status, and 100% success rate.
+        let jobs = vec![
+            Job {
+                id: 1,
+                stage: "build".to_string(),
+                name: "compile".to_string(),
+                status: "success".to_string(),
+            },
+            Job {
+                id: 2,
+                stage: "build".to_string(),
+                name: "cache".to_string(),
+                status: "skipped".to_string(),
+            },
+            Job {
+                id: 3,
+                stage: "test".to_string(),
+                name: "unit".to_string(),
+                status: "failed".to_string(),
+            },
+            Job {
+                id: 4,
+                stage: "test".to_string(),
+                name: "integration".to_string(),
+                status: "success".to_string(),
+            },
+        ];
+
+        let summaries = get_stages_summary(&jobs);
+        assert_eq!(summaries.len(), 2);
+
+        // Build stage verification (success + skipped = success/100%)
+        let build = summaries.iter().find(|s| s.name == "build").unwrap();
+        assert_eq!(build.status, "success");
+        assert_eq!(build.success, 2);
+        assert_eq!(build.total, 2);
+        assert_eq!(build.percent, 100);
+
+        // Test stage verification (failed + success = failed/50%)
+        let test = summaries.iter().find(|s| s.name == "test").unwrap();
+        assert_eq!(test.status, "failed");
+        assert_eq!(test.success, 1);
+        assert_eq!(test.total, 2);
+        assert_eq!(test.percent, 50);
+    }
 }

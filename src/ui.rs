@@ -1495,6 +1495,30 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(footer_p, help_chunks[2]);
     }
 
+    if app.diff_loading {
+        let area = centered_rect(50, 20, size);
+        let block = Block::default()
+            .title(" Fetching Diff ")
+            .title_style(Style::default().fg(THEME.header_fg).add_modifier(Modifier::BOLD))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(THEME.border_focused))
+            .style(Style::default().bg(Color::Reset));
+        
+        let text = vec![
+            Line::from(""),
+            Line::from(Span::styled("   Fetching Pull Request / Merge Request Diff...", Style::default().fg(THEME.text_normal))),
+            Line::from(Span::styled("   Please wait, running CLI tool in background...", Style::default().fg(THEME.text_muted))),
+            Line::from(""),
+        ];
+        
+        let paragraph = Paragraph::new(text)
+            .block(block)
+            .alignment(Alignment::Left);
+            
+        f.render_widget(Clear, area);
+        f.render_widget(paragraph, area);
+    }
+
     if let Some(diff_view) = app.diff_view.take() {
         let area = centered_rect(95, 95, size);
         
@@ -1534,18 +1558,31 @@ pub fn render(f: &mut Frame, app: &mut App) {
             }));
             
         let mut file_items = Vec::new();
-        for (i, &(ref file_path, _)) in diff_view.files.iter().enumerate() {
-            let is_selected = i == diff_view.selected_file_idx;
+        for (i, node) in diff_view.visible_nodes.iter().enumerate() {
+            let is_selected = i == diff_view.selected_visible_idx;
+            
+            let indent = "  ".repeat(node.depth);
+            let indicator = if node.is_dir {
+                if node.is_expanded { "- " } else { "+ " }
+            } else {
+                "  "
+            };
+            
+            let display_str = format!(" {}{}{}", indent, indicator, node.name);
+            
             let item_style = if is_selected {
                 if diff_view.focus_on_files {
                     Style::default().bg(THEME.highlight_bg).fg(THEME.bg).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().bg(THEME.border).fg(THEME.text_normal)
                 }
+            } else if node.is_dir {
+                Style::default().fg(THEME.blue).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(THEME.text_normal)
             };
-            file_items.push(ListItem::new(format!("  {}", file_path)).style(item_style));
+            
+            file_items.push(ListItem::new(display_str).style(item_style));
         }
         let files_list = List::new(file_items).block(files_block);
         

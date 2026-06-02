@@ -19,6 +19,8 @@ pub enum Event {
     ReleasesFetched(Vec<crate::gitlab::releases::Release>),
     SelectorItemsFetched(Vec<String>),
     FetchFailed(crate::app::Tab, String),
+    DiffFetched(u64, String),
+    DiffFetchFailed(String),
 }
 
 #[derive(Debug)]

@@ -915,6 +915,14 @@ async fn main() -> Result<()> {
                     app.loading_tabs.remove(&tab);
                     app.error_message = Some(err_msg);
                 }
+                Event::DiffFetched(mr_iid, raw_diff) => {
+                    app.diff_loading = false;
+                    app.diff_view = Some(crate::app::DiffView::new(mr_iid, raw_diff));
+                }
+                Event::DiffFetchFailed(err_msg) => {
+                    app.diff_loading = false;
+                    app.error_message = Some(err_msg);
+                }
                 Event::Key(key_event) => {
                     if app.error_message.is_some() {
                         if key_event.code == KeyCode::Enter || key_event.code == KeyCode::Esc {
@@ -1389,18 +1397,77 @@ async fn main() -> Result<()> {
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('h') | KeyCode::Left => {
-                                diff_view.focus_on_files = true;
+                                if diff_view.focus_on_files {
+                                    if !diff_view.visible_nodes.is_empty() {
+                                        let node = &diff_view.visible_nodes[diff_view.selected_visible_idx];
+                                        if node.is_dir && node.is_expanded {
+                                            let path_id = node.path_id.clone();
+                                            diff_view.root_node.toggle_expanded(&path_id, "");
+                                            let mut visible = Vec::new();
+                                            diff_view.root_node.flatten(0, "", &mut visible);
+                                            diff_view.visible_nodes = visible;
+                                            diff_view.cursor_idx = 0;
+                                            diff_view.scroll_offset = 0;
+                                            diff_view.update_active_lines();
+                                        }
+                                    }
+                                } else {
+                                    diff_view.focus_on_files = true;
+                                }
                                 app.diff_view = Some(diff_view);
                             }
-                            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
-                                diff_view.focus_on_files = false;
+                            KeyCode::Char('l') | KeyCode::Right => {
+                                if diff_view.focus_on_files {
+                                    if !diff_view.visible_nodes.is_empty() {
+                                        let node = &diff_view.visible_nodes[diff_view.selected_visible_idx];
+                                        if node.is_dir && !node.is_expanded {
+                                            let path_id = node.path_id.clone();
+                                            diff_view.root_node.toggle_expanded(&path_id, "");
+                                            let mut visible = Vec::new();
+                                            diff_view.root_node.flatten(0, "", &mut visible);
+                                            diff_view.visible_nodes = visible;
+                                            diff_view.cursor_idx = 0;
+                                            diff_view.scroll_offset = 0;
+                                            diff_view.update_active_lines();
+                                        } else {
+                                            diff_view.focus_on_files = false;
+                                        }
+                                    }
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Enter | KeyCode::Char(' ') => {
+                                if diff_view.focus_on_files {
+                                    if !diff_view.visible_nodes.is_empty() {
+                                        let node = &diff_view.visible_nodes[diff_view.selected_visible_idx];
+                                        if node.is_dir {
+                                            let path_id = node.path_id.clone();
+                                            diff_view.root_node.toggle_expanded(&path_id, "");
+                                            let mut visible = Vec::new();
+                                            diff_view.root_node.flatten(0, "", &mut visible);
+                                            diff_view.visible_nodes = visible;
+                                            diff_view.cursor_idx = 0;
+                                            diff_view.scroll_offset = 0;
+                                            diff_view.update_active_lines();
+                                        } else {
+                                            diff_view.focus_on_files = false;
+                                        }
+                                    }
+                                } else {
+                                    diff_view.focus_on_files = true;
+                                }
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('j') | KeyCode::Down => {
                                 if diff_view.focus_on_files {
-                                    if !diff_view.files.is_empty() {
-                                        diff_view.selected_file_idx = (diff_view.selected_file_idx + 1).min(diff_view.files.len() - 1);
-                                        diff_view.cursor_idx = diff_view.files[diff_view.selected_file_idx].1;
+                                    if !diff_view.visible_nodes.is_empty() {
+                                        let old_idx = diff_view.selected_visible_idx;
+                                        diff_view.selected_visible_idx = (diff_view.selected_visible_idx + 1).min(diff_view.visible_nodes.len() - 1);
+                                        if diff_view.selected_visible_idx != old_idx {
+                                            diff_view.cursor_idx = 0;
+                                            diff_view.scroll_offset = 0;
+                                            diff_view.update_active_lines();
+                                        }
                                     }
                                 } else {
                                     if !diff_view.lines.is_empty() {
@@ -1412,9 +1479,14 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Char('k') | KeyCode::Up => {
                                 if diff_view.focus_on_files {
-                                    if diff_view.selected_file_idx > 0 {
-                                        diff_view.selected_file_idx -= 1;
-                                        diff_view.cursor_idx = diff_view.files[diff_view.selected_file_idx].1;
+                                    if diff_view.selected_visible_idx > 0 {
+                                        let old_idx = diff_view.selected_visible_idx;
+                                        diff_view.selected_visible_idx -= 1;
+                                        if diff_view.selected_visible_idx != old_idx {
+                                            diff_view.cursor_idx = 0;
+                                            diff_view.scroll_offset = 0;
+                                            diff_view.update_active_lines();
+                                        }
                                     }
                                 } else {
                                     if diff_view.cursor_idx > 0 {
@@ -1627,39 +1699,48 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         KeyCode::Char('v') => {
+                                            app.diff_loading = true;
+                                            let tx = events.sender();
+                                            let mr_iid = mr_iid;
                                             let mr_iid_str = mr_iid.to_string();
-                                            let cmd_args = vec!["mr", "diff", &mr_iid_str];
-                                            let is_github = match std::process::Command::new("git")
-                                                .args(["remote", "get-url", "origin"])
-                                                .output()
-                                                .map(|o| String::from_utf8_lossy(&o.stdout).contains("github.com"))
-                                            {
-                                                Ok(true) => true,
-                                                _ => false,
-                                            };
-                                            
-                                            let mut cmd = if is_github {
-                                                let gh_args = translate_glab_to_gh(&cmd_args);
-                                                let mut c = std::process::Command::new("gh");
-                                                c.args(gh_args);
-                                                c
-                                            } else {
-                                                let mut c = std::process::Command::new("glab");
-                                                c.args(&cmd_args);
-                                                c
-                                            };
-                                            
-                                            if let Ok(output) = cmd.output() {
-                                                if output.status.success() {
-                                                    let raw_diff = String::from_utf8_lossy(&output.stdout).into_owned();
-                                                    app.diff_view = Some(crate::app::DiffView::new(mr_iid, raw_diff));
+                                            tokio::spawn(async move {
+                                                let is_github = match tokio::process::Command::new("git")
+                                                    .args(["remote", "get-url", "origin"])
+                                                    .output()
+                                                    .await
+                                                    .map(|o| String::from_utf8_lossy(&o.stdout).contains("github.com"))
+                                                {
+                                                    Ok(true) => true,
+                                                    _ => false,
+                                                };
+
+                                                let cmd_args = vec!["mr", "diff", &mr_iid_str];
+                                                let mut cmd = if is_github {
+                                                    let gh_args = translate_glab_to_gh(&cmd_args);
+                                                    let mut c = tokio::process::Command::new("gh");
+                                                    c.args(gh_args);
+                                                    c
                                                 } else {
-                                                    let err_msg = String::from_utf8_lossy(&output.stderr);
-                                                    app.error_message = Some(format!("Failed to fetch diff: {}", err_msg));
+                                                    let mut c = tokio::process::Command::new("glab");
+                                                    c.args(&cmd_args);
+                                                    c
+                                                };
+
+                                                match cmd.output().await {
+                                                    Ok(output) => {
+                                                        if output.status.success() {
+                                                            let raw_diff = String::from_utf8_lossy(&output.stdout).into_owned();
+                                                            let _ = tx.send(Event::DiffFetched(mr_iid, raw_diff));
+                                                        } else {
+                                                            let err_msg = String::from_utf8_lossy(&output.stderr);
+                                                            let _ = tx.send(Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err_msg)));
+                                                        }
+                                                    }
+                                                    Err(_) => {
+                                                        let _ = tx.send(Event::DiffFetchFailed("Failed to execute CLI tool to fetch diff".to_string()));
+                                                    }
                                                 }
-                                            } else {
-                                                app.error_message = Some("Failed to execute CLI tool to fetch diff".to_string());
-                                            }
+                                            });
                                         }
                                         KeyCode::Char('o') => {
                                             run_glab_cmd(&["mr", "view", &mr_iid.to_string(), "-w"], &mut terminal).await;

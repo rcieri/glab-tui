@@ -1,5 +1,7 @@
 use crate::utils::ui::StatefulTable;
 use ratatui::widgets::{ListState, TableState};
+use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
@@ -59,16 +61,24 @@ pub struct Selector {
 
 impl Selector {
     pub fn get_filtered_items(&self) -> Vec<String> {
-        let query = self.search_query.to_lowercase();
-        let mut items: Vec<String> = self.all_items.iter()
-            .filter(|item| item.to_lowercase().contains(&query))
-            .cloned()
-            .collect();
+        let query = self.search_query.trim();
+        let mut items = if query.is_empty() {
+            self.all_items.clone()
+        } else {
+            let matcher = SkimMatcherV2::default();
+            let mut scored: Vec<(String, i64)> = self.all_items.iter()
+                .filter_map(|item| {
+                    matcher.fuzzy_match(item, query).map(|score| (item.clone(), score))
+                })
+                .collect();
+            scored.sort_by(|a, b| b.1.cmp(&a.1));
+            scored.into_iter().map(|(item, _)| item).collect()
+        };
             
-        if !query.trim().is_empty() {
-            let exact_match = self.all_items.iter().any(|item| item.to_lowercase() == query.trim());
+        if !query.is_empty() {
+            let exact_match = self.all_items.iter().any(|item| item.to_lowercase() == query.to_lowercase());
             if !exact_match {
-                items.insert(0, format!("+ Create \"{}\"", self.search_query.trim()));
+                items.insert(0, format!("+ Create \"{}\"", query));
             }
         }
         items
@@ -203,59 +213,58 @@ impl App {
     }
 
     pub fn filter_issues_list<'a>(items: &'a [crate::gitlab::issues::Issue], query: &str) -> Vec<&'a crate::gitlab::issues::Issue> {
-        let sq = query.to_lowercase();
-        items.iter()
-            .filter(|i| {
-                if sq.is_empty() {
-                    return true;
-                }
-                // ID
-                if format!("#{}", i.iid).contains(&sq) || i.iid.to_string().contains(&sq) {
-                    return true;
-                }
-                // State
-                if i.state.to_lowercase().contains(&sq) || (i.state == "opened" && "open".contains(&sq)) || (i.state == "closed" && "closed".contains(&sq)) {
-                    return true;
-                }
-                // Title
-                if i.title.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Author
-                if i.author.username.to_lowercase().contains(&sq) || format!("@{}", i.author.username).to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Updated Time
-                if crate::utils::format::time_ago(&i.updated_at).to_lowercase().contains(&sq) || i.updated_at.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Milestone
-                if let Some(m) = &i.milestone {
-                    if m.title.to_lowercase().contains(&sq) {
-                        return true;
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let matcher = SkimMatcherV2::default();
+        let mut scored_items = Vec::new();
+        
+        for item in items {
+            let mut best_score = None;
+            
+            let mut check_match = |text: &str| {
+                if let Some(score) = matcher.fuzzy_match(text, query) {
+                    if best_score.is_none() || Some(score) > best_score {
+                        best_score = Some(score);
                     }
                 }
-                // Labels
-                for label in &i.labels {
-                    if label.to_lowercase().contains(&sq) {
-                        return true;
-                    }
-                }
-                // Assignees
-                for assignee in &i.assignees {
-                    if assignee.username.to_lowercase().contains(&sq) || format!("@{}", assignee.username).to_lowercase().contains(&sq) {
-                        return true;
-                    }
-                }
-                // Description
-                if let Some(desc) = &i.description {
-                    if desc.to_lowercase().contains(&sq) {
-                        return true;
-                    }
-                }
-                false
-            })
-            .collect()
+            };
+            
+            check_match(&format!("#{}", item.iid));
+            check_match(&item.iid.to_string());
+            check_match(&item.state);
+            if item.state == "opened" {
+                check_match("open");
+            } else if item.state == "closed" {
+                check_match("closed");
+            }
+            check_match(&item.title);
+            check_match(&item.author.username);
+            check_match(&format!("@{}", item.author.username));
+            check_match(&crate::utils::format::time_ago(&item.updated_at));
+            check_match(&item.updated_at);
+            
+            if let Some(m) = &item.milestone {
+                check_match(&m.title);
+            }
+            for label in &item.labels {
+                check_match(label);
+            }
+            for assignee in &item.assignees {
+                check_match(&assignee.username);
+                check_match(&format!("@{}", assignee.username));
+            }
+            if let Some(desc) = &item.description {
+                check_match(desc);
+            }
+            
+            if let Some(score) = best_score {
+                scored_items.push((item, score));
+            }
+        }
+        
+        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_items.into_iter().map(|(item, _)| item).collect()
     }
 
     pub fn filtered_issues(&self) -> Vec<&crate::gitlab::issues::Issue> {
@@ -263,69 +272,65 @@ impl App {
     }
 
     pub fn filter_mrs_list<'a>(items: &'a [crate::gitlab::mr::MergeRequest], query: &str) -> Vec<&'a crate::gitlab::mr::MergeRequest> {
-        let sq = query.to_lowercase();
-        items.iter()
-            .filter(|m| {
-                if sq.is_empty() {
-                    return true;
-                }
-                // ID
-                if format!("!{}", m.iid).contains(&sq) || m.iid.to_string().contains(&sq) {
-                    return true;
-                }
-                // State
-                if m.state.to_lowercase().contains(&sq) || (m.state == "opened" && "open".contains(&sq)) || (m.state == "merged" && "merged".contains(&sq)) || (m.state == "closed" && "closed".contains(&sq)) {
-                    return true;
-                }
-                // Title
-                if m.title.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Author
-                if m.author.username.to_lowercase().contains(&sq) || format!("@{}", m.author.username).to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Updated Time
-                if crate::utils::format::time_ago(&m.updated_at).to_lowercase().contains(&sq) || m.updated_at.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Milestone
-                if let Some(ms) = &m.milestone {
-                    if ms.title.to_lowercase().contains(&sq) {
-                        return true;
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let matcher = SkimMatcherV2::default();
+        let mut scored_items = Vec::new();
+        
+        for item in items {
+            let mut best_score = None;
+            
+            let mut check_match = |text: &str| {
+                if let Some(score) = matcher.fuzzy_match(text, query) {
+                    if best_score.is_none() || Some(score) > best_score {
+                        best_score = Some(score);
                     }
                 }
-                // Target Branch
-                if m.target_branch.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Labels
-                for label in &m.labels {
-                    if label.to_lowercase().contains(&sq) {
-                        return true;
-                    }
-                }
-                // Assignees
-                for assignee in &m.assignees {
-                    if assignee.username.to_lowercase().contains(&sq) || format!("@{}", assignee.username).to_lowercase().contains(&sq) {
-                        return true;
-                    }
-                }
-                // Reviewers
-                for reviewer in &m.reviewers {
-                    if reviewer.username.to_lowercase().contains(&sq) || format!("@{}", reviewer.username).to_lowercase().contains(&sq) {
-                        return true;
-                    }
-                }
-                // Description
-                if let Some(desc) = &m.description {
-                    if desc.to_lowercase().contains(&sq) {
-                        return true;
-                    }
-                }
-                false
-            })
-            .collect()
+            };
+            
+            check_match(&format!("!{}", item.iid));
+            check_match(&item.iid.to_string());
+            check_match(&item.state);
+            if item.state == "opened" {
+                check_match("open");
+            } else if item.state == "merged" {
+                check_match("merged");
+            } else if item.state == "closed" {
+                check_match("closed");
+            }
+            check_match(&item.title);
+            check_match(&item.author.username);
+            check_match(&format!("@{}", item.author.username));
+            check_match(&crate::utils::format::time_ago(&item.updated_at));
+            check_match(&item.updated_at);
+            
+            if let Some(ms) = &item.milestone {
+                check_match(&ms.title);
+            }
+            check_match(&item.target_branch);
+            for label in &item.labels {
+                check_match(label);
+            }
+            for assignee in &item.assignees {
+                check_match(&assignee.username);
+                check_match(&format!("@{}", assignee.username));
+            }
+            for reviewer in &item.reviewers {
+                check_match(&reviewer.username);
+                check_match(&format!("@{}", reviewer.username));
+            }
+            if let Some(desc) = &item.description {
+                check_match(desc);
+            }
+            
+            if let Some(score) = best_score {
+                scored_items.push((item, score));
+            }
+        }
+        
+        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_items.into_iter().map(|(item, _)| item).collect()
     }
 
     pub fn filtered_mrs(&self) -> Vec<&crate::gitlab::mr::MergeRequest> {
@@ -337,39 +342,45 @@ impl App {
         query: &str,
         pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
     ) -> Vec<&'a crate::gitlab::pipelines::Pipeline> {
-        let sq = query.to_lowercase();
-        items.iter()
-            .filter(|p| {
-                if sq.is_empty() {
-                    return true;
-                }
-                // ID
-                if format!("#{}", p.id).contains(&sq) || p.id.to_string().contains(&sq) {
-                    return true;
-                }
-                // Status
-                if p.status.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Ref
-                if p.r#ref.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Updated Time
-                if crate::utils::format::time_ago(&p.updated_at).to_lowercase().contains(&sq) || p.updated_at.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Pipeline Jobs details
-                if let Some(jobs) = pipeline_jobs.get(&p.id) {
-                    for job in jobs {
-                        if job.name.to_lowercase().contains(&sq) || job.stage.to_lowercase().contains(&sq) || job.status.to_lowercase().contains(&sq) {
-                            return true;
-                        }
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let matcher = SkimMatcherV2::default();
+        let mut scored_items = Vec::new();
+        
+        for item in items {
+            let mut best_score = None;
+            
+            let mut check_match = |text: &str| {
+                if let Some(score) = matcher.fuzzy_match(text, query) {
+                    if best_score.is_none() || Some(score) > best_score {
+                        best_score = Some(score);
                     }
                 }
-                false
-            })
-            .collect()
+            };
+            
+            check_match(&format!("#{}", item.id));
+            check_match(&item.id.to_string());
+            check_match(&item.status);
+            check_match(&item.r#ref);
+            check_match(&crate::utils::format::time_ago(&item.updated_at));
+            check_match(&item.updated_at);
+            
+            if let Some(jobs) = pipeline_jobs.get(&item.id) {
+                for job in jobs {
+                    check_match(&job.name);
+                    check_match(&job.stage);
+                    check_match(&job.status);
+                }
+            }
+            
+            if let Some(score) = best_score {
+                scored_items.push((item, score));
+            }
+        }
+        
+        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_items.into_iter().map(|(item, _)| item).collect()
     }
 
     pub fn filtered_pipelines(&self) -> Vec<&crate::gitlab::pipelines::Pipeline> {
@@ -377,34 +388,39 @@ impl App {
     }
 
     pub fn filter_runners_list<'a>(items: &'a [crate::gitlab::runners::Runner], query: &str) -> Vec<&'a crate::gitlab::runners::Runner> {
-        let sq = query.to_lowercase();
-        items.iter()
-            .filter(|r| {
-                if sq.is_empty() {
-                    return true;
-                }
-                // ID
-                if r.id.to_string().contains(&sq) {
-                    return true;
-                }
-                // Description
-                if let Some(desc) = &r.description {
-                    if desc.to_lowercase().contains(&sq) {
-                        return true;
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let matcher = SkimMatcherV2::default();
+        let mut scored_items = Vec::new();
+        
+        for item in items {
+            let mut best_score = None;
+            
+            let mut check_match = |text: &str| {
+                if let Some(score) = matcher.fuzzy_match(text, query) {
+                    if best_score.is_none() || Some(score) > best_score {
+                        best_score = Some(score);
                     }
                 }
-                // Status
-                if r.status.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Active
-                let active_str = if r.active { "active" } else { "inactive" };
-                if active_str.contains(&sq) || r.active.to_string().contains(&sq) {
-                    return true;
-                }
-                false
-            })
-            .collect()
+            };
+            
+            check_match(&item.id.to_string());
+            if let Some(desc) = &item.description {
+                check_match(desc);
+            }
+            check_match(&item.status);
+            let active_str = if item.active { "active" } else { "inactive" };
+            check_match(active_str);
+            check_match(&item.active.to_string());
+            
+            if let Some(score) = best_score {
+                scored_items.push((item, score));
+            }
+        }
+        
+        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_items.into_iter().map(|(item, _)| item).collect()
     }
 
     pub fn filtered_runners(&self) -> Vec<&crate::gitlab::runners::Runner> {
@@ -412,27 +428,35 @@ impl App {
     }
 
     pub fn filter_releases_list<'a>(items: &'a [crate::gitlab::releases::Release], query: &str) -> Vec<&'a crate::gitlab::releases::Release> {
-        let sq = query.to_lowercase();
-        items.iter()
-            .filter(|r| {
-                if sq.is_empty() {
-                    return true;
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let matcher = SkimMatcherV2::default();
+        let mut scored_items = Vec::new();
+        
+        for item in items {
+            let mut best_score = None;
+            
+            let mut check_match = |text: &str| {
+                if let Some(score) = matcher.fuzzy_match(text, query) {
+                    if best_score.is_none() || Some(score) > best_score {
+                        best_score = Some(score);
+                    }
                 }
-                // Tag Name
-                if r.tag_name.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Name
-                if r.name.to_lowercase().contains(&sq) {
-                    return true;
-                }
-                // Date
-                if r.released_at.to_lowercase().contains(&sq) || crate::utils::format::time_ago(&r.released_at).to_lowercase().contains(&sq) {
-                    return true;
-                }
-                false
-            })
-            .collect()
+            };
+            
+            check_match(&item.tag_name);
+            check_match(&item.name);
+            check_match(&item.released_at);
+            check_match(&crate::utils::format::time_ago(&item.released_at));
+            
+            if let Some(score) = best_score {
+                scored_items.push((item, score));
+            }
+        }
+        
+        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
+        scored_items.into_iter().map(|(item, _)| item).collect()
     }
 
     pub fn filtered_releases(&self) -> Vec<&crate::gitlab::releases::Release> {
@@ -532,5 +556,41 @@ impl App {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_selector_fuzzy_matching() {
+        let selector = Selector {
+            title: "Labels".to_string(),
+            all_items: vec![
+                "bug".to_string(),
+                "feature request".to_string(),
+                "documentation".to_string(),
+                "critical bug".to_string(),
+            ],
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: "bug".to_string(),
+            is_filtering: true,
+            is_loading: false,
+            entity_iid: 1,
+            entity_type: "issue".to_string(),
+            field_type: "labels".to_string(),
+            multi_select: true,
+            state: ListState::default(),
+        };
+
+        let filtered = selector.get_filtered_items();
+        // Since query is "bug", both "bug" and "critical bug" should match.
+        // "bug" should be ranked higher than "critical bug" because "bug" is an exact match / matches at start.
+        assert!(filtered.contains(&"bug".to_string()));
+        assert!(filtered.contains(&"critical bug".to_string()));
+        assert_eq!(filtered[0], "bug".to_string());
+        assert_eq!(filtered[1], "critical bug".to_string());
     }
 }

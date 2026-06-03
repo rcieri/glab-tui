@@ -433,21 +433,34 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     } else {
                         ("CLOSED", Style::default().fg(THEME.red).bg(if is_selected { THEME.highlight_bg } else { THEME.red_bg }).add_modifier(Modifier::BOLD))
                     };
-                    Row::new(vec![
+                    let assignees_str = if i.assignees.is_empty() {
+                            "—".to_string()
+                        } else {
+                            i.assignees.iter().map(|a| format!("@{}", a.username)).collect::<Vec<_>>().join(", ")
+                        };
+                        let labels_str = if i.labels.is_empty() {
+                            "—".to_string()
+                        } else {
+                            i.labels.join(", ")
+                        };
+                        let milestone_str = i.milestone.as_ref().map(|m| m.title.clone()).unwrap_or_else(|| "—".to_string());
+                        Row::new(vec![
                         render_fuzzy_cell(&format!("#{}", i.iid), &app.search_query, is_selected, false, Style::default().fg(THEME.text_normal), Alignment::Left),
                         render_fuzzy_cell(state_text, &app.search_query, is_selected, false, state_style, Alignment::Center),
                         render_fuzzy_cell(&truncate(&i.title, 100), &app.search_query, is_selected, false, Style::default().fg(THEME.text_normal), Alignment::Left),
-                        render_fuzzy_cell(&truncate(&i.author.username, 15), &app.search_query, is_selected, false, Style::default().fg(THEME.blue), Alignment::Left),
-                        render_fuzzy_cell(&time_ago(&i.updated_at), &app.search_query, is_selected, false, Style::default().fg(THEME.yellow), Alignment::Left),
+                        render_fuzzy_cell(&truncate(&assignees_str, 20), &app.search_query, is_selected, false, Style::default().fg(THEME.blue), Alignment::Left),
+                        render_fuzzy_cell(&truncate(&labels_str, 24), &app.search_query, is_selected, false, Style::default().fg(THEME.purple), Alignment::Left),
+                        render_fuzzy_cell(&truncate(&milestone_str, 18), &app.search_query, is_selected, false, Style::default().fg(THEME.yellow), Alignment::Left),
                     ]).height(1)
                 });
 
                 let widths = [
                     Constraint::Length(10),
                     Constraint::Length(10),
-                    Constraint::Percentage(50),
+                    Constraint::Percentage(35),
+                    Constraint::Length(20),
+                    Constraint::Length(24),
                     Constraint::Length(18),
-                    Constraint::Length(15),
                 ];
 
                 let table = Table::new(rows, widths)
@@ -455,8 +468,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         Cell::from("ID"),
                         Cell::from(Line::from("State").alignment(Alignment::Center)),
                         Cell::from("Title"),
-                        Cell::from("Author"),
-                        Cell::from("Updated"),
+                        Cell::from("Assignees"),
+                        Cell::from("Labels"),
+                        Cell::from("Milestone"),
                     ]).style(header_style).height(1))
                     .block(main_block)
                     .row_highlight_style(highlight_style)
@@ -585,13 +599,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         }
                     };
 
-                    Row::new(vec![
+                    let mr_labels_str = if m.labels.is_empty() {
+                            "—".to_string()
+                        } else {
+                            m.labels.join(", ")
+                        };
+                        let mr_milestone_str = m.milestone.as_ref().map(|ms| ms.title.clone()).unwrap_or_else(|| "—".to_string());
+                        Row::new(vec![
                         render_fuzzy_cell(&format!("!{}", m.iid), &app.search_query, is_selected, false, Style::default().fg(THEME.text_normal), Alignment::Left),
                         render_fuzzy_cell(state_text, &app.search_query, is_selected, false, state_style, Alignment::Center),
                         render_fuzzy_cell(&status_styled, &app.search_query, is_selected, false, status_style, Alignment::Center),
                         render_fuzzy_cell(&truncate(&clean_title, 100), &app.search_query, is_selected, false, Style::default().fg(THEME.text_normal), Alignment::Left),
-                        render_fuzzy_cell(&truncate(&m.author.username, 15), &app.search_query, is_selected, false, Style::default().fg(THEME.blue), Alignment::Left),
-                        render_fuzzy_cell(&time_ago(&m.updated_at), &app.search_query, is_selected, false, Style::default().fg(THEME.yellow), Alignment::Left),
+                        render_fuzzy_cell(&truncate(&mr_labels_str, 24), &app.search_query, is_selected, false, Style::default().fg(THEME.purple), Alignment::Left),
+                        render_fuzzy_cell(&truncate(&mr_milestone_str, 18), &app.search_query, is_selected, false, Style::default().fg(THEME.yellow), Alignment::Left),
                     ]).height(1)
                 });
 
@@ -599,9 +619,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Constraint::Length(10),
                     Constraint::Length(10),
                     Constraint::Length(11),
-                    Constraint::Percentage(42),
+                    Constraint::Percentage(35),
+                    Constraint::Length(24),
                     Constraint::Length(18),
-                    Constraint::Length(15),
                 ];
 
                 let table = Table::new(rows, widths)
@@ -610,8 +630,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         Cell::from(Line::from("State").alignment(Alignment::Center)),
                         Cell::from(Line::from("Status").alignment(Alignment::Center)),
                         Cell::from("Title"),
-                        Cell::from("Author"),
-                        Cell::from("Updated"),
+                        Cell::from("Labels"),
+                        Cell::from("Milestone"),
                     ]).style(header_style).height(1))
                     .block(main_block)
                     .row_highlight_style(highlight_style)
@@ -766,7 +786,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         render_fuzzy_cell(status_text, &app.search_query, is_row_highlighted, is_checked, Style::default().fg(status_color).bg(status_bg).add_modifier(Modifier::BOLD), Alignment::Center),
                         render_fuzzy_cell(&stages_dots, &app.search_query, is_row_highlighted, is_checked, Style::default().fg(THEME.text_normal), Alignment::Left),
                         render_fuzzy_cell(&truncate(&format_ref(&p.r#ref), 100), &app.search_query, is_row_highlighted, is_checked, Style::default().fg(THEME.purple), Alignment::Left),
-                        render_fuzzy_cell(&time_ago(&p.updated_at), &app.search_query, is_row_highlighted, is_checked, Style::default().fg(THEME.yellow), Alignment::Left),
                     ]).height(1)
                 });
 
@@ -774,8 +793,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Constraint::Length(14),
                     Constraint::Length(12),
                     Constraint::Length(24),
-                    Constraint::Percentage(45),
-                    Constraint::Length(15),
+                    Constraint::Percentage(60),
                 ];
 
                 let table = Table::new(rows, widths)
@@ -784,7 +802,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         Cell::from(Line::from("Status").alignment(Alignment::Center)),
                         Cell::from("Stages"),
                         Cell::from("Ref"),
-                        Cell::from("Updated"),
                     ]).style(header_style).height(1))
                     .block(main_block)
                     .row_highlight_style(highlight_style)

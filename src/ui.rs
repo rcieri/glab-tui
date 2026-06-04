@@ -2787,13 +2787,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let shortcuts = [
             Shortcut {
                 category: "Global & Nav",
-                key: "Tab / l / →",
+                key: "l / →",
                 action: "Next tab",
             },
             Shortcut {
                 category: "Global & Nav",
-                key: "S-Tab / h / ←",
+                key: "h / ←",
                 action: "Previous tab",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "Tab / t",
+                action: "Toggle columns config popup",
             },
             Shortcut {
                 category: "Global & Nav",
@@ -2994,7 +2999,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .add_modifier(Modifier::BOLD),
                     )),
                     Cell::from(Span::styled(
-                        "Tab / l / →",
+                        "l / →",
                         Style::default()
                             .fg(THEME.text_normal)
                             .add_modifier(Modifier::BOLD),
@@ -3007,13 +3012,26 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Row::new(vec![
                     Cell::from(""),
                     Cell::from(Span::styled(
-                        "S-Tab / h / ←",
+                        "h / ←",
                         Style::default()
                             .fg(THEME.text_normal)
                             .add_modifier(Modifier::BOLD),
                     )),
                     Cell::from(Span::styled(
                         "Previous tab",
+                        Style::default().fg(THEME.text_normal),
+                    )),
+                ]),
+                Row::new(vec![
+                    Cell::from(""),
+                    Cell::from(Span::styled(
+                        "Tab / t",
+                        Style::default()
+                            .fg(THEME.text_normal)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Cell::from(Span::styled(
+                        "Toggle columns config popup",
                         Style::default().fg(THEME.text_normal),
                     )),
                 ]),

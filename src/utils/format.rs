@@ -49,9 +49,15 @@ pub fn time_ago(date_str: &str) -> String {
 }
 
 pub fn format_ref(r#ref: &str) -> String {
-    if let Some(mr_id) = r#ref.strip_prefix("refs/merge-requests/").and_then(|s| s.strip_suffix("/merge")) {
+    if let Some(mr_id) = r#ref
+        .strip_prefix("refs/merge-requests/")
+        .and_then(|s| s.strip_suffix("/merge"))
+    {
         format!("MR !{}", mr_id)
-    } else if let Some(mr_id) = r#ref.strip_prefix("refs/merge-requests/").and_then(|s| s.split('/').next()) {
+    } else if let Some(mr_id) = r#ref
+        .strip_prefix("refs/merge-requests/")
+        .and_then(|s| s.split('/').next())
+    {
         format!("MR !{}", mr_id)
     } else if let Some(branch) = r#ref.strip_prefix("refs/heads/") {
         branch.to_string()
@@ -85,17 +91,26 @@ fn extract_quotes(s: &str) -> String {
 pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
     let title_trimmed = title.trim();
     let prefixes = [
-        "draft:", "wip:", "resolve:", "resolves:",
-        "[draft]", "[wip]", "[resolve]",
-        "draft ", "wip ", "resolve ", "resolves "
+        "draft:",
+        "wip:",
+        "resolve:",
+        "resolves:",
+        "[draft]",
+        "[wip]",
+        "[resolve]",
+        "draft ",
+        "wip ",
+        "resolve ",
+        "resolves ",
     ];
-    
+
     let title_lower = title_trimmed.to_lowercase();
     for p in prefixes {
         if title_lower.starts_with(p) {
             let prefix_len = p.len();
             let mut prefix = title_trimmed[..prefix_len].trim().to_string();
-            prefix = prefix.trim_end_matches(':')
+            prefix = prefix
+                .trim_end_matches(':')
                 .trim_start_matches('[')
                 .trim_end_matches(']')
                 .trim()
@@ -104,10 +119,9 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
             return (prefix, extract_quotes(remaining));
         }
     }
-    
+
     (String::new(), extract_quotes(title_trimmed))
 }
-
 
 pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
@@ -115,35 +129,48 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
         let trimmed = line.trim();
         if trimmed.starts_with("# ") {
             let content = trimmed.strip_prefix("# ").unwrap_or(trimmed);
-            lines.push(Line::from(vec![
-                Span::styled(format!("# {}", content), Style::default().fg(Color::Rgb(187, 153, 238)).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                format!("# {}", content),
+                Style::default()
+                    .fg(Color::Rgb(187, 153, 238))
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )]));
         } else if trimmed.starts_with("## ") {
             let content = trimmed.strip_prefix("## ").unwrap_or(trimmed);
-            lines.push(Line::from(vec![
-                Span::styled(format!("## {}", content), Style::default().fg(Color::Rgb(97, 175, 239)).add_modifier(Modifier::BOLD)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                format!("## {}", content),
+                Style::default()
+                    .fg(Color::Rgb(97, 175, 239))
+                    .add_modifier(Modifier::BOLD),
+            )]));
         } else if trimmed.starts_with("### ") {
             let content = trimmed.strip_prefix("### ").unwrap_or(trimmed);
-            lines.push(Line::from(vec![
-                Span::styled(format!("### {}", content), Style::default().fg(Color::Rgb(152, 195, 121)).add_modifier(Modifier::BOLD)),
-            ]));
+            lines.push(Line::from(vec![Span::styled(
+                format!("### {}", content),
+                Style::default()
+                    .fg(Color::Rgb(152, 195, 121))
+                    .add_modifier(Modifier::BOLD),
+            )]));
         } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
             let content = if trimmed.starts_with("- ") {
                 trimmed.strip_prefix("- ").unwrap()
             } else {
                 trimmed.strip_prefix("* ").unwrap()
             };
-            let mut spans = vec![
-                Span::styled("  • ", Style::default().fg(Color::Rgb(187, 153, 238)).add_modifier(Modifier::BOLD)),
-            ];
+            let mut spans = vec![Span::styled(
+                "  • ",
+                Style::default()
+                    .fg(Color::Rgb(187, 153, 238))
+                    .add_modifier(Modifier::BOLD),
+            )];
             spans.extend(parse_inline_styles(content));
             lines.push(Line::from(spans));
         } else if trimmed.starts_with("> ") {
             let content = trimmed.strip_prefix("> ").unwrap_or(trimmed);
-            let mut spans = vec![
-                Span::styled("  ▌ ", Style::default().fg(Color::Rgb(127, 132, 142))),
-            ];
+            let mut spans = vec![Span::styled(
+                "  ▌ ",
+                Style::default().fg(Color::Rgb(127, 132, 142)),
+            )];
             spans.extend(parse_inline_styles(content));
             lines.push(Line::from(spans));
         } else {
@@ -162,7 +189,10 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
     while i < chars.len() {
         if chars[i] == '`' {
             if !current_segment.is_empty() {
-                spans.push(Span::styled(current_segment.clone(), Style::default().fg(Color::Rgb(171, 178, 191))));
+                spans.push(Span::styled(
+                    current_segment.clone(),
+                    Style::default().fg(Color::Rgb(171, 178, 191)),
+                ));
                 current_segment.clear();
             }
             i += 1;
@@ -173,31 +203,40 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
             }
             spans.push(Span::styled(
                 code,
-                Style::default().fg(Color::Rgb(224, 108, 117)).bg(Color::Rgb(40, 44, 52)),
+                Style::default()
+                    .fg(Color::Rgb(224, 108, 117))
+                    .bg(Color::Rgb(40, 44, 52)),
             ));
             if i < chars.len() {
                 i += 1;
             }
-        } else if i + 1 < chars.len() && chars[i] == '*' && chars[i+1] == '*' {
+        } else if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
             if !current_segment.is_empty() {
-                spans.push(Span::styled(current_segment.clone(), Style::default().fg(Color::Rgb(171, 178, 191))));
+                spans.push(Span::styled(
+                    current_segment.clone(),
+                    Style::default().fg(Color::Rgb(171, 178, 191)),
+                ));
                 current_segment.clear();
             }
             i += 2;
             let mut bold_text = String::new();
-            while i + 1 < chars.len() && !(chars[i] == '*' && chars[i+1] == '*') {
+            while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '*') {
                 bold_text.push(chars[i]);
                 i += 1;
             }
-            if i < chars.len() && (i + 1 >= chars.len() || !(chars[i] == '*' && chars[i+1] == '*')) {
+            if i < chars.len()
+                && (i + 1 >= chars.len() || !(chars[i] == '*' && chars[i + 1] == '*'))
+            {
                 bold_text.push(chars[i]);
                 i += 1;
             }
             spans.push(Span::styled(
                 bold_text,
-                Style::default().fg(Color::Rgb(220, 223, 228)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(220, 223, 228))
+                    .add_modifier(Modifier::BOLD),
             ));
-            if i + 1 < chars.len() && chars[i] == '*' && chars[i+1] == '*' {
+            if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
                 i += 2;
             }
         } else {
@@ -207,7 +246,10 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
     }
 
     if !current_segment.is_empty() {
-        spans.push(Span::styled(current_segment, Style::default().fg(Color::Rgb(171, 178, 191))));
+        spans.push(Span::styled(
+            current_segment,
+            Style::default().fg(Color::Rgb(171, 178, 191)),
+        ));
     }
 
     spans
@@ -261,7 +303,10 @@ mod tests {
         );
         assert_eq!(
             parse_mr_title_prefix("Regular MR title without prefix"),
-            ("".to_string(), "Regular MR title without prefix".to_string())
+            (
+                "".to_string(),
+                "Regular MR title without prefix".to_string()
+            )
         );
         assert_eq!(
             parse_mr_title_prefix("\"Title wrapped in quotes\""),

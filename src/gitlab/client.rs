@@ -11,13 +11,14 @@ impl GitlabClient {
         let is_github = match tokio::process::Command::new("git")
             .args(["remote", "get-url", "origin"])
             .output()
-            .await {
-                Ok(output) if output.status.success() => {
-                    let url = String::from_utf8_lossy(&output.stdout);
-                    url.contains("github.com")
-                }
-                _ => false
-            };
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                let url = String::from_utf8_lossy(&output.stdout);
+                url.contains("github.com")
+            }
+            _ => false,
+        };
         Ok(Self { is_github })
     }
 
@@ -37,7 +38,7 @@ impl GitlabClient {
 
             let github_json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
             let translated_json = translate_json_to_gitlab(&gh_endpoint, github_json)?;
-            
+
             let data: T = serde_json::from_value(translated_json)?;
             Ok(data)
         } else {
@@ -107,7 +108,10 @@ impl GitlabClient {
         let encoded_path = project_path.replace("/", "%2F");
         let endpoint = format!("/projects/{}/members/all?per_page=100", encoded_path);
         let members: Vec<GitlabMember> = self.fetch_api(&endpoint).await?;
-        Ok(members.into_iter().map(|m| format!("@{}", m.username)).collect())
+        Ok(members
+            .into_iter()
+            .map(|m| format!("@{}", m.username))
+            .collect())
     }
 
     pub async fn fetch_milestones(&self, project_path: &str) -> Result<Vec<String>> {
@@ -116,7 +120,10 @@ impl GitlabClient {
             title: String,
         }
         let encoded_path = project_path.replace("/", "%2F");
-        let endpoint = format!("/projects/{}/milestones?state=active&per_page=100", encoded_path);
+        let endpoint = format!(
+            "/projects/{}/milestones?state=active&per_page=100",
+            encoded_path
+        );
         let milestones: Vec<GitlabMilestone> = self.fetch_api(&endpoint).await?;
         Ok(milestones.into_iter().map(|m| m.title).collect())
     }
@@ -134,14 +141,14 @@ pub async fn get_project_context() -> Result<String> {
     }
 
     let url = String::from_utf8(output.stdout)?.trim().to_string();
-    
+
     // Parse url to extract namespace/repo
     let path = if url.starts_with("git@") {
         url.split(':').nth(1).unwrap_or("unknown/unknown")
     } else if url.starts_with("http") {
         let parts: Vec<&str> = url.split('/').collect();
         if parts.len() >= 2 {
-            let p = format!("{}/{}", parts[parts.len()-2], parts[parts.len()-1]);
+            let p = format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]);
             return Ok(p.trim_end_matches(".git").to_string());
         }
         "unknown/unknown"
@@ -169,27 +176,36 @@ fn translate_issue(v: &serde_json::Value) -> serde_json::Value {
     let iid = v.get("number").cloned().unwrap_or(serde_json::Value::Null);
     let title = v.get("title").cloned().unwrap_or(serde_json::Value::Null);
     let raw_state = v.get("state").and_then(|s| s.as_str()).unwrap_or("open");
-    let state = if raw_state == "open" { "opened" } else { "closed" };
-    
+    let state = if raw_state == "open" {
+        "opened"
+    } else {
+        "closed"
+    };
+
     let labels_val = v.get("labels").and_then(|l| l.as_array());
     let labels = match labels_val {
         Some(arr) => {
-            let names: Vec<serde_json::Value> = arr.iter()
+            let names: Vec<serde_json::Value> = arr
+                .iter()
                 .filter_map(|label| label.get("name").cloned())
                 .collect();
             serde_json::Value::Array(names)
         }
         None => serde_json::Value::Array(vec![]),
     };
-    
-    let updated_at = v.get("updated_at").cloned().unwrap_or(serde_json::Value::Null);
-    
-    let username = v.get("user")
+
+    let updated_at = v
+        .get("updated_at")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let username = v
+        .get("user")
         .and_then(|u| u.get("login"))
         .and_then(|l| l.as_str())
         .unwrap_or("unknown");
     let author = serde_json::json!({ "username": username });
-    
+
     let milestone = match v.get("milestone") {
         Some(m) if !m.is_null() => {
             let m_title = m.get("title").cloned().unwrap_or(serde_json::Value::Null);
@@ -197,13 +213,17 @@ fn translate_issue(v: &serde_json::Value) -> serde_json::Value {
         }
         _ => serde_json::Value::Null,
     };
-    
+
     let assignees_val = v.get("assignees").and_then(|a| a.as_array());
     let assignees = match assignees_val {
         Some(arr) => {
-            let list: Vec<serde_json::Value> = arr.iter()
+            let list: Vec<serde_json::Value> = arr
+                .iter()
                 .map(|ass| {
-                    let u = ass.get("login").and_then(|l| l.as_str()).unwrap_or("unknown");
+                    let u = ass
+                        .get("login")
+                        .and_then(|l| l.as_str())
+                        .unwrap_or("unknown");
                     serde_json::json!({ "username": u })
                 })
                 .collect();
@@ -211,9 +231,9 @@ fn translate_issue(v: &serde_json::Value) -> serde_json::Value {
         }
         None => serde_json::Value::Array(vec![]),
     };
-    
+
     let description = v.get("body").cloned().unwrap_or(serde_json::Value::Null);
-    
+
     serde_json::json!({
         "iid": iid,
         "title": title,
@@ -231,27 +251,36 @@ fn translate_mr(v: &serde_json::Value) -> serde_json::Value {
     let iid = v.get("number").cloned().unwrap_or(serde_json::Value::Null);
     let title = v.get("title").cloned().unwrap_or(serde_json::Value::Null);
     let raw_state = v.get("state").and_then(|s| s.as_str()).unwrap_or("open");
-    let state = if raw_state == "open" { "opened" } else { "closed" };
-    
+    let state = if raw_state == "open" {
+        "opened"
+    } else {
+        "closed"
+    };
+
     let labels_val = v.get("labels").and_then(|l| l.as_array());
     let labels = match labels_val {
         Some(arr) => {
-            let names: Vec<serde_json::Value> = arr.iter()
+            let names: Vec<serde_json::Value> = arr
+                .iter()
                 .filter_map(|label| label.get("name").cloned())
                 .collect();
             serde_json::Value::Array(names)
         }
         None => serde_json::Value::Array(vec![]),
     };
-    
-    let updated_at = v.get("updated_at").cloned().unwrap_or(serde_json::Value::Null);
-    
-    let username = v.get("user")
+
+    let updated_at = v
+        .get("updated_at")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let username = v
+        .get("user")
         .and_then(|u| u.get("login"))
         .and_then(|l| l.as_str())
         .unwrap_or("unknown");
     let author = serde_json::json!({ "username": username });
-    
+
     let milestone = match v.get("milestone") {
         Some(m) if !m.is_null() => {
             let m_title = m.get("title").cloned().unwrap_or(serde_json::Value::Null);
@@ -259,13 +288,17 @@ fn translate_mr(v: &serde_json::Value) -> serde_json::Value {
         }
         _ => serde_json::Value::Null,
     };
-    
+
     let assignees_val = v.get("assignees").and_then(|a| a.as_array());
     let assignees = match assignees_val {
         Some(arr) => {
-            let list: Vec<serde_json::Value> = arr.iter()
+            let list: Vec<serde_json::Value> = arr
+                .iter()
                 .map(|ass| {
-                    let u = ass.get("login").and_then(|l| l.as_str()).unwrap_or("unknown");
+                    let u = ass
+                        .get("login")
+                        .and_then(|l| l.as_str())
+                        .unwrap_or("unknown");
                     serde_json::json!({ "username": u })
                 })
                 .collect();
@@ -273,13 +306,17 @@ fn translate_mr(v: &serde_json::Value) -> serde_json::Value {
         }
         None => serde_json::Value::Array(vec![]),
     };
-    
+
     let reviewers_val = v.get("requested_reviewers").and_then(|r| r.as_array());
     let reviewers = match reviewers_val {
         Some(arr) => {
-            let list: Vec<serde_json::Value> = arr.iter()
+            let list: Vec<serde_json::Value> = arr
+                .iter()
                 .map(|rev| {
-                    let u = rev.get("login").and_then(|l| l.as_str()).unwrap_or("unknown");
+                    let u = rev
+                        .get("login")
+                        .and_then(|l| l.as_str())
+                        .unwrap_or("unknown");
                     serde_json::json!({ "username": u })
                 })
                 .collect();
@@ -287,20 +324,22 @@ fn translate_mr(v: &serde_json::Value) -> serde_json::Value {
         }
         None => serde_json::Value::Array(vec![]),
     };
-    
-    let target_branch = v.get("base")
+
+    let target_branch = v
+        .get("base")
         .and_then(|b| b.get("ref"))
         .cloned()
         .unwrap_or_else(|| serde_json::Value::String("main".to_string()));
 
-    let source_branch = v.get("head")
+    let source_branch = v
+        .get("head")
         .and_then(|h| h.get("ref"))
         .cloned()
         .unwrap_or_else(|| serde_json::Value::String("".to_string()));
-        
+
     let draft = v.get("draft").and_then(|d| d.as_bool()).unwrap_or(false);
     let description = v.get("body").cloned().unwrap_or(serde_json::Value::Null);
-    
+
     serde_json::json!({
         "iid": iid,
         "title": title,
@@ -322,7 +361,7 @@ fn translate_pipeline(v: &serde_json::Value) -> serde_json::Value {
     let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
     let status_raw = v.get("status").and_then(|s| s.as_str()).unwrap_or("queued");
     let conclusion_raw = v.get("conclusion").and_then(|c| c.as_str()).unwrap_or("");
-    
+
     let status = if status_raw == "completed" {
         match conclusion_raw {
             "success" => "success",
@@ -336,10 +375,16 @@ fn translate_pipeline(v: &serde_json::Value) -> serde_json::Value {
     } else {
         "pending"
     };
-    
-    let r#ref = v.get("head_branch").cloned().unwrap_or_else(|| serde_json::Value::String("main".to_string()));
-    let updated_at = v.get("updated_at").cloned().unwrap_or(serde_json::Value::Null);
-    
+
+    let r#ref = v
+        .get("head_branch")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String("main".to_string()));
+    let updated_at = v
+        .get("updated_at")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
     serde_json::json!({
         "id": id,
         "status": status,
@@ -352,7 +397,7 @@ fn translate_job(v: &serde_json::Value) -> serde_json::Value {
     let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
     let status_raw = v.get("status").and_then(|s| s.as_str()).unwrap_or("queued");
     let conclusion_raw = v.get("conclusion").and_then(|c| c.as_str()).unwrap_or("");
-    
+
     let status = if status_raw == "completed" {
         match conclusion_raw {
             "success" => "success",
@@ -366,9 +411,9 @@ fn translate_job(v: &serde_json::Value) -> serde_json::Value {
     } else {
         "pending"
     };
-    
+
     let name = v.get("name").cloned().unwrap_or(serde_json::Value::Null);
-    
+
     serde_json::json!({
         "id": id,
         "status": status,
@@ -381,7 +426,7 @@ fn translate_runner(v: &serde_json::Value) -> serde_json::Value {
     let id = v.get("id").cloned().unwrap_or(serde_json::Value::Null);
     let description = v.get("name").cloned().unwrap_or(serde_json::Value::Null);
     let status = v.get("status").cloned().unwrap_or(serde_json::Value::Null);
-    
+
     serde_json::json!({
         "id": id,
         "description": description,
@@ -391,10 +436,20 @@ fn translate_runner(v: &serde_json::Value) -> serde_json::Value {
 }
 
 fn translate_release(v: &serde_json::Value) -> serde_json::Value {
-    let tag_name = v.get("tag_name").cloned().unwrap_or(serde_json::Value::Null);
-    let name = v.get("name").cloned().filter(|n| !n.is_null()).unwrap_or_else(|| tag_name.clone());
-    let released_at = v.get("published_at").cloned().unwrap_or(serde_json::Value::Null);
-    
+    let tag_name = v
+        .get("tag_name")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let name = v
+        .get("name")
+        .cloned()
+        .filter(|n| !n.is_null())
+        .unwrap_or_else(|| tag_name.clone());
+    let released_at = v
+        .get("published_at")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
     serde_json::json!({
         "name": name,
         "tag_name": tag_name,
@@ -406,7 +461,8 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
     if endpoint.contains("/issues") {
         if val.is_array() {
             if let Some(arr) = val.as_array() {
-                let list: Vec<serde_json::Value> = arr.iter()
+                let list: Vec<serde_json::Value> = arr
+                    .iter()
                     .filter(|item| item.get("pull_request").is_none())
                     .map(translate_issue)
                     .collect();
@@ -420,9 +476,7 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
     } else if endpoint.contains("/pulls") {
         if val.is_array() {
             if let Some(arr) = val.as_array() {
-                let list: Vec<serde_json::Value> = arr.iter()
-                    .map(translate_mr)
-                    .collect();
+                let list: Vec<serde_json::Value> = arr.iter().map(translate_mr).collect();
                 Ok(serde_json::Value::Array(list))
             } else {
                 Ok(serde_json::Value::Array(vec![]))
@@ -432,25 +486,22 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
         }
     } else if endpoint.contains("/actions/runs") && endpoint.contains("/jobs") {
         if let Some(arr) = val.get("jobs").and_then(|j| j.as_array()) {
-            let list: Vec<serde_json::Value> = arr.iter()
-                .map(translate_job)
-                .collect();
+            let list: Vec<serde_json::Value> = arr.iter().map(translate_job).collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))
         }
     } else if endpoint.contains("/actions/runs") {
         if let Some(arr) = val.get("workflow_runs").and_then(|w| w.as_array()) {
-            let list: Vec<serde_json::Value> = arr.iter()
-                .map(translate_pipeline)
-                .collect();
+            let list: Vec<serde_json::Value> = arr.iter().map(translate_pipeline).collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))
         }
     } else if endpoint.contains("/assignees") {
         if let Some(arr) = val.as_array() {
-            let list: Vec<serde_json::Value> = arr.iter()
+            let list: Vec<serde_json::Value> = arr
+                .iter()
                 .map(|u| {
                     let login = u.get("login").and_then(|l| l.as_str()).unwrap_or("unknown");
                     serde_json::Value::String(format!("@{}", login))
@@ -462,27 +513,23 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
         }
     } else if endpoint.contains("/milestones") {
         if let Some(arr) = val.as_array() {
-            let list: Vec<serde_json::Value> = arr.iter()
-                .filter_map(|m| m.get("title").cloned())
-                .collect();
+            let list: Vec<serde_json::Value> =
+                arr.iter().filter_map(|m| m.get("title").cloned()).collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))
         }
     } else if endpoint.contains("/labels") {
         if let Some(arr) = val.as_array() {
-            let list: Vec<serde_json::Value> = arr.iter()
-                .filter_map(|l| l.get("name").cloned())
-                .collect();
+            let list: Vec<serde_json::Value> =
+                arr.iter().filter_map(|l| l.get("name").cloned()).collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))
         }
     } else if endpoint.contains("/actions/runners") {
         if let Some(arr) = val.get("runners").and_then(|r| r.as_array()) {
-            let list: Vec<serde_json::Value> = arr.iter()
-                .map(translate_runner)
-                .collect();
+            let list: Vec<serde_json::Value> = arr.iter().map(translate_runner).collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))
@@ -490,9 +537,7 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
     } else if endpoint.contains("/releases") {
         if val.is_array() {
             if let Some(arr) = val.as_array() {
-                let list: Vec<serde_json::Value> = arr.iter()
-                    .map(translate_release)
-                    .collect();
+                let list: Vec<serde_json::Value> = arr.iter().map(translate_release).collect();
                 Ok(serde_json::Value::Array(list))
             } else {
                 Ok(serde_json::Value::Array(vec![]))
@@ -516,7 +561,9 @@ mod tests {
             "/repos/owner/repo/issues?state=open&per_page=100"
         );
         assert_eq!(
-            gitlab_to_github_endpoint("/projects/owner%2Frepo/merge_requests?state=opened&per_page=100"),
+            gitlab_to_github_endpoint(
+                "/projects/owner%2Frepo/merge_requests?state=opened&per_page=100"
+            ),
             "/repos/owner/repo/pulls?state=open&per_page=100"
         );
         assert_eq!(

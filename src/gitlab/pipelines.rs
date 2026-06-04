@@ -28,21 +28,31 @@ pub struct Job {
     pub matrix: Option<String>,
 }
 
-pub async fn list_pipeline_jobs(client: &GitlabClient, project_path: &str, pipeline_id: u64) -> Result<Vec<Job>> {
+pub async fn list_pipeline_jobs(
+    client: &GitlabClient,
+    project_path: &str,
+    pipeline_id: u64,
+) -> Result<Vec<Job>> {
     let encoded_path = project_path.replace("/", "%2F");
-    let endpoint_page1 = format!("/projects/{}/pipelines/{}/jobs?per_page=100&page=1", encoded_path, pipeline_id);
+    let endpoint_page1 = format!(
+        "/projects/{}/pipelines/{}/jobs?per_page=100&page=1",
+        encoded_path, pipeline_id
+    );
     let mut all_jobs: Vec<Job> = client.fetch_api(&endpoint_page1).await?;
-    
+
     if all_jobs.len() == 100 {
         let mut handles = Vec::new();
         for page in 2..=10 {
-            let endpoint = format!("/projects/{}/pipelines/{}/jobs?per_page=100&page={}", encoded_path, pipeline_id, page);
+            let endpoint = format!(
+                "/projects/{}/pipelines/{}/jobs?per_page=100&page={}",
+                encoded_path, pipeline_id, page
+            );
             let client_clone = client.clone();
             handles.push(tokio::spawn(async move {
                 client_clone.fetch_api::<Vec<Job>>(&endpoint).await
             }));
         }
-        
+
         for handle in handles {
             if let Ok(Ok(jobs)) = handle.await {
                 if jobs.is_empty() {
@@ -64,17 +74,23 @@ pub async fn list_pipeline_jobs(client: &GitlabClient, project_path: &str, pipel
 pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
     // Parse matrix suffix from job names before deduplication.
     // GitLab matrix jobs look like: "build [ubuntu, run:test]"
-    let all_jobs: Vec<Job> = all_jobs.into_iter().map(|mut job| {
-        if let (Some(bracket_start), Some(bracket_end)) = (job.name.rfind('['), job.name.rfind(']')) {
-            if bracket_end == job.name.len() - 1 {
-                let matrix_content = job.name[bracket_start + 1..bracket_end].trim().to_string();
-                let base_name = job.name[..bracket_start].trim().to_string();
-                job.matrix = Some(matrix_content);
-                job.name = base_name;
+    let all_jobs: Vec<Job> = all_jobs
+        .into_iter()
+        .map(|mut job| {
+            if let (Some(bracket_start), Some(bracket_end)) =
+                (job.name.rfind('['), job.name.rfind(']'))
+            {
+                if bracket_end == job.name.len() - 1 {
+                    let matrix_content =
+                        job.name[bracket_start + 1..bracket_end].trim().to_string();
+                    let base_name = job.name[..bracket_start].trim().to_string();
+                    job.matrix = Some(matrix_content);
+                    job.name = base_name;
+                }
             }
-        }
-        job
-    }).collect();
+            job
+        })
+        .collect();
 
     let mut stage_min_id = std::collections::HashMap::new();
     for j in all_jobs.iter() {
@@ -85,7 +101,8 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
     }
 
     // Deduplicate jobs by (name, matrix) key, keeping only the one with the maximum ID (latest retry)
-    let mut deduplicated: std::collections::HashMap<(String, Option<String>), Job> = std::collections::HashMap::new();
+    let mut deduplicated: std::collections::HashMap<(String, Option<String>), Job> =
+        std::collections::HashMap::new();
     for job in all_jobs {
         let key = (job.name.clone(), job.matrix.clone());
         let entry = deduplicated.entry(key).or_insert_with(|| job.clone());
@@ -106,11 +123,15 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
             a.id.cmp(&b.id)
         }
     });
-    
+
     all_jobs
 }
 
-pub async fn get_job_trace(client: &GitlabClient, project_path: &str, job_id: u64) -> Result<String> {
+pub async fn get_job_trace(
+    client: &GitlabClient,
+    project_path: &str,
+    job_id: u64,
+) -> Result<String> {
     let encoded_path = project_path.replace("/", "%2F");
     let endpoint = format!("/projects/{}/jobs/{}/trace", encoded_path, job_id);
     client.fetch_raw_api(&endpoint).await
@@ -222,11 +243,17 @@ mod tests {
         assert_eq!(processed.len(), 3);
 
         // Matrix field should be populated, base name should have brackets stripped
-        let ubuntu = processed.iter().find(|j| j.matrix.as_deref() == Some("ubuntu, unit")).unwrap();
+        let ubuntu = processed
+            .iter()
+            .find(|j| j.matrix.as_deref() == Some("ubuntu, unit"))
+            .unwrap();
         assert_eq!(ubuntu.name, "run-tests");
         assert_eq!(ubuntu.id, 203); // latest retry wins
 
-        let windows = processed.iter().find(|j| j.matrix.as_deref() == Some("windows, integration")).unwrap();
+        let windows = processed
+            .iter()
+            .find(|j| j.matrix.as_deref() == Some("windows, integration"))
+            .unwrap();
         assert_eq!(windows.name, "run-tests");
         assert_eq!(windows.id, 202);
 

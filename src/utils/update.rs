@@ -14,8 +14,11 @@ pub async fn perform_self_update() -> Result<bool> {
     }
 
     let json: Value = serde_json::from_slice(&output.stdout)?;
-    let latest_tag = json.get("tag_name").and_then(|v| v.as_str()).context("No tag_name in release")?;
-    
+    let latest_tag = json
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .context("No tag_name in release")?;
+
     let current_version = env!("CARGO_PKG_VERSION");
     let current_tag = format!("v{}", current_version);
     if latest_tag == current_tag {
@@ -55,10 +58,10 @@ pub async fn perform_self_update() -> Result<bool> {
             break;
         }
     }
-    
+
     let new_bin_path = downloaded_file_path.context("No file was downloaded")?;
     let current_exe = std::env::current_exe()?;
-    
+
     let mut old_exe = current_exe.clone();
     old_exe.set_extension("old");
     let _ = fs::rename(&current_exe, &old_exe);

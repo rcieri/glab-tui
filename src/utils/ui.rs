@@ -19,7 +19,11 @@ impl<T> StatefulList<T> {
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= self.items.len() - 1 { 0 } else { i + 1 }
+                if i >= self.items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
             }
             None => 0,
         };
@@ -32,7 +36,11 @@ impl<T> StatefulList<T> {
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i == 0 { self.items.len() - 1 } else { i - 1 }
+                if i == 0 {
+                    self.items.len() - 1
+                } else {
+                    i - 1
+                }
             }
             None => 0,
         };
@@ -63,7 +71,11 @@ impl<T> StatefulTable<T> {
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= len - 1 { 0 } else { i + 1 }
+                if i >= len - 1 {
+                    0
+                } else {
+                    i + 1
+                }
             }
             None => 0,
         };
@@ -76,7 +88,11 @@ impl<T> StatefulTable<T> {
         }
         let i = match self.state.selected() {
             Some(i) => {
-                if i == 0 { len - 1 } else { i - 1 }
+                if i == 0 {
+                    len - 1
+                } else {
+                    i - 1
+                }
             }
             None => 0,
         };

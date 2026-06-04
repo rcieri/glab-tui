@@ -14,7 +14,7 @@ fn get_cache_file_path(project_context: &str) -> PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    
+
     let mut path = PathBuf::from(home);
     path.push(".glab-tui-cache");
     let _ = fs::create_dir_all(&path);
@@ -43,7 +43,7 @@ fn get_recent_repos_file_path() -> PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    
+
     let mut path = PathBuf::from(home);
     path.push(".glab-tui-cache");
     let _ = fs::create_dir_all(&path);
@@ -69,7 +69,7 @@ pub fn add_recent_repo(repo_path: &str) {
     }
     repos.insert(0, repo_path);
     repos.truncate(20);
-    
+
     let path = get_recent_repos_file_path();
     if let Ok(content) = serde_json::to_string(&repos) {
         let _ = fs::write(path, content);
@@ -140,7 +140,7 @@ pub fn get_switchable_repos() -> Vec<String> {
     let repos_dir = get_repos_dir();
     let available_repos = get_repos_in_dir(&repos_dir);
     let recent_paths = get_recent_repos();
-    
+
     let mut sorted_repos = Vec::new();
     for path_str in recent_paths {
         let path = std::path::PathBuf::from(path_str);
@@ -155,13 +155,13 @@ pub fn get_switchable_repos() -> Vec<String> {
             }
         }
     }
-    
+
     for repo in available_repos {
         if !sorted_repos.contains(&repo) {
             sorted_repos.push(repo);
         }
     }
-    
+
     sorted_repos
 }
 
@@ -194,7 +194,7 @@ mod tests {
 
         let repo1_str = repo1.to_str().unwrap();
         let siblings = get_sibling_repos(repo1_str);
-        
+
         let has_repo2 = siblings.iter().any(|s| s.contains("repo2"));
         let has_non_repo = siblings.iter().any(|s| s.contains("non_repo"));
 
@@ -224,7 +224,7 @@ mod tests {
     fn test_repos_dir_env_var() {
         let temp_dir = tempdir().unwrap();
         let path_str = temp_dir.path().to_str().unwrap().to_string();
-        
+
         unsafe {
             std::env::set_var("GLAB_TUI_REPOS_DIR", &path_str);
         }
@@ -235,5 +235,3 @@ mod tests {
         }
     }
 }
-
-

@@ -1,6 +1,6 @@
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
-use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 pub static PAUSED: AtomicBool = AtomicBool::new(false);
@@ -38,7 +38,7 @@ impl EventHandler {
         let tick_rate = Duration::from_millis(tick_rate);
         let (sender, receiver) = mpsc::unbounded_channel();
         let _sender = sender.clone();
-        
+
         tokio::spawn(async move {
             let mut last_tick = Instant::now();
             loop {
@@ -61,7 +61,7 @@ impl EventHandler {
                             } else {
                                 continue;
                             }
-                        },
+                        }
                         CrosstermEvent::Mouse(e) => Event::Mouse(e),
                         CrosstermEvent::Resize(w, h) => Event::Resize(w, h),
                         _ => continue,

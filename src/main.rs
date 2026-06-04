@@ -929,21 +929,77 @@ fn spawn_refresh_active_tab(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 && (args[1] == "--update" || args[1] == "-u") {
-        println!("Checking for updates...");
-        match crate::utils::update::perform_self_update().await {
-            Ok(updated) => {
-                if updated {
-                    println!("Successfully updated to the latest version! Please restart glab-tui.");
-                } else {
-                    println!("Already up to date.");
-                }
+    let mut custom_repo: Option<String> = None;
+    let mut custom_dir: Option<String> = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-h" | "--help" => {
+                println!("glab-tui - GitLab/GitHub terminal user interface");
+                println!();
+                println!("Usage:");
+                println!("  glab-tui [options]");
+                println!();
+                println!("Options:");
+                println!("  -h, --help               Show this help message");
+                println!("  -v, --version            Show version information");
+                println!("  -u, --update             Check and install updates");
+                println!("  -r, --repo <namespace>   Specify git repo context (e.g., group/repo)");
+                println!("  -d, --dir <path>         Specify local repository directory to run in");
                 return Ok(());
             }
-            Err(e) => {
-                eprintln!("Update failed: {}", e);
+            "-v" | "--version" => {
+                println!("glab-tui version {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "-u" | "--update" => {
+                println!("Checking for updates...");
+                match crate::utils::update::perform_self_update().await {
+                    Ok(updated) => {
+                        if updated {
+                            println!("Successfully updated to the latest version! Please restart glab-tui.");
+                        } else {
+                            println!("Already up to date.");
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("Update failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            "-r" | "--repo" => {
+                if i + 1 < args.len() {
+                    custom_repo = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --repo option requires a namespace argument");
+                    std::process::exit(1);
+                }
+            }
+            "-d" | "--dir" => {
+                if i + 1 < args.len() {
+                    custom_dir = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    eprintln!("Error: --dir option requires a path argument");
+                    std::process::exit(1);
+                }
+            }
+            unknown => {
+                eprintln!("Error: Unknown argument '{}'", unknown);
+                eprintln!("Run 'glab-tui --help' for usage details.");
                 std::process::exit(1);
             }
+        }
+    }
+
+    if let Some(ref dir) = custom_dir {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("Error changing directory to '{}': {}", dir, e);
+            std::process::exit(1);
         }
     }
 
@@ -960,7 +1016,9 @@ async fn main() -> Result<()> {
     app.tx = Some(events.sender());
 
     // Initialize gitlab context
-    if let Ok(context) = gitlab::client::get_project_context().await {
+    if let Some(repo) = custom_repo {
+        app.project_context = repo;
+    } else if let Ok(context) = gitlab::client::get_project_context().await {
         app.project_context = context;
     }
 
@@ -1908,6 +1966,70 @@ async fn main() -> Result<()> {
                                 app.diff_view = Some(diff_view);
                             }
                         }
+                        continue;
+                    }
+
+                    if app.focus_column_checklist {
+                        match key_event.code {
+                            KeyCode::Esc | KeyCode::Char('t') => {
+                                app.focus_column_checklist = false;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                let max_idx = match app.active_tab {
+                                    app::Tab::Issues => 3,
+                                    app::Tab::MergeRequests => 4,
+                                    _ => 0,
+                                };
+                                if app.column_checklist_idx < max_idx {
+                                    app.column_checklist_idx += 1;
+                                } else {
+                                    app.column_checklist_idx = 0;
+                                }
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                let max_idx = match app.active_tab {
+                                    app::Tab::Issues => 3,
+                                    app::Tab::MergeRequests => 4,
+                                    _ => 0,
+                                };
+                                if app.column_checklist_idx > 0 {
+                                    app.column_checklist_idx -= 1;
+                                } else {
+                                    app.column_checklist_idx = max_idx;
+                                }
+                            }
+                            KeyCode::Char(' ') | KeyCode::Enter => {
+                                match app.active_tab {
+                                    app::Tab::Issues => {
+                                        match app.column_checklist_idx {
+                                            0 => app.show_issue_assignees = !app.show_issue_assignees,
+                                            1 => app.show_issue_labels = !app.show_issue_labels,
+                                            2 => app.show_issue_milestone = !app.show_issue_milestone,
+                                            3 => app.show_issue_author = !app.show_issue_author,
+                                            _ => {}
+                                        }
+                                    }
+                                    app::Tab::MergeRequests => {
+                                        match app.column_checklist_idx {
+                                            0 => app.show_mr_assignees = !app.show_mr_assignees,
+                                            1 => app.show_mr_reviewers = !app.show_mr_reviewers,
+                                            2 => app.show_mr_labels = !app.show_mr_labels,
+                                            3 => app.show_mr_milestone = !app.show_mr_milestone,
+                                            4 => app.show_mr_author = !app.show_mr_author,
+                                            _ => {}
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    if key_event.code == KeyCode::Char('t') && !app.focus_column_checklist && (app.active_tab == app::Tab::Issues || app.active_tab == app::Tab::MergeRequests) {
+                        app.focus_column_checklist = true;
+                        app.column_checklist_idx = 0;
                         continue;
                     }
 

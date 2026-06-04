@@ -591,6 +591,17 @@ pub struct App {
     pub status_message: Option<String>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    pub show_issue_assignees: bool,
+    pub show_issue_labels: bool,
+    pub show_issue_milestone: bool,
+    pub show_issue_author: bool,
+    pub show_mr_assignees: bool,
+    pub show_mr_reviewers: bool,
+    pub show_mr_labels: bool,
+    pub show_mr_milestone: bool,
+    pub show_mr_author: bool,
+    pub focus_column_checklist: bool,
+    pub column_checklist_idx: usize,
 }
 
 impl Default for App {
@@ -635,6 +646,17 @@ impl Default for App {
             status_message: None,
             refreshed_tabs: std::collections::HashSet::new(),
             tx: None,
+            show_issue_assignees: false,
+            show_issue_labels: true,
+            show_issue_milestone: false,
+            show_issue_author: false,
+            show_mr_assignees: false,
+            show_mr_reviewers: false,
+            show_mr_labels: true,
+            show_mr_milestone: false,
+            show_mr_author: false,
+            focus_column_checklist: false,
+            column_checklist_idx: 0,
         }
     }
 }
@@ -1329,5 +1351,23 @@ index abcdef..ffffff 100644
         assert_eq!(diff_view.visible_nodes[1].name, "vn-protocol");
         assert_eq!(diff_view.visible_nodes[0].line_idx, Some(0));
         assert_eq!(diff_view.visible_nodes[1].line_idx, Some(4));
+    }
+
+    #[test]
+    fn test_column_toggle_checklist_defaults() {
+        let app = App::default();
+        assert!(!app.show_issue_assignees);
+        assert!(app.show_issue_labels);
+        assert!(!app.show_issue_milestone);
+        assert!(!app.show_issue_author);
+
+        assert!(!app.show_mr_assignees);
+        assert!(!app.show_mr_reviewers);
+        assert!(app.show_mr_labels);
+        assert!(!app.show_mr_milestone);
+        assert!(!app.show_mr_author);
+
+        assert!(!app.focus_column_checklist);
+        assert_eq!(app.column_checklist_idx, 0);
     }
 }

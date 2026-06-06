@@ -2925,7 +2925,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let reserved_excluding_api = time_len + sep1_len + action_len + sep2_len + sep3_len + status_len;
                     let max_available = (bottom_inner.width as usize).saturating_sub(reserved_excluding_api);
                     let target_api_width = std::cmp::min(api_col_width, max_available);
-                    let truncated_api = truncate(cmd_to_run, target_api_width);
+                    let truncate_limit = target_api_width.saturating_sub(3);
+                    let truncated_api = truncate(cmd_to_run, truncate_limit);
 
                     let (cmd_bin, cmd_args) = if truncated_api.starts_with("glab") {
                         ("glab", truncated_api[4..].to_string())
@@ -2935,7 +2936,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         ("", truncated_api.clone())
                     };
 
-                    let padding_spaces = " ".repeat(target_api_width.saturating_sub(truncated_api.len()));
+                    let truncated_len = truncated_api.chars().count();
+                    let padding_spaces = " ".repeat(target_api_width.saturating_sub(truncated_len));
                     let cmd_args_padded = format!("{}{}", cmd_args, padding_spaces);
 
                     let mut cmd_spans = vec![

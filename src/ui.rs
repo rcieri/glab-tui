@@ -2921,9 +2921,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                     if !desc.is_empty() {
                         cmd_spans.push(Span::styled(" • ", Style::default().fg(THEME.text_muted)));
+                        let uppercase_desc = desc.to_uppercase();
+                        let padded_desc = format!("{: <25}", uppercase_desc);
                         cmd_spans.push(Span::styled(
-                            desc,
-                            Style::default().fg(THEME.text_normal),
+                            padded_desc,
+                            Style::default().fg(THEME.blue).add_modifier(Modifier::BOLD),
                         ));
                         cmd_spans.push(Span::styled(" $ ", Style::default().fg(THEME.text_muted)));
 

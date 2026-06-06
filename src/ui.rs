@@ -96,7 +96,7 @@ fn render_labels_cell(
 
     let mut char_styles: Vec<(char, Style)> = Vec::new();
     let mut current_len = 0;
-    
+
     let base_bg = if is_selected {
         Some(THEME.highlight_bg)
     } else if is_checked {
@@ -130,7 +130,9 @@ fn render_labels_cell(
         }
 
         let label_color = get_label_color(label);
-        let mut label_style = Style::default().fg(label_color).add_modifier(Modifier::BOLD);
+        let mut label_style = Style::default()
+            .fg(label_color)
+            .add_modifier(Modifier::BOLD);
         if let Some(bg) = base_bg {
             label_style = label_style.bg(bg);
         }
@@ -188,7 +190,7 @@ fn render_labels_cell(
         if index_set.contains(&i) {
             style = style.fg(THEME.yellow).add_modifier(Modifier::BOLD);
         }
-        
+
         if first {
             current_style = style;
             first = false;
@@ -482,7 +484,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Style::default().fg(THEME.yellow),
         ));
     }
-    
 
     let title = Paragraph::new(Line::from(title_spans))
         .style(Style::default().bg(THEME.bg))
@@ -2563,9 +2564,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let filtered_milestones = App::filter_milestones_list(
                     &app.milestones.items,
                     &app.search_query,
-                    app.enabled_columns.get(&Tab::Milestones).unwrap_or(&default_set),
+                    app.enabled_columns
+                        .get(&Tab::Milestones)
+                        .unwrap_or(&default_set),
                 );
-                
+
                 let header_cells = Tab::Milestones
                     .columns()
                     .into_iter()
@@ -2585,8 +2588,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 "IID" => m.iid.to_string(),
                                 "Title" => m.title.clone(),
                                 "State" => m.state.clone(),
-                                "Start Date" => m.start_date.clone().unwrap_or_else(|| "N/A".to_string()),
-                                "Due Date" => m.due_date.clone().unwrap_or_else(|| "N/A".to_string()),
+                                "Start Date" => {
+                                    m.start_date.clone().unwrap_or_else(|| "N/A".to_string())
+                                }
+                                "Due Date" => {
+                                    m.due_date.clone().unwrap_or_else(|| "N/A".to_string())
+                                }
                                 _ => "".to_string(),
                             };
                             cells.push(Cell::from(val));
@@ -2601,18 +2608,30 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Row::new(cells).style(row_style)
                 });
 
-                let table = Table::new(rows, [Constraint::Percentage(10), Constraint::Percentage(40), Constraint::Percentage(20), Constraint::Percentage(30)])
-                    .header(header)
-                    .block(main_block.clone())
-                    .row_highlight_style(highlight_style)
-                    .highlight_symbol(" ❯ ");
+                let table = Table::new(
+                    rows,
+                    [
+                        Constraint::Percentage(10),
+                        Constraint::Percentage(40),
+                        Constraint::Percentage(20),
+                        Constraint::Percentage(30),
+                    ],
+                )
+                .header(header)
+                .block(main_block.clone())
+                .row_highlight_style(highlight_style)
+                .highlight_symbol(" ❯ ");
 
                 f.render_stateful_widget(table, middle_chunks[1], &mut app.milestones.state);
 
                 let preview_block = Block::default()
                     .borders(Borders::ALL)
                     .title(" Milestone Details ")
-                    .title_style(Style::default().fg(THEME.text_muted).add_modifier(Modifier::BOLD))
+                    .title_style(
+                        Style::default()
+                            .fg(THEME.text_muted)
+                            .add_modifier(Modifier::BOLD),
+                    )
                     .border_style(Style::default().fg(THEME.border));
 
                 if let Some(selected_idx) = app.milestones.state.selected() {
@@ -2620,13 +2639,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         let mut text = Vec::new();
                         text.push(Line::from(vec![
                             Span::styled("Title:      ", Style::default().fg(THEME.text_muted)),
-                            Span::styled(&m.title, Style::default().fg(THEME.blue).add_modifier(Modifier::BOLD)),
+                            Span::styled(
+                                &m.title,
+                                Style::default().fg(THEME.blue).add_modifier(Modifier::BOLD),
+                            ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled("State:      ", Style::default().fg(THEME.text_muted)),
                             Span::styled(
                                 &m.state,
-                                Style::default().fg(if m.state == "active" { THEME.green } else { THEME.yellow })
+                                Style::default().fg(if m.state == "active" {
+                                    THEME.green
+                                } else {
+                                    THEME.yellow
+                                }),
                             ),
                         ]));
                         text.push(Line::from(vec![
@@ -2639,7 +2665,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         ]));
                         if let Some(desc) = &m.description {
                             text.push(Line::from(""));
-                            text.push(Line::from(Span::styled("Description:", Style::default().add_modifier(Modifier::BOLD))));
+                            text.push(Line::from(Span::styled(
+                                "Description:",
+                                Style::default().add_modifier(Modifier::BOLD),
+                            )));
                             text.push(Line::from(desc.as_str()));
                         }
                         text.push(Line::from(""));
@@ -2650,11 +2679,21 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             let open = total - closed;
 
                             text.push(Line::from(vec![
-                                Span::styled("Issues Status: ", Style::default().add_modifier(Modifier::BOLD)),
-                                Span::raw(format!("{} Closed / {} Open (Total {})", closed, open, total)),
+                                Span::styled(
+                                    "Issues Status: ",
+                                    Style::default().add_modifier(Modifier::BOLD),
+                                ),
+                                Span::raw(format!(
+                                    "{} Closed / {} Open (Total {})",
+                                    closed, open, total
+                                )),
                             ]));
 
-                            let pct = if total > 0 { (closed as f32 / total as f32) * 100.0 } else { 0.0 };
+                            let pct = if total > 0 {
+                                (closed as f32 / total as f32) * 100.0
+                            } else {
+                                0.0
+                            };
                             let filled_len = if total > 0 { (closed * 20) / total } else { 0 };
                             let bar = format!(
                                 "[{}{}] {:.1}%",
@@ -2662,7 +2701,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 "░".repeat(20 - filled_len),
                                 pct
                             );
-                            text.push(Line::from(Span::styled(bar, Style::default().fg(THEME.green))));
+                            text.push(Line::from(Span::styled(
+                                bar,
+                                Style::default().fg(THEME.green),
+                            )));
                             text.push(Line::from(""));
                         } else {
                             text.push(Line::from("Loading issues details..."));
@@ -2758,7 +2800,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let content_block = Block::default()
                     .borders(Borders::ALL)
                     .title(" Wiki Page Content ")
-                    .title_style(Style::default().fg(THEME.text_muted).add_modifier(Modifier::BOLD))
+                    .title_style(
+                        Style::default()
+                            .fg(THEME.text_muted)
+                            .add_modifier(Modifier::BOLD),
+                    )
                     .border_style(Style::default().fg(THEME.border));
 
                 if let Some(selected_idx) = app.wiki_pages.state.selected() {
@@ -2791,7 +2837,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.border))
             .title(" Terminal ")
-            .title_style(Style::default().fg(THEME.purple).add_modifier(Modifier::BOLD));
+            .title_style(
+                Style::default()
+                    .fg(THEME.purple)
+                    .add_modifier(Modifier::BOLD),
+            );
 
         let bottom_area = chunks[2];
         f.render_widget(bottom_block.clone(), bottom_area);
@@ -2800,12 +2850,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
         if bottom_inner.height > 0 {
             let mut log_lines = Vec::new();
             let log_height = bottom_inner.height as usize;
-            
+
             // Get the last N commands where N is the height of the pane
             let num_cmds = app.terminal_commands.len();
             let display_count = std::cmp::min(num_cmds, log_height);
             let start_idx = num_cmds.saturating_sub(display_count);
-            
+
             // Add padding empty lines if we have fewer commands than the log height
             if display_count < log_height {
                 for _ in 0..(log_height - display_count) {
@@ -2841,19 +2891,36 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         None
                     };
 
-                    let status_span = Span::styled(status_text, Style::default().fg(status_color).add_modifier(Modifier::BOLD));
-                    
+                    let status_span = Span::styled(
+                        status_text,
+                        Style::default()
+                            .fg(status_color)
+                            .add_modifier(Modifier::BOLD),
+                    );
+
                     let mut cmd_spans = vec![
-                        Span::styled(format!("[{}] ", time_str), Style::default().fg(THEME.text_muted)),
+                        Span::styled(
+                            format!("[{}] ", time_str),
+                            Style::default().fg(THEME.text_muted),
+                        ),
                         status_span,
                     ];
 
                     let cmd_clean = cmd.command.trim();
-                    if cmd_clean.starts_with("Fetch") || cmd_clean.starts_with("Error") || cmd_clean.starts_with("Loading") {
+                    if cmd_clean.starts_with("Fetch")
+                        || cmd_clean.starts_with("Error")
+                        || cmd_clean.starts_with("Loading")
+                    {
                         cmd_spans.push(Span::styled(" • ", Style::default().fg(THEME.text_muted)));
-                        cmd_spans.push(Span::styled(cmd_clean, Style::default().fg(THEME.text_normal)));
+                        cmd_spans.push(Span::styled(
+                            cmd_clean,
+                            Style::default().fg(THEME.text_normal),
+                        ));
                         if let Some(detail) = err_detail {
-                            cmd_spans.push(Span::styled(format!(": {}", detail), Style::default().fg(THEME.red)));
+                            cmd_spans.push(Span::styled(
+                                format!(": {}", detail),
+                                Style::default().fg(THEME.red),
+                            ));
                         }
                     } else {
                         cmd_spans.push(Span::styled(" $ ", Style::default().fg(THEME.text_muted)));
@@ -2866,13 +2933,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         };
 
                         if !cmd_bin.is_empty() {
-                            cmd_spans.push(Span::styled(cmd_bin, Style::default().fg(THEME.yellow).add_modifier(Modifier::BOLD)));
+                            cmd_spans.push(Span::styled(
+                                cmd_bin,
+                                Style::default()
+                                    .fg(THEME.yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
                         }
 
                         let max_args_len = (bottom_inner.width as usize).saturating_sub(30);
-                        cmd_spans.push(Span::styled(truncate(cmd_args, max_args_len), Style::default().fg(THEME.text_normal)));
+                        cmd_spans.push(Span::styled(
+                            truncate(cmd_args, max_args_len),
+                            Style::default().fg(THEME.text_normal),
+                        ));
                         if let Some(detail) = err_detail {
-                            cmd_spans.push(Span::styled(format!(" ({})", detail), Style::default().fg(THEME.red)));
+                            cmd_spans.push(Span::styled(
+                                format!(" ({})", detail),
+                                Style::default().fg(THEME.red),
+                            ));
                         }
                     }
 
@@ -2931,8 +3009,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let outer_block = Block::default()
             .title(format!(
                 " Pull Request / Merge Request Diff #{}{} ",
-                diff_view.mr_iid,
-                title_suffix
+                diff_view.mr_iid, title_suffix
             ))
             .title_style(
                 Style::default()
@@ -3084,20 +3161,27 @@ pub fn render(f: &mut Frame, app: &mut App) {
             line_spans.push(Span::styled(&line.content, final_content_style));
             list_lines.push(Line::from(line_spans));
 
-            let matching_comments: Vec<_> = app.draft_comments.iter().filter(|c| {
-                c.file_path == line.file_path
-                    && ((c.line_num.is_some() && c.line_num == line.new_line_num)
-                        || (c.old_line_num.is_some() && c.old_line_num == line.old_line_num))
-            }).collect();
+            let matching_comments: Vec<_> = app
+                .draft_comments
+                .iter()
+                .filter(|c| {
+                    c.file_path == line.file_path
+                        && ((c.line_num.is_some() && c.line_num == line.new_line_num)
+                            || (c.old_line_num.is_some() && c.old_line_num == line.old_line_num))
+                })
+                .collect();
 
             for comment in matching_comments {
-                let comment_style = Style::default()
-                    .fg(THEME.yellow)
-                    .bg(Color::Rgb(45, 45, 20));
-                
+                let comment_style = Style::default().fg(THEME.yellow).bg(Color::Rgb(45, 45, 20));
+
                 let spans = vec![
                     Span::styled("         ", Style::default()),
-                    Span::styled(" 💬 Draft Note: ", Style::default().fg(THEME.yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        " 💬 Draft Note: ",
+                        Style::default()
+                            .fg(THEME.yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(&comment.body, Style::default().fg(THEME.text_normal)),
                 ];
                 list_lines.push(Line::from(spans).style(comment_style));
@@ -3119,8 +3203,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         app.diff_view = Some(updated_diff_view);
     }
-
-
 
     if let Some(menu) = &mut app.edit_menu {
         let block = Block::default()
@@ -3149,19 +3231,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 };
 
                 let label_style = if is_selected {
-                    Style::default().fg(THEME.text_normal).bg(item_bg).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(THEME.text_normal)
+                        .bg(item_bg)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(THEME.text_muted).bg(item_bg)
                 };
 
                 let sep_style = if is_selected {
-                    Style::default().fg(THEME.text_normal).bg(item_bg).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(THEME.text_normal)
+                        .bg(item_bg)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(THEME.text_muted).bg(item_bg)
                 };
 
                 let val_style = if is_selected {
-                    Style::default().fg(THEME.text_normal).bg(item_bg).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(THEME.text_normal)
+                        .bg(item_bg)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(THEME.text_normal).bg(item_bg)
                 };
@@ -3169,19 +3260,31 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let (display_val, display_style) = if val.is_empty() {
                     if is_selected {
                         let action_hint = match label.as_str() {
-                            "Labels" | "Assignees" | "Reviewers" | "Milestone" | "Confidential" | "Status (Draft/Ready)" | "Merge Request Pipeline" => {
-                                " <Enter to select>"
-                            }
-                            "Description" => {
-                                " <Enter to open editor>"
-                            }
-                            _ => {
-                                " <Enter to edit>"
-                            }
+                            "Labels"
+                            | "Assignees"
+                            | "Reviewers"
+                            | "Milestone"
+                            | "Confidential"
+                            | "Status (Draft/Ready)"
+                            | "Merge Request Pipeline" => " <Enter to select>",
+                            "Description" => " <Enter to open editor>",
+                            _ => " <Enter to edit>",
                         };
-                        (format!("{} ▋", action_hint), Style::default().fg(THEME.text_muted).bg(item_bg).add_modifier(Modifier::ITALIC))
+                        (
+                            format!("{} ▋", action_hint),
+                            Style::default()
+                                .fg(THEME.text_muted)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::ITALIC),
+                        )
                     } else {
-                        (" <empty>".to_string(), Style::default().fg(THEME.border).bg(item_bg).add_modifier(Modifier::ITALIC))
+                        (
+                            " <empty>".to_string(),
+                            Style::default()
+                                .fg(THEME.border)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::ITALIC),
+                        )
                     }
                 } else {
                     (val.clone(), val_style)
@@ -3201,19 +3304,27 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let submit_idx = menu.fields.len() + 1;
         let all_items: Vec<ListItem> = if is_new_entity {
             let is_submit_selected = menu.selected_idx == submit_idx;
-            let submit_bg = if is_submit_selected { THEME.border_focused } else { Color::Reset };
-            let submit_fg = if is_submit_selected { THEME.bg } else { THEME.border_focused };
-            let submit_line = Line::from(vec![
-                Span::styled(
-                    "          [ Submit ]          ",
-                    Style::default()
-                        .fg(submit_fg)
-                        .bg(submit_bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]);
+            let submit_bg = if is_submit_selected {
+                THEME.border_focused
+            } else {
+                Color::Reset
+            };
+            let submit_fg = if is_submit_selected {
+                THEME.bg
+            } else {
+                THEME.border_focused
+            };
+            let submit_line = Line::from(vec![Span::styled(
+                "          [ Submit ]          ",
+                Style::default()
+                    .fg(submit_fg)
+                    .bg(submit_bg)
+                    .add_modifier(Modifier::BOLD),
+            )]);
             let mut v = items;
-            v.push(ListItem::new(Line::from("").style(Style::default().bg(Color::Reset))));
+            v.push(ListItem::new(
+                Line::from("").style(Style::default().bg(Color::Reset)),
+            ));
             v.push(ListItem::new(submit_line));
             v
         } else {
@@ -3229,17 +3340,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let inner_area = block.inner(area);
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),
-                Constraint::Length(2),
-            ])
+            .constraints([Constraint::Min(0), Constraint::Length(2)])
             .split(inner_area);
 
-        let list = List::new(all_items)
-            .style(Style::default().bg(Color::Reset));
+        let list = List::new(all_items).style(Style::default().bg(Color::Reset));
 
         let footer = Paragraph::new(footer_text)
-            .style(Style::default().fg(THEME.text_muted).bg(Color::Reset).add_modifier(Modifier::ITALIC))
+            .style(
+                Style::default()
+                    .fg(THEME.text_muted)
+                    .bg(Color::Reset)
+                    .add_modifier(Modifier::ITALIC),
+            )
             .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
@@ -3414,7 +3526,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             line_spans.push(Span::styled(item.clone(), style));
                         }
 
-                        ListItem::new(vec![Line::from(line_spans)]).style(Style::default().bg(item_bg))
+                        ListItem::new(vec![Line::from(line_spans)])
+                            .style(Style::default().bg(item_bg))
                     })
                     .collect();
 
@@ -3488,81 +3601,291 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         let shortcuts = [
             // Global & Nav
-            Shortcut { category: "Global & Nav", key: "l / →", action: "Next tab" },
-            Shortcut { category: "Global & Nav", key: "h / ←", action: "Previous tab" },
-            Shortcut { category: "Global & Nav", key: "Tab / t", action: "Toggle columns config popup" },
-            Shortcut { category: "Global & Nav", key: "j / k / ↓ / ↑", action: "Select item / Scroll page" },
-            Shortcut { category: "Global & Nav", key: "J / K", action: "Scroll description / trace / notes" },
-            Shortcut { category: "Global & Nav", key: "f / /", action: "Open fuzzy search / filter bar" },
-            Shortcut { category: "Global & Nav", key: "F5 / Ctrl+R", action: "Refresh active tab data" },
-            Shortcut { category: "Global & Nav", key: "Ctrl+S", action: "Switch repository" },
-            Shortcut { category: "Global & Nav", key: "u", action: "Check for updates" },
-            Shortcut { category: "Global & Nav", key: "? / F1", action: "Show this help modal" },
-            Shortcut { category: "Global & Nav", key: "q / Esc", action: "Quit / Close overlay" },
-            Shortcut { category: "Global & Nav", key: "Ctrl+C", action: "Quit program" },
-
+            Shortcut {
+                category: "Global & Nav",
+                key: "l / →",
+                action: "Next tab",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "h / ←",
+                action: "Previous tab",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "Tab / t",
+                action: "Toggle columns config popup",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "j / k / ↓ / ↑",
+                action: "Select item / Scroll page",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "J / K",
+                action: "Scroll description / trace / notes",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "f / /",
+                action: "Open fuzzy search / filter bar",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "F5 / Ctrl+R",
+                action: "Refresh active tab data",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "Ctrl+S",
+                action: "Switch repository",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "u",
+                action: "Check for updates",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "? / F1",
+                action: "Show this help modal",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "q / Esc",
+                action: "Quit / Close overlay",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: "Ctrl+C",
+                action: "Quit program",
+            },
             // Issues
-            Shortcut { category: "Issues", key: "n", action: "Create new Issue" },
-            Shortcut { category: "Issues", key: "e", action: "Open parameter edit menu" },
-            Shortcut { category: "Issues", key: "c", action: "Close selected Issue" },
-            Shortcut { category: "Issues", key: "o", action: "Open selected Issue in browser" },
-
+            Shortcut {
+                category: "Issues",
+                key: "n",
+                action: "Create new Issue",
+            },
+            Shortcut {
+                category: "Issues",
+                key: "e",
+                action: "Open parameter edit menu",
+            },
+            Shortcut {
+                category: "Issues",
+                key: "c",
+                action: "Close selected Issue",
+            },
+            Shortcut {
+                category: "Issues",
+                key: "o",
+                action: "Open selected Issue in browser",
+            },
             // Merge Requests
-            Shortcut { category: "Merge Requests", key: "n", action: "Create new Merge Request" },
-            Shortcut { category: "Merge Requests", key: "e", action: "Open parameter edit menu" },
-            Shortcut { category: "Merge Requests", key: "a", action: "Approve selected MR" },
-            Shortcut { category: "Merge Requests", key: "m", action: "Merge selected MR (squash + delete)" },
-            Shortcut { category: "Merge Requests", key: "s", action: "Toggle Draft / Ready status" },
-            Shortcut { category: "Merge Requests", key: "v", action: "View Merge Request diff changes" },
-            Shortcut { category: "Merge Requests", key: "o", action: "Open selected MR in browser" },
-
+            Shortcut {
+                category: "Merge Requests",
+                key: "n",
+                action: "Create new Merge Request",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: "e",
+                action: "Open parameter edit menu",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: "a",
+                action: "Approve selected MR",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: "m",
+                action: "Merge selected MR (squash + delete)",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: "s",
+                action: "Toggle Draft / Ready status",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: "v",
+                action: "View Merge Request diff changes",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: "o",
+                action: "Open selected MR in browser",
+            },
             // Pipelines
-            Shortcut { category: "Pipelines", key: "Enter", action: "View pipeline jobs list" },
-            Shortcut { category: "Pipelines", key: "p", action: "Trigger new pipeline from MR" },
-            Shortcut { category: "Pipelines", key: "r", action: "Retry selected pipeline(s)" },
-            Shortcut { category: "Pipelines", key: "c", action: "Cancel pipeline execution" },
-            Shortcut { category: "Pipelines", key: "Space", action: "Check / uncheck pipeline for bulk retry" },
-            Shortcut { category: "Pipelines", key: "o", action: "Open pipeline in browser" },
-
+            Shortcut {
+                category: "Pipelines",
+                key: "Enter",
+                action: "View pipeline jobs list",
+            },
+            Shortcut {
+                category: "Pipelines",
+                key: "p",
+                action: "Trigger new pipeline from MR",
+            },
+            Shortcut {
+                category: "Pipelines",
+                key: "r",
+                action: "Retry selected pipeline(s)",
+            },
+            Shortcut {
+                category: "Pipelines",
+                key: "c",
+                action: "Cancel pipeline execution",
+            },
+            Shortcut {
+                category: "Pipelines",
+                key: "Space",
+                action: "Check / uncheck pipeline for bulk retry",
+            },
+            Shortcut {
+                category: "Pipelines",
+                key: "o",
+                action: "Open pipeline in browser",
+            },
             // Jobs
-            Shortcut { category: "Jobs", key: "Enter", action: "View job trace (toggle zoom)" },
-            Shortcut { category: "Jobs", key: "Esc / Backspc", action: "Go back to Pipelines list" },
-            Shortcut { category: "Jobs", key: "r", action: "Retry selected job(s)" },
-            Shortcut { category: "Jobs", key: "c", action: "Cancel selected job(s)" },
-            Shortcut { category: "Jobs", key: "Space", action: "Check / uncheck job for bulk retry/cancel" },
-            Shortcut { category: "Jobs", key: "s", action: "Select all jobs in stage" },
-            Shortcut { category: "Jobs", key: "d", action: "Download job artifact" },
-            Shortcut { category: "Jobs", key: "e", action: "Open job trace in external $EDITOR" },
-            Shortcut { category: "Jobs", key: "o", action: "Open selected job in browser" },
-
+            Shortcut {
+                category: "Jobs",
+                key: "Enter",
+                action: "View job trace (toggle zoom)",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "Esc / Backspc",
+                action: "Go back to Pipelines list",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "r",
+                action: "Retry selected job(s)",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "c",
+                action: "Cancel selected job(s)",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "Space",
+                action: "Check / uncheck job for bulk retry/cancel",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "s",
+                action: "Select all jobs in stage",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "d",
+                action: "Download job artifact",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "e",
+                action: "Open job trace in external $EDITOR",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: "o",
+                action: "Open selected job in browser",
+            },
             // Wiki
-            Shortcut { category: "Wiki", key: "J / K", action: "Scroll wiki page content" },
-
+            Shortcut {
+                category: "Wiki",
+                key: "J / K",
+                action: "Scroll wiki page content",
+            },
             // Milestones
-            Shortcut { category: "Milestones", key: "J / K", action: "Scroll milestone issues list" },
-
+            Shortcut {
+                category: "Milestones",
+                key: "J / K",
+                action: "Scroll milestone issues list",
+            },
             // Runners
-            Shortcut { category: "Runners", key: "p / r", action: "Pause / Resume runner" },
-            Shortcut { category: "Runners", key: "e", action: "Edit runner description text" },
-
+            Shortcut {
+                category: "Runners",
+                key: "p / r",
+                action: "Pause / Resume runner",
+            },
+            Shortcut {
+                category: "Runners",
+                key: "e",
+                action: "Edit runner description text",
+            },
             // Releases
-            Shortcut { category: "Releases", key: "Enter", action: "View release notes (toggle zoom)" },
-            Shortcut { category: "Releases", key: "n", action: "Create new release tag & changelog" },
-            Shortcut { category: "Releases", key: "o", action: "Open release in browser" },
-
+            Shortcut {
+                category: "Releases",
+                key: "Enter",
+                action: "View release notes (toggle zoom)",
+            },
+            Shortcut {
+                category: "Releases",
+                key: "n",
+                action: "Create new release tag & changelog",
+            },
+            Shortcut {
+                category: "Releases",
+                key: "o",
+                action: "Open release in browser",
+            },
             // Notifications
-            Shortcut { category: "Notifications", key: "Enter", action: "Open notification target & mark read" },
-
+            Shortcut {
+                category: "Notifications",
+                key: "Enter",
+                action: "Open notification target & mark read",
+            },
             // Diff View
-            Shortcut { category: "Diff View", key: "q / Esc", action: "Exit Diff View" },
-            Shortcut { category: "Diff View", key: "Tab", action: "Toggle Focus (Files / Diff)" },
-            Shortcut { category: "Diff View", key: "h / l / Left / Right", action: "Switch Panel Focus" },
-            Shortcut { category: "Diff View", key: "j / k / ↓ / ↑", action: "Navigate files or diff lines" },
-            Shortcut { category: "Diff View", key: "J / K", action: "Next / Previous Hunk" },
-            Shortcut { category: "Diff View", key: "c", action: "Add Comment on Line" },
-            Shortcut { category: "Diff View", key: "p", action: "Toggle Review Mode (draft comments)" },
-            Shortcut { category: "Diff View", key: "r", action: "Submit Review (approve/changes/comment)" },
-            Shortcut { category: "Diff View", key: "? / F1", action: "Show this help modal" },
+            Shortcut {
+                category: "Diff View",
+                key: "q / Esc",
+                action: "Exit Diff View",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "Tab",
+                action: "Toggle Focus (Files / Diff)",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "h / l / Left / Right",
+                action: "Switch Panel Focus",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "j / k / ↓ / ↑",
+                action: "Navigate files or diff lines",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "J / K",
+                action: "Next / Previous Hunk",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "c",
+                action: "Add Comment on Line",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "p",
+                action: "Toggle Review Mode (draft comments)",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "r",
+                action: "Submit Review (approve/changes/comment)",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: "? / F1",
+                action: "Show this help modal",
+            },
         ];
 
         let active_categories: &[&str] = if app.diff_view.is_some() {
@@ -3653,7 +3976,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             for s in &filtered_shortcuts {
                 if s.category != last_category {
                     if !last_category.is_empty() {
-                        result_rows.push(Row::new(vec![Cell::from(""), Cell::from(""), Cell::from("")])); // spacer
+                        result_rows.push(Row::new(vec![
+                            Cell::from(""),
+                            Cell::from(""),
+                            Cell::from(""),
+                        ])); // spacer
                     }
                     result_rows.push(Row::new(vec![
                         Cell::from(Span::styled(
@@ -3764,7 +4091,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let tab = app.active_tab;
         let cols = tab.columns();
         let active_idx = app.column_checklist_idx;
-        
+
         let mut columns_list = Vec::new();
         let mut filters_list = Vec::new();
         for (i, col) in cols.iter().enumerate() {
@@ -3798,7 +4125,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(checklist_block.clone(), area);
 
         let inner_area = checklist_block.inner(area);
-        
+
         // Inner layout: List(s) + Footer
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -3819,36 +4146,35 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(footer_p, popup_layout[1]);
 
         let lists_area = popup_layout[0];
-        
+
         let layout_chunks = if filters_list.is_empty() {
             Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(1), // Columns Header
+                    Constraint::Length(1),                         // Columns Header
                     Constraint::Length(columns_list.len() as u16), // Columns List
-                    Constraint::Min(0), // Spacer
+                    Constraint::Min(0),                            // Spacer
                 ])
                 .split(lists_area)
         } else {
             Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(1), // Columns Header
+                    Constraint::Length(1),                         // Columns Header
                     Constraint::Length(columns_list.len() as u16), // Columns List
-                    Constraint::Length(1), // Spacer
-                    Constraint::Length(1), // Filters Header
+                    Constraint::Length(1),                         // Spacer
+                    Constraint::Length(1),                         // Filters Header
                     Constraint::Length(filters_list.len() as u16), // Filters List
                 ])
                 .split(lists_area)
         };
 
         // Render Columns header
-        let columns_header = Paragraph::new("  COLUMNS")
-            .style(
-                Style::default()
-                    .fg(THEME.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            );
+        let columns_header = Paragraph::new("  COLUMNS").style(
+            Style::default()
+                .fg(THEME.header_fg)
+                .add_modifier(Modifier::BOLD),
+        );
         f.render_widget(columns_header, layout_chunks[0]);
 
         // Render Columns list
@@ -3879,12 +4205,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             f.render_widget(Paragraph::new(""), layout_chunks[2]);
 
             // Render Filters header
-            let filters_header = Paragraph::new("  FILTERS")
-                .style(
-                    Style::default()
-                        .fg(THEME.purple)
-                        .add_modifier(Modifier::BOLD),
-                );
+            let filters_header = Paragraph::new("  FILTERS").style(
+                Style::default()
+                    .fg(THEME.purple)
+                    .add_modifier(Modifier::BOLD),
+            );
             f.render_widget(filters_header, layout_chunks[3]);
 
             let filter_items: Vec<ListItem> = filters_list
@@ -3918,11 +4243,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if let Some(err_msg) = &app.error_message {
         let block = Block::default()
             .title(" Error / Info ")
-            .title_style(
-                Style::default()
-                    .fg(THEME.red)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .title_style(Style::default().fg(THEME.red).add_modifier(Modifier::BOLD))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.red))
             .style(Style::default().bg(Color::Reset));

@@ -115,7 +115,6 @@ impl EditMenu {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub struct Selector {
     pub title: String,
@@ -837,9 +836,13 @@ impl App {
         self.loading_tabs.remove(&tab);
         self.loaded_tabs.insert(tab);
         self.refreshed_tabs.insert(tab);
-        
+
         let cmd_name = format!("Fetch {:?}", tab);
-        if let Some(pos) = self.terminal_commands.iter().rposition(|cmd| cmd.command == cmd_name && cmd.status == "Running") {
+        if let Some(pos) = self
+            .terminal_commands
+            .iter()
+            .rposition(|cmd| cmd.command == cmd_name && cmd.status == "Running")
+        {
             self.terminal_commands[pos].status = status.to_string();
         }
     }
@@ -1444,10 +1447,7 @@ impl App {
 
     pub fn filtered_wiki(&self) -> Vec<&crate::gitlab::wiki::WikiPage> {
         let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Wiki)
-            .unwrap_or(&default_set);
+        let enabled_cols = self.enabled_columns.get(&Tab::Wiki).unwrap_or(&default_set);
         Self::filter_wiki_list(&self.wiki_pages.items, &self.search_query, enabled_cols)
     }
 

@@ -43,7 +43,11 @@ pub struct MergeRequest {
     pub description: Option<String>,
 }
 
-pub async fn list_mrs(client: &GitlabClient, project_path: &str, show_closed: bool) -> Result<Vec<MergeRequest>> {
+pub async fn list_mrs(
+    client: &GitlabClient,
+    project_path: &str,
+    show_closed: bool,
+) -> Result<Vec<MergeRequest>> {
     let encoded_path = project_path.replace("/", "%2F");
     let state_param = if show_closed { "all" } else { "opened" };
     let endpoint = format!(

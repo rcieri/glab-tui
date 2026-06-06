@@ -20,7 +20,10 @@ impl GitlabClient {
             }
             _ => false,
         };
-        Ok(Self { is_github, tx: None })
+        Ok(Self {
+            is_github,
+            tx: None,
+        })
     }
 
     pub async fn fetch_api<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
@@ -51,8 +54,10 @@ impl GitlabClient {
                 Ok(out) => {
                     if out.status.success() {
                         let res_val: Result<T> = (|| {
-                            let github_json: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-                            let translated_json = translate_json_to_gitlab(&gh_endpoint, github_json)?;
+                            let github_json: serde_json::Value =
+                                serde_json::from_slice(&out.stdout)?;
+                            let translated_json =
+                                translate_json_to_gitlab(&gh_endpoint, github_json)?;
                             let data: T = serde_json::from_value(translated_json)?;
                             Ok(data)
                         })();
@@ -113,7 +118,8 @@ impl GitlabClient {
             match output {
                 Ok(out) => {
                     if out.status.success() {
-                        let res_val: Result<T> = serde_json::from_slice(&out.stdout).map_err(|e| e.into());
+                        let res_val: Result<T> =
+                            serde_json::from_slice(&out.stdout).map_err(|e| e.into());
                         match res_val {
                             Ok(data) => {
                                 if let Some(ref tx) = self.tx {
@@ -386,7 +392,8 @@ fn gitlab_to_github_endpoint(endpoint: &str) -> String {
         if let Some(milestone_id) = path
             .split("/milestones/")
             .nth(1)
-            .and_then(|s| s.split('/').next()) {
+            .and_then(|s| s.split('/').next())
+        {
             let base_path = path.split("/milestones/").next().unwrap_or("");
             return format!("{}/issues?milestone={}&state=all", base_path, milestone_id);
         }
@@ -751,11 +758,17 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
                     let title = m.get("title").cloned().unwrap_or(serde_json::Value::Null);
                     let id = m.get("id").cloned().unwrap_or(serde_json::Value::Null);
                     let number = m.get("number").cloned().unwrap_or(serde_json::Value::Null);
-                    let description = m.get("description").cloned().unwrap_or(serde_json::Value::Null);
+                    let description = m
+                        .get("description")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     let state = m.get("state").and_then(|s| s.as_str()).unwrap_or("open");
                     let gl_state = if state == "open" { "active" } else { "closed" };
                     let due_on = m.get("due_on").cloned().unwrap_or(serde_json::Value::Null);
-                    let created_at = m.get("created_at").cloned().unwrap_or(serde_json::Value::Null);
+                    let created_at = m
+                        .get("created_at")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     serde_json::json!({
                         "id": id,
                         "iid": number,

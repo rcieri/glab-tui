@@ -34,7 +34,11 @@ pub struct Issue {
     pub description: Option<String>,
 }
 
-pub async fn list_issues(client: &GitlabClient, project_path: &str, show_closed: bool) -> Result<Vec<Issue>> {
+pub async fn list_issues(
+    client: &GitlabClient,
+    project_path: &str,
+    show_closed: bool,
+) -> Result<Vec<Issue>> {
     let encoded_path = project_path.replace("/", "%2F");
     let state_param = if show_closed { "all" } else { "opened" };
     let endpoint = format!(

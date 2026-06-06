@@ -618,7 +618,7 @@ fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
                                 let pair = args[i + 1];
                                 if let Some(pos) = pair.find(':').or_else(|| pair.find('=')) {
                                     let k = &pair[..pos];
-                                    let v = &pair[pos+1..];
+                                    let v = &pair[pos + 1..];
                                     inputs.push(format!("{}={}", k, v));
                                 }
                                 i += 2;
@@ -1286,7 +1286,15 @@ async fn handle_entity_update(
                         .unwrap_or_default()
                 };
                 if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
-                    run_glab_update(entity_type, iid, &["-d", &new_desc], terminal, tx.clone(), tab).await;
+                    run_glab_update(
+                        entity_type,
+                        iid,
+                        &["-d", &new_desc],
+                        terminal,
+                        tx.clone(),
+                        tab,
+                    )
+                    .await;
                 }
             } else {
                 run_glab_update(entity_type, iid, &["-d", "-"], terminal, tx.clone(), tab).await;
@@ -1338,7 +1346,10 @@ fn get_default_template(template_type: &str) -> Option<String> {
     let dirs = if template_type == "issue" {
         vec![".github/ISSUE_TEMPLATE", ".gitlab/issue_templates"]
     } else {
-        vec![".github/PULL_REQUEST_TEMPLATE", ".gitlab/merge_request_templates"]
+        vec![
+            ".github/PULL_REQUEST_TEMPLATE",
+            ".gitlab/merge_request_templates",
+        ]
     };
 
     for dir in &dirs {
@@ -1351,7 +1362,10 @@ fn get_default_template(template_type: &str) -> Option<String> {
                 }
             }
             md_files.sort();
-            if let Some(default_path) = md_files.iter().find(|p| p.file_name().map(|n| n == "default.md").unwrap_or(false)) {
+            if let Some(default_path) = md_files
+                .iter()
+                .find(|p| p.file_name().map(|n| n == "default.md").unwrap_or(false))
+            {
                 if let Ok(content) = std::fs::read_to_string(default_path) {
                     return Some(content);
                 }
@@ -1385,7 +1399,7 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
                 if !current.trim().is_empty() {
                     if let Some(pos) = current.find(':').or_else(|| current.find('=')) {
                         let k = current[..pos].trim().to_string();
-                        let v = current[pos+1..].trim().to_string();
+                        let v = current[pos + 1..].trim().to_string();
                         if !k.is_empty() {
                             pairs.push((k, v));
                         }
@@ -1401,7 +1415,7 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
     if !current.trim().is_empty() {
         if let Some(pos) = current.find(':').or_else(|| current.find('=')) {
             let k = current[..pos].trim().to_string();
-            let v = current[pos+1..].trim().to_string();
+            let v = current[pos + 1..].trim().to_string();
             if !k.is_empty() {
                 pairs.push((k, v));
             }
@@ -1528,7 +1542,8 @@ fn spawn_refresh_active_tab(
                 let mut found_pipeline_id = None;
 
                 if let Some(branch) = &branch_name {
-                    let mr_iid = match gitlab::mr::list_mrs(&client, &project_context, false).await {
+                    let mr_iid = match gitlab::mr::list_mrs(&client, &project_context, false).await
+                    {
                         Ok(mrs) => mrs
                             .into_iter()
                             .find(|m| &m.source_branch == branch)
@@ -1588,19 +1603,17 @@ fn spawn_refresh_active_tab(
                     }
                 }
             }
-            app::Tab::Wiki => {
-                match gitlab::wiki::load_wiki_pages(&project_context).await {
-                    Ok(pages) => {
-                        let _ = tx.send(Event::WikiFetched(pages));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch wiki pages: {}", e),
-                        ));
-                    }
+            app::Tab::Wiki => match gitlab::wiki::load_wiki_pages(&project_context).await {
+                Ok(pages) => {
+                    let _ = tx.send(Event::WikiFetched(pages));
                 }
-            }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch wiki pages: {}", e),
+                    ));
+                }
+            },
         }
     });
 }
@@ -1732,7 +1745,13 @@ async fn main() -> Result<()> {
         if app.issues.items.is_empty() {
             app.start_loading_tab(app.active_tab);
         }
-        spawn_refresh_active_tab(&client, &app.project_context, app.active_tab, tx.clone(), app.is_column_visible(app.active_tab, "Show Closed Items"));
+        spawn_refresh_active_tab(
+            &client,
+            &app.project_context,
+            app.active_tab,
+            tx.clone(),
+            app.is_column_visible(app.active_tab, "Show Closed Items"),
+        );
     } else {
         app.error_message = Some("Failed to initialize GitLab client".to_string());
     }
@@ -1943,18 +1962,22 @@ async fn main() -> Result<()> {
                 Event::DiffFetched(mr_iid, raw_diff) => {
                     app.diff_loading = false;
                     app.diff_view = Some(crate::app::DiffView::new(mr_iid, raw_diff));
-                    if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
-                        cmd.command.contains("diff") && cmd.status == "Running"
-                    }) {
+                    if let Some(pos) = app
+                        .terminal_commands
+                        .iter()
+                        .rposition(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
+                    {
                         app.terminal_commands[pos].status = "Success".to_string();
                     }
                 }
                 Event::DiffFetchFailed(err_msg) => {
                     app.diff_loading = false;
                     app.error_message = Some(err_msg.clone());
-                    if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
-                        cmd.command.contains("diff") && cmd.status == "Running"
-                    }) {
+                    if let Some(pos) = app
+                        .terminal_commands
+                        .iter()
+                        .rposition(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
+                    {
                         app.terminal_commands[pos].status = format!("Failed: {}", err_msg);
                     }
                 }
@@ -1975,7 +1998,10 @@ async fn main() -> Result<()> {
                         Err(e) => format!("Failed: {}", e),
                     };
                     if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
-                        (cmd.command.starts_with("glab") || cmd.command.starts_with("gh") || cmd.command.contains("submit") || cmd.command.contains("bulk"))
+                        (cmd.command.starts_with("glab")
+                            || cmd.command.starts_with("gh")
+                            || cmd.command.contains("submit")
+                            || cmd.command.contains("bulk"))
                             && cmd.status == "Running"
                     }) {
                         app.terminal_commands[pos].status = status;
@@ -2261,37 +2287,52 @@ async fn main() -> Result<()> {
                                         if !value.trim().is_empty() {
                                             let tag_name = value.trim().to_string();
                                             let tx = events.sender();
-                                            let _ = tx.send(Event::CommandStarted(format!("glab release create {}", tag_name)));
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "glab release create {}",
+                                                tag_name
+                                            )));
                                             let active_tab = app.active_tab;
                                             tokio::spawn(async move {
-                                                let last_tag = if let Ok(output) = tokio::process::Command::new("git")
-                                                    .args(["describe", "--tags", "--abbrev=0"])
-                                                    .output()
-                                                    .await
+                                                let last_tag = if let Ok(output) =
+                                                    tokio::process::Command::new("git")
+                                                        .args(["describe", "--tags", "--abbrev=0"])
+                                                        .output()
+                                                        .await
                                                 {
-                                                    let t = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                                                    let t = String::from_utf8_lossy(&output.stdout)
+                                                        .trim()
+                                                        .to_string();
                                                     if t.is_empty() { None } else { Some(t) }
                                                 } else {
                                                     None
                                                 };
 
                                                 let log_args = if let Some(ref tag) = last_tag {
-                                                    vec!["log".to_string(), format!("{}..HEAD", tag), "--oneline".to_string()]
+                                                    vec![
+                                                        "log".to_string(),
+                                                        format!("{}..HEAD", tag),
+                                                        "--oneline".to_string(),
+                                                    ]
                                                 } else {
                                                     vec!["log".to_string(), "--oneline".to_string()]
                                                 };
 
-                                                let commits = if let Ok(output) = tokio::process::Command::new("git")
-                                                    .args(&log_args)
-                                                    .output()
-                                                    .await
+                                                let commits = if let Ok(output) =
+                                                    tokio::process::Command::new("git")
+                                                        .args(&log_args)
+                                                        .output()
+                                                        .await
                                                 {
                                                     String::from_utf8_lossy(&output.stdout)
                                                         .lines()
                                                         .map(|line| {
-                                                            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                                                            let parts: Vec<&str> =
+                                                                line.splitn(2, ' ').collect();
                                                             if parts.len() == 2 {
-                                                                format!("- {} ({})", parts[1], parts[0])
+                                                                format!(
+                                                                    "- {} ({})",
+                                                                    parts[1], parts[0]
+                                                                )
                                                             } else {
                                                                 format!("- {}", line)
                                                             }
@@ -2311,46 +2352,83 @@ async fn main() -> Result<()> {
                                                 let changelog = format!(
                                                     "## Release Notes\n\n### {}\n\n{}\n",
                                                     title_range,
-                                                    if commits.is_empty() { "- No changes found".to_string() } else { commits }
+                                                    if commits.is_empty() {
+                                                        "- No changes found".to_string()
+                                                    } else {
+                                                        commits
+                                                    }
                                                 );
 
-                                                let temp_path = std::env::temp_dir().join(format!("glab-tui-release-{}.md", tag_name));
-                                                if let Ok(_) = std::fs::write(&temp_path, &changelog) {
-                                                    let temp_str = temp_path.to_string_lossy().to_string();
-                                                    
-                                                    let is_github = match tokio::process::Command::new("git")
-                                                        .args(["remote", "get-url", "origin"])
-                                                        .output()
-                                                        .await
-                                                    {
-                                                        Ok(output) if output.status.success() => {
-                                                            let url = String::from_utf8_lossy(&output.stdout);
-                                                            url.contains("github.com")
-                                                        }
-                                                        _ => false,
-                                                    };
+                                                let temp_path = std::env::temp_dir().join(format!(
+                                                    "glab-tui-release-{}.md",
+                                                    tag_name
+                                                ));
+                                                if let Ok(_) =
+                                                    std::fs::write(&temp_path, &changelog)
+                                                {
+                                                    let temp_str =
+                                                        temp_path.to_string_lossy().to_string();
 
-                                                    let program = if is_github { "gh" } else { "glab" };
-                                                    let args = ["release", "create", &tag_name, "-F", &temp_str];
-                                                    
-                                                    let mut cmd = tokio::process::Command::new(program);
+                                                    let is_github =
+                                                        match tokio::process::Command::new("git")
+                                                            .args(["remote", "get-url", "origin"])
+                                                            .output()
+                                                            .await
+                                                        {
+                                                            Ok(output)
+                                                                if output.status.success() =>
+                                                            {
+                                                                let url = String::from_utf8_lossy(
+                                                                    &output.stdout,
+                                                                );
+                                                                url.contains("github.com")
+                                                            }
+                                                            _ => false,
+                                                        };
+
+                                                    let program =
+                                                        if is_github { "gh" } else { "glab" };
+                                                    let args = [
+                                                        "release", "create", &tag_name, "-F",
+                                                        &temp_str,
+                                                    ];
+
+                                                    let mut cmd =
+                                                        tokio::process::Command::new(program);
                                                     cmd.args(&args);
 
                                                     match cmd.output().await {
                                                         Ok(output) => {
-                                                            let _ = std::fs::remove_file(&temp_path);
+                                                            let _ =
+                                                                std::fs::remove_file(&temp_path);
                                                             if output.status.success() {
-                                                                let _ = tx.send(Event::CommandCompleted(active_tab, Ok(())));
+                                                                let _ = tx.send(
+                                                                    Event::CommandCompleted(
+                                                                        active_tab,
+                                                                        Ok(()),
+                                                                    ),
+                                                                );
                                                             } else {
-                                                                let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                                                                let _ = tx.send(Event::CommandCompleted(
-                                                                    active_tab,
-                                                                    Err(format!("Command failed: {}", err_msg)),
-                                                                ));
+                                                                let err_msg =
+                                                                    String::from_utf8_lossy(
+                                                                        &output.stderr,
+                                                                    )
+                                                                    .trim()
+                                                                    .to_string();
+                                                                let _ = tx.send(
+                                                                    Event::CommandCompleted(
+                                                                        active_tab,
+                                                                        Err(format!(
+                                                                            "Command failed: {}",
+                                                                            err_msg
+                                                                        )),
+                                                                    ),
+                                                                );
                                                             }
                                                         }
                                                         Err(e) => {
-                                                            let _ = std::fs::remove_file(&temp_path);
+                                                            let _ =
+                                                                std::fs::remove_file(&temp_path);
                                                             let _ = tx.send(Event::CommandCompleted(
                                                                 active_tab,
                                                                 Err(format!("Failed to execute command: {}", e)),
@@ -2370,7 +2448,10 @@ async fn main() -> Result<()> {
                                         mr_iid,
                                         status,
                                     } => {
-                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
                                         let tx = events.sender();
                                         let comments = app.draft_comments.clone();
                                         app.draft_comments.clear();
@@ -2390,7 +2471,10 @@ async fn main() -> Result<()> {
                                                 let mut json_comments = serde_json::json!([]);
                                                 if let Some(arr) = json_comments.as_array_mut() {
                                                     for comment in &comments {
-                                                        let line = comment.line_num.or(comment.old_line_num).unwrap_or(1);
+                                                        let line = comment
+                                                            .line_num
+                                                            .or(comment.old_line_num)
+                                                            .unwrap_or(1);
                                                         arr.push(serde_json::json!({
                                                             "path": comment.file_path,
                                                             "line": line,
@@ -2403,14 +2487,28 @@ async fn main() -> Result<()> {
                                                     "event": github_event,
                                                     "comments": json_comments,
                                                 });
-                                                let temp_path = std::env::temp_dir().join(format!("glab-tui-review-{}.json", mr_iid));
-                                                if let Ok(_) = std::fs::write(&temp_path, serde_json::to_string(&payload).unwrap()) {
-                                                    let temp_str = temp_path.to_string_lossy().to_string();
-                                                    let _ = tx.send(Event::CommandStarted(format!("gh api submit review MR #{}", mr_iid)));
+                                                let temp_path = std::env::temp_dir().join(format!(
+                                                    "glab-tui-review-{}.json",
+                                                    mr_iid
+                                                ));
+                                                if let Ok(_) = std::fs::write(
+                                                    &temp_path,
+                                                    serde_json::to_string(&payload).unwrap(),
+                                                ) {
+                                                    let temp_str =
+                                                        temp_path.to_string_lossy().to_string();
+                                                    let _ =
+                                                        tx.send(Event::CommandStarted(format!(
+                                                            "gh api submit review MR #{}",
+                                                            mr_iid
+                                                        )));
                                                     let output = tokio::process::Command::new("gh")
                                                         .args([
                                                             "api",
-                                                            &format!("repos/{}/pulls/{}/reviews", project_context, mr_iid),
+                                                            &format!(
+                                                                "repos/{}/pulls/{}/reviews",
+                                                                project_context, mr_iid
+                                                            ),
                                                             "--input",
                                                             &temp_str,
                                                         ])
@@ -2419,57 +2517,92 @@ async fn main() -> Result<()> {
                                                     let _ = std::fs::remove_file(&temp_path);
                                                     match output {
                                                         Ok(out) if out.status.success() => {
-                                                            let _ = tx.send(Event::CommandCompleted(
-                                                                app::Tab::MergeRequests,
-                                                                Ok(()),
-                                                            ));
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::MergeRequests,
+                                                                    Ok(()),
+                                                                ));
                                                         }
                                                         Ok(out) => {
-                                                            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                                                            let _ = tx.send(Event::CommandCompleted(
-                                                                app::Tab::MergeRequests,
-                                                                Err(format!("Submit review failed: {}", err)),
-                                                            ));
+                                                            let err = String::from_utf8_lossy(
+                                                                &out.stderr,
+                                                            )
+                                                            .trim()
+                                                            .to_string();
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::MergeRequests,
+                                                                    Err(format!(
+                                                                        "Submit review failed: {}",
+                                                                        err
+                                                                    )),
+                                                                ));
                                                         }
                                                         Err(e) => {
-                                                            let _ = tx.send(Event::CommandCompleted(
-                                                                app::Tab::MergeRequests,
-                                                                Err(format!("Failed to run gh: {}", e)),
-                                                            ));
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::MergeRequests,
+                                                                    Err(format!(
+                                                                        "Failed to run gh: {}",
+                                                                        e
+                                                                    )),
+                                                                ));
                                                         }
                                                     }
                                                 }
                                             } else {
-                                                let _ = tx.send(Event::CommandStarted(format!("glab submit review MR #{}", mr_iid)));
-                                                let encoded_path = project_context.replace("/", "%2F");
+                                                let _ = tx.send(Event::CommandStarted(format!(
+                                                    "glab submit review MR #{}",
+                                                    mr_iid
+                                                )));
+                                                let encoded_path =
+                                                    project_context.replace("/", "%2F");
                                                 let mut success = true;
                                                 let mut err_msg = String::new();
 
                                                 // Fetch MR details to get base_sha, start_sha, and head_sha
-                                                let mr_output = tokio::process::Command::new("glab")
-                                                    .args([
-                                                        "api",
-                                                        &format!("projects/{}/merge_requests/{}", encoded_path, mr_iid),
-                                                    ])
-                                                    .output()
-                                                    .await;
+                                                let mr_output =
+                                                    tokio::process::Command::new("glab")
+                                                        .args([
+                                                            "api",
+                                                            &format!(
+                                                                "projects/{}/merge_requests/{}",
+                                                                encoded_path, mr_iid
+                                                            ),
+                                                        ])
+                                                        .output()
+                                                        .await;
 
-                                                let (base_sha, start_sha, head_sha) = if let Ok(out) = mr_output {
-                                                    if out.status.success() {
-                                                        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                                                            let base = v["diff_refs"]["base_sha"].as_str().map(|s| s.to_string());
-                                                            let start = v["diff_refs"]["start_sha"].as_str().map(|s| s.to_string());
-                                                            let head = v["diff_refs"]["head_sha"].as_str().map(|s| s.to_string());
-                                                            (base, start, head)
+                                                let (base_sha, start_sha, head_sha) =
+                                                    if let Ok(out) = mr_output {
+                                                        if out.status.success() {
+                                                            if let Ok(v) = serde_json::from_slice::<
+                                                                serde_json::Value,
+                                                            >(
+                                                                &out.stdout
+                                                            ) {
+                                                                let base =
+                                                                    v["diff_refs"]["base_sha"]
+                                                                        .as_str()
+                                                                        .map(|s| s.to_string());
+                                                                let start =
+                                                                    v["diff_refs"]["start_sha"]
+                                                                        .as_str()
+                                                                        .map(|s| s.to_string());
+                                                                let head =
+                                                                    v["diff_refs"]["head_sha"]
+                                                                        .as_str()
+                                                                        .map(|s| s.to_string());
+                                                                (base, start, head)
+                                                            } else {
+                                                                (None, None, None)
+                                                            }
                                                         } else {
                                                             (None, None, None)
                                                         }
                                                     } else {
                                                         (None, None, None)
-                                                    }
-                                                } else {
-                                                    (None, None, None)
-                                                };
+                                                    };
 
                                                 for comment in &comments {
                                                     let mut position = serde_json::json!({
@@ -2477,29 +2610,43 @@ async fn main() -> Result<()> {
                                                         "new_path": comment.file_path,
                                                     });
                                                     if let Some(ref base) = base_sha {
-                                                        position["base_sha"] = serde_json::json!(base);
+                                                        position["base_sha"] =
+                                                            serde_json::json!(base);
                                                     }
                                                     if let Some(ref start) = start_sha {
-                                                        position["start_sha"] = serde_json::json!(start);
+                                                        position["start_sha"] =
+                                                            serde_json::json!(start);
                                                     }
                                                     if let Some(ref head) = head_sha {
-                                                        position["head_sha"] = serde_json::json!(head);
+                                                        position["head_sha"] =
+                                                            serde_json::json!(head);
                                                     }
                                                     if let Some(line_num) = comment.line_num {
-                                                        position["new_line"] = serde_json::json!(line_num);
+                                                        position["new_line"] =
+                                                            serde_json::json!(line_num);
                                                     }
-                                                    if let Some(old_line_num) = comment.old_line_num {
-                                                        position["old_line"] = serde_json::json!(old_line_num);
-                                                        position["old_path"] = serde_json::json!(comment.file_path);
+                                                    if let Some(old_line_num) = comment.old_line_num
+                                                    {
+                                                        position["old_line"] =
+                                                            serde_json::json!(old_line_num);
+                                                        position["old_path"] =
+                                                            serde_json::json!(comment.file_path);
                                                     }
 
                                                     let draft_payload = serde_json::json!({
                                                         "note": comment.body,
                                                         "position": position,
                                                     });
-                                                    let temp_path = std::env::temp_dir().join(format!("glab-tui-draft-{}.json", mr_iid));
-                                                    if let Ok(_) = std::fs::write(&temp_path, serde_json::to_string(&draft_payload).unwrap()) {
-                                                        let temp_str = temp_path.to_string_lossy().to_string();
+                                                    let temp_path = std::env::temp_dir().join(
+                                                        format!("glab-tui-draft-{}.json", mr_iid),
+                                                    );
+                                                    if let Ok(_) = std::fs::write(
+                                                        &temp_path,
+                                                        serde_json::to_string(&draft_payload)
+                                                            .unwrap(),
+                                                    ) {
+                                                        let temp_str =
+                                                            temp_path.to_string_lossy().to_string();
                                                         let output = tokio::process::Command::new("glab")
                                                             .args([
                                                                 "api",
@@ -2515,12 +2662,17 @@ async fn main() -> Result<()> {
                                                         if let Ok(out) = output {
                                                             if !out.status.success() {
                                                                 success = false;
-                                                                err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                                                                err_msg = String::from_utf8_lossy(
+                                                                    &out.stderr,
+                                                                )
+                                                                .trim()
+                                                                .to_string();
                                                                 break;
                                                             }
                                                         } else {
                                                             success = false;
-                                                            err_msg = "Failed to run glab api".to_string();
+                                                            err_msg = "Failed to run glab api"
+                                                                .to_string();
                                                             break;
                                                         }
                                                     }
@@ -2554,14 +2706,27 @@ async fn main() -> Result<()> {
                                                                     }
                                                                 }
                                                             }
-                                                            
+
                                                             if !value_clone.trim().is_empty() {
                                                                 let note_payload = serde_json::json!({
                                                                     "body": value_clone,
                                                                 });
-                                                                let temp_path = std::env::temp_dir().join(format!("glab-tui-note-{}.json", mr_iid));
-                                                                if let Ok(_) = std::fs::write(&temp_path, serde_json::to_string(&note_payload).unwrap()) {
-                                                                    let temp_str = temp_path.to_string_lossy().to_string();
+                                                                let temp_path = std::env::temp_dir(
+                                                                )
+                                                                .join(format!(
+                                                                    "glab-tui-note-{}.json",
+                                                                    mr_iid
+                                                                ));
+                                                                if let Ok(_) = std::fs::write(
+                                                                    &temp_path,
+                                                                    serde_json::to_string(
+                                                                        &note_payload,
+                                                                    )
+                                                                    .unwrap(),
+                                                                ) {
+                                                                    let temp_str = temp_path
+                                                                        .to_string_lossy()
+                                                                        .to_string();
                                                                     let _ = tokio::process::Command::new("glab")
                                                                         .args([
                                                                             "api",
@@ -2573,21 +2738,32 @@ async fn main() -> Result<()> {
                                                                         ])
                                                                         .output()
                                                                         .await;
-                                                                    let _ = std::fs::remove_file(&temp_path);
+                                                                    let _ = std::fs::remove_file(
+                                                                        &temp_path,
+                                                                    );
                                                                 }
                                                             }
 
-                                                            let _ = tx.send(Event::CommandCompleted(
-                                                                app::Tab::MergeRequests,
-                                                                Ok(()),
-                                                            ));
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::MergeRequests,
+                                                                    Ok(()),
+                                                                ));
                                                         }
                                                         Ok(out) => {
-                                                            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                                                            let _ = tx.send(Event::CommandCompleted(
-                                                                app::Tab::MergeRequests,
-                                                                Err(format!("Bulk publish failed: {}", err)),
-                                                            ));
+                                                            let err = String::from_utf8_lossy(
+                                                                &out.stderr,
+                                                            )
+                                                            .trim()
+                                                            .to_string();
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::MergeRequests,
+                                                                    Err(format!(
+                                                                        "Bulk publish failed: {}",
+                                                                        err
+                                                                    )),
+                                                                ));
                                                         }
                                                         Err(e) => {
                                                             let _ = tx.send(Event::CommandCompleted(
@@ -2599,15 +2775,16 @@ async fn main() -> Result<()> {
                                                 } else {
                                                     let _ = tx.send(Event::CommandCompleted(
                                                         app::Tab::MergeRequests,
-                                                        Err(format!("Draft notes creation failed: {}", err_msg)),
+                                                        Err(format!(
+                                                            "Draft notes creation failed: {}",
+                                                            err_msg
+                                                        )),
                                                     ));
                                                 }
                                             }
                                         });
                                     }
-                                    crate::app::TextInputAction::EditNewField {
-                                        field_idx,
-                                    } => {
+                                    crate::app::TextInputAction::EditNewField { field_idx } => {
                                         // Write the value directly into the edit_menu fields
                                         // (no CLI call — iid==0 means this entity is not yet created)
                                         if let Some(ref mut menu) = app.edit_menu {
@@ -2837,7 +3014,10 @@ async fn main() -> Result<()> {
                                                             &app.project_context,
                                                             app.active_tab,
                                                             events.sender(),
-                                                            app.is_column_visible(app.active_tab, "Show Closed Items"),
+                                                            app.is_column_visible(
+                                                                app.active_tab,
+                                                                "Show Closed Items",
+                                                            ),
                                                         );
                                                     }
                                                 } else {
@@ -2872,13 +3052,18 @@ async fn main() -> Result<()> {
                                             .as_ref()
                                             .map(|c| c.is_github)
                                             .unwrap_or(false);
-                                        let pr_suffix = if is_github { "Pull Request" } else { "Merge Request" };
+                                        let pr_suffix = if is_github {
+                                            "Pull Request"
+                                        } else {
+                                            "Merge Request"
+                                        };
 
                                         let mut title_val = String::new();
                                         let mut labels_val = String::new();
                                         let mut assignees_val = String::new();
                                         let mut milestone_val = String::new();
-                                        let mut description_val = get_default_template("mr").unwrap_or_default();
+                                        let mut description_val =
+                                            get_default_template("mr").unwrap_or_default();
                                         let mut issue_iid = 0;
 
                                         if let Some(item) = selected_val {
@@ -2894,7 +3079,12 @@ async fn main() -> Result<()> {
                                                 };
 
                                                 if let Some(iid) = parsed_iid {
-                                                    if let Some(issue) = app.issues.items.iter().find(|i| i.iid == iid) {
+                                                    if let Some(issue) = app
+                                                        .issues
+                                                        .items
+                                                        .iter()
+                                                        .find(|i| i.iid == iid)
+                                                    {
                                                         issue_iid = issue.iid;
                                                         title_val = issue.title.clone();
                                                         if !issue.labels.is_empty() {
@@ -2912,13 +3102,24 @@ async fn main() -> Result<()> {
                                                             milestone_val = m.title.clone();
                                                         }
                                                         if let Some(ref d) = issue.description {
-                                                            description_val = format!("Closes #{}\n\n{}", issue.iid, d);
+                                                            description_val = format!(
+                                                                "Closes #{}\n\n{}",
+                                                                issue.iid, d
+                                                            );
                                                         } else {
-                                                            let mr_tmpl = get_default_template("mr").unwrap_or_default();
+                                                            let mr_tmpl =
+                                                                get_default_template("mr")
+                                                                    .unwrap_or_default();
                                                             if mr_tmpl.is_empty() {
-                                                                description_val = format!("Closes #{}", issue.iid);
+                                                                description_val = format!(
+                                                                    "Closes #{}",
+                                                                    issue.iid
+                                                                );
                                                             } else {
-                                                                description_val = format!("Closes #{}\n\n{}", issue.iid, mr_tmpl);
+                                                                description_val = format!(
+                                                                    "Closes #{}\n\n{}",
+                                                                    issue.iid, mr_tmpl
+                                                                );
                                                             }
                                                         }
                                                     }
@@ -2930,13 +3131,19 @@ async fn main() -> Result<()> {
                                             title: format!("Create {}", pr_suffix),
                                             fields: vec![
                                                 ("Title".to_string(), title_val),
-                                                ("Source Branch".to_string(), get_current_branch().unwrap_or_default()),
+                                                (
+                                                    "Source Branch".to_string(),
+                                                    get_current_branch().unwrap_or_default(),
+                                                ),
                                                 ("Target Branch".to_string(), String::new()),
                                                 ("Labels".to_string(), labels_val),
                                                 ("Assignees".to_string(), assignees_val),
                                                 ("Reviewers".to_string(), String::new()),
                                                 ("Milestone".to_string(), milestone_val),
-                                                ("Status (Draft/Ready)".to_string(), "Ready".to_string()),
+                                                (
+                                                    "Status (Draft/Ready)".to_string(),
+                                                    "Ready".to_string(),
+                                                ),
                                                 ("Description".to_string(), description_val),
                                             ],
                                             selected_idx: 0,
@@ -2960,16 +3167,21 @@ async fn main() -> Result<()> {
                                                 Some(filtered_items[selector.cursor_idx].clone());
                                         }
 
-                                        let status = selected_val.unwrap_or_else(|| "Comment".to_string());
+                                        let status =
+                                            selected_val.unwrap_or_else(|| "Comment".to_string());
                                         app.selector = None;
                                         app.text_input = Some(crate::app::TextInput {
-                                            title: format!(" Submit Review ({}) - Summary/Description ", status),
+                                            title: format!(
+                                                " Submit Review ({}) - Summary/Description ",
+                                                status
+                                            ),
                                             value: String::new(),
                                             cursor_idx: 0,
-                                            action: crate::app::TextInputAction::SubmitReviewFinal {
-                                                mr_iid: selector.entity_iid,
-                                                status,
-                                            },
+                                            action:
+                                                crate::app::TextInputAction::SubmitReviewFinal {
+                                                    mr_iid: selector.entity_iid,
+                                                    status,
+                                                },
                                         });
                                         continue;
                                     }
@@ -3004,17 +3216,32 @@ async fn main() -> Result<()> {
                                                 _ => "",
                                             };
                                             if !target_field_name.is_empty() {
-                                                if let Some(f) = menu.fields.iter_mut().find(|f| f.0 == target_field_name) {
-                                                     let display_val = if field_type == "confidential" {
-                                                         selected_list.first().cloned().unwrap_or_else(|| "No".to_string())
-                                                     } else if field_type == "draft_status" {
-                                                         selected_list.first().cloned().unwrap_or_else(|| "Ready".to_string())
-                                                     } else if field_type == "mr_pipeline" {
-                                                         selected_list.first().cloned().unwrap_or_else(|| "No".to_string())
-                                                     } else {
-                                                         selected_list.join(", ")
-                                                     };
-                                                     f.1 = display_val;
+                                                if let Some(f) = menu
+                                                    .fields
+                                                    .iter_mut()
+                                                    .find(|f| f.0 == target_field_name)
+                                                {
+                                                    let display_val = if field_type
+                                                        == "confidential"
+                                                    {
+                                                        selected_list
+                                                            .first()
+                                                            .cloned()
+                                                            .unwrap_or_else(|| "No".to_string())
+                                                    } else if field_type == "draft_status" {
+                                                        selected_list
+                                                            .first()
+                                                            .cloned()
+                                                            .unwrap_or_else(|| "Ready".to_string())
+                                                    } else if field_type == "mr_pipeline" {
+                                                        selected_list
+                                                            .first()
+                                                            .cloned()
+                                                            .unwrap_or_else(|| "No".to_string())
+                                                    } else {
+                                                        selected_list.join(", ")
+                                                    };
+                                                    f.1 = display_val;
                                                 }
                                             }
                                         }
@@ -3035,7 +3262,10 @@ async fn main() -> Result<()> {
                                                 &app.project_context,
                                                 app.active_tab,
                                                 events.sender(),
-                                                app.is_column_visible(app.active_tab, "Show Closed Items"),
+                                                app.is_column_visible(
+                                                    app.active_tab,
+                                                    "Show Closed Items",
+                                                ),
                                             );
                                         }
 
@@ -3094,19 +3324,60 @@ async fn main() -> Result<()> {
                             KeyCode::Enter => {
                                 let entity_iid = menu.entity_iid;
                                 let entity_type = menu.entity_type.clone();
-                                let is_on_submit = entity_iid == 0 && menu.selected_idx == menu.fields.len() + 1;
+                                let is_on_submit =
+                                    entity_iid == 0 && menu.selected_idx == menu.fields.len() + 1;
 
                                 if is_on_submit {
                                     if entity_iid == 0 {
                                         if entity_type == "new_issue" {
-                                            let title = menu.fields.iter().find(|(k, _)| k == "Title").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let description = menu.fields.iter().find(|(k, _)| k == "Description").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let labels = menu.fields.iter().find(|(k, _)| k == "Labels").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let assignees = menu.fields.iter().find(|(k, _)| k == "Assignees").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let milestone = menu.fields.iter().find(|(k, _)| k == "Milestone").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let confidential = menu.fields.iter().find(|(k, _)| k == "Confidential").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let due_date = menu.fields.iter().find(|(k, _)| k == "Due Date").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let weight = menu.fields.iter().find(|(k, _)| k == "Weight").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+                                            let title = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Title")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let description = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Description")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let labels = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Labels")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let assignees = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Assignees")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let milestone = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Milestone")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let confidential = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Confidential")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let due_date = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Due Date")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let weight = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Weight")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
 
                                             let mut cmd_args = vec!["issue", "create"];
                                             if !title.is_empty() {
@@ -3125,7 +3396,9 @@ async fn main() -> Result<()> {
                                             if !assignees.is_empty() {
                                                 clean_assignees = assignees
                                                     .split(',')
-                                                    .map(|a| a.trim().trim_start_matches('@').to_string())
+                                                    .map(|a| {
+                                                        a.trim().trim_start_matches('@').to_string()
+                                                    })
                                                     .collect::<Vec<_>>()
                                                     .join(",");
                                                 cmd_args.push("--assignee");
@@ -3148,29 +3421,88 @@ async fn main() -> Result<()> {
                                             }
 
                                             app.edit_menu = None;
-                                            run_glab_cmd(&cmd_args, &mut terminal, events.sender(), app.active_tab).await;
-                                            
+                                            run_glab_cmd(
+                                                &cmd_args,
+                                                &mut terminal,
+                                                events.sender(),
+                                                app.active_tab,
+                                            )
+                                            .await;
+
                                             if let Some(client) = &app.gitlab_client {
                                                 spawn_refresh_active_tab(
                                                     client,
                                                     &app.project_context,
                                                     app.active_tab,
                                                     events.sender(),
-                                                    app.is_column_visible(app.active_tab, "Show Closed Items"),
+                                                    app.is_column_visible(
+                                                        app.active_tab,
+                                                        "Show Closed Items",
+                                                    ),
                                                 );
                                             }
                                             continue;
                                         } else if entity_type == "new_mr" {
-                                            let title = menu.fields.iter().find(|(k, _)| k == "Title").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let source = menu.fields.iter().find(|(k, _)| k == "Source Branch").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let target = menu.fields.iter().find(|(k, _)| k == "Target Branch").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let labels = menu.fields.iter().find(|(k, _)| k == "Labels").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let assignees = menu.fields.iter().find(|(k, _)| k == "Assignees").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let reviewers = menu.fields.iter().find(|(k, _)| k == "Reviewers").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let milestone = menu.fields.iter().find(|(k, _)| k == "Milestone").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let status = menu.fields.iter().find(|(k, _)| k == "Status (Draft/Ready)").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let description = menu.fields.iter().find(|(k, _)| k == "Description").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let mr_pipeline = menu.fields.iter().find(|(k, _)| k == "Merge Request Pipeline").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+                                            let title = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Title")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let source = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Source Branch")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let target = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Target Branch")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let labels = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Labels")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let assignees = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Assignees")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let reviewers = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Reviewers")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let milestone = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Milestone")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let status = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Status (Draft/Ready)")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let description = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Description")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let mr_pipeline = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Merge Request Pipeline")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
 
                                             let mut cmd_args = vec!["mr", "create", "-y"];
                                             if !title.is_empty() {
@@ -3193,7 +3525,9 @@ async fn main() -> Result<()> {
                                             if !assignees.is_empty() {
                                                 clean_assignees = assignees
                                                     .split(',')
-                                                    .map(|a| a.trim().trim_start_matches('@').to_string())
+                                                    .map(|a| {
+                                                        a.trim().trim_start_matches('@').to_string()
+                                                    })
                                                     .collect::<Vec<_>>()
                                                     .join(",");
                                                 cmd_args.push("--assignee");
@@ -3203,7 +3537,9 @@ async fn main() -> Result<()> {
                                             if !reviewers.is_empty() {
                                                 clean_reviewers = reviewers
                                                     .split(',')
-                                                    .map(|r| r.trim().trim_start_matches('@').to_string())
+                                                    .map(|r| {
+                                                        r.trim().trim_start_matches('@').to_string()
+                                                    })
                                                     .collect::<Vec<_>>()
                                                     .join(",");
                                                 cmd_args.push("--reviewer");
@@ -3225,24 +3561,58 @@ async fn main() -> Result<()> {
                                             }
 
                                             app.edit_menu = None;
-                                            run_glab_cmd(&cmd_args, &mut terminal, events.sender(), app.active_tab).await;
-                                            
+                                            run_glab_cmd(
+                                                &cmd_args,
+                                                &mut terminal,
+                                                events.sender(),
+                                                app.active_tab,
+                                            )
+                                            .await;
+
                                             if let Some(client) = &app.gitlab_client {
                                                 spawn_refresh_active_tab(
                                                     client,
                                                     &app.project_context,
                                                     app.active_tab,
                                                     events.sender(),
-                                                    app.is_column_visible(app.active_tab, "Show Closed Items"),
+                                                    app.is_column_visible(
+                                                        app.active_tab,
+                                                        "Show Closed Items",
+                                                    ),
                                                 );
                                             }
                                             continue;
                                         } else if entity_type == "new_pipeline" {
-                                            let branch = menu.fields.iter().find(|(k, _)| k == "Branch / Ref").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let mr = menu.fields.iter().find(|(k, _)| k == "Merge Request Pipeline").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let variables = menu.fields.iter().find(|(k, _)| k == "Variables").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let inputs = menu.fields.iter().find(|(k, _)| k == "Inputs").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
-                                            let workflow = menu.fields.iter().find(|(k, _)| k == "Workflow / CI File (GitHub)").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+                                            let branch = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Branch / Ref")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let mr = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Merge Request Pipeline")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let variables = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Variables")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let inputs = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Inputs")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
+                                            let workflow = menu
+                                                .fields
+                                                .iter()
+                                                .find(|(k, _)| k == "Workflow / CI File (GitHub)")
+                                                .map(|(_, v)| v.trim().to_string())
+                                                .unwrap_or_default();
 
                                             let var_pairs = parse_key_value_pairs(&variables);
                                             let mut var_strs = Vec::new();
@@ -3278,15 +3648,24 @@ async fn main() -> Result<()> {
                                             }
 
                                             app.edit_menu = None;
-                                            run_glab_cmd(&cmd_args, &mut terminal, events.sender(), app.active_tab).await;
-                                            
+                                            run_glab_cmd(
+                                                &cmd_args,
+                                                &mut terminal,
+                                                events.sender(),
+                                                app.active_tab,
+                                            )
+                                            .await;
+
                                             if let Some(client) = &app.gitlab_client {
                                                 spawn_refresh_active_tab(
                                                     client,
                                                     &app.project_context,
                                                     app.active_tab,
                                                     events.sender(),
-                                                    app.is_column_visible(app.active_tab, "Show Closed Items"),
+                                                    app.is_column_visible(
+                                                        app.active_tab,
+                                                        "Show Closed Items",
+                                                    ),
                                                 );
                                             }
                                             continue;
@@ -3336,7 +3715,8 @@ async fn main() -> Result<()> {
                                         all_items = vec!["Draft".to_string(), "Ready".to_string()];
                                         is_loading = false;
                                         if entity_iid == 0 {
-                                            let current_val = menu.fields[menu.selected_idx].1.clone();
+                                            let current_val =
+                                                menu.fields[menu.selected_idx].1.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             } else {
@@ -3355,7 +3735,8 @@ async fn main() -> Result<()> {
                                         all_items = vec!["Yes".to_string(), "No".to_string()];
                                         is_loading = false;
                                         if entity_iid == 0 {
-                                            let current_val = menu.fields[menu.selected_idx].1.clone();
+                                            let current_val =
+                                                menu.fields[menu.selected_idx].1.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             } else {
@@ -3366,7 +3747,10 @@ async fn main() -> Result<()> {
 
                                     if entity_iid == 0 {
                                         let current_val = menu.fields[menu.selected_idx].1.clone();
-                                        if !current_val.is_empty() && field_type != "draft_status" && field_type != "mr_pipeline" {
+                                        if !current_val.is_empty()
+                                            && field_type != "draft_status"
+                                            && field_type != "mr_pipeline"
+                                        {
                                             if multi_select {
                                                 for item in current_val.split(',') {
                                                     let trimmed = item.trim().to_string();
@@ -3880,7 +4264,10 @@ async fn main() -> Result<()> {
                                         ("Confidential".to_string(), "No".to_string()),
                                         ("Due Date".to_string(), String::new()),
                                         ("Weight".to_string(), "0".to_string()),
-                                        ("Description".to_string(), get_default_template("issue").unwrap_or_default()),
+                                        (
+                                            "Description".to_string(),
+                                            get_default_template("issue").unwrap_or_default(),
+                                        ),
                                     ],
                                     selected_idx: 0,
                                     entity_iid: 0,
@@ -3968,53 +4355,58 @@ async fn main() -> Result<()> {
                         },
                         app::Tab::MergeRequests => {
                             if key_event.code == KeyCode::Char('n') {
-                                 let is_github = app
-                                     .gitlab_client
-                                     .as_ref()
-                                     .map(|c| c.is_github)
-                                     .unwrap_or(false);
-                                 let pr_suffix = if is_github { "Pull Request" } else { "Merge Request" };
+                                let is_github = app
+                                    .gitlab_client
+                                    .as_ref()
+                                    .map(|c| c.is_github)
+                                    .unwrap_or(false);
+                                let pr_suffix = if is_github {
+                                    "Pull Request"
+                                } else {
+                                    "Merge Request"
+                                };
 
-                                 let mut all_items = vec!["Create blank (No issue)".to_string()];
-                                 let is_loading = app.issues.items.is_empty();
-                                 if !is_loading {
-                                     for issue in &app.issues.items {
-                                         if issue.state == "opened" || issue.state == "open" {
-                                             all_items.push(format!("#{} {}", issue.iid, issue.title));
-                                         }
-                                     }
-                                 }
+                                let mut all_items = vec!["Create blank (No issue)".to_string()];
+                                let is_loading = app.issues.items.is_empty();
+                                if !is_loading {
+                                    for issue in &app.issues.items {
+                                        if issue.state == "opened" || issue.state == "open" {
+                                            all_items
+                                                .push(format!("#{} {}", issue.iid, issue.title));
+                                        }
+                                    }
+                                }
 
-                                 app.selector = Some(crate::app::Selector {
-                                     title: format!(" Select Issue to Base {} On ", pr_suffix),
-                                     all_items,
-                                     selected_items: std::collections::HashSet::new(),
-                                     cursor_idx: 0,
-                                     search_query: String::new(),
-                                     is_filtering: true,
-                                     is_loading,
-                                     entity_iid: 0,
-                                     entity_type: "new_mr_selector".to_string(),
-                                     field_type: "create_mr".to_string(),
-                                     multi_select: false,
-                                     state: {
-                                         let mut s = ListState::default();
-                                         s.select(Some(0));
-                                         s
-                                     },
-                                 });
+                                app.selector = Some(crate::app::Selector {
+                                    title: format!(" Select Issue to Base {} On ", pr_suffix),
+                                    all_items,
+                                    selected_items: std::collections::HashSet::new(),
+                                    cursor_idx: 0,
+                                    search_query: String::new(),
+                                    is_filtering: true,
+                                    is_loading,
+                                    entity_iid: 0,
+                                    entity_type: "new_mr_selector".to_string(),
+                                    field_type: "create_mr".to_string(),
+                                    multi_select: false,
+                                    state: {
+                                        let mut s = ListState::default();
+                                        s.select(Some(0));
+                                        s
+                                    },
+                                });
 
-                                 if is_loading {
-                                     if let Some(client) = &app.gitlab_client {
-                                         spawn_refresh_active_tab(
-                                             client,
-                                             &app.project_context,
-                                             app::Tab::Issues,
-                                             events.sender(),
-                                             false,
-                                         );
-                                     }
-                                 }
+                                if is_loading {
+                                    if let Some(client) = &app.gitlab_client {
+                                        spawn_refresh_active_tab(
+                                            client,
+                                            &app.project_context,
+                                            app::Tab::Issues,
+                                            events.sender(),
+                                            false,
+                                        );
+                                    }
+                                }
                             } else if let Some(selected_idx) = app.mrs.state.selected() {
                                 let filtered = app.filtered_mrs();
                                 let mr_info = filtered
@@ -4223,7 +4615,11 @@ async fn main() -> Result<()> {
                                 app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Run Pipeline".to_string(),
                                     fields: vec![
-                                        ("Branch / Ref".to_string(), get_current_branch().unwrap_or_else(|| "main".to_string())),
+                                        (
+                                            "Branch / Ref".to_string(),
+                                            get_current_branch()
+                                                .unwrap_or_else(|| "main".to_string()),
+                                        ),
                                         ("Merge Request Pipeline".to_string(), "No".to_string()),
                                         ("Variables".to_string(), String::new()),
                                         ("Inputs".to_string(), String::new()),
@@ -5066,7 +5462,10 @@ async fn main() -> Result<()> {
                                             &app.project_context,
                                             app.active_tab,
                                             events.sender(),
-                                            app.is_column_visible(app.active_tab, "Show Closed Items"),
+                                            app.is_column_visible(
+                                                app.active_tab,
+                                                "Show Closed Items",
+                                            ),
                                         );
                                     }
                                 }
@@ -5085,7 +5484,10 @@ async fn main() -> Result<()> {
                                             &app.project_context,
                                             app.active_tab,
                                             events.sender(),
-                                            app.is_column_visible(app.active_tab, "Show Closed Items"),
+                                            app.is_column_visible(
+                                                app.active_tab,
+                                                "Show Closed Items",
+                                            ),
                                         );
                                     }
                                 }
@@ -5127,9 +5529,7 @@ async fn main() -> Result<()> {
                                 app::Tab::Milestones => {
                                     app.milestones.next(app.filtered_milestones().len())
                                 }
-                                app::Tab::Wiki => {
-                                    app.wiki_pages.next(app.filtered_wiki().len())
-                                }
+                                app::Tab::Wiki => app.wiki_pages.next(app.filtered_wiki().len()),
                             },
                             KeyCode::Up | KeyCode::Char('k') => match app.active_tab {
                                 app::Tab::Issues => {
@@ -5244,10 +5644,14 @@ mod tests {
     #[test]
     fn test_translate_glab_to_gh_mr_create_with_issue_and_body() {
         let glab_args = vec![
-            "mr", "create",
-            "-i", "123",
-            "--title", "Pre-filled title",
-            "--description", "This is the user edited description body."
+            "mr",
+            "create",
+            "-i",
+            "123",
+            "--title",
+            "Pre-filled title",
+            "--description",
+            "This is the user edited description body.",
         ];
         let gh_args = translate_glab_to_gh(&glab_args);
         assert_eq!(
@@ -5296,7 +5700,17 @@ mod tests {
 
     #[test]
     fn test_translate_glab_to_gh_ci_run() {
-        let glab_args = vec!["ci", "run", "my-workflow.yml", "-b", "my-branch", "--variables", "var1:val1", "-i", "inp1:val1"];
+        let glab_args = vec![
+            "ci",
+            "run",
+            "my-workflow.yml",
+            "-b",
+            "my-branch",
+            "--variables",
+            "var1:val1",
+            "-i",
+            "inp1:val1",
+        ];
         let gh_args = translate_glab_to_gh(&glab_args);
         assert_eq!(
             gh_args,

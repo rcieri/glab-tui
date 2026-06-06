@@ -31,7 +31,9 @@ pub async fn load_wiki_pages(project_context: &str) -> Result<Vec<WikiPage>> {
         .output()
         .await?;
 
-    let origin_url = String::from_utf8_lossy(&origin_output.stdout).trim().to_string();
+    let origin_url = String::from_utf8_lossy(&origin_output.stdout)
+        .trim()
+        .to_string();
     if origin_url.is_empty() {
         anyhow::bail!("No origin remote found to determine Wiki URL");
     }

@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "glab-tui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",

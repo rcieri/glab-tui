@@ -780,7 +780,9 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
                 .iter()
                 .map(|u| {
                     let login = u.get("login").and_then(|l| l.as_str()).unwrap_or("unknown");
-                    serde_json::Value::String(format!("@{}", login))
+                    serde_json::json!({
+                        "username": login
+                    })
                 })
                 .collect();
             Ok(serde_json::Value::Array(list))
@@ -824,8 +826,16 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
         }
     } else if endpoint.contains("/labels") {
         if let Some(arr) = val.as_array() {
-            let list: Vec<serde_json::Value> =
-                arr.iter().filter_map(|l| l.get("name").cloned()).collect();
+            let list: Vec<serde_json::Value> = arr
+                .iter()
+                .filter_map(|l| {
+                    l.get("name").map(|name| {
+                        serde_json::json!({
+                            "name": name
+                        })
+                    })
+                })
+                .collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))

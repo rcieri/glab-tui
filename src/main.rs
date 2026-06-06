@@ -292,10 +292,15 @@ fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
                                 i += 1;
                             }
                         }
-                        "-d" => {
-                            if i + 1 < args.len() && args[i + 1] == "-" {
-                                gh_args.push("--body-file".to_string());
-                                gh_args.push("-".to_string());
+                        "-d" | "--description" => {
+                            if i + 1 < args.len() {
+                                if args[i + 1] == "-" {
+                                    gh_args.push("--body-file".to_string());
+                                    gh_args.push("-".to_string());
+                                } else {
+                                    gh_args.push("--body".to_string());
+                                    gh_args.push(args[i + 1].to_string());
+                                }
                                 i += 2;
                             } else {
                                 i += 1;
@@ -546,6 +551,20 @@ fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
                                     if i + 1 < args.len() {
                                         gh_args.push("--base".to_string());
                                         gh_args.push(args[i + 1].to_string());
+                                        i += 2;
+                                    } else {
+                                        i += 1;
+                                    }
+                                }
+                                "-d" | "--description" => {
+                                    if i + 1 < args.len() {
+                                        if args[i + 1] == "-" {
+                                            gh_args.push("--body-file".to_string());
+                                            gh_args.push("-".to_string());
+                                        } else {
+                                            gh_args.push("--body".to_string());
+                                            gh_args.push(args[i + 1].to_string());
+                                        }
                                         i += 2;
                                     } else {
                                         i += 1;
@@ -3233,8 +3252,11 @@ async fn main() -> Result<()> {
                                                 let parsed_iid = if id_val.starts_with('#') {
                                                     id_val
                                                         .strip_prefix('#')
-                                                        .and_then(|s| s.split(':').next())
-                                                        .and_then(|s| s.trim().parse::<u64>().ok())
+                                                        .and_then(|s| {
+                                                            s.split(|c: char| !c.is_numeric())
+                                                                .next()
+                                                        })
+                                                        .and_then(|s| s.parse::<u64>().ok())
                                                 } else {
                                                     id_val.trim().parse::<u64>().ok()
                                                 };
@@ -3665,7 +3687,12 @@ async fn main() -> Result<()> {
                                                 .map(|(_, v)| v.trim().to_string())
                                                 .unwrap_or_default();
 
+                                            let entity_iid_str = menu.entity_iid.to_string();
                                             let mut cmd_args = vec!["mr", "create", "-y"];
+                                            if menu.entity_iid > 0 {
+                                                cmd_args.push("--related-issue");
+                                                cmd_args.push(&entity_iid_str);
+                                            }
                                             if !title.is_empty() {
                                                 cmd_args.push("--title");
                                                 cmd_args.push(&title);
@@ -5902,6 +5929,38 @@ mod tests {
                 "var1=val1".to_string(),
                 "-f".to_string(),
                 "inp1=val1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_translate_glab_to_gh_mr_update_description() {
+        let glab_args = vec!["mr", "update", "123", "-d", "new description text"];
+        let gh_args = translate_glab_to_gh(&glab_args);
+        assert_eq!(
+            gh_args,
+            vec![
+                "pr".to_string(),
+                "edit".to_string(),
+                "123".to_string(),
+                "--body".to_string(),
+                "new description text".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_translate_glab_to_gh_issue_update_description() {
+        let glab_args = vec!["issue", "update", "123", "-d", "new description text"];
+        let gh_args = translate_glab_to_gh(&glab_args);
+        assert_eq!(
+            gh_args,
+            vec![
+                "issue".to_string(),
+                "edit".to_string(),
+                "123".to_string(),
+                "--body".to_string(),
+                "new description text".to_string()
             ]
         );
     }

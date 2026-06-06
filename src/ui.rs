@@ -482,15 +482,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Style::default().fg(THEME.yellow),
         ));
     }
-    if let Some(ref status) = app.status_message {
-        title_spans.push(Span::styled(" | ", Style::default().fg(THEME.text_muted)));
-        title_spans.push(Span::styled(
-            format!(" {} ", status),
-            Style::default()
-                .fg(THEME.yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
+    
 
     let title = Paragraph::new(Line::from(title_spans))
         .style(Style::default().bg(THEME.bg))
@@ -560,11 +552,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(sidebar, middle_chunks[0]);
 
     // Main Area Title
-    let tab_title = if app.loading_tabs.contains(&app.active_tab) {
-        format!(" {} (loading...) ", app.active_tab.title(is_github))
-    } else {
-        format!(" {} ", app.active_tab.title(is_github))
-    };
+    let tab_title = format!(" {} ", app.active_tab.title(is_github));
     let main_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app.focus_column_checklist {
@@ -2922,7 +2910,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Line::from(""),
         ];
 
-        let paragraph = Paragraph::new(text).block(block).alignment(Alignment::Left);
+        let paragraph = Paragraph::new(text)
+            .block(block)
+            .alignment(Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
         f.render_widget(paragraph, area);
@@ -3117,7 +3108,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         let footer_p = Paragraph::new(" Esc/q: Exit • Tab: Toggle Focus • h/l/Left/Right: Switch Panels • j/k/↑/↓: Navigate • J/K: Next/Prev Hunk • c: Comment • p: Toggle Review Mode • r: Submit Review ")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC));
+            .style(Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC))
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
         f.render_widget(outer_block, area);
@@ -3227,8 +3219,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(1),
-                Constraint::Length(1),
+                Constraint::Min(0),
+                Constraint::Length(2),
             ])
             .split(inner_area);
 
@@ -3236,7 +3228,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .style(Style::default().bg(Color::Reset));
 
         let footer = Paragraph::new(footer_text)
-            .style(Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC));
+            .style(Style::default().fg(THEME.text_muted).add_modifier(Modifier::ITALIC))
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
         f.render_widget(block, area);
@@ -3267,7 +3260,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 [
                     Constraint::Length(3), // Search/Filter
                     Constraint::Min(0),    // List of items
-                    Constraint::Length(2), // Help/Info footer
+                    Constraint::Length(3), // Help/Info footer
                 ]
                 .as_ref(),
             )
@@ -3301,38 +3294,45 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         let search_p = Paragraph::new(search_text)
             .block(search_block)
-            .style(search_style);
+            .style(search_style)
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         let footer_text = if selector.is_filtering {
             "  Esc/Enter: Stop filtering • Backspace: Delete  "
         } else {
             "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • f: Filter • Esc: Back  "
         };
-        let footer_p = Paragraph::new(footer_text).style(
-            Style::default()
-                .fg(THEME.text_muted)
-                .add_modifier(Modifier::ITALIC),
-        );
+        let footer_p = Paragraph::new(footer_text)
+            .style(
+                Style::default()
+                    .fg(THEME.text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
         f.render_widget(block, area);
         f.render_widget(search_p, chunks[0]);
 
         if selector.is_loading {
-            let p = Paragraph::new("\n  Loading options from GitLab...").style(
-                Style::default()
-                    .fg(THEME.text_muted)
-                    .add_modifier(Modifier::ITALIC),
-            );
+            let p = Paragraph::new("\n  Loading options from GitLab...")
+                .style(
+                    Style::default()
+                        .fg(THEME.text_muted)
+                        .add_modifier(Modifier::ITALIC),
+                )
+                .wrap(ratatui::widgets::Wrap { trim: true });
             f.render_widget(p, chunks[1]);
         } else {
             let filtered_items = selector.get_filtered_items_with_indices();
             if filtered_items.is_empty() {
-                let p = Paragraph::new("\n  No matching options found.").style(
-                    Style::default()
-                        .fg(THEME.text_muted)
-                        .add_modifier(Modifier::ITALIC),
-                );
+                let p = Paragraph::new("\n  No matching options found.")
+                    .style(
+                        Style::default()
+                            .fg(THEME.text_muted)
+                            .add_modifier(Modifier::ITALIC),
+                    )
+                    .wrap(ratatui::widgets::Wrap { trim: true });
                 f.render_widget(p, chunks[1]);
             } else {
                 let items: Vec<ListItem> = filtered_items
@@ -3421,7 +3421,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .border_style(Style::default().fg(THEME.border_focused))
             .style(Style::default().bg(Color::Reset));
 
-        let area = centered_rect(40, 15, size);
+        let area = centered_rect(50, 20, size);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -3429,7 +3429,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .constraints(
                 [
                     Constraint::Min(0),    // Value input line
-                    Constraint::Length(1), // Help footer
+                    Constraint::Length(2), // Help footer
                 ]
                 .as_ref(),
             )
@@ -3442,13 +3442,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
             display_val.push('▋');
         }
 
-        let value_p = Paragraph::new(display_val).style(Style::default().fg(THEME.text_normal));
+        let value_p = Paragraph::new(display_val)
+            .style(Style::default().fg(THEME.text_normal))
+            .wrap(ratatui::widgets::Wrap { trim: false });
 
-        let footer_p = Paragraph::new("  Enter: Confirm • Esc: Cancel  ").style(
-            Style::default()
-                .fg(THEME.text_muted)
-                .add_modifier(Modifier::ITALIC),
-        );
+        let footer_p = Paragraph::new("  Enter: Confirm • Esc: Cancel  ")
+            .style(
+                Style::default()
+                    .fg(THEME.text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
         f.render_widget(block, area);
@@ -3584,7 +3588,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 [
                     Constraint::Length(3), // Search / Filter
                     Constraint::Min(0),    // Table
-                    Constraint::Length(1), // Help footer
+                    Constraint::Length(2), // Help footer
                 ]
                 .as_ref(),
             )
@@ -3621,7 +3625,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         let search_p = Paragraph::new(search_text)
             .style(search_style)
-            .block(search_block);
+            .block(search_block)
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         let rows: Vec<Row> = if app.help_search_query.is_empty() {
             let mut result_rows = Vec::new();
@@ -3727,7 +3732,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Style::default()
                     .fg(THEME.text_muted)
                     .add_modifier(Modifier::ITALIC),
-            );
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
         f.render_widget(search_p, help_chunks[0]);
@@ -3751,11 +3757,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
         }
 
         // Calculate size for the popup based on columns count (no nested borders anymore)
-        let width = 38;
+        let width = 48;
         let height = if filters_list.is_empty() {
-            (columns_list.len() + 5) as u16
+            (columns_list.len() + 6) as u16
         } else {
-            (columns_list.len() + filters_list.len() + 6) as u16
+            (columns_list.len() + filters_list.len() + 7) as u16
         };
         let area = centered_rect_fixed(width, height, size);
 
@@ -3779,7 +3785,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
-                Constraint::Length(1), // Footer
+                Constraint::Length(2), // Footer
             ])
             .split(inner_area);
 
@@ -3789,7 +3795,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Style::default()
                     .fg(THEME.text_muted)
                     .add_modifier(Modifier::ITALIC),
-            );
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
         f.render_widget(footer_p, popup_layout[1]);
 
         let lists_area = popup_layout[0];
@@ -3887,6 +3894,51 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .collect();
             f.render_widget(List::new(filter_items), layout_chunks[4]);
         }
+    }
+
+    if let Some(err_msg) = &app.error_message {
+        let block = Block::default()
+            .title(" Error / Info ")
+            .title_style(
+                Style::default()
+                    .fg(THEME.red)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(THEME.red))
+            .style(Style::default().bg(Color::Reset));
+
+        let area = centered_rect(60, 20, size);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints(
+                [
+                    Constraint::Min(0),    // Error message text
+                    Constraint::Length(1), // Help footer
+                ]
+                .as_ref(),
+            )
+            .split(area);
+
+        let msg_p = Paragraph::new(err_msg.as_str())
+            .style(Style::default().fg(THEME.text_normal))
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        let footer_p = Paragraph::new(" Press Enter or Esc to dismiss ")
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(THEME.text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+        f.render_widget(msg_p, chunks[0]);
+        f.render_widget(footer_p, chunks[1]);
     }
 }
 

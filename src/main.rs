@@ -1771,19 +1771,43 @@ async fn main() -> Result<()> {
                 Event::DiffFetched(mr_iid, raw_diff) => {
                     app.diff_loading = false;
                     app.diff_view = Some(crate::app::DiffView::new(mr_iid, raw_diff));
+                    if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
+                        cmd.command.contains("diff") && cmd.status == "Running"
+                    }) {
+                        app.terminal_commands[pos].status = "Success".to_string();
+                    }
                 }
                 Event::DiffFetchFailed(err_msg) => {
                     app.diff_loading = false;
-                    app.error_message = Some(err_msg);
+                    app.error_message = Some(err_msg.clone());
+                    if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
+                        cmd.command.contains("diff") && cmd.status == "Running"
+                    }) {
+                        app.terminal_commands[pos].status = format!("Failed: {}", err_msg);
+                    }
                 }
                 Event::CommandStarted(msg) => {
-                    app.status_message = Some(msg);
+                    let timestamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+                    app.terminal_commands.push(crate::app::TerminalCommand {
+                        timestamp,
+                        command: msg,
+                        status: "Running".to_string(),
+                    });
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     terminal.draw(|f| ui::render(f, &mut app))?;
                 }
                 Event::CommandCompleted(tab, res) => {
-                    app.status_message = None;
+                    let status = match &res {
+                        Ok(_) => "Success".to_string(),
+                        Err(e) => format!("Failed: {}", e),
+                    };
+                    if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
+                        (cmd.command.starts_with("glab") || cmd.command.starts_with("gh") || cmd.command.contains("submit") || cmd.command.contains("bulk"))
+                            && cmd.status == "Running"
+                    }) {
+                        app.terminal_commands[pos].status = status;
+                    }
                     match res {
                         Ok(_) => {
                             if let Some(client) = app.gitlab_client.clone() {
@@ -1805,6 +1829,15 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::Key(key_event) => {
+                    if key_event.code == KeyCode::Char('c')
+                        && key_event
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                    {
+                        app.quit();
+                        continue;
+                    }
+
                     if app.error_message.is_some() {
                         if key_event.code == KeyCode::Enter || key_event.code == KeyCode::Esc {
                             app.error_message = None;
@@ -2056,6 +2089,7 @@ async fn main() -> Result<()> {
                                         if !value.trim().is_empty() {
                                             let tag_name = value.trim().to_string();
                                             let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!("glab release create {}", tag_name)));
                                             let active_tab = app.active_tab;
                                             tokio::spawn(async move {
                                                 let last_tag = if let Ok(output) = tokio::process::Command::new("git")
@@ -2200,6 +2234,7 @@ async fn main() -> Result<()> {
                                                 let temp_path = std::env::temp_dir().join(format!("glab-tui-review-{}.json", mr_iid));
                                                 if let Ok(_) = std::fs::write(&temp_path, serde_json::to_string(&payload).unwrap()) {
                                                     let temp_str = temp_path.to_string_lossy().to_string();
+                                                    let _ = tx.send(Event::CommandStarted(format!("gh api submit review MR #{}", mr_iid)));
                                                     let output = tokio::process::Command::new("gh")
                                                         .args([
                                                             "api",
@@ -2233,6 +2268,7 @@ async fn main() -> Result<()> {
                                                     }
                                                 }
                                             } else {
+                                                let _ = tx.send(Event::CommandStarted(format!("glab submit review MR #{}", mr_iid)));
                                                 let encoded_path = project_context.replace("/", "%2F");
                                                 let mut success = true;
                                                 let mut err_msg = String::new();
@@ -4557,8 +4593,6 @@ async fn main() -> Result<()> {
                                         app.selected_job_index = None;
                                         app.selected_jobs.clear();
                                     }
-                                } else {
-                                    app.quit();
                                 }
                             }
                             KeyCode::Char('f') => {

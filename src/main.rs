@@ -277,8 +277,12 @@ fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
                     gh_args.push(t.to_string());
                 }
                 if let Some(b) = body {
-                    gh_args.push("--body".to_string());
-                    gh_args.push(b.to_string());
+                    if b == "-" {
+                        gh_args.push("-e".to_string());
+                    } else {
+                        gh_args.push("--body".to_string());
+                        gh_args.push(b.to_string());
+                    }
                 } else {
                     gh_args.push("--body".to_string());
                     gh_args.push("".to_string());
@@ -361,8 +365,7 @@ fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
                         "-d" | "--description" => {
                             if i + 1 < args.len() {
                                 if args[i + 1] == "-" {
-                                    gh_args.push("--body-file".to_string());
-                                    gh_args.push("-".to_string());
+                                    gh_args.push("-e".to_string());
                                 } else {
                                     gh_args.push("--body".to_string());
                                     gh_args.push(args[i + 1].to_string());
@@ -495,15 +498,19 @@ fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
                         }
 
                         if let Some(b) = body {
-                            gh_args.push("--body".to_string());
-                            if let Some(id) = issue_id {
-                                if !b.contains(&format!("#{}", id)) {
-                                    gh_args.push(format!("Resolves #{}\n\n{}", id, b));
+                            if b == "-" {
+                                gh_args.push("-e".to_string());
+                            } else {
+                                gh_args.push("--body".to_string());
+                                if let Some(id) = issue_id {
+                                    if !b.contains(&format!("#{}", id)) {
+                                        gh_args.push(format!("Resolves #{}\n\n{}", id, b));
+                                    } else {
+                                        gh_args.push(b.to_string());
+                                    }
                                 } else {
                                     gh_args.push(b.to_string());
                                 }
-                            } else {
-                                gh_args.push(b.to_string());
                             }
                         } else if let Some(id) = issue_id {
                             gh_args.push("--body".to_string());
@@ -781,7 +788,7 @@ fn translate_glab_to_gh(args: &[&str]) -> Vec<String> {
 }
 
 fn is_command_interactive(args: &[&str]) -> bool {
-    args.iter().any(|&arg| arg == "-d" || arg == "--desc") && args.iter().any(|&arg| arg == "-")
+    args.iter().any(|&arg| arg == "-d" || arg == "--desc" || arg == "--description") && args.iter().any(|&arg| arg == "-")
 }
 
 fn get_command_description(args: &[&str], is_github: bool) -> String {
@@ -826,14 +833,83 @@ async fn run_glab_cmd(
         disable_raw_mode().unwrap();
         execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture).unwrap();
 
-        let mut cmd = std::process::Command::new(program);
-        cmd.args(&actual_args);
-        cmd.stdin(std::process::Stdio::inherit());
-        cmd.stdout(std::process::Stdio::inherit());
-        cmd.stderr(std::process::Stdio::inherit());
+        let mut actual_args = actual_args;
+        let mut cancel = false;
 
-        if let Ok(mut child) = cmd.spawn() {
-            let _ = child.wait();
+        if is_github && actual_args.iter().any(|arg| arg == "-e") {
+            actual_args.retain(|arg| arg != "-e");
+
+            let is_pr = actual_args.iter().any(|arg| arg == "pr");
+            let is_edit = actual_args.iter().any(|arg| arg == "edit");
+            let entity_type = if is_pr { "pr" } else { "issue" };
+            let mut initial_body = String::new();
+
+            if is_edit {
+                if let Some(pos) = actual_args.iter().position(|arg| arg == "edit") {
+                    if pos + 1 < actual_args.len() {
+                        let id = &actual_args[pos + 1];
+                        let output = std::process::Command::new("gh")
+                            .args([entity_type, "view", id, "--json", "body", "--jq", ".body"])
+                            .output();
+                        if let Ok(out) = output {
+                            if out.status.success() {
+                                initial_body = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if initial_body.is_empty() {
+                let template_type = if is_pr { "mr" } else { "issue" };
+                initial_body = get_default_template(template_type).unwrap_or_default();
+            }
+
+            let edited_body = (|| {
+                let editor = std::env::var("EDITOR")
+                    .or_else(|_| std::env::var("VISUAL"))
+                    .unwrap_or_else(|_| "helix".to_string());
+                let mut tmp = tempfile::NamedTempFile::new().ok()?;
+                std::io::Write::write_all(&mut tmp, initial_body.as_bytes()).ok()?;
+                
+                let mut cmd = if cfg!(target_os = "windows") {
+                    let mut c = std::process::Command::new("cmd");
+                    c.args(&["/c", &format!("{} \"{}\"", editor, tmp.path().to_string_lossy())]);
+                    c
+                } else {
+                    let mut c = std::process::Command::new(&editor);
+                    c.arg(tmp.path());
+                    c
+                };
+                cmd.stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit());
+                if let Ok(mut child) = cmd.spawn() {
+                    child.wait().ok()?;
+                }
+
+                let content = std::fs::read_to_string(tmp.path()).ok()?;
+                Some(content.trim().to_string())
+            })();
+
+            if let Some(body) = edited_body {
+                actual_args.push("--body".to_string());
+                actual_args.push(body);
+            } else {
+                cancel = true;
+            }
+        }
+
+        if !cancel {
+            let mut cmd = std::process::Command::new(program);
+            cmd.args(&actual_args);
+            cmd.stdin(std::process::Stdio::inherit());
+            cmd.stdout(std::process::Stdio::inherit());
+            cmd.stderr(std::process::Stdio::inherit());
+
+            if let Ok(mut child) = cmd.spawn() {
+                let _ = child.wait();
+            }
         }
 
         enable_raw_mode().unwrap();
@@ -844,7 +920,11 @@ async fn run_glab_cmd(
         let _ = terminal.clear();
         crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
 
-        let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
+        if cancel {
+            let _ = tx.send(Event::CommandCompleted(tab, Err("Edit cancelled".to_string())));
+        } else {
+            let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
+        }
     } else {
         let desc = get_command_description(args, is_github);
         let status_msg = format!("{}: {} {}", desc, program, args.join(" "));
@@ -1089,6 +1169,117 @@ async fn apply_selector_changes(
                 if entity_type == "mr" {
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                         item.draft = val.to_lowercase() == "draft";
+                    }
+                }
+            }
+        }
+        "description_edit_choice" => {
+            app.selector = None;
+            let choice = values.first().cloned().unwrap_or_default();
+            let is_github = app
+                .gitlab_client
+                .as_ref()
+                .map(|c| c.is_github)
+                .unwrap_or(false);
+
+            if iid == 0 {
+                if let Some(ref mut menu) = app.edit_menu {
+                    if let Some(f) = menu.fields.iter_mut().find(|f| f.0 == "Description") {
+                        if choice.starts_with("Basic Text Editor") {
+                            let current_val = if f.1.trim().is_empty() {
+                                let template_type = if entity_type == "new_mr" { "mr" } else { "issue" };
+                                get_default_template(template_type).unwrap_or_default()
+                            } else {
+                                f.1.clone()
+                            };
+                            if let Some(new_desc) = edit_in_editor(&current_val, terminal) {
+                                f.1 = new_desc;
+                            }
+                        } else {
+                            f.1 = "-".to_string();
+                        }
+                    }
+                }
+            } else {
+                let current_desc = if entity_type == "issue" {
+                    app.issues
+                        .items
+                        .iter()
+                        .find(|i| i.iid == iid)
+                        .and_then(|i| i.description.clone())
+                        .filter(|d| !d.trim().is_empty())
+                        .unwrap_or_else(|| get_default_template("issue").unwrap_or_default())
+                } else {
+                    app.mrs
+                        .items
+                        .iter()
+                        .find(|m| m.iid == iid)
+                        .and_then(|m| m.description.clone())
+                        .filter(|d| !d.trim().is_empty())
+                        .unwrap_or_else(|| get_default_template("mr").unwrap_or_default())
+                };
+
+                if choice.starts_with("Basic Text Editor") {
+                    if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
+                        if entity_type == "issue" {
+                            if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
+                                item.description = Some(new_desc.clone());
+                            }
+                        } else if entity_type == "mr" {
+                            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                                item.description = Some(new_desc.clone());
+                            }
+                        }
+                        run_glab_update(
+                            entity_type,
+                            iid,
+                            &["-d", &new_desc],
+                            terminal,
+                            tx.clone(),
+                            tab,
+                        )
+                        .await;
+                    }
+                } else {
+                    if is_github {
+                        run_glab_update(
+                            entity_type,
+                            iid,
+                            &["-e"],
+                            terminal,
+                            tx.clone(),
+                            tab,
+                        )
+                        .await;
+                    } else {
+                        run_glab_update(
+                            entity_type,
+                            iid,
+                            &["-d", "-"],
+                            terminal,
+                            tx.clone(),
+                            tab,
+                        )
+                        .await;
+                    }
+                    if let Some(client) = &app.gitlab_client {
+                        if entity_type == "issue" {
+                            if let Ok(updated) =
+                                gitlab::issues::get_issue(client, &app.project_context, iid).await
+                            {
+                                if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
+                                    *item = updated;
+                                }
+                            }
+                        } else if entity_type == "mr" {
+                            if let Ok(updated) =
+                                gitlab::mr::get_mr(client, &app.project_context, iid).await
+                            {
+                                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                                    *item = updated;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1377,64 +1568,32 @@ async fn handle_entity_update(
                 .as_ref()
                 .map(|c| c.is_github)
                 .unwrap_or(false);
-            if is_github {
-                let current_desc = if entity_type == "issue" {
-                    app.issues
-                        .items
-                        .iter()
-                        .find(|i| i.iid == iid)
-                        .and_then(|i| i.description.clone())
-                        .unwrap_or_default()
+            let choices = vec![
+                "Basic Text Editor ($EDITOR)".to_string(),
+                if is_github {
+                    "CLI Native Editor (gh -e)".to_string()
                 } else {
-                    app.mrs
-                        .items
-                        .iter()
-                        .find(|m| m.iid == iid)
-                        .and_then(|m| m.description.clone())
-                        .unwrap_or_default()
-                };
-                if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
-                    if entity_type == "issue" {
-                        if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                            item.description = Some(new_desc.clone());
-                        }
-                    } else if entity_type == "mr" {
-                        if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                            item.description = Some(new_desc.clone());
-                        }
-                    }
-                    run_glab_update(
-                        entity_type,
-                        iid,
-                        &["-d", &new_desc],
-                        terminal,
-                        tx.clone(),
-                        tab,
-                    )
-                    .await;
+                    "CLI Native Editor (glab -d -)".to_string()
                 }
-            } else {
-                run_glab_update(entity_type, iid, &["-d", "-"], terminal, tx.clone(), tab).await;
-                if let Some(client) = &app.gitlab_client {
-                    if entity_type == "issue" {
-                        if let Ok(updated) =
-                            gitlab::issues::get_issue(client, &app.project_context, iid).await
-                        {
-                            if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                                *item = updated;
-                            }
-                        }
-                    } else if entity_type == "mr" {
-                        if let Ok(updated) =
-                            gitlab::mr::get_mr(client, &app.project_context, iid).await
-                        {
-                            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                                *item = updated;
-                            }
-                        }
-                    }
-                }
-            }
+            ];
+            app.selector = Some(crate::app::Selector {
+                title: "Edit Description using:".to_string(),
+                all_items: choices,
+                selected_items: std::collections::HashSet::new(),
+                cursor_idx: 0,
+                search_query: String::new(),
+                is_filtering: false,
+                is_loading: false,
+                entity_iid: iid,
+                entity_type: entity_type.to_string(),
+                field_type: "description_edit_choice".to_string(),
+                multi_select: false,
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(0));
+                    s
+                },
+            });
         }
         _ => {}
     }
@@ -3461,6 +3620,123 @@ async fn main() -> Result<()> {
                                         }
                                     }
 
+                                    if field_type == "description_edit_choice" {
+                                        app.selector = None;
+                                        let choice = selected_list.first().cloned().unwrap_or_default();
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map(|c| c.is_github)
+                                            .unwrap_or(false);
+
+                                        if entity_iid == 0 {
+                                            if let Some(ref mut menu) = app.edit_menu {
+                                                if let Some(f) = menu.fields.iter_mut().find(|f| f.0 == "Description") {
+                                                    if choice.starts_with("Basic Text Editor") {
+                                                        let current_val = if f.1.trim().is_empty() {
+                                                            let template_type = if entity_type == "new_mr" { "mr" } else { "issue" };
+                                                            get_default_template(template_type).unwrap_or_default()
+                                                        } else {
+                                                            f.1.clone()
+                                                        };
+                                                        if let Some(new_desc) = edit_in_editor(&current_val, &mut terminal) {
+                                                            f.1 = new_desc;
+                                                        }
+                                                    } else {
+                                                        f.1 = "-".to_string();
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            let current_desc = if entity_type == "issue" {
+                                                app.issues
+                                                    .items
+                                                    .iter()
+                                                    .find(|i| i.iid == entity_iid)
+                                                    .and_then(|i| i.description.clone())
+                                                    .filter(|d| !d.trim().is_empty())
+                                                    .unwrap_or_else(|| get_default_template("issue").unwrap_or_default())
+                                            } else {
+                                                app.mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .filter(|d| !d.trim().is_empty())
+                                                    .unwrap_or_else(|| get_default_template("mr").unwrap_or_default())
+                                            };
+
+                                            if choice.starts_with("Basic Text Editor") {
+                                                if let Some(new_desc) = edit_in_editor(&current_desc, &mut terminal) {
+                                                    if entity_type == "issue" {
+                                                        if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == entity_iid) {
+                                                            item.description = Some(new_desc.clone());
+                                                        }
+                                                    } else if entity_type == "mr" {
+                                                        if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == entity_iid) {
+                                                            item.description = Some(new_desc.clone());
+                                                        }
+                                                    }
+                                                    let tx = events.sender();
+                                                    let tab = app.active_tab;
+                                                    run_glab_update(
+                                                        &entity_type,
+                                                        entity_iid,
+                                                        &["-d", &new_desc],
+                                                        &mut terminal,
+                                                        tx,
+                                                        tab,
+                                                    )
+                                                    .await;
+                                                }
+                                            } else {
+                                                let tx = events.sender();
+                                                let tab = app.active_tab;
+                                                if is_github {
+                                                    run_glab_update(
+                                                        &entity_type,
+                                                        entity_iid,
+                                                        &["-e"],
+                                                        &mut terminal,
+                                                        tx.clone(),
+                                                        tab,
+                                                    )
+                                                    .await;
+                                                } else {
+                                                    run_glab_update(
+                                                        &entity_type,
+                                                        entity_iid,
+                                                        &["-d", "-"],
+                                                        &mut terminal,
+                                                        tx.clone(),
+                                                        tab,
+                                                    )
+                                                    .await;
+                                                }
+                                                if let Some(client) = &app.gitlab_client {
+                                                    if entity_type == "issue" {
+                                                        if let Ok(updated) =
+                                                            gitlab::issues::get_issue(client, &app.project_context, entity_iid).await
+                                                        {
+                                                            if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == entity_iid) {
+                                                                *item = updated;
+                                                            }
+                                                        }
+                                                    } else if entity_type == "mr" {
+                                                        if let Ok(updated) =
+                                                            gitlab::mr::get_mr(client, &app.project_context, entity_iid).await
+                                                        {
+                                                            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == entity_iid) {
+                                                                *item = updated;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+
                                     if entity_iid == 0 {
                                         // Write the values directly to the active field of app.edit_menu
                                         if let Some(ref mut menu) = app.edit_menu {
@@ -4138,12 +4414,47 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
 
+                                if field_name == "Description" {
+                                    let is_github = app
+                                        .gitlab_client
+                                        .as_ref()
+                                        .map(|c| c.is_github)
+                                        .unwrap_or(false);
+                                    let choices = vec![
+                                        "Basic Text Editor ($EDITOR)".to_string(),
+                                        if is_github {
+                                            "CLI Native Editor (gh -e)".to_string()
+                                        } else {
+                                            "CLI Native Editor (glab -d -)".to_string()
+                                        }
+                                    ];
+                                    app.selector = Some(crate::app::Selector {
+                                        title: "Edit Description using:".to_string(),
+                                        all_items: choices,
+                                        selected_items: std::collections::HashSet::new(),
+                                        cursor_idx: 0,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid,
+                                        entity_type: entity_type.clone(),
+                                        field_type: "description_edit_choice".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                    app.edit_menu = Some(menu);
+                                    continue;
+                                }
+
                                 if field_name == "Title"
                                     || field_name == "Source Branch"
                                     || field_name == "Target Branch"
                                     || field_name == "Due Date"
                                     || field_name == "Weight"
-                                    || field_name == "Description"
                                     || field_name == "Branch / Ref"
                                     || field_name == "Variables"
                                     || field_name == "Inputs"

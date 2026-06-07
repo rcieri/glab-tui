@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -6,6 +8,7 @@ use tokio::sync::mpsc;
 pub static PAUSED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum Event {
     Tick,
     Key(KeyEvent),
@@ -21,10 +24,17 @@ pub enum Event {
     FetchFailed(crate::app::Tab, String),
     DiffFetched(u64, String),
     DiffFetchFailed(String),
-    NotificationsFetched(Vec<crate::gitlab::notifications::Notification>),
+    TodosFetched(Vec<crate::gitlab::notifications::Notification>),
     JobsTabFetched(u64, Vec<crate::gitlab::pipelines::Job>),
     CommandStarted(String),
     CommandCompleted(crate::app::Tab, Result<(), String>),
+    TerminalCommandLogged {
+        timestamp: String,
+        command: String,
+        status: String,
+    },
+    MilestonesFetched(Vec<crate::gitlab::milestones::Milestone>),
+    MilestoneIssuesFetched(u64, Vec<crate::gitlab::issues::Issue>),
 }
 
 #[derive(Debug)]

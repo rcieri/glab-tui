@@ -16,6 +16,37 @@ pub struct Notification {
 }
 
 pub async fn list_notifications(client: &GitlabClient) -> Result<Vec<Notification>> {
+    let cmd_str = if client.is_github {
+        "gh api notifications".to_string()
+    } else {
+        "glab api todos".to_string()
+    };
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    if let Some(ref tx) = client.tx {
+        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+            timestamp: timestamp.clone(),
+            command: cmd_str.clone(),
+            status: "Running".to_string(),
+        });
+    }
+
+    let res = list_notifications_inner(client).await;
+
+    if let Some(ref tx) = client.tx {
+        let status = match &res {
+            Ok(_) => "Success".to_string(),
+            Err(e) => format!("Failed: {}", e),
+        };
+        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+            timestamp: timestamp.clone(),
+            command: cmd_str.clone(),
+            status,
+        });
+    }
+    res
+}
+
+async fn list_notifications_inner(client: &GitlabClient) -> Result<Vec<Notification>> {
     if client.is_github {
         let output = Command::new("gh")
             .args(["api", "notifications"])
@@ -160,6 +191,39 @@ pub async fn list_notifications(client: &GitlabClient) -> Result<Vec<Notificatio
 }
 
 pub async fn mark_notification_as_read(client: &GitlabClient, id: &str) -> Result<()> {
+    let cmd_str = if client.is_github {
+        let endpoint = format!("notifications/threads/{}", id);
+        format!("gh api --method PATCH {}", endpoint)
+    } else {
+        let endpoint = format!("todos/{}/mark_as_done", id);
+        format!("glab api --method POST {}", endpoint)
+    };
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    if let Some(ref tx) = client.tx {
+        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+            timestamp: timestamp.clone(),
+            command: cmd_str.clone(),
+            status: "Running".to_string(),
+        });
+    }
+
+    let res = mark_notification_as_read_inner(client, id).await;
+
+    if let Some(ref tx) = client.tx {
+        let status = match &res {
+            Ok(_) => "Success".to_string(),
+            Err(e) => format!("Failed: {}", e),
+        };
+        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+            timestamp: timestamp.clone(),
+            command: cmd_str.clone(),
+            status,
+        });
+    }
+    res
+}
+
+async fn mark_notification_as_read_inner(client: &GitlabClient, id: &str) -> Result<()> {
     if client.is_github {
         let endpoint = format!("notifications/threads/{}", id);
         let output = Command::new("gh")

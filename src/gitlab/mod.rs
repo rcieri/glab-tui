@@ -1,5 +1,6 @@
 pub mod client;
 pub mod issues;
+pub mod milestones;
 pub mod mr;
 pub mod notifications;
 pub mod pipelines;

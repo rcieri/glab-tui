@@ -1,0 +1,35 @@
+name: MSRV
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main", "dev"]
+  schedule:
+    # Run weekly to catch MSRV regressions from dep updates
+    - cron: "0 8 * * 2"
+
+env:
+  CARGO_TERM_COLOR: always
+  # edition 2024 requires Rust >= 1.85, but dependencies require >= 1.88
+  MSRV: "1.88"
+
+jobs:
+  msrv:
+    name: Check MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MSRV toolchain (${{ env.MSRV }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.MSRV }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-${{ env.MSRV }}
+
+      - name: Check build on MSRV
+        run: cargo check --all-targets

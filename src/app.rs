@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -12,18 +14,22 @@ pub enum Tab {
     Jobs,
     Runners,
     Releases,
-    Notifications,
+    Todos,
+    Milestones,
+    Terminal,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 7] = [
+    pub const ALL: [Tab; 9] = [
         Tab::Issues,
         Tab::MergeRequests,
         Tab::Pipelines,
         Tab::Jobs,
         Tab::Runners,
         Tab::Releases,
-        Tab::Notifications,
+        Tab::Todos,
+        Tab::Milestones,
+        Tab::Terminal,
     ];
 
     pub fn title(&self, is_github: bool) -> &'static str {
@@ -40,7 +46,9 @@ impl Tab {
             Tab::Jobs => "Jobs",
             Tab::Runners => "Runners",
             Tab::Releases => "Releases",
-            Tab::Notifications => "Notifications",
+            Tab::Todos => "Todos",
+            Tab::Milestones => "Milestones",
+            Tab::Terminal => "Terminal",
         }
     }
 
@@ -54,6 +62,7 @@ impl Tab {
                 "Labels",
                 "Milestone",
                 "Author",
+                "Show Closed Items",
             ],
             Tab::MergeRequests => vec![
                 "ID",
@@ -65,12 +74,15 @@ impl Tab {
                 "Labels",
                 "Milestone",
                 "Author",
+                "Show Closed Items",
             ],
             Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec!["Tag", "Release Name", "Date"],
-            Tab::Notifications => vec!["State", "Project", "Type", "ID", "Title"],
+            Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
+            Tab::Milestones => vec!["IID", "Title", "State", "Start Date", "Due Date"],
+            Tab::Terminal => vec![],
         }
     }
 
@@ -82,7 +94,9 @@ impl Tab {
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec!["Tag", "Release Name", "Date"],
-            Tab::Notifications => vec!["State", "Project", "Type", "ID", "Title"],
+            Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
+            Tab::Milestones => vec!["IID", "Title", "State", "Due Date"],
+            Tab::Terminal => vec![],
         }
     }
 }
@@ -95,6 +109,12 @@ pub struct EditMenu {
     pub entity_iid: u64,
     pub entity_type: String, // "issue", "mr"
     pub state: ListState,
+}
+
+impl EditMenu {
+    pub fn is_new(&self) -> bool {
+        self.entity_type.starts_with("new_")
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -122,20 +142,11 @@ impl Selector {
                 .map(|item| (item.clone(), None))
                 .collect()
         } else {
-            let matcher = SkimMatcherV2::default();
-            let mut scored: Vec<(String, Vec<usize>, i64)> = self
-                .all_items
+            let q = query.to_lowercase();
+            self.all_items
                 .iter()
-                .filter_map(|item| {
-                    matcher
-                        .fuzzy_indices(item, query)
-                        .map(|(score, indices)| (item.clone(), indices, score))
-                })
-                .collect();
-            scored.sort_by(|a, b| b.2.cmp(&a.2));
-            scored
-                .into_iter()
-                .map(|(item, indices, _)| (item, Some(indices)))
+                .filter(|item| item.to_lowercase().contains(&q))
+                .map(|item| (item.clone(), None))
                 .collect()
         };
 
@@ -145,7 +156,7 @@ impl Selector {
                 .iter()
                 .any(|item| item.to_lowercase() == query.to_lowercase());
             if !exact_match {
-                items.insert(0, (format!("+ Create \"{}\"", query), None));
+                items.push((format!("+ Create \"{}\"", query), None));
             }
         }
         items
@@ -348,6 +359,7 @@ pub struct FlatDiffTreeNode {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DiffView {
     pub mr_iid: u64,
     pub raw_diff: String,
@@ -633,11 +645,25 @@ fn parse_hunk_header(header: &str) -> Option<(u32, u32)> {
 }
 
 #[derive(Clone, Debug)]
+pub struct DraftComment {
+    pub file_path: String,
+    pub line_num: Option<u32>,
+    pub old_line_num: Option<u32>,
+    pub body: String,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum TextInputAction {
     EditField {
         entity_iid: u64,
         entity_type: String,
         field_type: String,
+    },
+    /// Edit a field inside a "new entity" EditMenu (iid=0). The value is
+    /// written back to `edit_menu.fields[field_idx]` on confirm.
+    EditNewField {
+        field_idx: usize,
     },
     CreateIssue,
     AddReviewComment {
@@ -647,6 +673,11 @@ pub enum TextInputAction {
         old_line_num: Option<u32>,
     },
     EnterPipelineId,
+    CreateRelease,
+    SubmitReviewFinal {
+        mr_iid: u64,
+        status: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -657,11 +688,25 @@ pub struct TextInput {
     pub action: TextInputAction,
 }
 
+#[derive(Debug, Clone)]
+pub struct TerminalCommand {
+    pub timestamp: String,
+    pub command: String,
+    pub status: String,
+}
+
+#[derive(Debug)]
+pub enum GroupItem {
+    Header(String),
+    Item(usize),
+}
+
 pub struct App {
     pub active_tab: Tab,
     pub running: bool,
     pub project_context: String,
     pub gitlab_client: Option<crate::gitlab::client::GitlabClient>,
+    pub terminal_commands: Vec<TerminalCommand>,
     pub issues: StatefulTable<crate::gitlab::issues::Issue>,
     pub mrs: StatefulTable<crate::gitlab::mr::MergeRequest>,
     pub pipelines: StatefulTable<crate::gitlab::pipelines::Pipeline>,
@@ -693,13 +738,24 @@ pub struct App {
     pub help_search_query: String,
     pub diff_view: Option<DiffView>,
     pub diff_loading: bool,
-    pub notifications: StatefulTable<crate::gitlab::notifications::Notification>,
+    pub todos: StatefulTable<crate::gitlab::notifications::Notification>,
     pub status_message: Option<String>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub enabled_columns: std::collections::HashMap<Tab, std::collections::HashSet<String>>,
     pub focus_column_checklist: bool,
     pub column_checklist_idx: usize,
+    pub in_review_mode: bool,
+    pub draft_comments: Vec<DraftComment>,
+    pub milestones: StatefulTable<crate::gitlab::milestones::Milestone>,
+    pub selected_milestone_issues: Option<Vec<crate::gitlab::issues::Issue>>,
+    pub selected_milestone_iid: Option<u64>,
+    pub terminal_scroll: usize,
+    pub focus_grouping: bool,
+    pub grouping_idx: usize,
+    pub group_by_column: Option<String>,
+    pub group_list_state: ratatui::widgets::ListState,
+    pub group_items: Vec<GroupItem>,
 }
 
 impl Default for App {
@@ -709,6 +765,7 @@ impl Default for App {
             running: true,
             project_context: "group/repository".to_string(),
             gitlab_client: None,
+            terminal_commands: vec![],
             issues: StatefulTable::with_items(vec![]),
             mrs: StatefulTable::with_items(vec![]),
             pipelines: StatefulTable::with_items(vec![]),
@@ -740,7 +797,7 @@ impl Default for App {
             help_search_query: String::new(),
             diff_view: None,
             diff_loading: false,
-            notifications: StatefulTable::with_items(vec![]),
+            todos: StatefulTable::with_items(vec![]),
             status_message: None,
             refreshed_tabs: std::collections::HashSet::new(),
             tx: None,
@@ -758,11 +815,34 @@ impl Default for App {
             },
             focus_column_checklist: false,
             column_checklist_idx: 0,
+            in_review_mode: false,
+            draft_comments: Vec::new(),
+            milestones: StatefulTable::with_items(vec![]),
+            selected_milestone_issues: None,
+            selected_milestone_iid: None,
+            terminal_scroll: 0,
+            focus_grouping: false,
+            grouping_idx: 0,
+            group_by_column: None,
+            group_list_state: ratatui::widgets::ListState::default(),
+            group_items: Vec::new(),
         }
     }
 }
 
 impl App {
+    pub fn start_loading_tab(&mut self, tab: Tab) {
+        if !self.loading_tabs.contains(&tab) {
+            self.loading_tabs.insert(tab);
+        }
+    }
+
+    pub fn complete_loading_tab(&mut self, tab: Tab, _status: &str) {
+        self.loading_tabs.remove(&tab);
+        self.loaded_tabs.insert(tab);
+        self.refreshed_tabs.insert(tab);
+    }
+
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
         if let Some(set) = self.enabled_columns.get(&tab) {
             set.contains(col)
@@ -818,62 +898,53 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
-        let mut scored_items = Vec::new();
-
-        for item in items {
-            let mut best_score = None;
-
-            let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
+                    }
+                };
+                if enabled_cols.contains("ID") {
+                    check_match(&format!("#{}", item.iid));
+                    check_match(&item.iid.to_string());
+                }
+                if enabled_cols.contains("State") {
+                    if item.state == "opened" {
+                        check_match("OPEN");
+                    } else if item.state == "closed" {
+                        check_match("CLOSED");
                     }
                 }
-            };
-
-            if enabled_cols.contains("ID") {
-                check_match(&format!("#{}", item.iid));
-                check_match(&item.iid.to_string());
-            }
-            if enabled_cols.contains("State") {
-                if item.state == "opened" {
-                    check_match("OPEN");
-                } else if item.state == "closed" {
-                    check_match("CLOSED");
+                if enabled_cols.contains("Title") {
+                    check_match(&item.title);
                 }
-            }
-            if enabled_cols.contains("Title") {
-                check_match(&item.title);
-            }
-            if enabled_cols.contains("Author") {
-                check_match(&item.author.username);
-                check_match(&format!("@{}", item.author.username));
-            }
-            if enabled_cols.contains("Milestone") {
-                if let Some(m) = &item.milestone {
-                    check_match(&m.title);
+                if enabled_cols.contains("Author") {
+                    check_match(&item.author.username);
+                    check_match(&format!("@{}", item.author.username));
                 }
-            }
-            if enabled_cols.contains("Labels") {
-                for label in &item.labels {
-                    check_match(label);
+                if enabled_cols.contains("Milestone") {
+                    if let Some(m) = &item.milestone {
+                        check_match(&m.title);
+                    }
                 }
-            }
-            if enabled_cols.contains("Assignees") {
-                for assignee in &item.assignees {
-                    check_match(&assignee.username);
-                    check_match(&format!("@{}", assignee.username));
+                if enabled_cols.contains("Labels") {
+                    for label in &item.labels {
+                        check_match(label);
+                    }
                 }
-            }
-
-            if let Some(score) = best_score {
-                scored_items.push((item, score));
-            }
-        }
-
-        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
-        scored_items.into_iter().map(|(item, _)| item).collect()
+                if enabled_cols.contains("Assignees") {
+                    for assignee in &item.assignees {
+                        check_match(&assignee.username);
+                        check_match(&format!("@{}", assignee.username));
+                    }
+                }
+                matches
+            })
+            .collect()
     }
 
     pub fn filtered_issues(&self) -> Vec<&crate::gitlab::issues::Issue> {
@@ -986,47 +1057,38 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
-        let mut scored_items = Vec::new();
-
-        for item in items {
-            let mut best_score = None;
-
-            let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
+                    }
+                };
+                if enabled_cols.contains("ID") {
+                    check_match(&format!("#{}", item.id));
+                    check_match(&item.id.to_string());
+                }
+                if enabled_cols.contains("Status") {
+                    check_match(&item.status);
+                }
+                if enabled_cols.contains("Ref") {
+                    check_match(&item.r#ref);
+                }
+                if enabled_cols.contains("Stages") {
+                    if let Some(jobs) = pipeline_jobs.get(&item.id) {
+                        for job in jobs {
+                            check_match(&job.name);
+                            check_match(&job.stage);
+                            check_match(&job.status);
+                        }
                     }
                 }
-            };
-
-            if enabled_cols.contains("ID") {
-                check_match(&format!("#{}", item.id));
-                check_match(&item.id.to_string());
-            }
-            if enabled_cols.contains("Status") {
-                check_match(&item.status);
-            }
-            if enabled_cols.contains("Ref") {
-                check_match(&item.r#ref);
-            }
-            if enabled_cols.contains("Stages") {
-                if let Some(jobs) = pipeline_jobs.get(&item.id) {
-                    for job in jobs {
-                        check_match(&job.name);
-                        check_match(&job.stage);
-                        check_match(&job.status);
-                    }
-                }
-            }
-
-            if let Some(score) = best_score {
-                scored_items.push((item, score));
-            }
-        }
-
-        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
-        scored_items.into_iter().map(|(item, _)| item).collect()
+                matches
+            })
+            .collect()
     }
 
     pub fn filtered_pipelines(&self) -> Vec<&crate::gitlab::pipelines::Pipeline> {
@@ -1051,40 +1113,36 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
-        let mut scored_items = Vec::new();
-        for item in items {
-            let mut best_score = None;
-            let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
+                    }
+                };
+                if enabled_cols.contains("ID") {
+                    check_match(&item.id.to_string());
+                }
+                if enabled_cols.contains("Status") {
+                    check_match(&item.status);
+                }
+                if enabled_cols.contains("Stage") {
+                    check_match(&item.stage);
+                }
+                if enabled_cols.contains("Name") {
+                    check_match(&item.name);
+                }
+                if enabled_cols.contains("Matrix") {
+                    if let Some(matrix) = &item.matrix {
+                        check_match(matrix);
                     }
                 }
-            };
-            if enabled_cols.contains("ID") {
-                check_match(&item.id.to_string());
-            }
-            if enabled_cols.contains("Status") {
-                check_match(&item.status);
-            }
-            if enabled_cols.contains("Stage") {
-                check_match(&item.stage);
-            }
-            if enabled_cols.contains("Name") {
-                check_match(&item.name);
-            }
-            if enabled_cols.contains("Matrix") {
-                if let Some(matrix) = &item.matrix {
-                    check_match(matrix);
-                }
-            }
-            if let Some(score) = best_score {
-                scored_items.push((item, score));
-            }
-        }
-        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
-        scored_items.into_iter().map(|(item, _)| item).collect()
+                matches
+            })
+            .collect()
     }
 
     pub fn filtered_jobs(&self) -> Vec<&crate::gitlab::pipelines::Job> {
@@ -1105,44 +1163,35 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
-        let mut scored_items = Vec::new();
-
-        for item in items {
-            let mut best_score = None;
-
-            let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
+                    }
+                };
+                if enabled_cols.contains("ID") {
+                    check_match(&item.id.to_string());
+                }
+                if enabled_cols.contains("Description") {
+                    if let Some(desc) = &item.description {
+                        check_match(desc);
                     }
                 }
-            };
-
-            if enabled_cols.contains("ID") {
-                check_match(&item.id.to_string());
-            }
-            if enabled_cols.contains("Description") {
-                if let Some(desc) = &item.description {
-                    check_match(desc);
+                if enabled_cols.contains("Status") {
+                    check_match(&item.status);
                 }
-            }
-            if enabled_cols.contains("Status") {
-                check_match(&item.status);
-            }
-            if enabled_cols.contains("Active") {
-                let active_str = if item.active { "active" } else { "inactive" };
-                check_match(active_str);
-                check_match(&item.active.to_string());
-            }
-
-            if let Some(score) = best_score {
-                scored_items.push((item, score));
-            }
-        }
-
-        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
-        scored_items.into_iter().map(|(item, _)| item).collect()
+                if enabled_cols.contains("Active") {
+                    let active_str = if item.active { "active" } else { "inactive" };
+                    check_match(active_str);
+                    check_match(&item.active.to_string());
+                }
+                matches
+            })
+            .collect()
     }
 
     pub fn filtered_runners(&self) -> Vec<&crate::gitlab::runners::Runner> {
@@ -1162,38 +1211,29 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
-        let mut scored_items = Vec::new();
-
-        for item in items {
-            let mut best_score = None;
-
-            let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
                     }
+                };
+                if enabled_cols.contains("Tag") {
+                    check_match(&item.tag_name);
                 }
-            };
-
-            if enabled_cols.contains("Tag") {
-                check_match(&item.tag_name);
-            }
-            if enabled_cols.contains("Release Name") {
-                check_match(&item.name);
-            }
-            if enabled_cols.contains("Date") {
-                check_match(&item.released_at);
-                check_match(&crate::utils::format::time_ago(&item.released_at));
-            }
-
-            if let Some(score) = best_score {
-                scored_items.push((item, score));
-            }
-        }
-
-        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
-        scored_items.into_iter().map(|(item, _)| item).collect()
+                if enabled_cols.contains("Release Name") {
+                    check_match(&item.name);
+                }
+                if enabled_cols.contains("Date") {
+                    check_match(&item.released_at);
+                    check_match(&crate::utils::format::time_ago(&item.released_at));
+                }
+                matches
+            })
+            .collect()
     }
 
     pub fn filtered_releases(&self) -> Vec<&crate::gitlab::releases::Release> {
@@ -1205,7 +1245,7 @@ impl App {
         Self::filter_releases_list(&self.releases.items, &self.search_query, enabled_cols)
     }
 
-    pub fn filter_notifications_list<'a>(
+    pub fn filter_todos_list<'a>(
         items: &'a [crate::gitlab::notifications::Notification],
         query: &str,
         enabled_cols: &std::collections::HashSet<String>,
@@ -1213,53 +1253,276 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
-        let mut scored_items = Vec::new();
-
-        for item in items {
-            let mut best_score = None;
-
-            let mut check_match = |text: &str| {
-                if let Some(score) = matcher.fuzzy_match(text, query) {
-                    if best_score.is_none() || Some(score) > best_score {
-                        best_score = Some(score);
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
                     }
+                };
+                if enabled_cols.contains("State") {
+                    check_match(&item.state);
                 }
-            };
-
-            if enabled_cols.contains("State") {
-                check_match(&item.state);
-            }
-            if enabled_cols.contains("Project") {
-                check_match(&item.project_path);
-            }
-            if enabled_cols.contains("Type") {
-                check_match(&item.target_type);
-            }
-            if enabled_cols.contains("ID") {
-                check_match(&item.target_iid.to_string());
-                check_match(&format!("#{}", item.target_iid));
-            }
-            if enabled_cols.contains("Title") {
-                check_match(&item.title);
-            }
-
-            if let Some(score) = best_score {
-                scored_items.push((item, score));
-            }
-        }
-
-        scored_items.sort_by(|a, b| b.1.cmp(&a.1));
-        scored_items.into_iter().map(|(item, _)| item).collect()
+                if enabled_cols.contains("Project") {
+                    check_match(&item.project_path);
+                }
+                if enabled_cols.contains("Type") {
+                    check_match(&item.target_type);
+                }
+                if enabled_cols.contains("ID") {
+                    check_match(&item.target_iid.to_string());
+                    check_match(&format!("#{}", item.target_iid));
+                }
+                if enabled_cols.contains("Title") {
+                    check_match(&item.title);
+                }
+                matches
+            })
+            .collect()
     }
 
-    pub fn filtered_notifications(&self) -> Vec<&crate::gitlab::notifications::Notification> {
+    pub fn filtered_todos(&self) -> Vec<&crate::gitlab::notifications::Notification> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = self
             .enabled_columns
-            .get(&Tab::Notifications)
+            .get(&Tab::Todos)
             .unwrap_or(&default_set);
-        Self::filter_notifications_list(&self.notifications.items, &self.search_query, enabled_cols)
+        Self::filter_todos_list(&self.todos.items, &self.search_query, enabled_cols)
+    }
+
+    pub fn filter_milestones_list<'a>(
+        items: &'a [crate::gitlab::milestones::Milestone],
+        query: &str,
+        enabled_cols: &std::collections::HashSet<String>,
+    ) -> Vec<&'a crate::gitlab::milestones::Milestone> {
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
+                    }
+                };
+                if enabled_cols.contains("IID") {
+                    check_match(&item.iid.to_string());
+                    check_match(&format!("#{}", item.iid));
+                }
+                if enabled_cols.contains("Title") {
+                    check_match(&item.title);
+                }
+                if enabled_cols.contains("State") {
+                    check_match(&item.state);
+                }
+                if enabled_cols.contains("Start Date") {
+                    if let Some(d) = &item.start_date {
+                        check_match(d);
+                    }
+                }
+                if enabled_cols.contains("Due Date") {
+                    if let Some(d) = &item.due_date {
+                        check_match(d);
+                    }
+                }
+                matches
+            })
+            .collect()
+    }
+
+    pub fn filtered_milestones(&self) -> Vec<&crate::gitlab::milestones::Milestone> {
+        let default_set = std::collections::HashSet::new();
+        let enabled_cols = self
+            .enabled_columns
+            .get(&Tab::Milestones)
+            .unwrap_or(&default_set);
+        Self::filter_milestones_list(&self.milestones.items, &self.search_query, enabled_cols)
+    }
+
+    pub fn rebuild_group_map(&mut self) {
+        self.group_items.clear();
+        let Some(col) = self.group_by_column.clone() else { return };
+        let column_label = col.clone();
+        let groups: std::collections::BTreeMap<String, Vec<usize>> = match self.active_tab {
+            Tab::Issues => {
+                let items = self.filtered_issues();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, i) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "State" => i.state.clone(),
+                        "Author" => i.author.username.clone(),
+                        "Labels" => {
+                            if i.labels.is_empty() {
+                                "None".to_string()
+                            } else {
+                                i.labels[0].clone()
+                            }
+                        }
+                        "Milestone" => i
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .unwrap_or_else(|| "None".to_string()),
+                        "Assignees" => {
+                            if i.assignees.is_empty() {
+                                "Unassigned".to_string()
+                            } else {
+                                i.assignees
+                                    .iter()
+                                    .map(|a| a.username.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }
+                        }
+                        "ID" => format!("#{}", i.iid),
+                        "Title" => {
+                            let c = i.title.chars().next().unwrap_or('?');
+                            c.to_uppercase().to_string()
+                        }
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::MergeRequests => {
+                let items = self.filtered_mrs();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, m) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "State" => m.state.clone(),
+                        "Author" => m.author.username.clone(),
+                        "Labels" => {
+                            if m.labels.is_empty() {
+                                "None".to_string()
+                            } else {
+                                m.labels[0].clone()
+                            }
+                        }
+                        "Milestone" => m
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .unwrap_or_else(|| "None".to_string()),
+                        "Assignees" => {
+                            if m.assignees.is_empty() {
+                                "Unassigned".to_string()
+                            } else {
+                                m.assignees
+                                    .iter()
+                                    .map(|a| a.username.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }
+                        }
+                        "Reviewers" => {
+                            if m.reviewers.is_empty() {
+                                "None".to_string()
+                            } else {
+                                m.reviewers
+                                    .iter()
+                                    .map(|r| r.username.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }
+                        }
+                        "Status" => {
+                            if m.draft {
+                                "Draft".to_string()
+                            } else {
+                                "Ready".to_string()
+                            }
+                        }
+                        "ID" => format!("#{}", m.iid),
+                        "Title" => {
+                            let c = m.title.chars().next().unwrap_or('?');
+                            c.to_uppercase().to_string()
+                        }
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Todos => {
+                let items = self.filtered_todos();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, n) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "State" => n.state.clone(),
+                        "Type" => n.target_type.clone(),
+                        "Project" => n.project_path.clone(),
+                        "ID" => format!("#{}", n.target_iid),
+                        "Title" => {
+                            let c = n.title.chars().next().unwrap_or('?');
+                            c.to_uppercase().to_string()
+                        }
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Pipelines => {
+                let items = self.filtered_pipelines();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, p) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "Status" => p.status.clone(),
+                        "Ref" => p.r#ref.clone(),
+                        "ID" => format!("#{}", p.id),
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Jobs => {
+                let items = self.filtered_jobs();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, j) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "Status" => j.status.clone(),
+                        "Stage" => j.stage.clone(),
+                        "Name" => j.name.clone(),
+                        "ID" => format!("#{}", j.id),
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            _ => return,
+        };
+        for (name, indices) in &groups {
+            self.group_items.push(GroupItem::Header(format!("{}: {}", column_label, name)));
+            for &i in indices {
+                self.group_items.push(GroupItem::Item(i));
+            }
+        }
+        let total = self.group_items.len();
+        if total > 0 {
+            if let Some(sel) = self.group_list_state.selected() {
+                if sel >= total {
+                    self.group_list_state.select(Some(total - 1));
+                }
+            } else {
+                self.group_list_state.select(Some(0));
+            }
+        } else {
+            self.group_list_state.select(None);
+        }
     }
 
     pub fn update_filter_selection(&mut self) {
@@ -1354,20 +1617,20 @@ impl App {
                     }
                 }
             }
-            Tab::Notifications => {
-                let len = self.filtered_notifications().len();
-                let sel = self.notifications.state.selected();
+            Tab::Todos => {
+                let len = self.filtered_todos().len();
+                let sel = self.todos.state.selected();
                 if len == 0 {
-                    self.notifications.state.select(None);
+                    self.todos.state.select(None);
                 } else {
                     match sel {
                         Some(idx) => {
                             if idx >= len {
-                                self.notifications.state.select(Some(len - 1));
+                                self.todos.state.select(Some(len - 1));
                             }
                         }
                         None => {
-                            self.notifications.state.select(Some(0));
+                            self.todos.state.select(Some(0));
                         }
                     }
                 }
@@ -1383,7 +1646,27 @@ impl App {
                     self.jobs_list_state.select(Some(idx));
                 }
             }
+            Tab::Milestones => {
+                let len = self.filtered_milestones().len();
+                let sel = self.milestones.state.selected();
+                if len == 0 {
+                    self.milestones.state.select(None);
+                } else {
+                    match sel {
+                        Some(idx) => {
+                            if idx >= len {
+                                self.milestones.state.select(Some(len - 1));
+                            }
+                        }
+                        None => {
+                            self.milestones.state.select(Some(0));
+                        }
+                    }
+                }
+            }
+            Tab::Terminal => {}
         }
+        self.rebuild_group_map();
     }
 }
 

@@ -1,0 +1,35 @@
+# PR Labeler configuration
+# Maps file path globs to label names.
+# Docs: https://github.com/actions/labeler
+
+feature:
+  - changed-files:
+    - any-glob-to-any-file: "src/**"
+
+ui:
+  - changed-files:
+    - any-glob-to-any-file: "src/ui.rs"
+
+gitlab-api:
+  - changed-files:
+    - any-glob-to-any-file: "src/gitlab/**"
+
+cache:
+  - changed-files:
+    - any-glob-to-any-file: "src/utils/**"
+
+ci/cd:
+  - changed-files:
+    - any-glob-to-any-file: ".github/**"
+
+chore:
+  - changed-files:
+    - any-glob-to-any-file:
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - "*.md"
+      - "**/*.md"

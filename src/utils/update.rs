@@ -26,7 +26,20 @@ pub async fn perform_self_update() -> Result<bool> {
     }
 
     let target_os = std::env::consts::OS;
-    let pattern = if target_os == "windows" { "*.exe" } else { "*" };
+    let target_arch = std::env::consts::ARCH;
+
+    let arch_str = match target_arch {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        _ => "amd64", // fallback
+    };
+
+    let asset_name = match target_os {
+        "linux" => format!("glab-tui-linux-{}.tar.gz", arch_str),
+        "macos" => format!("glab-tui-macos-{}.tar.gz", arch_str),
+        "windows" => "glab-tui-windows-amd64.zip".to_string(),
+        _ => anyhow::bail!("Unsupported operating system: {}", target_os),
+    };
 
     let temp_dir = tempdir()?;
     let download_output = tokio::process::Command::new("gh")
@@ -37,7 +50,7 @@ pub async fn perform_self_update() -> Result<bool> {
             "-R",
             "rcieri/glab-tui",
             "-p",
-            pattern,
+            &asset_name,
             "--dir",
             temp_dir.path().to_str().unwrap(),
         ])
@@ -49,17 +62,63 @@ pub async fn perform_self_update() -> Result<bool> {
         anyhow::bail!("Failed to download release binary: {}", err);
     }
 
-    let entries = fs::read_dir(temp_dir.path())?;
-    let mut downloaded_file_path = None;
-    for entry in entries {
-        let entry = entry?;
-        if entry.file_type()?.is_file() {
-            downloaded_file_path = Some(entry.path());
-            break;
+    let archive_path = temp_dir.path().join(&asset_name);
+    if !archive_path.exists() {
+        anyhow::bail!(
+            "Downloaded asset not found at expected path: {:?}",
+            archive_path
+        );
+    }
+
+    let extract_dir = temp_dir.path().join("extracted");
+    fs::create_dir_all(&extract_dir)?;
+
+    if target_os == "windows" {
+        let output = tokio::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                    archive_path.to_str().unwrap(),
+                    extract_dir.to_str().unwrap()
+                ),
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to unzip Windows release archive: {}", err);
+        }
+    } else {
+        let output = tokio::process::Command::new("tar")
+            .args([
+                "-xzf",
+                archive_path.to_str().unwrap(),
+                "-C",
+                extract_dir.to_str().unwrap(),
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to untar Linux/macOS release archive: {}", err);
         }
     }
 
-    let new_bin_path = downloaded_file_path.context("No file was downloaded")?;
+    let exe_filename = if target_os == "windows" {
+        "glab-tui.exe"
+    } else {
+        "glab-tui"
+    };
+    let new_bin_path = extract_dir.join(exe_filename);
+    if !new_bin_path.exists() {
+        anyhow::bail!(
+            "Extracted binary not found at expected path: {:?}",
+            new_bin_path
+        );
+    }
+
     let current_exe = std::env::current_exe()?;
 
     let mut old_exe = current_exe.clone();

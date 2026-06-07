@@ -25,6 +25,8 @@ pub struct Issue {
     #[serde(default)]
     pub labels: Vec<String>,
     pub updated_at: String,
+    pub created_at: Option<String>,
+    pub closed_at: Option<String>,
     pub author: Author,
     pub milestone: Option<Milestone>,
     #[serde(default)]
@@ -32,11 +34,16 @@ pub struct Issue {
     pub description: Option<String>,
 }
 
-pub async fn list_issues(client: &GitlabClient, project_path: &str) -> Result<Vec<Issue>> {
+pub async fn list_issues(
+    client: &GitlabClient,
+    project_path: &str,
+    show_closed: bool,
+) -> Result<Vec<Issue>> {
     let encoded_path = project_path.replace("/", "%2F");
+    let state_param = if show_closed { "all" } else { "opened" };
     let endpoint = format!(
-        "/projects/{}/issues?state=opened&per_page=100",
-        encoded_path
+        "/projects/{}/issues?state={}&per_page=100",
+        encoded_path, state_param
     );
     client.fetch_api(&endpoint).await
 }

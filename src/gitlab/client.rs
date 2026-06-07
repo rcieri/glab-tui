@@ -4,6 +4,42 @@ use tokio::process::Command;
 #[derive(Debug, Clone)]
 pub struct GitlabClient {
     pub is_github: bool,
+    pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+}
+
+fn get_api_description(endpoint: &str, is_github: bool) -> String {
+    let pr_suffix = if is_github { "PR" } else { "MR" };
+    let prs_suffix = if is_github { "PRs" } else { "MRs" };
+
+    if endpoint.contains("/issues/") {
+        "Fetching Issue".to_string()
+    } else if endpoint.contains("/issues") {
+        "Fetching Issues".to_string()
+    } else if endpoint.contains("/merge_requests/") {
+        format!("Fetching {}", pr_suffix)
+    } else if endpoint.contains("/merge_requests") {
+        format!("Fetching {}", prs_suffix)
+    } else if endpoint.contains("/pipelines/") && endpoint.contains("/jobs") {
+        "Fetching Jobs".to_string()
+    } else if endpoint.contains("/pipelines") {
+        "Fetching Pipelines".to_string()
+    } else if endpoint.contains("/runners") {
+        "Fetching Runners".to_string()
+    } else if endpoint.contains("/releases") {
+        "Fetching Releases".to_string()
+    } else if endpoint.contains("/milestones/") && endpoint.contains("/issues") {
+        "Fetching Milestone Issues".to_string()
+    } else if endpoint.contains("/milestones") {
+        "Fetching Milestones".to_string()
+    } else if endpoint.contains("/labels") {
+        "Fetching Labels".to_string()
+    } else if endpoint.contains("/members") {
+        "Fetching Members".to_string()
+    } else if endpoint.contains("notifications") || endpoint.contains("todos") {
+        "Fetching Notifications".to_string()
+    } else {
+        "Fetching API".to_string()
+    }
 }
 
 impl GitlabClient {
@@ -19,74 +55,294 @@ impl GitlabClient {
             }
             _ => false,
         };
-        Ok(Self { is_github })
+        Ok(Self {
+            is_github,
+            tx: None,
+        })
     }
 
     pub async fn fetch_api<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
-        if self.is_github {
+        let desc = get_api_description(endpoint, self.is_github);
+        let cmd_str = if self.is_github {
+            let gh_endpoint = gitlab_to_github_endpoint(endpoint);
+            format!("{}: gh api {}", desc, gh_endpoint)
+        } else {
+            format!("{}: glab api {}", desc, endpoint)
+        };
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        if let Some(ref tx) = self.tx {
+            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                timestamp: timestamp.clone(),
+                command: cmd_str.clone(),
+                status: "Running".to_string(),
+            });
+        }
+
+        let res = if self.is_github {
             let gh_endpoint = gitlab_to_github_endpoint(endpoint);
             let output = Command::new("gh")
                 .args(["api", &gh_endpoint])
                 .output()
                 .await
-                .context("Failed to execute gh api command")?;
+                .context("Failed to execute gh api command");
 
-            if !output.status.success() {
-                let err_msg = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("gh api failed: {}", err_msg);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let res_val: Result<T> = (|| {
+                            let github_json: serde_json::Value =
+                                serde_json::from_slice(&out.stdout)?;
+                            let translated_json =
+                                translate_json_to_gitlab(&gh_endpoint, github_json)?;
+                            let data: T = serde_json::from_value(translated_json)?;
+                            Ok(data)
+                        })();
+                        match res_val {
+                            Ok(data) => {
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: "Success".to_string(),
+                                    });
+                                }
+                                Ok(data)
+                            }
+                            Err(e) => {
+                                let err_msg = format!("JSON error: {}", e);
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: format!("Failed: {}", err_msg),
+                                    });
+                                }
+                                Err(e.into())
+                            }
+                        }
+                    } else {
+                        let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                        if let Some(ref tx) = self.tx {
+                            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                timestamp: timestamp.clone(),
+                                command: cmd_str.clone(),
+                                status: format!("Failed: {}", err_msg),
+                            });
+                        }
+                        anyhow::bail!("gh api failed: {}", err_msg)
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    if let Some(ref tx) = self.tx {
+                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                            timestamp: timestamp.clone(),
+                            command: cmd_str.clone(),
+                            status: format!("Failed: {}", err_msg),
+                        });
+                    }
+                    Err(e.into())
+                }
             }
-
-            let github_json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-            let translated_json = translate_json_to_gitlab(&gh_endpoint, github_json)?;
-
-            let data: T = serde_json::from_value(translated_json)?;
-            Ok(data)
         } else {
             let output = Command::new("glab")
                 .args(["api", endpoint])
                 .output()
                 .await
-                .context("Failed to execute glab api command")?;
+                .context("Failed to execute glab api command");
 
-            if !output.status.success() {
-                let err_msg = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("glab api failed: {}", err_msg);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let res_val: Result<T> =
+                            serde_json::from_slice(&out.stdout).map_err(|e| e.into());
+                        match res_val {
+                            Ok(data) => {
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: "Success".to_string(),
+                                    });
+                                }
+                                Ok(data)
+                            }
+                            Err(e) => {
+                                let err_msg = format!("JSON error: {}", e);
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: format!("Failed: {}", err_msg),
+                                    });
+                                }
+                                Err(e)
+                            }
+                        }
+                    } else {
+                        let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                        if let Some(ref tx) = self.tx {
+                            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                timestamp: timestamp.clone(),
+                                command: cmd_str.clone(),
+                                status: format!("Failed: {}", err_msg),
+                            });
+                        }
+                        anyhow::bail!("glab api failed: {}", err_msg)
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    if let Some(ref tx) = self.tx {
+                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                            timestamp: timestamp.clone(),
+                            command: cmd_str.clone(),
+                            status: format!("Failed: {}", err_msg),
+                        });
+                    }
+                    Err(e.into())
+                }
             }
-
-            let data: T = serde_json::from_slice(&output.stdout)?;
-            Ok(data)
-        }
+        };
+        res
     }
 
     pub async fn fetch_raw_api(&self, endpoint: &str) -> Result<String> {
-        if self.is_github {
+        let desc = get_api_description(endpoint, self.is_github);
+        let cmd_str = if self.is_github {
+            let gh_endpoint = gitlab_to_github_endpoint(endpoint);
+            format!("{}: gh api {}", desc, gh_endpoint)
+        } else {
+            format!("{}: glab api {}", desc, endpoint)
+        };
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        if let Some(ref tx) = self.tx {
+            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                timestamp: timestamp.clone(),
+                command: cmd_str.clone(),
+                status: "Running".to_string(),
+            });
+        }
+
+        let res = if self.is_github {
             let gh_endpoint = gitlab_to_github_endpoint(endpoint);
             let output = Command::new("gh")
                 .args(["api", &gh_endpoint])
                 .output()
                 .await
-                .context("Failed to execute gh api command")?;
+                .context("Failed to execute gh api command");
 
-            if !output.status.success() {
-                let err_msg = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("gh api failed: {}", err_msg);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let raw_str = String::from_utf8(out.stdout).map_err(|e| e.into());
+                        match raw_str {
+                            Ok(s) => {
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: "Success".to_string(),
+                                    });
+                                }
+                                Ok(s)
+                            }
+                            Err(e) => {
+                                let err_msg = format!("UTF-8 error: {}", e);
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: format!("Failed: {}", err_msg),
+                                    });
+                                }
+                                Err(e)
+                            }
+                        }
+                    } else {
+                        let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                        if let Some(ref tx) = self.tx {
+                            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                timestamp: timestamp.clone(),
+                                command: cmd_str.clone(),
+                                status: format!("Failed: {}", err_msg),
+                            });
+                        }
+                        anyhow::bail!("gh api failed: {}", err_msg)
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    if let Some(ref tx) = self.tx {
+                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                            timestamp: timestamp.clone(),
+                            command: cmd_str.clone(),
+                            status: format!("Failed: {}", err_msg),
+                        });
+                    }
+                    Err(e.into())
+                }
             }
-
-            Ok(String::from_utf8(output.stdout)?)
         } else {
             let output = Command::new("glab")
                 .args(["api", endpoint])
                 .output()
                 .await
-                .context("Failed to execute glab api command")?;
+                .context("Failed to execute glab api command");
 
-            if !output.status.success() {
-                let err_msg = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("glab api failed: {}", err_msg);
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let raw_str = String::from_utf8(out.stdout).map_err(|e| e.into());
+                        match raw_str {
+                            Ok(s) => {
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: "Success".to_string(),
+                                    });
+                                }
+                                Ok(s)
+                            }
+                            Err(e) => {
+                                let err_msg = format!("UTF-8 error: {}", e);
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: format!("Failed: {}", err_msg),
+                                    });
+                                }
+                                Err(e)
+                            }
+                        }
+                    } else {
+                        let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                        if let Some(ref tx) = self.tx {
+                            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                timestamp: timestamp.clone(),
+                                command: cmd_str.clone(),
+                                status: format!("Failed: {}", err_msg),
+                            });
+                        }
+                        anyhow::bail!("glab api failed: {}", err_msg)
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    if let Some(ref tx) = self.tx {
+                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                            timestamp: timestamp.clone(),
+                            command: cmd_str.clone(),
+                            status: format!("Failed: {}", err_msg),
+                        });
+                    }
+                    Err(e.into())
+                }
             }
-
-            Ok(String::from_utf8(output.stdout)?)
-        }
+        };
+        res
     }
 
     pub async fn fetch_labels(&self, project_path: &str) -> Result<Vec<String>> {
@@ -169,6 +425,16 @@ fn gitlab_to_github_endpoint(endpoint: &str) -> String {
     path = path.replace("/members/all", "/assignees");
     path = path.replace("/jobs/", "/actions/jobs/");
     path = path.replace("/trace", "/logs");
+    if path.contains("/milestones/") && path.contains("/issues") {
+        if let Some(milestone_id) = path
+            .split("/milestones/")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+        {
+            let base_path = path.split("/milestones/").next().unwrap_or("");
+            return format!("{}/issues?milestone={}&state=all", base_path, milestone_id);
+        }
+    }
     path
 }
 
@@ -196,6 +462,14 @@ fn translate_issue(v: &serde_json::Value) -> serde_json::Value {
 
     let updated_at = v
         .get("updated_at")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let created_at = v
+        .get("created_at")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let closed_at = v
+        .get("closed_at")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
 
@@ -240,6 +514,8 @@ fn translate_issue(v: &serde_json::Value) -> serde_json::Value {
         "state": state,
         "labels": labels,
         "updated_at": updated_at,
+        "created_at": created_at,
+        "closed_at": closed_at,
         "author": author,
         "milestone": milestone,
         "assignees": assignees,
@@ -504,7 +780,9 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
                 .iter()
                 .map(|u| {
                     let login = u.get("login").and_then(|l| l.as_str()).unwrap_or("unknown");
-                    serde_json::Value::String(format!("@{}", login))
+                    serde_json::json!({
+                        "username": login
+                    })
                 })
                 .collect();
             Ok(serde_json::Value::Array(list))
@@ -513,16 +791,51 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
         }
     } else if endpoint.contains("/milestones") {
         if let Some(arr) = val.as_array() {
-            let list: Vec<serde_json::Value> =
-                arr.iter().filter_map(|m| m.get("title").cloned()).collect();
+            let list: Vec<serde_json::Value> = arr
+                .iter()
+                .map(|m| {
+                    let title = m.get("title").cloned().unwrap_or(serde_json::Value::Null);
+                    let id = m.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                    let number = m.get("number").cloned().unwrap_or(serde_json::Value::Null);
+                    let description = m
+                        .get("description")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let state = m.get("state").and_then(|s| s.as_str()).unwrap_or("open");
+                    let gl_state = if state == "open" { "active" } else { "closed" };
+                    let due_on = m.get("due_on").cloned().unwrap_or(serde_json::Value::Null);
+                    let created_at = m
+                        .get("created_at")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    serde_json::json!({
+                        "id": id,
+                        "iid": number,
+                        "title": title,
+                        "description": description,
+                        "state": gl_state,
+                        "start_date": serde_json::Value::Null,
+                        "due_date": due_on,
+                        "created_at": created_at
+                    })
+                })
+                .collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))
         }
     } else if endpoint.contains("/labels") {
         if let Some(arr) = val.as_array() {
-            let list: Vec<serde_json::Value> =
-                arr.iter().filter_map(|l| l.get("name").cloned()).collect();
+            let list: Vec<serde_json::Value> = arr
+                .iter()
+                .filter_map(|l| {
+                    l.get("name").map(|name| {
+                        serde_json::json!({
+                            "name": name
+                        })
+                    })
+                })
+                .collect();
             Ok(serde_json::Value::Array(list))
         } else {
             Ok(serde_json::Value::Array(vec![]))

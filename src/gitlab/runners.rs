@@ -1,8 +1,8 @@
 use super::client::GitlabClient;
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Runner {
     pub id: u64,
     pub description: Option<String>,

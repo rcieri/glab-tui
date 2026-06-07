@@ -3384,7 +3384,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             | "Milestone"
                             | "Confidential"
                             | "Status (Draft/Ready)"
-                            | "Merge Request Pipeline" => " <Enter to select>",
+                            | "Merge Request Pipeline"
+                            | "Source Branch"
+                            | "Target Branch" => " <Enter to select>",
                             "Description" => " <Enter to edit>",
                             "Description ($EDITOR)" => " <Enter to open editor>",
                             _ => " <Enter to edit>",

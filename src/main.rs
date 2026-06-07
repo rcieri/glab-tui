@@ -713,6 +713,19 @@ async fn apply_selector_changes(
                 }
             }
         }
+        "target_branch" => {
+            if let Some(val) = values.first() {
+                if entity_type == "mr" {
+                    let args = UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag("--target-branch", val)
+                        .build();
+                    run_cli(&cli, &args, terminal, tx.clone(), tab).await;
+                    if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                        item.target_branch = val.clone();
+                    }
+                }
+            }
+        }
         "description_edit_choice" => {
             app.selector = None;
             let choice = values.first().cloned().unwrap_or_default();
@@ -1266,6 +1279,69 @@ fn get_current_branch() -> Option<String> {
         }
     }
     None
+}
+
+fn slugify(s: &str) -> String {
+    let mut slug = String::with_capacity(s.len());
+    for c in s.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+        } else if c.is_ascii() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+fn get_default_branch() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let branch = branch
+            .strip_prefix("origin/")
+            .unwrap_or(&branch)
+            .to_string();
+        if !branch.is_empty() && branch != "HEAD" {
+            return Some(branch);
+        }
+    }
+    None
+}
+
+fn get_branches() -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .args(["branch", "-a"])
+        .output()
+        .ok();
+    if let Some(output) = output {
+        if output.status.success() {
+            let mut branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        return None;
+                    }
+                    let name = line.strip_prefix('*').unwrap_or(line).trim().to_string();
+                    let name = name
+                        .strip_prefix("remotes/origin/")
+                        .unwrap_or(&name)
+                        .to_string();
+                    if name.is_empty() || name.contains(" -> ") {
+                        return None;
+                    }
+                    Some(name)
+                })
+                .collect();
+            branches.sort();
+            branches.dedup();
+            return branches;
+        }
+    }
+    Vec::new()
 }
 
 fn spawn_refresh_active_tab(
@@ -3041,6 +3117,7 @@ async fn main() -> Result<()> {
                                         let mut labels_val = String::new();
                                         let mut assignees_val = String::new();
                                         let mut milestone_val = String::new();
+                                        let mut source_branch_val = String::new();
                                         let mut description_val =
                                             get_default_template("mr").unwrap_or_default();
                                         let mut issue_iid = 0;
@@ -3069,6 +3146,11 @@ async fn main() -> Result<()> {
                                                     {
                                                         issue_iid = issue.iid;
                                                         title_val = issue.title.clone();
+                                                        source_branch_val = format!(
+                                                            "{}-{}",
+                                                            issue.iid,
+                                                            slugify(&issue.title)
+                                                        );
                                                         if !issue.labels.is_empty() {
                                                             labels_val = issue.labels.join(", ");
                                                         }
@@ -3113,18 +3195,19 @@ async fn main() -> Result<()> {
                                             title: format!("Create {}", pr_suffix),
                                             fields: vec![
                                                 ("Title".to_string(), title_val),
+                                                ("Source Branch".to_string(), source_branch_val),
                                                 (
-                                                    "Source Branch".to_string(),
-                                                    get_current_branch().unwrap_or_default(),
+                                                    "Target Branch".to_string(),
+                                                    get_default_branch()
+                                                        .unwrap_or_else(|| "main".to_string()),
                                                 ),
-                                                ("Target Branch".to_string(), String::new()),
                                                 ("Labels".to_string(), labels_val),
                                                 ("Assignees".to_string(), assignees_val),
                                                 ("Reviewers".to_string(), String::new()),
                                                 ("Milestone".to_string(), milestone_val),
                                                 (
                                                     "Status (Draft/Ready)".to_string(),
-                                                    "Ready".to_string(),
+                                                    "Draft".to_string(),
                                                 ),
                                                 ("Description".to_string(), description_val),
                                                 (
@@ -3366,6 +3449,8 @@ async fn main() -> Result<()> {
                                                 "confidential" => "Confidential",
                                                 "draft_status" => "Status (Draft/Ready)",
                                                 "mr_pipeline" => "Merge Request Pipeline",
+                                                "source_branch" => "Source Branch",
+                                                "target_branch" => "Target Branch",
                                                 _ => "",
                                             };
                                             if !target_field_name.is_empty() {
@@ -3896,6 +3981,8 @@ async fn main() -> Result<()> {
                                     || field_name == "Confidential"
                                     || field_name == "Status (Draft/Ready)"
                                     || field_name == "Merge Request Pipeline"
+                                    || field_name == "Source Branch"
+                                    || field_name == "Target Branch"
                                 {
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
@@ -3906,6 +3993,8 @@ async fn main() -> Result<()> {
                                         "Confidential" => "confidential",
                                         "Status (Draft/Ready)" => "draft_status",
                                         "Merge Request Pipeline" => "mr_pipeline",
+                                        "Source Branch" => "source_branch",
+                                        "Target Branch" => "target_branch",
                                         _ => "",
                                     };
                                     let multi_select = match field_type {
@@ -3923,7 +4012,9 @@ async fn main() -> Result<()> {
                                     } else if field_type == "draft_status" {
                                         all_items = vec!["Draft".to_string(), "Ready".to_string()];
                                         is_loading = false;
-                                        if entity_iid == 0 {
+                                        let is_new_entity =
+                                            entity_iid == 0 || entity_type.starts_with("new_");
+                                        if is_new_entity {
                                             let current_val =
                                                 menu.fields[menu.selected_idx].1.clone();
                                             if !current_val.is_empty() {
@@ -3943,7 +4034,9 @@ async fn main() -> Result<()> {
                                     } else if field_type == "mr_pipeline" {
                                         all_items = vec!["Yes".to_string(), "No".to_string()];
                                         is_loading = false;
-                                        if entity_iid == 0 {
+                                        let is_new_entity =
+                                            entity_iid == 0 || entity_type.starts_with("new_");
+                                        if is_new_entity {
                                             let current_val =
                                                 menu.fields[menu.selected_idx].1.clone();
                                             if !current_val.is_empty() {
@@ -3952,9 +4045,14 @@ async fn main() -> Result<()> {
                                                 current_set.insert("No".to_string());
                                             }
                                         }
+                                    } else if field_type == "source_branch"
+                                        || field_type == "target_branch"
+                                    {
+                                        all_items = get_branches();
+                                        is_loading = false;
                                     }
 
-                                    if entity_iid == 0 {
+                                    if entity_iid == 0 || entity_type.starts_with("new_") {
                                         let current_val = menu.fields[menu.selected_idx].1.clone();
                                         if !current_val.is_empty()
                                             && field_type != "draft_status"
@@ -4022,16 +4120,29 @@ async fn main() -> Result<()> {
                                                         current_set.insert(m.title.clone());
                                                     }
                                                 }
+                                                "target_branch" => {
+                                                    current_set.insert(mr.target_branch.clone());
+                                                }
                                                 _ => {}
                                             }
                                         }
                                     }
 
+                                    let start_idx = if multi_select {
+                                        0
+                                    } else {
+                                        current_set
+                                            .iter()
+                                            .next()
+                                            .and_then(|sel| all_items.iter().position(|a| a == sel))
+                                            .unwrap_or(0)
+                                    };
+
                                     app.selector = Some(crate::app::Selector {
                                         title: format!("Select {}", field_name),
                                         all_items,
                                         selected_items: current_set,
-                                        cursor_idx: 0,
+                                        cursor_idx: start_idx,
                                         search_query: String::new(),
                                         is_filtering: false,
                                         is_loading,
@@ -4147,8 +4258,6 @@ async fn main() -> Result<()> {
                                 }
 
                                 if field_name == "Title"
-                                    || field_name == "Source Branch"
-                                    || field_name == "Target Branch"
                                     || field_name == "Due Date"
                                     || field_name == "Weight"
                                     || field_name == "Branch / Ref"
@@ -4656,7 +4765,7 @@ async fn main() -> Result<()> {
                                     selected_items: std::collections::HashSet::new(),
                                     cursor_idx: 0,
                                     search_query: String::new(),
-                                    is_filtering: true,
+                                    is_filtering: false,
                                     is_loading,
                                     entity_iid: 0,
                                     entity_type: "new_mr_selector".to_string(),

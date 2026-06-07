@@ -4567,6 +4567,48 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
+                    if app.focus_grouping {
+                        match key_event.code {
+                            KeyCode::Esc | KeyCode::Char(',') => {
+                                app.focus_grouping = false;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                let len = app.active_tab.columns().len();
+                                let max_idx = if len > 0 { len - 1 } else { 0 };
+                                if app.grouping_idx < max_idx {
+                                    app.grouping_idx += 1;
+                                } else {
+                                    app.grouping_idx = 0;
+                                }
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                let len = app.active_tab.columns().len();
+                                let max_idx = if len > 0 { len - 1 } else { 0 };
+                                if app.grouping_idx > 0 {
+                                    app.grouping_idx -= 1;
+                                } else {
+                                    app.grouping_idx = max_idx;
+                                }
+                            }
+                            KeyCode::Char(' ') | KeyCode::Enter => {
+                                let cols = app.active_tab.columns();
+                                if let Some(col_name) = cols.get(app.grouping_idx) {
+                                    let col_str = col_name.to_string();
+                                    if app.group_by_column.as_deref() == Some(col_str.as_str()) {
+                                        app.group_by_column = None;
+                                    } else {
+                                        app.group_by_column = Some(col_str);
+                                    }
+                                    app.group_list_state.select(Some(0));
+                                    app.focus_grouping = false;
+                                    app.update_filter_selection();
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     if app.is_typing_search {
                         match key_event.code {
                             KeyCode::Enter | KeyCode::Esc => app.is_typing_search = false,
@@ -4590,6 +4632,12 @@ async fn main() -> Result<()> {
                     {
                         app.focus_column_checklist = true;
                         app.column_checklist_idx = 0;
+                        continue;
+                    }
+
+                    if key_event.code == KeyCode::Char(',') && !app.focus_grouping {
+                        app.focus_grouping = true;
+                        app.grouping_idx = 0;
                         continue;
                     }
 

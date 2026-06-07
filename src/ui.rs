@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table},
 };
 
-use crate::app::{App, Tab};
+use crate::app::{App, GroupItem, Tab};
 use crate::utils::format::{format_ref, render_markdown, time_ago, truncate};
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -734,169 +734,204 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let filtered_issues =
                     App::filter_issues_list(&app.issues.items, &app.search_query, enabled_cols);
 
-                let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
-                    let is_selected = app.issues.state.selected() == Some(idx);
-                    let (state_text, state_style) = if i.state == "opened" {
-                        (
-                            "OPEN",
-                            Style::default()
-                                .fg(THEME.green)
-                                .bg(if is_selected {
-                                    THEME.highlight_bg
+                if app.group_by_column.is_some() && !app.group_items.is_empty() {
+                    let list_items: Vec<ListItem> = app.group_items.iter().map(|gi| {
+                        match gi {
+                            GroupItem::Header(label) => {
+                                ListItem::new(Line::from(
+                                    Span::styled(label, Style::default().fg(THEME.blue).add_modifier(Modifier::BOLD))
+                                ))
+                                .style(Style::default().bg(THEME.highlight_bg))
+                            }
+                            GroupItem::Item(idx) => {
+                                if let Some(issue) = filtered_issues.get(*idx) {
+                                    let state_tag = if issue.state == "opened" { "OPEN" } else { "CLOSED" };
+                                    let state_color = if issue.state == "opened" { THEME.green } else { THEME.red };
+                                    ListItem::new(Line::from(vec![
+                                        Span::styled(format!("#{} ", issue.iid), Style::default().fg(THEME.text_normal)),
+                                        Span::styled(format!("{} ", state_tag), Style::default().fg(state_color).add_modifier(Modifier::BOLD)),
+                                        Span::styled(truncate(&issue.title, 80), Style::default().fg(THEME.text_normal)),
+                                    ]))
                                 } else {
-                                    THEME.green_bg
-                                })
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        (
-                            "CLOSED",
+                                    ListItem::new(Line::from(""))
+                                }
+                            }
+                        }
+                    }).collect();
+
+                    f.render_stateful_widget(
+                        List::new(list_items)
+                            .block(main_block)
+                            .highlight_symbol(" ❯ ")
+                            .highlight_style(highlight_style),
+                        middle_chunks[1],
+                        &mut app.group_list_state,
+                    );
+                } else {
+                    let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
+                        let is_selected = app.issues.state.selected() == Some(idx);
+                        let (state_text, state_style) = if i.state == "opened" {
+                            (
+                                "OPEN",
+                                Style::default()
+                                    .fg(THEME.green)
+                                    .bg(if is_selected {
+                                        THEME.highlight_bg
+                                    } else {
+                                        THEME.green_bg
+                                    })
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                        } else {
+                            (
+                                "CLOSED",
+                                Style::default()
+                                    .fg(THEME.red)
+                                    .bg(if is_selected {
+                                        THEME.highlight_bg
+                                    } else {
+                                        THEME.red_bg
+                                    })
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                        };
+                        let mut cells = Vec::new();
+                        if app.is_column_visible(Tab::Issues, "ID") {
+                            cells.push(render_fuzzy_cell(
+                                &format!("#{}", i.iid),
+                                &app.search_query,
+                                is_selected,
+                                false,
+                                Style::default().fg(THEME.text_normal),
+                                Alignment::Left,
+                            ));
+                        }
+                        if app.is_column_visible(Tab::Issues, "State") {
+                            cells.push(render_fuzzy_cell(
+                                state_text,
+                                &app.search_query,
+                                is_selected,
+                                false,
+                                state_style,
+                                Alignment::Center,
+                            ));
+                        }
+                        if app.is_column_visible(Tab::Issues, "Title") {
+                            cells.push(render_fuzzy_cell(
+                                &truncate(&i.title, 100),
+                                &app.search_query,
+                                is_selected,
+                                false,
+                                Style::default().fg(THEME.text_normal),
+                                Alignment::Left,
+                            ));
+                        }
+                        if app.is_column_visible(Tab::Issues, "Assignees") {
+                            let assignees_str = if i.assignees.is_empty() {
+                                "—".to_string()
+                            } else {
+                                i.assignees
+                                    .iter()
+                                    .map(|a| format!("@{}", a.username))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            };
+                            cells.push(render_fuzzy_cell(
+                                &truncate(&assignees_str, 20),
+                                &app.search_query,
+                                is_selected,
+                                false,
+                                Style::default().fg(THEME.blue),
+                                Alignment::Left,
+                            ));
+                        }
+                        if app.is_column_visible(Tab::Issues, "Labels") {
+                            cells.push(render_labels_cell(
+                                &i.labels,
+                                &app.search_query,
+                                is_selected,
+                                false,
+                                24,
+                            ));
+                        }
+                        if app.is_column_visible(Tab::Issues, "Milestone") {
+                            let milestone_str = i
+                                .milestone
+                                .as_ref()
+                                .map(|m| m.title.clone())
+                                .unwrap_or_else(|| "—".to_string());
+                            cells.push(render_fuzzy_cell(
+                                &truncate(&milestone_str, 18),
+                                &app.search_query,
+                                is_selected,
+                                false,
+                                Style::default().fg(THEME.yellow),
+                                Alignment::Left,
+                            ));
+                        }
+                        if app.is_column_visible(Tab::Issues, "Author") {
+                            let author_str = format!("@{}", i.author.username);
+                            cells.push(render_fuzzy_cell(
+                                &truncate(&author_str, 15),
+                                &app.search_query,
+                                is_selected,
+                                false,
+                                Style::default().fg(THEME.blue),
+                                Alignment::Left,
+                            ));
+                        }
+                        let row_style = if is_selected {
+                            Style::default().bg(THEME.highlight_bg)
+                        } else {
                             Style::default()
-                                .fg(THEME.red)
-                                .bg(if is_selected {
-                                    THEME.highlight_bg
-                                } else {
-                                    THEME.red_bg
-                                })
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    };
-                    let mut cells = Vec::new();
+                        };
+                        Row::new(cells).style(row_style).height(1)
+                    });
+
+                    let mut header_cells = Vec::new();
+                    let mut widths = Vec::new();
+
                     if app.is_column_visible(Tab::Issues, "ID") {
-                        cells.push(render_fuzzy_cell(
-                            &format!("#{}", i.iid),
-                            &app.search_query,
-                            is_selected,
-                            false,
-                            Style::default().fg(THEME.text_normal),
-                            Alignment::Left,
-                        ));
+                        header_cells.push(Cell::from("ID"));
+                        widths.push(Constraint::Length(10));
                     }
                     if app.is_column_visible(Tab::Issues, "State") {
-                        cells.push(render_fuzzy_cell(
-                            state_text,
-                            &app.search_query,
-                            is_selected,
-                            false,
-                            state_style,
-                            Alignment::Center,
-                        ));
+                        header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
+                        widths.push(Constraint::Length(10));
                     }
                     if app.is_column_visible(Tab::Issues, "Title") {
-                        cells.push(render_fuzzy_cell(
-                            &truncate(&i.title, 100),
-                            &app.search_query,
-                            is_selected,
-                            false,
-                            Style::default().fg(THEME.text_normal),
-                            Alignment::Left,
-                        ));
+                        header_cells.push(Cell::from("Title"));
+                        widths.push(Constraint::Fill(1));
                     }
                     if app.is_column_visible(Tab::Issues, "Assignees") {
-                        let assignees_str = if i.assignees.is_empty() {
-                            "—".to_string()
-                        } else {
-                            i.assignees
-                                .iter()
-                                .map(|a| format!("@{}", a.username))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        cells.push(render_fuzzy_cell(
-                            &truncate(&assignees_str, 20),
-                            &app.search_query,
-                            is_selected,
-                            false,
-                            Style::default().fg(THEME.blue),
-                            Alignment::Left,
-                        ));
+                        header_cells.push(Cell::from("Assignees"));
+                        widths.push(Constraint::Length(20));
                     }
                     if app.is_column_visible(Tab::Issues, "Labels") {
-                        cells.push(render_labels_cell(
-                            &i.labels,
-                            &app.search_query,
-                            is_selected,
-                            false,
-                            24,
-                        ));
+                        header_cells.push(Cell::from("Labels"));
+                        widths.push(Constraint::Length(24));
                     }
                     if app.is_column_visible(Tab::Issues, "Milestone") {
-                        let milestone_str = i
-                            .milestone
-                            .as_ref()
-                            .map(|m| m.title.clone())
-                            .unwrap_or_else(|| "—".to_string());
-                        cells.push(render_fuzzy_cell(
-                            &truncate(&milestone_str, 18),
-                            &app.search_query,
-                            is_selected,
-                            false,
-                            Style::default().fg(THEME.yellow),
-                            Alignment::Left,
-                        ));
+                        header_cells.push(Cell::from("Milestone"));
+                        widths.push(Constraint::Length(18));
                     }
                     if app.is_column_visible(Tab::Issues, "Author") {
-                        let author_str = format!("@{}", i.author.username);
-                        cells.push(render_fuzzy_cell(
-                            &truncate(&author_str, 15),
-                            &app.search_query,
-                            is_selected,
-                            false,
-                            Style::default().fg(THEME.blue),
-                            Alignment::Left,
-                        ));
+                        header_cells.push(Cell::from("Author"));
+                        widths.push(Constraint::Length(15));
                     }
-                    let row_style = if is_selected {
-                        Style::default().bg(THEME.highlight_bg)
-                    } else {
-                        Style::default()
-                    };
-                    Row::new(cells).style(row_style).height(1)
-                });
 
-                let mut header_cells = Vec::new();
-                let mut widths = Vec::new();
+                    if widths.is_empty() {
+                        widths.push(Constraint::Min(0));
+                    }
 
-                if app.is_column_visible(Tab::Issues, "ID") {
-                    header_cells.push(Cell::from("ID"));
-                    widths.push(Constraint::Length(10));
-                }
-                if app.is_column_visible(Tab::Issues, "State") {
-                    header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
-                    widths.push(Constraint::Length(10));
-                }
-                if app.is_column_visible(Tab::Issues, "Title") {
-                    header_cells.push(Cell::from("Title"));
-                    widths.push(Constraint::Fill(1));
-                }
-                if app.is_column_visible(Tab::Issues, "Assignees") {
-                    header_cells.push(Cell::from("Assignees"));
-                    widths.push(Constraint::Length(20));
-                }
-                if app.is_column_visible(Tab::Issues, "Labels") {
-                    header_cells.push(Cell::from("Labels"));
-                    widths.push(Constraint::Length(24));
-                }
-                if app.is_column_visible(Tab::Issues, "Milestone") {
-                    header_cells.push(Cell::from("Milestone"));
-                    widths.push(Constraint::Length(18));
-                }
-                if app.is_column_visible(Tab::Issues, "Author") {
-                    header_cells.push(Cell::from("Author"));
-                    widths.push(Constraint::Length(15));
-                }
+                    let table = Table::new(rows, widths)
+                        .header(Row::new(header_cells).style(header_style).height(1))
+                        .block(main_block)
+                        .row_highlight_style(highlight_style)
+                        .highlight_symbol(" ❯ ");
 
-                if widths.is_empty() {
-                    widths.push(Constraint::Min(0));
+                    f.render_stateful_widget(table, middle_chunks[1], &mut app.issues.state);
                 }
-
-                let table = Table::new(rows, widths)
-                    .header(Row::new(header_cells).style(header_style).height(1))
-                    .block(main_block)
-                    .row_highlight_style(highlight_style)
-                    .highlight_symbol(" ❯ ");
-
-                f.render_stateful_widget(table, middle_chunks[1], &mut app.issues.state);
 
                 let preview_block = Block::default()
                     .borders(Borders::ALL)
@@ -907,7 +942,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .fg(THEME.text_muted)
                             .add_modifier(Modifier::BOLD),
                     );
-                if let Some(selected) = app.issues.state.selected() {
+                let selected_issue_idx = if app.group_by_column.is_some() {
+                    app.group_list_state.selected().and_then(|s| {
+                        match app.group_items.get(s) {
+                            Some(GroupItem::Item(idx)) => Some(*idx),
+                            _ => None,
+                        }
+                    })
+                } else {
+                    app.issues.state.selected()
+                };
+                if let Some(selected) = selected_issue_idx {
                     if let Some(issue) = filtered_issues.get(selected) {
                         let milestone = issue
                             .milestone
@@ -4264,6 +4309,76 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .collect();
             f.render_widget(List::new(filter_items), layout_chunks[4]);
         }
+    }
+
+    if app.focus_grouping {
+        let tab = app.active_tab;
+        let cols: Vec<&str> = tab
+            .columns()
+            .into_iter()
+            .filter(|c| *c != "Show Closed Items")
+            .collect();
+        let active_idx = app.grouping_idx;
+
+        let width = 48;
+        let height = (cols.len() + 6) as u16;
+        let area = centered_rect_fixed(width, height, size);
+
+        let group_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(THEME.border_focused))
+            .title(format!(" Group By: {} ", tab.title(is_github)))
+            .title_style(
+                Style::default()
+                    .fg(THEME.border_focused)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        f.render_widget(Clear, area);
+        f.render_widget(group_block.clone(), area);
+
+        let inner_area = group_block.inner(area);
+
+        let popup_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(2)])
+            .split(inner_area);
+
+        let group_items: Vec<ListItem> = cols
+            .iter()
+            .enumerate()
+            .map(|(i, col)| {
+                let is_selected = app.group_by_column.as_deref() == Some(*col);
+                let text = format!(
+                    "  {} {}",
+                    if is_selected { "◉" } else { "○" },
+                    col
+                );
+                let is_active = i == active_idx;
+                let style = if is_active {
+                    Style::default()
+                        .fg(THEME.bg)
+                        .bg(THEME.border_focused)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_selected {
+                    Style::default().fg(THEME.green)
+                } else {
+                    Style::default().fg(THEME.text_normal)
+                };
+                ListItem::new(text).style(style)
+            })
+            .collect();
+        f.render_widget(List::new(group_items), popup_layout[0]);
+
+        let footer_p = Paragraph::new(" [Spc/Enter] Select • [,/Esc] Close ")
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(THEME.text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
+        f.render_widget(footer_p, popup_layout[1]);
     }
 }
 

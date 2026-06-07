@@ -695,6 +695,12 @@ pub struct TerminalCommand {
     pub status: String,
 }
 
+#[derive(Debug)]
+pub enum GroupItem {
+    Header(String),
+    Item(usize),
+}
+
 pub struct App {
     pub active_tab: Tab,
     pub running: bool,
@@ -745,6 +751,11 @@ pub struct App {
     pub selected_milestone_issues: Option<Vec<crate::gitlab::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
     pub terminal_scroll: usize,
+    pub focus_grouping: bool,
+    pub grouping_idx: usize,
+    pub group_by_column: Option<String>,
+    pub group_list_state: ratatui::widgets::ListState,
+    pub group_items: Vec<GroupItem>,
 }
 
 impl Default for App {
@@ -810,6 +821,11 @@ impl Default for App {
             selected_milestone_issues: None,
             selected_milestone_iid: None,
             terminal_scroll: 0,
+            focus_grouping: false,
+            grouping_idx: 0,
+            group_by_column: None,
+            group_list_state: ratatui::widgets::ListState::default(),
+            group_items: Vec::new(),
         }
     }
 }
@@ -1329,6 +1345,186 @@ impl App {
         Self::filter_milestones_list(&self.milestones.items, &self.search_query, enabled_cols)
     }
 
+    pub fn rebuild_group_map(&mut self) {
+        self.group_items.clear();
+        let Some(col) = self.group_by_column.clone() else { return };
+        let column_label = col.clone();
+        let groups: std::collections::BTreeMap<String, Vec<usize>> = match self.active_tab {
+            Tab::Issues => {
+                let items = self.filtered_issues();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, i) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "State" => i.state.clone(),
+                        "Author" => i.author.username.clone(),
+                        "Labels" => {
+                            if i.labels.is_empty() {
+                                "None".to_string()
+                            } else {
+                                i.labels[0].clone()
+                            }
+                        }
+                        "Milestone" => i
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .unwrap_or_else(|| "None".to_string()),
+                        "Assignees" => {
+                            if i.assignees.is_empty() {
+                                "Unassigned".to_string()
+                            } else {
+                                i.assignees
+                                    .iter()
+                                    .map(|a| a.username.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }
+                        }
+                        "ID" => format!("#{}", i.iid),
+                        "Title" => {
+                            let c = i.title.chars().next().unwrap_or('?');
+                            c.to_uppercase().to_string()
+                        }
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::MergeRequests => {
+                let items = self.filtered_mrs();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, m) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "State" => m.state.clone(),
+                        "Author" => m.author.username.clone(),
+                        "Labels" => {
+                            if m.labels.is_empty() {
+                                "None".to_string()
+                            } else {
+                                m.labels[0].clone()
+                            }
+                        }
+                        "Milestone" => m
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .unwrap_or_else(|| "None".to_string()),
+                        "Assignees" => {
+                            if m.assignees.is_empty() {
+                                "Unassigned".to_string()
+                            } else {
+                                m.assignees
+                                    .iter()
+                                    .map(|a| a.username.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }
+                        }
+                        "Reviewers" => {
+                            if m.reviewers.is_empty() {
+                                "None".to_string()
+                            } else {
+                                m.reviewers
+                                    .iter()
+                                    .map(|r| r.username.clone())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            }
+                        }
+                        "Status" => {
+                            if m.draft {
+                                "Draft".to_string()
+                            } else {
+                                "Ready".to_string()
+                            }
+                        }
+                        "ID" => format!("#{}", m.iid),
+                        "Title" => {
+                            let c = m.title.chars().next().unwrap_or('?');
+                            c.to_uppercase().to_string()
+                        }
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Todos => {
+                let items = self.filtered_todos();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, n) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "State" => n.state.clone(),
+                        "Type" => n.target_type.clone(),
+                        "Project" => n.project_path.clone(),
+                        "ID" => format!("#{}", n.target_iid),
+                        "Title" => {
+                            let c = n.title.chars().next().unwrap_or('?');
+                            c.to_uppercase().to_string()
+                        }
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Pipelines => {
+                let items = self.filtered_pipelines();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, p) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "Status" => p.status.clone(),
+                        "Ref" => p.r#ref.clone(),
+                        "ID" => format!("#{}", p.id),
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Jobs => {
+                let items = self.filtered_jobs();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, j) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "Status" => j.status.clone(),
+                        "Stage" => j.stage.clone(),
+                        "Name" => j.name.clone(),
+                        "ID" => format!("#{}", j.id),
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            _ => return,
+        };
+        for (name, indices) in &groups {
+            self.group_items.push(GroupItem::Header(format!("{}: {}", column_label, name)));
+            for &i in indices {
+                self.group_items.push(GroupItem::Item(i));
+            }
+        }
+        let total = self.group_items.len();
+        if total > 0 {
+            if let Some(sel) = self.group_list_state.selected() {
+                if sel >= total {
+                    self.group_list_state.select(Some(total - 1));
+                }
+            } else {
+                self.group_list_state.select(Some(0));
+            }
+        } else {
+            self.group_list_state.select(None);
+        }
+    }
+
     pub fn update_filter_selection(&mut self) {
         match self.active_tab {
             Tab::Issues => {
@@ -1470,6 +1666,7 @@ impl App {
             }
             Tab::Terminal => {}
         }
+        self.rebuild_group_map();
     }
 }
 

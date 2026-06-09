@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use crate::utils::ui::StatefulTable;
-use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::style::Modifier;
 use ratatui::widgets::{ListState, TableState};
 use std::sync::LazyLock;
@@ -35,7 +35,7 @@ fn highlight_line_syntax(
         .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
 
     let mut highlighter =
-        syntect::easy::HighlightLines::new(syntax, &THEME_SET.themes["base16-ocean.dark"]);
+        syntect::easy::HighlightLines::new(syntax, &THEME_SET.themes["base16-eighties.dark"]);
 
     // Remove the leading +/-/space for syntax highlighting, but keep the actual code
     let code = if line_content.starts_with('+')

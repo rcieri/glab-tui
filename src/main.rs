@@ -4941,6 +4941,7 @@ async fn main() -> Result<()> {
                                         } else {
                                             set.insert(col_str);
                                         }
+                                        app.update_filter_selection();
                                     }
                                 }
                             }

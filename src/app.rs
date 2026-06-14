@@ -1420,7 +1420,10 @@ impl App {
                     "Title" => b.title.clone(),
                     _ => String::new(),
                 };
-                val_a.cmp(&val_b)
+                match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    _ => val_a.cmp(&val_b),
+                }
             });
         }
         list
@@ -1591,7 +1594,10 @@ impl App {
                     "Title" => b.title.clone(),
                     _ => String::new(),
                 };
-                val_a.cmp(&val_b)
+                match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    _ => val_a.cmp(&val_b),
+                }
             });
         }
         list
@@ -1673,7 +1679,10 @@ impl App {
                     "ID" => b.id.to_string(),
                     _ => String::new(),
                 };
-                val_a.cmp(&val_b)
+                match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    _ => val_a.cmp(&val_b),
+                }
             });
         }
         list
@@ -1754,7 +1763,10 @@ impl App {
                     "ID" => b.id.to_string(),
                     _ => String::new(),
                 };
-                val_a.cmp(&val_b)
+                match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    _ => val_a.cmp(&val_b),
+                }
             });
         }
         list
@@ -1929,7 +1941,10 @@ impl App {
                     "Title" => b.title.clone(),
                     _ => String::new(),
                 };
-                val_a.cmp(&val_b)
+                match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    _ => val_a.cmp(&val_b),
+                }
             });
         }
         list

@@ -151,7 +151,6 @@ impl Tab {
                 "Labels",
                 "Milestone",
                 "Author",
-                "Show Closed Items",
             ],
             Tab::MergeRequests => vec![
                 "ID",
@@ -163,7 +162,6 @@ impl Tab {
                 "Labels",
                 "Milestone",
                 "Author",
-                "Show Merged Items",
             ],
             Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
@@ -172,13 +170,6 @@ impl Tab {
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
             Tab::Milestones => vec!["ID", "Title", "State", "Start Date", "Due Date"],
             Tab::Terminal => vec![],
-        }
-    }
-
-    pub fn show_closed_column_name(&self) -> &'static str {
-        match self {
-            Tab::MergeRequests => "Show Merged Items",
-            _ => "Show Closed Items",
         }
     }
 
@@ -1123,6 +1114,11 @@ pub struct App {
     pub group_ascending: bool,
     pub group_list_state: ratatui::widgets::ListState,
     pub group_items: Vec<GroupItem>,
+    pub column_filters: std::collections::HashMap<
+        Tab,
+        std::collections::HashMap<String, std::collections::HashSet<String>>,
+    >,
+    pub column_filter_context: Option<(Tab, String)>,
 }
 
 impl Default for App {
@@ -1195,6 +1191,8 @@ impl Default for App {
             group_ascending: true,
             group_list_state: ratatui::widgets::ListState::default(),
             group_items: Vec::new(),
+            column_filters: std::collections::HashMap::new(),
+            column_filter_context: None,
         }
     }
 }
@@ -1219,6 +1217,41 @@ impl App {
             true
         }
     }
+
+    pub fn get_column_filter(
+        &self,
+        tab: Tab,
+        col: &str,
+    ) -> Option<&std::collections::HashSet<String>> {
+        self.column_filters.get(&tab)?.get(col)
+    }
+
+    pub fn has_column_filter(&self, tab: Tab, col: &str) -> bool {
+        self.get_column_filter(tab, col)
+            .map_or(false, |v| !v.is_empty())
+    }
+
+    pub fn set_column_filter(
+        &mut self,
+        tab: Tab,
+        col: &str,
+        values: std::collections::HashSet<String>,
+    ) {
+        self.column_filters
+            .entry(tab)
+            .or_default()
+            .insert(col.to_string(), values);
+    }
+
+    pub fn remove_column_filter(&mut self, tab: Tab, col: &str) {
+        if let Some(filters) = self.column_filters.get_mut(&tab) {
+            filters.remove(col);
+            if filters.is_empty() {
+                self.column_filters.remove(&tab);
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -1437,13 +1470,31 @@ impl App {
     }
 
     pub fn filtered_issues(&self) -> Vec<&crate::gitlab::issues::Issue> {
-        Self::filtered_issues_list(
+        let mut list = Self::filtered_issues_list(
             &self.issues.items,
             &self.search_query,
             &self.enabled_columns,
             self.group_ascending,
             &self.group_by_column,
-        )
+        );
+        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Issues, |item, col| {
+            match col {
+                "Labels" => item.labels.clone(),
+                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
+                "Author" => vec![item.author.username.clone()],
+                "Milestone" => item
+                    .milestone
+                    .as_ref()
+                    .map(|m| m.title.clone())
+                    .into_iter()
+                    .collect(),
+                "State" => vec![item.state.clone()],
+                "ID" => vec![item.iid.to_string()],
+                "Title" => vec![item.title.clone()],
+                _ => vec![],
+            }
+        });
+        list
     }
 
     pub fn filter_mrs_list<'a>(
@@ -1614,13 +1665,40 @@ impl App {
     }
 
     pub fn filtered_mrs(&self) -> Vec<&crate::gitlab::mr::MergeRequest> {
-        Self::filtered_mrs_list(
+        let mut list = Self::filtered_mrs_list(
             &self.mrs.items,
             &self.search_query,
             &self.enabled_columns,
             self.group_ascending,
             &self.group_by_column,
-        )
+        );
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::MergeRequests,
+            |item, col| match col {
+                "Labels" => item.labels.clone(),
+                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
+                "Reviewers" => item.reviewers.iter().map(|r| r.username.clone()).collect(),
+                "Author" => vec![item.author.username.clone()],
+                "Milestone" => item
+                    .milestone
+                    .as_ref()
+                    .map(|m| m.title.clone())
+                    .into_iter()
+                    .collect(),
+                "State" => vec![item.state.clone()],
+                "Status" => vec![if item.draft {
+                    "Draft".to_string()
+                } else {
+                    "Ready".to_string()
+                }],
+                "ID" => vec![item.iid.to_string()],
+                "Title" => vec![item.title.clone()],
+                _ => vec![],
+            },
+        );
+        list
     }
 
     pub fn filter_pipelines_list<'a>(
@@ -1702,14 +1780,26 @@ impl App {
     }
 
     pub fn filtered_pipelines(&self) -> Vec<&crate::gitlab::pipelines::Pipeline> {
-        Self::filtered_pipelines_list(
+        let mut list = Self::filtered_pipelines_list(
             &self.pipelines.items,
             &self.search_query,
             &self.pipeline_jobs,
             &self.enabled_columns,
             self.group_ascending,
             &self.group_by_column,
-        )
+        );
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Pipelines,
+            |item, col| match col {
+                "ID" => vec![item.id.to_string()],
+                "Status" => vec![item.status.clone()],
+                "Ref" => vec![item.r#ref.clone()],
+                _ => vec![],
+            },
+        );
+        list
     }
 
     pub fn filter_jobs_list<'a>(
@@ -1790,13 +1880,23 @@ impl App {
 
     pub fn filtered_jobs(&self) -> Vec<&crate::gitlab::pipelines::Job> {
         if let Some(jobs) = &self.selected_pipeline_jobs {
-            Self::filtered_jobs_list(
+            let mut list = Self::filtered_jobs_list(
                 jobs,
                 &self.search_query,
                 &self.enabled_columns,
                 self.group_ascending,
                 &self.group_by_column,
-            )
+            );
+            Self::apply_column_filters(&mut list, &self.column_filters, Tab::Jobs, |item, col| {
+                match col {
+                    "ID" => vec![item.id.to_string()],
+                    "Stage" => vec![item.stage.clone()],
+                    "Status" => vec![item.status.clone()],
+                    "Name" => vec![item.name.clone()],
+                    _ => vec![],
+                }
+            });
+            list
         } else {
             vec![]
         }
@@ -1847,7 +1947,20 @@ impl App {
             .enabled_columns
             .get(&Tab::Runners)
             .unwrap_or(&default_set);
-        Self::filter_runners_list(&self.runners.items, &self.search_query, enabled_cols)
+        let mut list: Vec<&crate::gitlab::runners::Runner> =
+            Self::filter_runners_list(&self.runners.items, &self.search_query, enabled_cols);
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Runners,
+            |item, col| match col {
+                "ID" => vec![item.id.to_string()],
+                "Status" => vec![item.status.clone()],
+                "Active" => vec![item.active.to_string()],
+                _ => vec![],
+            },
+        );
+        list
     }
 
     pub fn filter_releases_list<'a>(
@@ -1889,7 +2002,19 @@ impl App {
             .enabled_columns
             .get(&Tab::Releases)
             .unwrap_or(&default_set);
-        Self::filter_releases_list(&self.releases.items, &self.search_query, enabled_cols)
+        let mut list =
+            Self::filter_releases_list(&self.releases.items, &self.search_query, enabled_cols);
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Releases,
+            |item, col| match col {
+                "Tag" => vec![item.tag_name.clone()],
+                "Release Name" => vec![item.name.clone()],
+                _ => vec![],
+            },
+        );
+        list
     }
 
     pub fn filter_todos_list<'a>(
@@ -1970,13 +2095,24 @@ impl App {
     }
 
     pub fn filtered_todos(&self) -> Vec<&crate::gitlab::notifications::Notification> {
-        Self::filtered_todos_list(
+        let mut list = Self::filtered_todos_list(
             &self.todos.items,
             &self.search_query,
             &self.enabled_columns,
             self.group_ascending,
             &self.group_by_column,
-        )
+        );
+        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
+            match col {
+                "State" => vec![item.state.clone()],
+                "Project" => vec![item.project_path.clone()],
+                "Type" => vec![item.target_type.clone()],
+                "ID" => vec![item.id.clone()],
+                "Title" => vec![item.title.clone()],
+                _ => vec![],
+            }
+        });
+        list
     }
 
     pub fn filter_milestones_list<'a>(
@@ -2028,7 +2164,253 @@ impl App {
             .enabled_columns
             .get(&Tab::Milestones)
             .unwrap_or(&default_set);
-        Self::filter_milestones_list(&self.milestones.items, &self.search_query, enabled_cols)
+        let mut list: Vec<&crate::gitlab::milestones::Milestone> =
+            Self::filter_milestones_list(&self.milestones.items, &self.search_query, enabled_cols);
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Milestones,
+            |item, col| match col {
+                "ID" => vec![item.id.to_string()],
+                "Title" => vec![item.title.clone()],
+                "State" => vec![item.state.clone()],
+                _ => vec![],
+            },
+        );
+        list
+    }
+
+    pub fn apply_column_filters<'a, T>(
+        list: &mut Vec<&'a T>,
+        column_filters: &std::collections::HashMap<
+            Tab,
+            std::collections::HashMap<String, std::collections::HashSet<String>>,
+        >,
+        tab: Tab,
+        get_values: impl Fn(&T, &str) -> Vec<String>,
+    ) {
+        let Some(filters) = column_filters.get(&tab) else {
+            return;
+        };
+        for (col, selected) in filters {
+            if selected.is_empty() {
+                continue;
+            }
+            let is_text = matches!(
+                col.as_str(),
+                "Title" | "Name" | "Ref" | "Tag" | "Release Name"
+            );
+            list.retain(|item| {
+                let vals = get_values(item, col);
+                if is_text {
+                    vals.iter().any(|v| {
+                        selected
+                            .iter()
+                            .any(|s| v.to_lowercase().contains(&s.to_lowercase()))
+                    })
+                } else {
+                    vals.iter().any(|v| selected.contains(v))
+                }
+            });
+        }
+    }
+
+    pub fn collect_unique_column_values(&self, tab: Tab, col: &str) -> Vec<String> {
+        use std::collections::BTreeSet;
+        let mut values: BTreeSet<String> = BTreeSet::new();
+        match tab {
+            Tab::Issues => {
+                for item in &self.issues.items {
+                    match col {
+                        "ID" => {
+                            values.insert(item.iid.to_string());
+                        }
+                        "State" => {
+                            values.insert(item.state.clone());
+                        }
+                        "Title" => {
+                            values.insert(item.title.clone());
+                        }
+                        "Labels" => {
+                            for l in &item.labels {
+                                values.insert(l.clone());
+                            }
+                        }
+                        "Assignees" => {
+                            for a in &item.assignees {
+                                values.insert(a.username.clone());
+                            }
+                        }
+                        "Author" => {
+                            values.insert(item.author.username.clone());
+                        }
+                        "Milestone" => {
+                            if let Some(m) = &item.milestone {
+                                values.insert(m.title.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::MergeRequests => {
+                for item in &self.mrs.items {
+                    match col {
+                        "ID" => {
+                            values.insert(item.iid.to_string());
+                        }
+                        "State" => {
+                            values.insert(item.state.clone());
+                        }
+                        "Status" => {
+                            values.insert(if item.draft {
+                                "Draft".to_string()
+                            } else {
+                                "Ready".to_string()
+                            });
+                        }
+                        "Title" => {
+                            values.insert(item.title.clone());
+                        }
+                        "Labels" => {
+                            for l in &item.labels {
+                                values.insert(l.clone());
+                            }
+                        }
+                        "Assignees" => {
+                            for a in &item.assignees {
+                                values.insert(a.username.clone());
+                            }
+                        }
+                        "Reviewers" => {
+                            for r in &item.reviewers {
+                                values.insert(r.username.clone());
+                            }
+                        }
+                        "Author" => {
+                            values.insert(item.author.username.clone());
+                        }
+                        "Milestone" => {
+                            if let Some(m) = &item.milestone {
+                                values.insert(m.title.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Pipelines => {
+                for item in &self.pipelines.items {
+                    match col {
+                        "ID" => {
+                            values.insert(item.id.to_string());
+                        }
+                        "Status" => {
+                            values.insert(item.status.clone());
+                        }
+                        "Ref" => {
+                            values.insert(item.r#ref.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Jobs => {
+                if let Some(jobs) = &self.selected_pipeline_jobs {
+                    for item in jobs {
+                        match col {
+                            "ID" => {
+                                values.insert(item.id.to_string());
+                            }
+                            "Stage" => {
+                                values.insert(item.stage.clone());
+                            }
+                            "Status" => {
+                                values.insert(item.status.clone());
+                            }
+                            "Name" => {
+                                values.insert(item.name.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Tab::Runners => {
+                for item in &self.runners.items {
+                    match col {
+                        "ID" => {
+                            values.insert(item.id.to_string());
+                        }
+                        "Description" => {
+                            if let Some(d) = &item.description {
+                                values.insert(d.clone());
+                            }
+                        }
+                        "Status" => {
+                            values.insert(item.status.clone());
+                        }
+                        "Active" => {
+                            values.insert(item.active.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Releases => {
+                for item in &self.releases.items {
+                    match col {
+                        "Tag" => {
+                            values.insert(item.tag_name.clone());
+                        }
+                        "Release Name" => {
+                            values.insert(item.name.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Todos => {
+                for item in &self.todos.items {
+                    match col {
+                        "State" => {
+                            values.insert(item.state.clone());
+                        }
+                        "Project" => {
+                            values.insert(item.project_path.clone());
+                        }
+                        "Type" => {
+                            values.insert(item.target_type.clone());
+                        }
+                        "ID" => {
+                            values.insert(item.id.clone());
+                        }
+                        "Title" => {
+                            values.insert(item.title.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Milestones => {
+                for item in &self.milestones.items {
+                    match col {
+                        "ID" => {
+                            values.insert(item.id.to_string());
+                        }
+                        "Title" => {
+                            values.insert(item.title.clone());
+                        }
+                        "State" => {
+                            values.insert(item.state.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Terminal => {}
+        }
+        values.into_iter().collect()
     }
 
     pub fn rebuild_group_map(&mut self) {

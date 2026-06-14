@@ -15,9 +15,16 @@ pub struct Notification {
     pub updated_at: String,
 }
 
-pub async fn list_notifications(client: &GitlabClient) -> Result<Vec<Notification>> {
+pub async fn list_notifications(
+    client: &GitlabClient,
+    show_read: bool,
+) -> Result<Vec<Notification>> {
     let cmd_str = if client.is_github {
-        "gh api notifications".to_string()
+        if show_read {
+            "gh api notifications?all=true".to_string()
+        } else {
+            "gh api notifications".to_string()
+        }
     } else {
         "glab api todos".to_string()
     };
@@ -30,7 +37,7 @@ pub async fn list_notifications(client: &GitlabClient) -> Result<Vec<Notificatio
         });
     }
 
-    let res = list_notifications_inner(client).await;
+    let res = list_notifications_inner(client, show_read).await;
 
     if let Some(ref tx) = client.tx {
         let status = match &res {
@@ -46,10 +53,17 @@ pub async fn list_notifications(client: &GitlabClient) -> Result<Vec<Notificatio
     res
 }
 
-async fn list_notifications_inner(client: &GitlabClient) -> Result<Vec<Notification>> {
+async fn list_notifications_inner(
+    client: &GitlabClient,
+    show_read: bool,
+) -> Result<Vec<Notification>> {
     if client.is_github {
+        let mut args = vec!["api", "notifications"];
+        if show_read {
+            args.push("?all=true");
+        }
         let output = Command::new("gh")
-            .args(["api", "notifications"])
+            .args(&args)
             .output()
             .await
             .context("Failed to run gh api notifications")?;
@@ -125,69 +139,78 @@ async fn list_notifications_inner(client: &GitlabClient) -> Result<Vec<Notificat
         }
         Ok(list)
     } else {
-        let output = Command::new("glab")
-            .args(["api", "todos"])
-            .output()
-            .await
-            .context("Failed to run glab api todos")?;
-
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("glab api todos failed: {}", err);
-        }
-
-        let json: Value = serde_json::from_slice(&output.stdout)?;
-        let mut list = Vec::new();
-        if let Some(arr) = json.as_array() {
-            for item in arr {
-                let id = item.get("id").map(|v| v.to_string()).unwrap_or_default();
-                let project_path = item
-                    .get("project")
-                    .and_then(|p| p.get("path_with_namespace"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let target = item.get("target");
-                let title = target
-                    .and_then(|t| t.get("title"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let target_iid = target
-                    .and_then(|t| t.get("iid"))
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
-
-                let target_type = item
-                    .get("target_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Issue")
-                    .to_string();
-                let state = item
-                    .get("state")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("pending")
-                    .to_string();
-                let updated_at = item
-                    .get("updated_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                list.push(Notification {
-                    id,
-                    project_path,
-                    title,
-                    target_type,
-                    target_iid,
-                    state,
-                    updated_at,
-                });
-            }
+        let mut list = fetch_gitlab_todos(client, false).await?;
+        if show_read {
+            list.extend(fetch_gitlab_todos(client, true).await?);
         }
         Ok(list)
     }
+}
+
+async fn fetch_gitlab_todos(client: &GitlabClient, done: bool) -> Result<Vec<Notification>> {
+    let endpoint = if done { "todos?state=done" } else { "todos" };
+    let output = Command::new("glab")
+        .args(["api", endpoint])
+        .output()
+        .await
+        .context("Failed to run glab api todos")?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("glab api todos failed: {}", err);
+    }
+
+    let json: Value = serde_json::from_slice(&output.stdout)?;
+    let mut list = Vec::new();
+    if let Some(arr) = json.as_array() {
+        for item in arr {
+            let id = item.get("id").map(|v| v.to_string()).unwrap_or_default();
+            let project_path = item
+                .get("project")
+                .and_then(|p| p.get("path_with_namespace"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let target = item.get("target");
+            let title = target
+                .and_then(|t| t.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let target_iid = target
+                .and_then(|t| t.get("iid"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let target_type = item
+                .get("target_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Issue")
+                .to_string();
+            let state = item
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending")
+                .to_string();
+            let updated_at = item
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            list.push(Notification {
+                id,
+                project_path,
+                title,
+                target_type,
+                target_iid,
+                state,
+                updated_at,
+            });
+        }
+    }
+    Ok(list)
 }
 
 pub async fn mark_notification_as_read(client: &GitlabClient, id: &str) -> Result<()> {

@@ -740,12 +740,32 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     middle_chunks[2],
                 );
             } else {
-                let filtered_issues = App::filtered_issues_list(
+                let mut filtered_issues = App::filtered_issues_list(
                     &app.issues.items,
                     &app.search_query,
                     &app.enabled_columns,
                     app.group_ascending,
                     &app.group_by_column,
+                );
+                App::apply_column_filters(
+                    &mut filtered_issues,
+                    &app.column_filters,
+                    Tab::Issues,
+                    |item, col| match col {
+                        "Labels" => item.labels.clone(),
+                        "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
+                        "Author" => vec![item.author.username.clone()],
+                        "Milestone" => item
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .into_iter()
+                            .collect(),
+                        "State" => vec![item.state.clone()],
+                        "ID" => vec![item.iid.to_string()],
+                        "Title" => vec![item.title.clone()],
+                        _ => vec![],
+                    },
                 );
 
                 let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
@@ -1096,12 +1116,40 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     middle_chunks[2],
                 );
             } else {
-                let filtered_mrs = App::filtered_mrs_list(
+                let mut filtered_mrs = App::filtered_mrs_list(
                     &app.mrs.items,
                     &app.search_query,
                     &app.enabled_columns,
                     app.group_ascending,
                     &app.group_by_column,
+                );
+                App::apply_column_filters(
+                    &mut filtered_mrs,
+                    &app.column_filters,
+                    Tab::MergeRequests,
+                    |item, col| match col {
+                        "Labels" => item.labels.clone(),
+                        "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
+                        "Reviewers" => item.reviewers.iter().map(|r| r.username.clone()).collect(),
+                        "Author" => vec![item.author.username.clone()],
+                        "Milestone" => item
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .into_iter()
+                            .collect(),
+                        "State" => vec![item.state.clone()],
+                        "Status" => {
+                            vec![if item.draft {
+                                "Draft".to_string()
+                            } else {
+                                "Ready".to_string()
+                            }]
+                        }
+                        "ID" => vec![item.iid.to_string()],
+                        "Title" => vec![item.title.clone()],
+                        _ => vec![],
+                    },
                 );
 
                 let rows = filtered_mrs.iter().enumerate().map(|(idx, m)| {
@@ -1595,13 +1643,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     middle_chunks[2],
                 );
             } else {
-                let filtered_pipelines = App::filtered_pipelines_list(
+                let mut filtered_pipelines = App::filtered_pipelines_list(
                     &app.pipelines.items,
                     &app.search_query,
                     &app.pipeline_jobs,
                     &app.enabled_columns,
                     app.group_ascending,
                     &app.group_by_column,
+                );
+                App::apply_column_filters(
+                    &mut filtered_pipelines,
+                    &app.column_filters,
+                    Tab::Pipelines,
+                    |item, col| match col {
+                        "ID" => vec![item.id.to_string()],
+                        "Status" => vec![item.status.clone()],
+                        "Ref" => vec![item.r#ref.clone()],
+                        _ => vec![],
+                    },
                 );
 
                 let rows = filtered_pipelines.iter().enumerate().map(|(idx, p)| {
@@ -1824,12 +1883,25 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     middle_chunks[2],
                 );
             } else if let Some(jobs) = &app.selected_pipeline_jobs {
-                let filtered_jobs = App::filtered_jobs_list(
+                let mut filtered_jobs = App::filtered_jobs_list(
                     jobs,
                     &app.search_query,
                     &app.enabled_columns,
                     app.group_ascending,
                     &app.group_by_column,
+                );
+                App::apply_column_filters(
+                    &mut filtered_jobs,
+                    &app.column_filters,
+                    Tab::Jobs,
+                    |item, col| match col {
+                        "ID" => vec![item.id.to_string()],
+                        "Stage" => vec![item.stage.clone()],
+                        "Status" => vec![item.status.clone()],
+                        "Name" => vec![item.name.clone()],
+                        "Matrix" => vec![item.matrix.clone().unwrap_or_default()],
+                        _ => vec![],
+                    },
                 );
 
                 let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
@@ -2068,8 +2140,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .enabled_columns
                     .get(&Tab::Runners)
                     .unwrap_or(&default_set);
-                let filtered_runners =
+                let mut filtered_runners =
                     App::filter_runners_list(&app.runners.items, &app.search_query, enabled_cols);
+                App::apply_column_filters(
+                    &mut filtered_runners,
+                    &app.column_filters,
+                    Tab::Runners,
+                    |item, col| match col {
+                        "ID" => vec![item.id.to_string()],
+                        "Status" => vec![item.status.clone()],
+                        "Active" => vec![item.active.to_string()],
+                        _ => vec![],
+                    },
+                );
 
                 let rows = filtered_runners.iter().enumerate().map(|(idx, r)| {
                     let is_row_highlighted = app.runners.state.selected() == Some(idx);
@@ -2347,8 +2430,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .enabled_columns
                     .get(&Tab::Releases)
                     .unwrap_or(&default_set);
-                let filtered_releases =
+                let mut filtered_releases =
                     App::filter_releases_list(&app.releases.items, &app.search_query, enabled_cols);
+                App::apply_column_filters(
+                    &mut filtered_releases,
+                    &app.column_filters,
+                    Tab::Releases,
+                    |item, col| match col {
+                        "Tag" => vec![item.tag_name.clone()],
+                        "Release Name" => vec![item.name.clone()],
+                        _ => vec![],
+                    },
+                );
 
                 let rows = filtered_releases.iter().enumerate().map(|(idx, r)| {
                     let is_row_highlighted = app.releases.state.selected() == Some(idx);
@@ -2500,12 +2593,25 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     middle_chunks[2],
                 );
             } else {
-                let filtered_todos = App::filtered_todos_list(
+                let mut filtered_todos = App::filtered_todos_list(
                     &app.todos.items,
                     &app.search_query,
                     &app.enabled_columns,
                     app.group_ascending,
                     &app.group_by_column,
+                );
+                App::apply_column_filters(
+                    &mut filtered_todos,
+                    &app.column_filters,
+                    Tab::Todos,
+                    |item, col| match col {
+                        "State" => vec![item.state.clone()],
+                        "Project" => vec![item.project_path.clone()],
+                        "Type" => vec![item.target_type.clone()],
+                        "ID" => vec![item.id.to_string()],
+                        "Title" => vec![item.title.clone()],
+                        _ => vec![],
+                    },
                 );
 
                 let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
@@ -2720,12 +2826,23 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 );
             } else {
                 let default_set = std::collections::HashSet::new();
-                let filtered_milestones = App::filter_milestones_list(
+                let mut filtered_milestones = App::filter_milestones_list(
                     &app.milestones.items,
                     &app.search_query,
                     app.enabled_columns
                         .get(&Tab::Milestones)
                         .unwrap_or(&default_set),
+                );
+                App::apply_column_filters(
+                    &mut filtered_milestones,
+                    &app.column_filters,
+                    Tab::Milestones,
+                    |item, col| match col {
+                        "ID" => vec![item.id.to_string()],
+                        "Title" => vec![item.title.clone()],
+                        "State" => vec![item.state.clone()],
+                        _ => vec![],
+                    },
                 );
 
                 let header_cells = Tab::Milestones
@@ -4269,106 +4386,90 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(footer, layout[1]);
     }
 
-    if let Some(selector) = &mut app.selector {
-        let block = Block::default()
-            .title(format!(" {} ", selector.title))
-            .title_style(
-                Style::default()
-                    .fg(THEME.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.border_focused))
-            .style(Style::default().bg(Color::Reset));
+    if app.column_filter_context.is_none() {
+        if let Some(selector) = &mut app.selector {
+            let block = Block::default()
+                .title(format!(" {} ", selector.title))
+                .title_style(
+                    Style::default()
+                        .fg(THEME.header_fg)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(THEME.border_focused))
+                .style(Style::default().bg(Color::Reset));
 
-        let area = centered_rect(50, 60, size);
+            let area = centered_rect(50, 60, size);
 
-        let has_filter = selector.field_type != "comment_action_select"
-            && selector.field_type != "review_submit_status"
-            && selector.field_type != "description_edit_choice";
+            let has_filter = selector.field_type != "comment_action_select"
+                && selector.field_type != "review_submit_status"
+                && selector.field_type != "description_edit_choice";
 
-        let constraints = if has_filter {
-            vec![
-                Constraint::Length(3), // Search/Filter
-                Constraint::Min(0),    // List of items
-                Constraint::Length(3), // Help/Info footer
-            ]
-        } else {
-            vec![
-                Constraint::Min(0),    // List of items
-                Constraint::Length(3), // Help/Info footer
-            ]
-        };
+            let constraints = if has_filter {
+                vec![
+                    Constraint::Length(3), // Search/Filter
+                    Constraint::Min(0),    // List of items
+                    Constraint::Length(3), // Help/Info footer
+                ]
+            } else {
+                vec![
+                    Constraint::Min(0),    // List of items
+                    Constraint::Length(3), // Help/Info footer
+                ]
+            };
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints(constraints)
-            .split(area);
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints(constraints)
+                .split(area);
 
-        let (search_chunk, list_chunk, footer_chunk) = if has_filter {
-            (Some(chunks[0]), chunks[1], chunks[2])
-        } else {
-            (None, chunks[0], chunks[1])
-        };
+            let (search_chunk, list_chunk, footer_chunk) = if has_filter {
+                (Some(chunks[0]), chunks[1], chunks[2])
+            } else {
+                (None, chunks[0], chunks[1])
+            };
 
-        let border_color_search = if selector.is_filtering {
-            THEME.border_focused
-        } else {
-            THEME.border
-        };
-        let search_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color_search).bg(Color::Reset))
-            .title(" Filter (press 'f' or '/' to focus) ");
+            let border_color_search = if selector.is_filtering {
+                THEME.border_focused
+            } else {
+                THEME.border
+            };
+            let search_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_color_search).bg(Color::Reset))
+                .title(" Filter (press 'f' or '/' to focus) ");
 
-        let search_text = if selector.is_filtering {
-            format!("{}▋", selector.search_query)
-        } else if selector.search_query.is_empty() {
-            "Type to filter...".to_string()
-        } else {
-            selector.search_query.clone()
-        };
+            let search_text = if selector.is_filtering {
+                format!("{}▋", selector.search_query)
+            } else if selector.search_query.is_empty() {
+                "Type to filter...".to_string()
+            } else {
+                selector.search_query.clone()
+            };
 
-        let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
-            Style::default()
-                .fg(THEME.text_muted)
-                .bg(Color::Reset)
-                .add_modifier(Modifier::ITALIC)
-        } else {
-            Style::default().fg(THEME.text_normal).bg(Color::Reset)
-        };
-
-        let search_p = Paragraph::new(search_text)
-            .block(search_block)
-            .style(search_style)
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
-        let footer_text = if selector.is_filtering {
-            "  Esc/Enter: Stop filtering • Backspace: Delete  "
-        } else if has_filter {
-            "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • f: Filter • Esc: Back  "
-        } else {
-            "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • Esc: Back  "
-        };
-        let footer_p = Paragraph::new(footer_text)
-            .style(
+            let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
                 Style::default()
                     .fg(THEME.text_muted)
                     .bg(Color::Reset)
-                    .add_modifier(Modifier::ITALIC),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
+                    .add_modifier(Modifier::ITALIC)
+            } else {
+                Style::default().fg(THEME.text_normal).bg(Color::Reset)
+            };
 
-        f.render_widget(Clear, area);
-        f.render_widget(block, area);
+            let search_p = Paragraph::new(search_text)
+                .block(search_block)
+                .style(search_style)
+                .wrap(ratatui::widgets::Wrap { trim: true });
 
-        if let Some(sc) = search_chunk {
-            f.render_widget(search_p, sc);
-        }
-
-        if selector.is_loading {
-            let p = Paragraph::new("\n  Loading options from GitLab...")
+            let footer_text = if selector.is_filtering {
+                "  Esc/Enter: Stop filtering • Backspace: Delete  "
+            } else if has_filter {
+                "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • f: Filter • Esc: Back  "
+            } else {
+                "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • Esc: Back  "
+            };
+            let footer_p = Paragraph::new(footer_text)
                 .style(
                     Style::default()
                         .fg(THEME.text_muted)
@@ -4376,11 +4477,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         .add_modifier(Modifier::ITALIC),
                 )
                 .wrap(ratatui::widgets::Wrap { trim: true });
-            f.render_widget(p, list_chunk);
-        } else {
-            let filtered_items = selector.get_filtered_items_with_indices();
-            if filtered_items.is_empty() {
-                let p = Paragraph::new("\n  No matching options found.")
+
+            f.render_widget(Clear, area);
+            f.render_widget(block, area);
+
+            if let Some(sc) = search_chunk {
+                f.render_widget(search_p, sc);
+            }
+
+            if selector.is_loading {
+                let p = Paragraph::new("\n  Loading options from GitLab...")
                     .style(
                         Style::default()
                             .fg(THEME.text_muted)
@@ -4390,82 +4496,95 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .wrap(ratatui::widgets::Wrap { trim: true });
                 f.render_widget(p, list_chunk);
             } else {
-                let items: Vec<ListItem> = filtered_items
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (item, indices))| {
-                        let is_selected = if item.starts_with("+ Create \"") {
-                            let clean_val = selector.search_query.trim().to_string();
-                            selector.selected_items.contains(&clean_val)
-                        } else {
-                            selector.selected_items.contains(item)
-                        };
-
-                        let marker = if is_selected { " ▣ " } else { " ☐ " };
-                        let marker_color = if is_selected {
-                            THEME.green
-                        } else {
-                            THEME.text_muted
-                        };
-
-                        let item_bg = if i == selector.cursor_idx {
-                            THEME.highlight_bg
-                        } else {
-                            Color::Reset
-                        };
-
-                        let style = if i == selector.cursor_idx {
+                let filtered_items = selector.get_filtered_items_with_indices();
+                if filtered_items.is_empty() {
+                    let p = Paragraph::new("\n  No matching options found.")
+                        .style(
                             Style::default()
-                                .bg(item_bg)
-                                .fg(THEME.text_normal)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(THEME.text_normal).bg(item_bg)
-                        };
+                                .fg(THEME.text_muted)
+                                .bg(Color::Reset)
+                                .add_modifier(Modifier::ITALIC),
+                        )
+                        .wrap(ratatui::widgets::Wrap { trim: true });
+                    f.render_widget(p, list_chunk);
+                } else {
+                    let items: Vec<ListItem> = filtered_items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (item, indices))| {
+                            let is_selected = if item.starts_with("+ Create \"") {
+                                let clean_val = selector.search_query.trim().to_string();
+                                selector.selected_items.contains(&clean_val)
+                            } else {
+                                selector.selected_items.contains(item)
+                            };
 
-                        let highlight_style = if i == selector.cursor_idx {
-                            Style::default()
-                                .bg(item_bg)
-                                .fg(THEME.yellow)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                                .fg(THEME.yellow)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::BOLD)
-                        };
+                            let marker = if is_selected { " ▣ " } else { " ☐ " };
+                            let marker_color = if is_selected {
+                                THEME.green
+                            } else {
+                                THEME.text_muted
+                            };
 
-                        let mut line_spans = vec![Span::styled(
-                            marker,
-                            Style::default()
-                                .fg(marker_color)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::BOLD),
-                        )];
+                            let item_bg = if i == selector.cursor_idx {
+                                THEME.highlight_bg
+                            } else {
+                                Color::Reset
+                            };
 
-                        if let Some(indices) = indices {
-                            line_spans.extend(highlight_fuzzy_match(
-                                item,
-                                indices,
-                                style,
-                                highlight_style,
-                            ));
-                        } else {
-                            line_spans.push(Span::styled(item.clone(), style));
-                        }
+                            let style = if i == selector.cursor_idx {
+                                Style::default()
+                                    .bg(item_bg)
+                                    .fg(THEME.text_normal)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default().fg(THEME.text_normal).bg(item_bg)
+                            };
 
-                        ListItem::new(vec![Line::from(line_spans)])
-                            .style(Style::default().bg(item_bg))
-                    })
-                    .collect();
+                            let highlight_style = if i == selector.cursor_idx {
+                                Style::default()
+                                    .bg(item_bg)
+                                    .fg(THEME.yellow)
+                                    .add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default()
+                                    .fg(THEME.yellow)
+                                    .bg(item_bg)
+                                    .add_modifier(Modifier::BOLD)
+                            };
 
-                let list = List::new(items).style(Style::default().bg(Color::Reset));
-                let mut state = selector.state.clone();
-                f.render_stateful_widget(list, list_chunk, &mut state);
-                selector.state = state;
+                            let mut line_spans = vec![Span::styled(
+                                marker,
+                                Style::default()
+                                    .fg(marker_color)
+                                    .bg(item_bg)
+                                    .add_modifier(Modifier::BOLD),
+                            )];
+
+                            if let Some(indices) = indices {
+                                line_spans.extend(highlight_fuzzy_match(
+                                    item,
+                                    indices,
+                                    style,
+                                    highlight_style,
+                                ));
+                            } else {
+                                line_spans.push(Span::styled(item.clone(), style));
+                            }
+
+                            ListItem::new(vec![Line::from(line_spans)])
+                                .style(Style::default().bg(item_bg))
+                        })
+                        .collect();
+
+                    let list = List::new(items).style(Style::default().bg(Color::Reset));
+                    let mut state = selector.state.clone();
+                    f.render_stateful_widget(list, list_chunk, &mut state);
+                    selector.state = state;
+                }
             }
+            f.render_widget(footer_p, footer_chunk);
         }
-        f.render_widget(footer_p, footer_chunk);
     }
 
     if let Some(text_input) = &app.text_input {
@@ -5030,30 +5149,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let cols = tab.columns();
         let active_idx = app.column_checklist_idx;
 
-        let group_cols: Vec<&str> = cols
-            .iter()
-            .filter(|c| **c != "Show Closed Items" && **c != "Show Merged Items")
-            .copied()
-            .collect();
+        let group_cols: Vec<&str> = cols.iter().copied().collect();
 
-        let mut columns_list = Vec::new();
-        let mut filters_list = Vec::new();
-        for (i, col) in cols.iter().enumerate() {
-            if *col == "Show Closed Items" || *col == "Show Merged Items" {
-                filters_list.push((i, *col));
-            } else {
-                columns_list.push((i, *col));
-            }
-        }
+        let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
 
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
         let width = 48;
-        let height = (columns_list.len()
-            + filters_list.len()
-            + group_cols.len()
-            + 2
-            + if filters_list.is_empty() { 10 } else { 12 }) as u16;
+        let height = (columns_list.len() + group_cols.len() + 4 + 2 + 6) as u16;
         let area = centered_rect_fixed(width, height, size);
 
         let checklist_block = Block::default()
@@ -5075,11 +5178,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         // COLUMNS header + list
         constraints.push(Constraint::Length(1));
         constraints.push(Constraint::Length(columns_list.len() as u16));
-        if !filters_list.is_empty() {
-            constraints.push(Constraint::Length(1)); // spacer
-            constraints.push(Constraint::Length(1)); // FILTERS header
-            constraints.push(Constraint::Length(filters_list.len() as u16)); // FILTERS list
-        }
         constraints.push(Constraint::Length(1)); // spacer
         constraints.push(Constraint::Length(1)); // GROUP BY header
         constraints.push(Constraint::Length(group_cols.len() as u16)); // GROUP BY list
@@ -5109,7 +5207,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .iter()
             .map(|&(orig_idx, col)| {
                 let checked = app.is_column_visible(tab, col);
-                let text = format!("  [{}] {}", if checked { "x" } else { " " }, col);
+                let filter_count = app
+                    .get_column_filter(tab, col)
+                    .map(|s| s.len())
+                    .filter(|&n| n > 0);
+                let text = if let Some(count) = filter_count {
+                    format!(
+                        "  [{}] {} ({})",
+                        if checked { "x" } else { " " },
+                        col,
+                        count
+                    )
+                } else {
+                    format!("  [{}] {}", if checked { "x" } else { " " }, col)
+                };
                 let is_active = orig_idx == active_idx;
                 let style = if is_active {
                     Style::default()
@@ -5126,41 +5237,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .collect();
         f.render_widget(List::new(col_items), popup_layout[chunk_idx]);
         chunk_idx += 1;
-
-        // Render FILTERS section if present
-        if !filters_list.is_empty() {
-            chunk_idx += 1; // spacer
-
-            let filters_header = Paragraph::new("  FILTERS").style(
-                Style::default()
-                    .fg(THEME.purple)
-                    .add_modifier(Modifier::BOLD),
-            );
-            f.render_widget(filters_header, popup_layout[chunk_idx]);
-            chunk_idx += 1;
-
-            let filter_items: Vec<ListItem> = filters_list
-                .iter()
-                .map(|&(orig_idx, col)| {
-                    let checked = app.is_column_visible(tab, col);
-                    let text = format!("  [{}] {}", if checked { "x" } else { " " }, col);
-                    let is_active = orig_idx == active_idx;
-                    let style = if is_active {
-                        Style::default()
-                            .fg(THEME.bg)
-                            .bg(THEME.border_focused)
-                            .add_modifier(Modifier::BOLD)
-                    } else if checked {
-                        Style::default().fg(THEME.text_normal)
-                    } else {
-                        Style::default().fg(THEME.text_muted)
-                    };
-                    ListItem::new(text).style(style)
-                })
-                .collect();
-            f.render_widget(List::new(filter_items), popup_layout[chunk_idx]);
-            chunk_idx += 1;
-        }
 
         chunk_idx += 1; // spacer
 
@@ -5244,6 +5320,145 @@ pub fn render(f: &mut Frame, app: &mut App) {
             )
             .wrap(ratatui::widgets::Wrap { trim: true });
         f.render_widget(footer_p, popup_layout[chunk_idx]);
+    }
+
+    // Render value-based column filter selector as overlay on configure view
+    if app.focus_column_checklist && app.column_filter_context.is_some() {
+        if let Some(selector) = &mut app.selector {
+            let block = Block::default()
+                .title(format!(" {} ", selector.title))
+                .title_style(
+                    Style::default()
+                        .fg(THEME.header_fg)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(THEME.border_focused))
+                .style(Style::default().bg(Color::Reset));
+
+            let area = centered_rect_fixed(44, 44, size);
+
+            let has_filter = true;
+
+            let constraints = vec![
+                Constraint::Length(3), // Search/Filter
+                Constraint::Min(0),    // List of items
+                Constraint::Length(3), // Help/Info footer
+            ];
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints(constraints)
+                .split(area);
+
+            let (search_chunk, list_chunk, footer_chunk) = (chunks[0], chunks[1], chunks[2]);
+
+            let border_color_search = if selector.is_filtering {
+                THEME.border_focused
+            } else {
+                THEME.border
+            };
+            let search_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_color_search).bg(Color::Reset))
+                .title(" Filter (press 'f' or '/' to focus) ");
+
+            let search_text = if selector.is_filtering {
+                format!("{}▋", selector.search_query)
+            } else if selector.search_query.is_empty() {
+                "Type to filter...".to_string()
+            } else {
+                selector.search_query.clone()
+            };
+            let search_p = Paragraph::new(search_text)
+                .block(search_block)
+                .style(Style::default().fg(THEME.text_normal));
+
+            f.render_widget(Clear, area);
+            f.render_widget(block, area);
+            f.render_widget(search_p, search_chunk);
+
+            // Render items list
+            let items_list = selector.get_filtered_items_with_indices();
+            let items: Vec<ListItem> = items_list
+                .iter()
+                .enumerate()
+                .map(|(i, (item, indices))| {
+                    let is_selected = selector.selected_items.contains(item);
+
+                    let marker = if is_selected { " ▣ " } else { " ☐ " };
+                    let marker_color = if is_selected {
+                        THEME.green
+                    } else {
+                        THEME.text_muted
+                    };
+
+                    let item_bg = if i == selector.cursor_idx {
+                        THEME.highlight_bg
+                    } else {
+                        Color::Reset
+                    };
+
+                    let style = if i == selector.cursor_idx {
+                        Style::default()
+                            .bg(item_bg)
+                            .fg(THEME.text_normal)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(THEME.text_normal).bg(item_bg)
+                    };
+
+                    let highlight_style = if i == selector.cursor_idx {
+                        Style::default()
+                            .bg(item_bg)
+                            .fg(THEME.yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(THEME.yellow)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::BOLD)
+                    };
+
+                    let mut line_spans = vec![Span::styled(
+                        marker,
+                        Style::default()
+                            .fg(marker_color)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::BOLD),
+                    )];
+
+                    if let Some(indices) = indices {
+                        line_spans.extend(highlight_fuzzy_match(
+                            item,
+                            indices,
+                            style,
+                            highlight_style,
+                        ));
+                    } else {
+                        line_spans.push(Span::styled(item.clone(), style));
+                    }
+
+                    ListItem::new(vec![Line::from(line_spans)]).style(Style::default().bg(item_bg))
+                })
+                .collect();
+
+            let list = List::new(items).style(Style::default().bg(Color::Reset));
+            let mut state = selector.state.clone();
+            f.render_stateful_widget(list, list_chunk, &mut state);
+            selector.state = state;
+
+            let footer_p = Paragraph::new(" [Spc] Toggle • [Enter] Confirm • [Esc] Cancel ")
+                .alignment(Alignment::Center)
+                .style(
+                    Style::default()
+                        .fg(THEME.text_muted)
+                        .add_modifier(Modifier::ITALIC),
+                )
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            f.render_widget(footer_p, footer_chunk);
+        }
     }
 
     if app.show_submit_review_prompt.is_some() {

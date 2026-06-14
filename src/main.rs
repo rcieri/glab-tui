@@ -1325,19 +1325,50 @@ fn get_branches() -> Vec<String> {
     Vec::new()
 }
 
+fn save_configure_cache(
+    project_context: &str,
+    enabled_columns: &std::collections::HashMap<app::Tab, std::collections::HashSet<String>>,
+    group_by_column: &Option<String>,
+    group_ascending: bool,
+    column_filters: &std::collections::HashMap<
+        app::Tab,
+        std::collections::HashMap<String, std::collections::HashSet<String>>,
+    >,
+) {
+    let mut cache = crate::utils::cache::load_cache(project_context);
+    cache.enabled_columns = enabled_columns
+        .iter()
+        .map(|(tab, cols)| (format!("{tab:?}"), cols.iter().cloned().collect()))
+        .collect();
+    cache.group_by_column = group_by_column.clone();
+    cache.group_ascending = group_ascending;
+    cache.column_filters = column_filters
+        .iter()
+        .map(|(tab, filters)| {
+            (
+                format!("{tab:?}"),
+                filters
+                    .iter()
+                    .map(|(col, vals)| (col.clone(), vals.iter().cloned().collect()))
+                    .collect(),
+            )
+        })
+        .collect();
+    crate::utils::cache::save_cache(project_context, &cache);
+}
+
 fn spawn_refresh_active_tab(
     client: &gitlab::client::GitlabClient,
     project_context: &str,
     tab: app::Tab,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    show_closed: bool,
 ) {
     let client = client.clone();
     let project_context = project_context.to_string();
     tokio::spawn(async move {
         match tab {
             app::Tab::Issues => {
-                match gitlab::issues::list_issues(&client, &project_context, show_closed).await {
+                match gitlab::issues::list_issues(&client, &project_context, true).await {
                     Ok(issues) => {
                         let _ = tx.send(Event::IssuesFetched(issues));
                     }
@@ -1350,7 +1381,7 @@ fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::MergeRequests => {
-                match gitlab::mr::list_mrs(&client, &project_context, show_closed).await {
+                match gitlab::mr::list_mrs(&client, &project_context, true).await {
                     Ok(mrs) => {
                         let _ = tx.send(Event::MrsFetched(mrs));
                     }
@@ -1401,17 +1432,19 @@ fn spawn_refresh_active_tab(
                     }
                 }
             }
-            app::Tab::Todos => match gitlab::notifications::list_notifications(&client).await {
-                Ok(notifs) => {
-                    let _ = tx.send(Event::TodosFetched(notifs));
+            app::Tab::Todos => {
+                match gitlab::notifications::list_notifications(&client, true).await {
+                    Ok(notifs) => {
+                        let _ = tx.send(Event::TodosFetched(notifs));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::FetchFailed(
+                            tab,
+                            format!("Failed to fetch notifications: {}", e),
+                        ));
+                    }
                 }
-                Err(e) => {
-                    let _ = tx.send(Event::FetchFailed(
-                        tab,
-                        format!("Failed to fetch notifications: {}", e),
-                    ));
-                }
-            },
+            }
             app::Tab::Jobs => {
                 let branch_name = get_current_branch();
                 let mut found_pipeline_id = None;
@@ -1614,6 +1647,17 @@ async fn main() -> Result<()> {
         app.group_ascending = cache.group_ascending;
     }
 
+    if !cache.column_filters.is_empty() {
+        for (tab_str, filters) in &cache.column_filters {
+            if let Some(tab) = app::Tab::ALL.iter().find(|t| format!("{t:?}") == *tab_str) {
+                let entry = app.column_filters.entry(*tab).or_default();
+                for (col, vals) in filters {
+                    entry.insert(col.clone(), vals.iter().cloned().collect());
+                }
+            }
+        }
+    }
+
     if !app.issues.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Issues);
     }
@@ -1644,13 +1688,7 @@ async fn main() -> Result<()> {
         if app.issues.items.is_empty() {
             app.start_loading_tab(app.active_tab);
         }
-        spawn_refresh_active_tab(
-            &client,
-            &app.project_context,
-            app.active_tab,
-            tx.clone(),
-            app.is_column_visible(app.active_tab, app.active_tab.show_closed_column_name()),
-        );
+        spawn_refresh_active_tab(&client, &app.project_context, app.active_tab, tx.clone());
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         app.terminal_commands.push(crate::app::TerminalCommand {
@@ -1749,10 +1787,6 @@ async fn main() -> Result<()> {
                                     &app.project_context,
                                     app.active_tab,
                                     events.sender(),
-                                    app.is_column_visible(
-                                        app.active_tab,
-                                        app.active_tab.show_closed_column_name(),
-                                    ),
                                 );
                             }
                         }
@@ -1806,6 +1840,21 @@ async fn main() -> Result<()> {
                         .collect();
                     cache.group_by_column = app.group_by_column.clone();
                     cache.group_ascending = app.group_ascending;
+                    cache.column_filters = app
+                        .column_filters
+                        .iter()
+                        .map(|(tab, filters)| {
+                            (
+                                format!("{tab:?}"),
+                                filters
+                                    .iter()
+                                    .map(|(col, vals)| {
+                                        (col.clone(), vals.iter().cloned().collect())
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect();
                     crate::utils::cache::save_cache(&app.project_context, &cache);
                 }
                 Event::MrsFetched(mrs) => {
@@ -1994,10 +2043,6 @@ async fn main() -> Result<()> {
                                     &app.project_context,
                                     tab,
                                     events.sender(),
-                                    app.is_column_visible(
-                                        app.active_tab,
-                                        app.active_tab.show_closed_column_name(),
-                                    ),
                                 );
                             }
                             if let Some(diff_view) = &app.diff_view {
@@ -2200,10 +2245,6 @@ async fn main() -> Result<()> {
                                     &app.project_context,
                                     app.active_tab,
                                     events.sender(),
-                                    app.is_column_visible(
-                                        app.active_tab,
-                                        app.active_tab.show_closed_column_name(),
-                                    ),
                                 );
                             }
                         }
@@ -3286,6 +3327,24 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Enter => {
                                     let field_type = selector.field_type.clone();
+                                    if field_type == "column_filter" {
+                                        if let Some((tab, col)) = app.column_filter_context.take() {
+                                            app.set_column_filter(
+                                                tab,
+                                                &col,
+                                                selector.selected_items.clone(),
+                                            );
+                                            app.update_filter_selection();
+                                            save_configure_cache(
+                                                &app.project_context,
+                                                &app.enabled_columns,
+                                                &app.group_by_column,
+                                                app.group_ascending,
+                                                &app.column_filters,
+                                            );
+                                        }
+                                        continue;
+                                    }
                                     if field_type == "switch_repo" {
                                         let filtered_items = selector.get_filtered_items();
                                         let mut selected_val =
@@ -3435,11 +3494,6 @@ async fn main() -> Result<()> {
                                                             &app.project_context,
                                                             app.active_tab,
                                                             events.sender(),
-                                                            app.is_column_visible(
-                                                                app.active_tab,
-                                                                app.active_tab
-                                                                    .show_closed_column_name(),
-                                                            ),
                                                         );
                                                     }
                                                 } else {
@@ -4283,10 +4337,6 @@ async fn main() -> Result<()> {
                                                 &app.project_context,
                                                 app.active_tab,
                                                 events.sender(),
-                                                app.is_column_visible(
-                                                    app.active_tab,
-                                                    app.active_tab.show_closed_column_name(),
-                                                ),
                                             );
                                         }
 
@@ -4463,10 +4513,6 @@ async fn main() -> Result<()> {
                                                 &app.project_context,
                                                 app.active_tab,
                                                 events.sender(),
-                                                app.is_column_visible(
-                                                    app.active_tab,
-                                                    app.active_tab.show_closed_column_name(),
-                                                ),
                                             );
                                         }
                                         continue;
@@ -4648,10 +4694,6 @@ async fn main() -> Result<()> {
                                                 &app.project_context,
                                                 app.active_tab,
                                                 events.sender(),
-                                                app.is_column_visible(
-                                                    app.active_tab,
-                                                    app.active_tab.show_closed_column_name(),
-                                                ),
                                             );
                                         }
                                         continue;
@@ -4756,10 +4798,6 @@ async fn main() -> Result<()> {
                                                 &app.project_context,
                                                 app.active_tab,
                                                 events.sender(),
-                                                app.is_column_visible(
-                                                    app.active_tab,
-                                                    app.active_tab.show_closed_column_name(),
-                                                ),
                                             );
                                         }
                                         continue;
@@ -5783,11 +5821,7 @@ async fn main() -> Result<()> {
 
                     if app.focus_column_checklist {
                         let cols = app.active_tab.columns();
-                        let group_cols: Vec<&str> = cols
-                            .iter()
-                            .filter(|c| **c != "Show Closed Items" && **c != "Show Merged Items")
-                            .copied()
-                            .collect();
+                        let group_cols: Vec<&str> = cols.iter().copied().collect();
                         let cols_end = cols.len();
                         let group_end = cols_end + group_cols.len();
                         let max_idx = group_end + 1;
@@ -5810,7 +5844,21 @@ async fn main() -> Result<()> {
                                     app.column_checklist_idx = max_idx;
                                 }
                             }
-                            KeyCode::Char(' ') | KeyCode::Enter => {
+                            KeyCode::Char('J') => {
+                                app.column_checklist_idx = match app.column_checklist_idx {
+                                    idx if idx < cols_end => cols_end,
+                                    idx if idx < group_end => group_end,
+                                    _ => 0,
+                                };
+                            }
+                            KeyCode::Char('K') => {
+                                app.column_checklist_idx = match app.column_checklist_idx {
+                                    idx if idx >= group_end => cols_end,
+                                    idx if idx >= cols_end => 0,
+                                    _ => group_end,
+                                };
+                            }
+                            KeyCode::Char(' ') => {
                                 let idx = app.column_checklist_idx;
                                 if idx < cols_end {
                                     if let Some(col_name) = cols.get(idx) {
@@ -5841,18 +5889,13 @@ async fn main() -> Result<()> {
                                     app.group_ascending = idx == group_end;
                                     app.update_filter_selection();
                                 }
-                                let mut cache =
-                                    crate::utils::cache::load_cache(&app.project_context);
-                                cache.enabled_columns = app
-                                    .enabled_columns
-                                    .iter()
-                                    .map(|(tab, cols)| {
-                                        (format!("{tab:?}"), cols.iter().cloned().collect())
-                                    })
-                                    .collect();
-                                cache.group_by_column = app.group_by_column.clone();
-                                cache.group_ascending = app.group_ascending;
-                                crate::utils::cache::save_cache(&app.project_context, &cache);
+                                save_configure_cache(
+                                    &app.project_context,
+                                    &app.enabled_columns,
+                                    &app.group_by_column,
+                                    app.group_ascending,
+                                    &app.column_filters,
+                                );
                                 if let Some(client) = app.gitlab_client.clone() {
                                     app.start_loading_tab(app.active_tab);
                                     spawn_refresh_active_tab(
@@ -5860,11 +5903,89 @@ async fn main() -> Result<()> {
                                         &app.project_context,
                                         app.active_tab,
                                         events.sender(),
-                                        app.is_column_visible(
-                                            app.active_tab,
-                                            app.active_tab.show_closed_column_name(),
-                                        ),
                                     );
+                                }
+                            }
+                            KeyCode::Enter => {
+                                let idx = app.column_checklist_idx;
+                                if idx < cols_end {
+                                    if let Some(col_name) = cols.get(idx) {
+                                        let col_str = col_name.to_string();
+                                        let all_values = app
+                                            .collect_unique_column_values(app.active_tab, &col_str);
+                                        let selected = app
+                                            .column_filters
+                                            .get(&app.active_tab)
+                                            .and_then(|f| f.get(&col_str))
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        app.column_filter_context =
+                                            Some((app.active_tab, col_str.clone()));
+                                        app.selector = Some(crate::app::Selector {
+                                            title: format!("Filter by {}", col_name),
+                                            all_items: all_values,
+                                            selected_items: selected,
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: 0,
+                                            entity_type: String::new(),
+                                            field_type: "column_filter".to_string(),
+                                            multi_select: true,
+                                            state: {
+                                                let mut s = ratatui::widgets::ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
+                                    }
+                                } else if idx < group_end {
+                                    let group_idx = idx - cols_end;
+                                    if let Some(col) = group_cols.get(group_idx) {
+                                        if app.group_by_column.as_deref() == Some(col) {
+                                            app.group_by_column = None;
+                                        } else {
+                                            app.group_by_column = Some(col.to_string());
+                                        }
+                                        app.group_list_state.select(Some(0));
+                                        app.update_filter_selection();
+                                    }
+                                    save_configure_cache(
+                                        &app.project_context,
+                                        &app.enabled_columns,
+                                        &app.group_by_column,
+                                        app.group_ascending,
+                                        &app.column_filters,
+                                    );
+                                    if let Some(client) = app.gitlab_client.clone() {
+                                        app.start_loading_tab(app.active_tab);
+                                        spawn_refresh_active_tab(
+                                            &client,
+                                            &app.project_context,
+                                            app.active_tab,
+                                            events.sender(),
+                                        );
+                                    }
+                                } else {
+                                    app.group_ascending = idx == group_end;
+                                    app.update_filter_selection();
+                                    save_configure_cache(
+                                        &app.project_context,
+                                        &app.enabled_columns,
+                                        &app.group_by_column,
+                                        app.group_ascending,
+                                        &app.column_filters,
+                                    );
+                                    if let Some(client) = app.gitlab_client.clone() {
+                                        app.start_loading_tab(app.active_tab);
+                                        spawn_refresh_active_tab(
+                                            &client,
+                                            &app.project_context,
+                                            app.active_tab,
+                                            events.sender(),
+                                        );
+                                    }
                                 }
                             }
                             _ => {}
@@ -6105,7 +6226,6 @@ async fn main() -> Result<()> {
                                             &app.project_context,
                                             app::Tab::Issues,
                                             events.sender(),
-                                            false,
                                         );
                                     }
                                 }
@@ -6512,8 +6632,7 @@ async fn main() -> Result<()> {
                                                             &client_clone,
                                                             &project_context,
                                                             active_tab,
-                                                            tx,
-                                                            false,
+                                                            tx.clone(),
                                                         );
                                                     });
                                                 } else {
@@ -6525,6 +6644,7 @@ async fn main() -> Result<()> {
                                                     {
                                                         p.status = "running".to_string();
                                                     }
+                                                    let tx = events.sender();
                                                     tokio::spawn(async move {
                                                         let endpoint = format!(
                                                             "projects/{}/pipelines/{}/retry",
@@ -6543,7 +6663,6 @@ async fn main() -> Result<()> {
                                                             &project_context,
                                                             active_tab,
                                                             tx,
-                                                            false,
                                                         );
                                                     });
                                                 }
@@ -6580,7 +6699,6 @@ async fn main() -> Result<()> {
                                                         &project_context,
                                                         active_tab,
                                                         tx,
-                                                        false,
                                                     );
                                                 });
                                             }
@@ -7359,10 +7477,6 @@ async fn main() -> Result<()> {
                                             &app.project_context,
                                             app.active_tab,
                                             events.sender(),
-                                            app.is_column_visible(
-                                                app.active_tab,
-                                                app.active_tab.show_closed_column_name(),
-                                            ),
                                         );
                                     }
                                 }
@@ -7381,10 +7495,6 @@ async fn main() -> Result<()> {
                                             &app.project_context,
                                             app.active_tab,
                                             events.sender(),
-                                            app.is_column_visible(
-                                                app.active_tab,
-                                                app.active_tab.show_closed_column_name(),
-                                            ),
                                         );
                                     }
                                 }

@@ -9,6 +9,7 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 
 * **Primary Language:** Rust (Edition 2024)
 * **TUI Framework:** `ratatui` (v0.30.1)
+* **Syntax Highlighting:** `syntect` (v5, `default-fancy` features)
 * **Async Runtime:** `tokio`
 * **Terminal Handling:** `crossterm`
 
@@ -55,6 +56,33 @@ The application detects whether the current repository is hosted on GitHub or Gi
 ### External Editor Integration
 * The application pauses the UI to open an external `$EDITOR` (or `$VISUAL`, defaulting to `helix`).
 * This is done using `crossterm::terminal::LeaveAlternateScreen`. See `edit_in_editor` in [src/main.rs](src/main.rs) for the boilerplate. Do not reinvent this wheel.
+
+### Syntax Highlighting (`syntect`)
+* Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
+* `SYNTAX_SET` and `THEME_SET` are global `LazyLock` statics using `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`.
+* The public function `highlight_line_syntax(file_path, line_content, ext)` returns `Option<Vec<(ratatui::style::Style, String)>>`.
+* `syntect_style_to_ratatui()` converts `syntect::highlighting::Style` → `ratatui::style::Style`.
+* `DiffLine` contains an optional `syntax_highlighted: Option<Vec<(Style, String)>>` field populated during parsing.
+
+### Code Review System
+* **Diff view** supports inline comments, code suggestions, and draft reviews:
+  - `DiscussionNote` / `NotePosition` structs in [src/gitlab/mr.rs](src/gitlab/mr.rs).
+  - `list_mr_notes()` fetches notes for an MR via the API.
+  - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` and submitted atomically.
+  - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
+  - `DiffFetched` event now uses named fields: `{ mr_iid, raw_diff, comments }`.
+* **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui.rs](src/ui.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
+
+### Cache & State Persistence
+* Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
+* `ProjectCache` now stores `enabled_columns`, `group_by_column`, `group_ascending`, and `column_filters` in addition to API data.
+* Cache is written on every successful data fetch; read on startup.
+
+### Column Configure Popup
+* The configure overlay (`Tab`/`t`) has three sections: **COLUMNS** (checkbox toggle), **GROUP BY** (single-select), and **ORDER** (Ascending/Descending).
+* Value-based column filtering is available by pressing `Enter` on a focused column item, which opens a selector overlay with distinct values for that column.
+* Column filter state is tracked via `app.column_filter_context` and `app.column_filters: HashMap<Tab, HashMap<String, Vec<String>>>`.
+* Group state is tracked via `app.group_by_column: Option<String>` and `app.group_ascending: bool`.
 
 ## 4. UI & Rendering Guidelines (`ratatui`)
 

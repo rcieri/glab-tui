@@ -8,12 +8,15 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description)
-- **Merge Requests / Pull Requests** — list, filter, create MRs from issues, approve, merge, view diffs in terminal, and edit MR/PR metadata
+- **Merge Requests / Pull Requests** — list, filter, create MRs from issues, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
+- **Code Reviews** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, and atomic review submission
+- **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with syntax highlighting
 - **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces
 - **Runners** — list runners, pause/resume, edit descriptions, and monitor live performance/queue metrics
 - **Releases** — browse project releases and view details in the terminal
 - **Multi-colored Labels** — table columns render labels with their individual unique hashed colors, preserving search highlights
-- **Columns Config Modal** — press `Tab` or `t` to open a centered checkbox popup overlay to toggle visibility of any table column
+- **Columns Config Modal** — press `Tab` or `t` to open a centered popup overlay to toggle column visibility, group by any column, and set sort order
+- **Value-based Column Filtering** — filter table rows by specific column values from the configure popup
 - **Live Search** — fuzzy-filter across all visible columns by pressing `f`
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL`
@@ -119,7 +122,8 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 |---|---|
 | `l` / `→` | Next tab |
 | `h` / `←` | Previous tab |
-| `Tab` / `t` | Open columns toggling popup overlay |
+| `Tab` / `t` | Open column configure popup (toggle, group, order) |
+| `,` / `Esc` | Close configure popup |
 | `j` / `↓` | Move selection down |
 | `k` / `↑` | Move selection up |
 | `f` | Open search / filter bar |
@@ -166,6 +170,11 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | `s` | Toggle Draft / Ready status |
 | `J` | Scroll description panel down |
 | `K` | Scroll description panel up |
+| `d` | Toggle unified/side-by-side diff layout (inside diff view) |
+| `c` | Add comment on selected line range (inside diff view) |
+| `e` | Add code suggestion (inside diff view) |
+| `a` | Open comment actions menu (inside diff view) |
+| `r` | Submit pending review (inside diff view) |
 
 **MR edit menu fields**
 
@@ -250,8 +259,8 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 
 | Crate | Version | Purpose |
 |---|---|---|
-| [`ratatui`](https://crates.io/crates/ratatui) | 0.29 | TUI rendering framework |
-| [`crossterm`](https://crates.io/crates/crossterm) | 0.28 | Cross-platform terminal I/O and event streaming |
+| [`ratatui`](https://crates.io/crates/ratatui) | 0.30.1 | TUI rendering framework |
+| [`crossterm`](https://crates.io/crates/crossterm) | 0.29.0 | Cross-platform terminal I/O and event streaming |
 | [`tokio`](https://crates.io/crates/tokio) | 1.38 (full) | Async runtime for concurrent data fetching |
 | [`serde`](https://crates.io/crates/serde) | 1.0 (derive) | Serialization / deserialization |
 | [`serde_json`](https://crates.io/crates/serde_json) | 1.0 | Parsing JSON responses from `glab api` |
@@ -259,6 +268,7 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | [`chrono`](https://crates.io/crates/chrono) | 0.4 | Timestamp formatting ("2 hours ago") |
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
+| [`syntect`](https://crates.io/crates/syntect) | 5 | Syntax highlighting in diff and preview panes |
 
 All API calls are made by shelling out to `gh api` or `glab api` — no personal access token or direct HTTP client is required inside the binary.
 

@@ -14,7 +14,7 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install stable toolchain with llvm-tools
         uses: dtolnay/rust-toolchain@stable

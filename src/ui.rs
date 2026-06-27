@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Tab};
+use crate::config::THEME;
 use crate::utils::format::{format_ref, render_markdown, time_ago, truncate};
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -219,53 +220,6 @@ fn render_labels_cell(
 
     Cell::from(Line::from(spans).alignment(Alignment::Left)).style(cell_style)
 }
-
-struct Theme {
-    bg: Color,
-    border: Color,
-    border_focused: Color,
-    header_fg: Color,
-    highlight_bg: Color,
-    inactive_bg: Color,
-    text_normal: Color,
-    text_muted: Color,
-    checked_bg: Color,
-
-    // Status colors (Sunset themed)
-    green: Color,    // success, open
-    green_bg: Color, // status pill bg
-    red: Color,      // failed, closed
-    red_bg: Color,
-    blue: Color, // running, active
-    blue_bg: Color,
-    yellow: Color, // pending, warning
-    yellow_bg: Color,
-    purple: Color, // merged, releases
-    purple_bg: Color,
-}
-
-const THEME: Theme = Theme {
-    bg: Color::Rgb(18, 18, 20),               // dark slate base
-    border: Color::Rgb(80, 80, 88),           // muted gray border for inactive panes
-    border_focused: Color::Rgb(49, 191, 103), // vibrant green for active panes
-    header_fg: Color::Rgb(49, 191, 103),      // vibrant green for active headers
-    highlight_bg: Color::Rgb(43, 43, 57),     // dark slate selection highlight background
-    inactive_bg: Color::Rgb(49, 50, 68), // dark gray surface for selection hover or inactive elements
-    text_normal: Color::Rgb(216, 222, 233), // light text
-    text_muted: Color::Rgb(130, 130, 138), // muted gray text
-    checked_bg: Color::Rgb(28, 38, 55),  // subtle dark steel blue for checked rows
-
-    green: Color::Rgb(49, 191, 103), // success / open (vibrant green)
-    green_bg: Color::Rgb(20, 45, 28), // dark green background for pill
-    red: Color::Rgb(224, 73, 83),    // failed / closed
-    red_bg: Color::Rgb(50, 20, 25),  // dark red background for pill
-    blue: Color::Rgb(61, 139, 255),  // running / active
-    blue_bg: Color::Rgb(15, 35, 60), // dark blue background for pill
-    yellow: Color::Rgb(235, 180, 50), // pending / warning
-    yellow_bg: Color::Rgb(45, 35, 15), // dark yellow background for pill
-    purple: Color::Rgb(168, 122, 243), // merged / releases
-    purple_bg: Color::Rgb(38, 25, 55), // dark purple background for pill
-};
 
 struct StageSummary {
     name: String,
@@ -2439,6 +2393,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     |item, col| match col {
                         "Tag" => vec![item.tag_name.clone()],
                         "Release Name" => vec![item.name.clone()],
+                        "Description" => item
+                            .description
+                            .clone()
+                            .map(|d| vec![d])
+                            .unwrap_or_default(),
+                        "Author" => item
+                            .author_name
+                            .clone()
+                            .map(|a| vec![a])
+                            .unwrap_or_default(),
                         _ => vec![],
                     },
                 );
@@ -2478,6 +2442,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Alignment::Left,
                         ));
                     }
+                    if app.is_column_visible(Tab::Releases, "Description") {
+                        let desc = r.description.as_deref().unwrap_or("");
+                        row_cells.push(render_fuzzy_cell(
+                            &truncate(desc, 80),
+                            &app.search_query,
+                            is_row_highlighted,
+                            false,
+                            Style::default().fg(THEME.text_muted),
+                            Alignment::Left,
+                        ));
+                    }
+                    if app.is_column_visible(Tab::Releases, "Author") {
+                        let author = r.author_name.as_deref().unwrap_or("");
+                        row_cells.push(render_fuzzy_cell(
+                            &author.to_string(),
+                            &app.search_query,
+                            is_row_highlighted,
+                            false,
+                            Style::default().fg(THEME.blue),
+                            Alignment::Left,
+                        ));
+                    }
                     let row_style = if is_row_highlighted {
                         Style::default().bg(THEME.highlight_bg)
                     } else {
@@ -2500,6 +2486,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
                     widths.push(Constraint::Length(12));
+                }
+                if app.is_column_visible(Tab::Releases, "Description") {
+                    header_cells.push(Cell::from("Description"));
+                    widths.push(Constraint::Fill(2));
+                }
+                if app.is_column_visible(Tab::Releases, "Author") {
+                    header_cells.push(Cell::from("Author"));
+                    widths.push(Constraint::Length(16));
                 }
 
                 if widths.is_empty() {
@@ -2553,6 +2547,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Span::styled("Date:    ", Style::default().fg(THEME.text_muted)),
                             Span::styled(&r.released_at, Style::default().fg(THEME.yellow)),
                         ]));
+                        if let Some(ref author) = r.author_name {
+                            text.push(Line::from(vec![
+                                Span::styled("Author:  ", Style::default().fg(THEME.text_muted)),
+                                Span::styled(author, Style::default().fg(THEME.blue)),
+                            ]));
+                        }
+                        if let Some(ref desc) = r.description {
+                            if !desc.is_empty() {
+                                text.push(Line::from(Span::styled(
+                                    "---",
+                                    Style::default().fg(THEME.text_muted),
+                                )));
+                                text.push(Line::from(Span::styled(
+                                    truncate(desc, 200),
+                                    Style::default().fg(THEME.text_normal),
+                                )));
+                            }
+                        }
                         f.render_widget(
                             Paragraph::new(text)
                                 .block(preview_block)
@@ -4858,6 +4870,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 action: "Open selected job in browser",
             },
             // Milestones
+            Shortcut {
+                category: "Milestones",
+                key: "n",
+                action: "Create new milestone",
+            },
             Shortcut {
                 category: "Milestones",
                 key: "J / K",

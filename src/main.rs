@@ -4,6 +4,7 @@
 #![allow(unused_assignments)]
 
 mod app;
+mod config;
 mod event;
 mod gitlab;
 mod ui;
@@ -2587,6 +2588,112 @@ async fn main() -> Result<()> {
                                                         active_tab,
                                                         Err("Failed to write temporary changelog file".to_string()),
                                                     ));
+                                                }
+                                            });
+                                        }
+                                    }
+                                    crate::app::TextInputAction::CreateMilestone => {
+                                        if !value.trim().is_empty() {
+                                            let title = value.trim().to_string();
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map(|c| c.is_github)
+                                                .unwrap_or(false);
+                                            let project_context = app.project_context.clone();
+                                            let encoded_path = project_context.replace("/", "%2F");
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Creating milestone: {}",
+                                                title
+                                            )));
+                                            tokio::spawn(async move {
+                                                if is_github {
+                                                    let gh_repo = encoded_path.replace("%2F", "/");
+                                                    let cmd = tokio::process::Command::new("gh")
+                                                        .args([
+                                                            "api",
+                                                            &format!(
+                                                                "repos/{}/milestones",
+                                                                gh_repo
+                                                            ),
+                                                            "-f",
+                                                            &format!("title={}", title),
+                                                        ])
+                                                        .output()
+                                                        .await;
+                                                    match cmd {
+                                                        Ok(out) if out.status.success() => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Milestones,
+                                                                    Ok(()),
+                                                                ));
+                                                        }
+                                                        Ok(out) => {
+                                                            let err = String::from_utf8_lossy(
+                                                                &out.stderr,
+                                                            )
+                                                            .trim()
+                                                            .to_string();
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Milestones,
+                                                                    Err(format!("Failed: {}", err)),
+                                                                ));
+                                                        }
+                                                        Err(e) => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Milestones,
+                                                                    Err(format!("Error: {}", e)),
+                                                                ));
+                                                        }
+                                                    }
+                                                } else {
+                                                    let endpoint = format!(
+                                                        "/projects/{}/milestones",
+                                                        encoded_path
+                                                    );
+                                                    let cmd = tokio::process::Command::new("glab")
+                                                        .args([
+                                                            "api",
+                                                            "-X",
+                                                            "POST",
+                                                            &endpoint,
+                                                            "-f",
+                                                            &format!("title={}", title),
+                                                        ])
+                                                        .output()
+                                                        .await;
+                                                    match cmd {
+                                                        Ok(out) if out.status.success() => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Milestones,
+                                                                    Ok(()),
+                                                                ));
+                                                        }
+                                                        Ok(out) => {
+                                                            let err = String::from_utf8_lossy(
+                                                                &out.stderr,
+                                                            )
+                                                            .trim()
+                                                            .to_string();
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Milestones,
+                                                                    Err(format!("Failed: {}", err)),
+                                                                ));
+                                                        }
+                                                        Err(e) => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Milestones,
+                                                                    Err(format!("Error: {}", e)),
+                                                                ));
+                                                        }
+                                                    }
                                                 }
                                             });
                                         }
@@ -7157,36 +7264,46 @@ async fn main() -> Result<()> {
                                 handled = false;
                             }
                         }
-                        app::Tab::Releases => {
-                            if let Some(selected_idx) = app.releases.state.selected() {
-                                if let Some(item) = app.filtered_releases().get(selected_idx) {
-                                    match key_event.code {
-                                        KeyCode::Char('o') => {
-                                            let cli = app_cli(&app);
-                                            let args = vec![
-                                                "release".to_string(),
-                                                "view".to_string(),
-                                                item.tag_name.clone(),
-                                                cli.flag_web().to_string(),
-                                            ];
-                                            run_cli(
-                                                &cli,
-                                                &args,
-                                                &mut terminal,
-                                                events.sender(),
-                                                app.active_tab,
-                                            )
-                                            .await;
+                        app::Tab::Releases => match key_event.code {
+                            KeyCode::Char('n') => {
+                                app.text_input = Some(crate::app::TextInput {
+                                    title: "Create Release".to_string(),
+                                    value: String::new(),
+                                    cursor_idx: 0,
+                                    action: crate::app::TextInputAction::CreateRelease,
+                                });
+                            }
+                            _ => {
+                                if let Some(selected_idx) = app.releases.state.selected() {
+                                    if let Some(item) = app.filtered_releases().get(selected_idx) {
+                                        match key_event.code {
+                                            KeyCode::Char('o') => {
+                                                let cli = app_cli(&app);
+                                                let args = vec![
+                                                    "release".to_string(),
+                                                    "view".to_string(),
+                                                    item.tag_name.clone(),
+                                                    cli.flag_web().to_string(),
+                                                ];
+                                                run_cli(
+                                                    &cli,
+                                                    &args,
+                                                    &mut terminal,
+                                                    events.sender(),
+                                                    app.active_tab,
+                                                )
+                                                .await;
+                                            }
+                                            _ => handled = false,
                                         }
-                                        _ => handled = false,
+                                    } else {
+                                        handled = false;
                                     }
                                 } else {
                                     handled = false;
                                 }
-                            } else {
-                                handled = false;
                             }
-                        }
+                        },
                         app::Tab::Todos => {
                             if let Some(selected_idx) = app.todos.state.selected() {
                                 if let Some(item) = app.filtered_todos().get(selected_idx) {
@@ -7262,9 +7379,17 @@ async fn main() -> Result<()> {
                                 handled = false;
                             }
                         }
-                        app::Tab::Milestones => {
-                            handled = false;
-                        }
+                        app::Tab::Milestones => match key_event.code {
+                            KeyCode::Char('n') => {
+                                app.text_input = Some(crate::app::TextInput {
+                                    title: "Create Milestone".to_string(),
+                                    value: String::new(),
+                                    cursor_idx: 0,
+                                    action: crate::app::TextInputAction::CreateMilestone,
+                                });
+                            }
+                            _ => handled = false,
+                        },
                         app::Tab::Terminal => {
                             handled = false;
                         }

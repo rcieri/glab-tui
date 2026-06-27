@@ -166,7 +166,14 @@ impl Tab {
             Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
-            Tab::Releases => vec!["Tag", "Release Name", "Date"],
+            Tab::Releases => vec![
+                "Tag",
+                "Release Name",
+                "Date",
+                "Description",
+                "Author",
+                "Assets",
+            ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
             Tab::Milestones => vec!["ID", "Title", "State", "Start Date", "Due Date"],
             Tab::Terminal => vec![],
@@ -1025,6 +1032,7 @@ pub enum TextInputAction {
     },
     EnterPipelineId,
     CreateRelease,
+    CreateMilestone,
     SubmitReviewFinal {
         mr_iid: u64,
         status: String,
@@ -1991,6 +1999,16 @@ impl App {
                     check_match(&item.released_at);
                     check_match(&crate::utils::format::time_ago(&item.released_at));
                 }
+                if enabled_cols.contains("Description") {
+                    if let Some(ref desc) = item.description {
+                        check_match(desc);
+                    }
+                }
+                if enabled_cols.contains("Author") {
+                    if let Some(ref a) = item.author_name {
+                        check_match(a);
+                    }
+                }
                 matches
             })
             .collect()
@@ -2011,6 +2029,16 @@ impl App {
             |item, col| match col {
                 "Tag" => vec![item.tag_name.clone()],
                 "Release Name" => vec![item.name.clone()],
+                "Description" => item
+                    .description
+                    .clone()
+                    .map(|d| vec![d])
+                    .unwrap_or_default(),
+                "Author" => item
+                    .author_name
+                    .clone()
+                    .map(|a| vec![a])
+                    .unwrap_or_default(),
                 _ => vec![],
             },
         );
@@ -2365,6 +2393,11 @@ impl App {
                         }
                         "Release Name" => {
                             values.insert(item.name.clone());
+                        }
+                        "Author" => {
+                            if let Some(ref a) = item.author_name {
+                                values.insert(a.clone());
+                            }
                         }
                         _ => {}
                     }

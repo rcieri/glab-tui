@@ -742,11 +742,29 @@ fn translate_release(v: &serde_json::Value) -> serde_json::Value {
         .get("published_at")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let description = v.get("body").cloned().unwrap_or(serde_json::Value::Null);
+    let author_name = v
+        .get("author")
+        .and_then(|a| a.get("login"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let assets_link = v
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|first| first.get("browser_download_url"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
 
     serde_json::json!({
         "name": name,
         "tag_name": tag_name,
         "released_at": released_at,
+        "description": description,
+        "author_name": author_name,
+        "commit_id": null,
+        "commit_title": null,
+        "assets_link": assets_link,
     })
 }
 

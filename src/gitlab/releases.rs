@@ -7,6 +7,11 @@ pub struct Release {
     pub name: String,
     pub tag_name: String,
     pub released_at: String,
+    pub description: Option<String>,
+    pub author_name: Option<String>,
+    pub commit_id: Option<String>,
+    pub commit_title: Option<String>,
+    pub assets_link: Option<String>,
 }
 
 pub async fn list_releases(client: &GitlabClient, project_path: &str) -> Result<Vec<Release>> {

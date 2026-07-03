@@ -1180,7 +1180,7 @@ pub enum GroupItem {
 
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
-    DeleteMilestone(u64), // milestone iid
+    DeleteMilestone(u64),  // milestone iid
     DeleteRelease(String), // release tag_name
 }
 
@@ -2804,7 +2804,10 @@ impl App {
                                 r.released_at.clone()
                             }
                         }
-                        "Author" => r.author_name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                        "Author" => r
+                            .author_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string()),
                         "Tag" => r.tag_name.clone(),
                         "Release Name" => r.name.clone(),
                         _ => "Unknown".to_string(),

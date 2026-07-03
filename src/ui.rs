@@ -3300,22 +3300,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     },
                 );
 
-                let header_cells = Tab::Milestones
-                    .columns(is_github)
-                    .into_iter()
-                    .filter(|col| app.is_column_visible(Tab::Milestones, col))
-                    .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
-                let header = Row::new(header_cells)
-                    .style(header_style)
-                    .height(1)
-                    .bottom_margin(1);
+                let mut header_cells = Vec::new();
+                let mut widths = Vec::new();
+                let cols = Tab::Milestones.columns(is_github);
+                for col in &cols {
+                    if app.is_column_visible(Tab::Milestones, col) {
+                        header_cells.push(Cell::from(*col));
+                        match *col {
+                            "ID" => widths.push(Constraint::Length(10)),
+                            "Title" => widths.push(Constraint::Fill(1)),
+                            "State" => widths.push(Constraint::Length(12)),
+                            "Start Date" => widths.push(Constraint::Length(15)),
+                            "Due Date" => widths.push(Constraint::Length(15)),
+                            _ => widths.push(Constraint::Length(10)),
+                        }
+                    }
+                }
 
                 let rows = filtered_milestones.iter().enumerate().map(|(idx, m)| {
                     let mut cells = Vec::new();
-                    let cols = Tab::Milestones.columns(is_github);
-                    for col in cols {
-                        if app.is_column_visible(Tab::Milestones, &col) {
-                            let val = match col {
+                    for col in &cols {
+                        if app.is_column_visible(Tab::Milestones, col) {
+                            let val = match *col {
                                 "ID" => m.iid.to_string(),
                                 "Title" => m.title.clone(),
                                 "State" => m.state.clone(),
@@ -3339,19 +3345,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Row::new(cells).style(row_style)
                 });
 
-                let table = Table::new(
-                    rows,
-                    [
-                        Constraint::Percentage(10),
-                        Constraint::Percentage(40),
-                        Constraint::Percentage(20),
-                        Constraint::Percentage(30),
-                    ],
-                )
-                .header(header)
-                .block(main_block.clone())
-                .row_highlight_style(highlight_style)
-                .highlight_symbol(" ❯ ");
+                if widths.is_empty() {
+                    widths.push(Constraint::Min(0));
+                }
+
+                let table = Table::new(rows, widths)
+                    .header(Row::new(header_cells).style(header_style).height(1))
+                    .block(main_block.clone())
+                    .row_highlight_style(highlight_style)
+                    .highlight_symbol(" ❯ ");
 
                 f.render_stateful_widget(table, content_area, &mut app.milestones.state);
 
@@ -6298,13 +6300,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ])
             .split(area);
 
-        let message_p = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(message),
-        ])
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(THEME.read().unwrap().text_normal))
-        .wrap(ratatui::widgets::Wrap { trim: true });
+        let message_p = Paragraph::new(vec![Line::from(""), Line::from(message)])
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(THEME.read().unwrap().text_normal))
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         let footer_p = Paragraph::new(" y: Yes (Confirm) • n/Esc: Cancel ")
             .alignment(Alignment::Center)

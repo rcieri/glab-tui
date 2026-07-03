@@ -51,24 +51,17 @@ jobs:
 
                   NEW_TAG="v$major.$minor.$patch"
                   echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
-                  echo "BRANCH_NAME=release-prep-$NEW_TAG" >> $GITHUB_ENV
                   echo "Calculated new version: $NEW_TAG"
-
-            - name: Create Isolated Branch
-              run: |
-                  git checkout -b ${{ env.BRANCH_NAME }}
 
             - name: OpenCode Docs & Changelog Update
               uses: anomalyco/opencode/github@latest
               env:
                   OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-                  # TRICK: Provide an empty string here so OpenCode CANNOT make its own PR
-                  GITHUB_TOKEN: ""
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   NEW_TAG: ${{ env.NEW_TAG }}
               with:
                   model: opencode/big-pickle
-                  # Force it to edit files locally in the workspace without interacting with GitHub APIs
-                  use_github_token: false
+                  use_github_token: true
                   prompt: |
                       We are prepping a new repository release. The upcoming version tag is going to be: $NEW_TAG.
 
@@ -78,29 +71,26 @@ jobs:
                       2. AGENTS.md: Update any agent guidelines, automation logs, or architecture schemas affected by our latest feature set or dependencies. Ensure versioning matrices match $NEW_TAG.
                       3. README.md: Scan for installation commands, setup instructions, or documentation badges displaying the old version string, and replace them cleanly with version $NEW_TAG.
 
-                      Save and write these file modifications directly back into the working directory. Do not try to push or create a pull request.
+                      Save and write these file modifications directly back into the working directory. OpenCode will commit these changes and open a pull request.
 
-            - name: Create Pristine Pull Request
+            - name: Standardize Pull Request Title
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                  # Push and create the PR via GitHub CLI since OpenCode was locked out
-                  if [ -n "$(git status --porcelain)" ]; then
-                      git add CHANGELOG.md AGENTS.md README.md
-                      git commit -m "chore: release updates for ${{ env.NEW_TAG }}"
-                      git push origin ${{ env.BRANCH_NAME }} --force
-                      
-                      PR_EXISTS=$(gh pr list --head ${{ env.BRANCH_NAME }} --json number --jq '.[0].number')
-                      
-                      if [ -z "$PR_EXISTS" ]; then
-                          gh pr create \
-                              --title "chore: prepare release ${{ env.NEW_TAG }}" \
-                              --body "This automated PR updates \`CHANGELOG.md\`, \`AGENTS.md\`, and \`README.md\` to reflect the changes for version **${{ env.NEW_TAG }}**. Review and merge this PR, then manually tag the release." \
-                              --base main \
-                              --head ${{ env.BRANCH_NAME }}
-                      else
-                          echo "Pull request already exists: #$PR_EXISTS"
-                      fi
+                  # Give GitHub a brief second to register the newly created PR from the previous step
+                  sleep 3
+
+                  # Find the open PR created by OpenCode for this branch
+                  PR_NUMBER=$(gh pr list --head "release-prep-${{ env.NEW_TAG }}" --json number --jq '.[0].number')
+
+                  # If OpenCode used a default branch format like 'opencode-branch...', catch any open PR from the bot account
+                  if [ -z "$PR_NUMBER" ]; then
+                      PR_NUMBER=$(gh pr list --author "app/opencode" --json number --jq '.[0].number' 2>/dev/null || gh pr list --json number --jq '.[0].number')
+                  fi
+
+                  if [ -n "$PR_NUMBER" ]; then
+                      echo "Found PR #$PR_NUMBER. Overriding title to match conventional commits formatting..."
+                      gh pr edit "$PR_NUMBER" --title "chore: prepare release ${{ env.NEW_TAG }}"
                   else
-                      echo "No documentation or changelog updates were generated."
+                      echo "Could not find an active PR number to rename."
                   fi

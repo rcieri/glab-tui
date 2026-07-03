@@ -168,21 +168,14 @@ impl Tab {
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec![
                 "Tag",
-                "Date",
                 "Release Name",
-                "Description",
+                "Date",
                 "Author",
                 "Assets",
+                "Description",
             ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
-            Tab::Milestones => {
-                let mut cols = vec!["ID", "Title", "State"];
-                if !is_github {
-                    cols.push("Start Date");
-                }
-                cols.push("Due Date");
-                cols
-            }
+            Tab::Milestones => vec!["ID", "State", "Title", "Due Date", "Progress"],
             Tab::Terminal => vec![],
         }
     }
@@ -200,16 +193,16 @@ impl Tab {
             Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
-            Tab::Releases => vec!["Tag", "Date", "Release Name"],
+            Tab::Releases => vec![
+                "Tag",
+                "Release Name",
+                "Date",
+                "Author",
+                "Assets",
+                "Description",
+            ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
-            Tab::Milestones => {
-                let mut cols = vec!["ID", "Title", "State"];
-                if !is_github {
-                    cols.push("Start Date");
-                }
-                cols.push("Due Date");
-                cols
-            }
+            Tab::Milestones => vec!["ID", "State", "Title", "Due Date", "Progress"],
             Tab::Terminal => vec![],
         }
     }

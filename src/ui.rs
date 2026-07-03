@@ -2822,16 +2822,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Alignment::Left,
                         ));
                     }
-                    if app.is_column_visible(Tab::Releases, "Date") {
-                        row_cells.push(render_fuzzy_cell(
-                            &truncate(&r.released_at, 10),
-                            &app.search_query,
-                            is_row_highlighted,
-                            false,
-                            Style::default().fg(THEME.read().unwrap().yellow),
-                            Alignment::Left,
-                        ));
-                    }
                     if app.is_column_visible(Tab::Releases, "Release Name") {
                         row_cells.push(render_fuzzy_cell(
                             &truncate(&r.name, 100),
@@ -2842,14 +2832,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Alignment::Left,
                         ));
                     }
-                    if app.is_column_visible(Tab::Releases, "Description") {
-                        let desc = r.description.as_deref().unwrap_or("");
+                    if app.is_column_visible(Tab::Releases, "Date") {
                         row_cells.push(render_fuzzy_cell(
-                            &truncate(desc, 80),
+                            &truncate(&r.released_at, 10),
                             &app.search_query,
                             is_row_highlighted,
                             false,
-                            Style::default().fg(THEME.read().unwrap().text_muted),
+                            Style::default().fg(THEME.read().unwrap().yellow),
                             Alignment::Left,
                         ));
                     }
@@ -2861,6 +2850,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             is_row_highlighted,
                             false,
                             Style::default().fg(THEME.read().unwrap().blue),
+                            Alignment::Left,
+                        ));
+                    }
+                    if app.is_column_visible(Tab::Releases, "Assets") {
+                        let assets = r.assets_link.as_deref().unwrap_or("");
+                        row_cells.push(render_fuzzy_cell(
+                            &truncate(assets, 50),
+                            &app.search_query,
+                            is_row_highlighted,
+                            false,
+                            Style::default().fg(THEME.read().unwrap().blue),
+                            Alignment::Left,
+                        ));
+                    }
+                    if app.is_column_visible(Tab::Releases, "Description") {
+                        let desc = r.description.as_deref().unwrap_or("");
+                        row_cells.push(render_fuzzy_cell(
+                            &truncate(desc, 80),
+                            &app.search_query,
+                            is_row_highlighted,
+                            false,
+                            Style::default().fg(THEME.read().unwrap().text_muted),
                             Alignment::Left,
                         ));
                     }
@@ -2879,21 +2890,25 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     header_cells.push(Cell::from("Tag"));
                     widths.push(Constraint::Length(20));
                 }
+                if app.is_column_visible(Tab::Releases, "Release Name") {
+                    header_cells.push(Cell::from("Release Name"));
+                    widths.push(Constraint::Fill(2));
+                }
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
                     widths.push(Constraint::Length(12));
                 }
-                if app.is_column_visible(Tab::Releases, "Release Name") {
-                    header_cells.push(Cell::from("Release Name"));
-                    widths.push(Constraint::Fill(1));
-                }
-                if app.is_column_visible(Tab::Releases, "Description") {
-                    header_cells.push(Cell::from("Description"));
-                    widths.push(Constraint::Fill(2));
-                }
                 if app.is_column_visible(Tab::Releases, "Author") {
                     header_cells.push(Cell::from("Author"));
                     widths.push(Constraint::Length(16));
+                }
+                if app.is_column_visible(Tab::Releases, "Assets") {
+                    header_cells.push(Cell::from("Assets"));
+                    widths.push(Constraint::Length(20));
+                }
+                if app.is_column_visible(Tab::Releases, "Description") {
+                    header_cells.push(Cell::from("Description"));
+                    widths.push(Constraint::Fill(3));
                 }
 
                 if widths.is_empty() {
@@ -3341,6 +3356,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             "State" => widths.push(Constraint::Length(12)),
                             "Start Date" => widths.push(Constraint::Length(15)),
                             "Due Date" => widths.push(Constraint::Length(15)),
+                            "Progress" => widths.push(Constraint::Length(10)),
                             _ => widths.push(Constraint::Length(10)),
                         }
                     }
@@ -3412,6 +3428,36 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                         is_selected,
                                         false,
                                         Style::default().fg(THEME.read().unwrap().yellow),
+                                        Alignment::Left,
+                                    ));
+                                }
+                                "Progress" => {
+                                    let progress_str = if app.selected_milestone_iid == Some(m.iid)
+                                    {
+                                        if let Some(issues) = &app.selected_milestone_issues {
+                                            let total = issues.len();
+                                            if total > 0 {
+                                                let closed = issues
+                                                    .iter()
+                                                    .filter(|i| i.state == "closed")
+                                                    .count();
+                                                let percent = (closed * 100) / total;
+                                                format!("{}%", percent)
+                                            } else {
+                                                "0%".to_string()
+                                            }
+                                        } else {
+                                            "Loading...".to_string()
+                                        }
+                                    } else {
+                                        "-".to_string()
+                                    };
+                                    cells.push(render_fuzzy_cell(
+                                        &progress_str,
+                                        &app.search_query,
+                                        is_selected,
+                                        false,
+                                        Style::default().fg(THEME.read().unwrap().green),
                                         Alignment::Left,
                                     ));
                                 }

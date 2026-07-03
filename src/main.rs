@@ -1638,6 +1638,7 @@ async fn main() -> Result<()> {
     app.releases.items = cache.releases;
     app.todos.items = cache.todos;
     app.milestones.items = cache.milestones;
+    app.pipeline_jobs = cache.pipeline_jobs;
 
     if !cache.enabled_columns.is_empty() {
         for (tab_str, cols) in &cache.enabled_columns {
@@ -1821,6 +1822,10 @@ async fn main() -> Result<()> {
                         app.jobs_list_state
                             .select(app.selected_job_index.or(Some(0)));
                     }
+
+                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
+                    cache.pipeline_jobs = app.pipeline_jobs.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &cache);
                 }
                 Event::JobsTabFetched(pipeline_id, jobs) => {
                     app.complete_loading_tab(app::Tab::Jobs, "Success");
@@ -1883,10 +1888,13 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.pipelines.items = pipelines;
                     app.update_filter_selection();
-                    app.pipeline_jobs.clear();
+                    let new_ids: std::collections::HashSet<u64> =
+                        app.pipelines.items.iter().map(|p| p.id).collect();
+                    app.pipeline_jobs.retain(|id, _| new_ids.contains(id));
                     app.fetching_pipelines.clear();
                     let mut cache = crate::utils::cache::load_cache(&app.project_context);
                     cache.pipelines = app.pipelines.items.clone();
+                    cache.pipeline_jobs = app.pipeline_jobs.clone();
                     crate::utils::cache::save_cache(&app.project_context, &cache);
                 }
                 Event::TodosFetched(notifs) => {
@@ -4277,13 +4285,23 @@ async fn main() -> Result<()> {
                                     let mut selected_list: Vec<String> =
                                         selector.selected_items.iter().cloned().collect();
 
-                                    // Auto-select highlighted item on Enter for single-select fields if nothing selected
-                                    if !selector.multi_select && selected_list.is_empty() {
-                                        if !filtered_items.is_empty() {
-                                            let item = &filtered_items[selector.cursor_idx];
-                                            if !item.starts_with("+ Create \"") {
-                                                selected_list.push(item.clone());
+                                    // Include highlighted item in selection if nothing auto-selected
+                                    if !filtered_items.is_empty() {
+                                        let item = &filtered_items[selector.cursor_idx];
+                                        if item.starts_with("+ Create \"") {
+                                            let query = selector.search_query.trim().to_string();
+                                            if !query.is_empty() {
+                                                if selector.multi_select {
+                                                    if !selected_list.contains(&query) {
+                                                        selected_list.push(query);
+                                                    }
+                                                } else {
+                                                    selected_list = vec![query];
+                                                }
                                             }
+                                        } else if !selector.multi_select && selected_list.is_empty()
+                                        {
+                                            selected_list.push(item.clone());
                                         }
                                     }
 
@@ -4656,9 +4674,6 @@ async fn main() -> Result<()> {
                                         if !description.is_empty() {
                                             cmd_args.push(cli.flag_description().to_string());
                                             cmd_args.push(description);
-                                        } else if cli.is_github {
-                                            cmd_args.push("--body".into());
-                                            cmd_args.push("".into());
                                         }
                                         if !labels.is_empty() {
                                             cmd_args.push("--label".into());

@@ -4328,7 +4328,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .add_modifier(Modifier::ITALIC)
                     };
                     val_spans.push(Span::styled(
-                        if is_selected { format!("{} ▋", action_hint) } else { action_hint.to_string() },
+                        if is_selected {
+                            format!("{} ▋", action_hint)
+                        } else {
+                            action_hint.to_string()
+                        },
                         hint_style,
                     ));
                 } else {
@@ -4344,11 +4348,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             let parts: Vec<&str> = truncated.split(',').collect();
                             for (idx, part) in parts.iter().enumerate() {
                                 if idx > 0 {
-                                    val_spans.push(Span::styled(", ", Style::default().fg(THEME.text_normal).bg(item_bg)));
+                                    val_spans.push(Span::styled(
+                                        ", ",
+                                        Style::default().fg(THEME.text_normal).bg(item_bg),
+                                    ));
                                 }
                                 let trimmed = part.trim();
                                 let label_color = get_label_color(trimmed);
-                                let mut style = Style::default().fg(label_color).bg(item_bg).add_modifier(Modifier::BOLD);
+                                let mut style = Style::default()
+                                    .fg(label_color)
+                                    .bg(item_bg)
+                                    .add_modifier(Modifier::BOLD);
                                 if is_selected {
                                     style = style.add_modifier(Modifier::UNDERLINED);
                                 }
@@ -4359,7 +4369,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             let parts: Vec<&str> = truncated.split(',').collect();
                             for (idx, part) in parts.iter().enumerate() {
                                 if idx > 0 {
-                                    val_spans.push(Span::styled(", ", Style::default().fg(THEME.text_normal).bg(item_bg)));
+                                    val_spans.push(Span::styled(
+                                        ", ",
+                                        Style::default().fg(THEME.text_normal).bg(item_bg),
+                                    ));
                                 }
                                 let trimmed = part.trim();
                                 let mut style = Style::default().fg(THEME.blue).bg(item_bg);
@@ -4373,8 +4386,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             let val_fg = match label.as_str() {
                                 "Milestone" => THEME.purple,
                                 "Due Date" => THEME.yellow,
-                                "Status (Draft/Ready)" | "Source Branch" | "Target Branch" => THEME.purple,
-                                "Confidential" => if val.to_lowercase() == "yes" { THEME.red } else { THEME.green },
+                                "Status (Draft/Ready)" | "Source Branch" | "Target Branch" => {
+                                    THEME.purple
+                                }
+                                "Confidential" => {
+                                    if val.to_lowercase() == "yes" {
+                                        THEME.red
+                                    } else {
+                                        THEME.green
+                                    }
+                                }
                                 _ => THEME.text_normal,
                             };
                             let mut style = Style::default().fg(val_fg).bg(item_bg);

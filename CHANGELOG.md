@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-07-03
+
+### Fixed
+- **Multi-byte label panic** — `render_labels_cell` no longer panics when truncating labels containing multi-byte characters such as emojis (👕, 🌟) or accented Unicode. Introduced `floor_char_boundary()` to safely snap slice indices to valid UTF-8 boundaries (#90, #93).
+
+### Maintenance
+- **CI release automation** — added automated release workflow to streamline tagging and publishing.
+- **opencode agent setup** — configured `opencode` CI agent for assisted code reviews via `pull_request_review_comment` triggers; upgraded `actions/checkout` to v7 with `persist-credentials: false`.
+
 ## [2.3.0] - 2026-07-02
 
 ### Added

@@ -127,9 +127,16 @@ If asked to add a new Tab (e.g., "Deployments"):
 6.  **Handle Navigation:** In [src/main.rs](src/main.rs), handle `KeyCode::Down`/`Up` to navigate the table state.
 7.  **Render:** In [src/ui.rs](src/ui.rs), add a branch to `match app.active_tab` to construct the rows, table, and details preview pane.
 
+### Release Process
+* Releases follow semver via annotated git tags (`vMAJOR.MINOR.PATCH`).
+* A `ci(release): release automation` workflow builds binaries and creates GitHub releases on tag push.
+* The `CHANGELOG.md` is updated manually per release; keep entries grouped under **Added**, **Fixed**, **Changed**, **Dependencies**, and **Maintenance**.
+* After tagging, run `cargo bump` to update the version in `Cargo.toml` and commit with message `chore(release): prepare release vX.Y.Z`.
+
 ## 6. Development & Quality Standards
 
 * **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `app.error_message`. Do not `unwrap()` or `panic!()` in UI or event handling code.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+* **Current Version:** `2.3.1`

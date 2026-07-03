@@ -3372,51 +3372,63 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         let mut text = Vec::new();
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Title:      ",
+                                "Title:       ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
                             Span::styled(
                                 &m.title,
                                 Style::default()
-                                    .fg(THEME.read().unwrap().blue)
+                                    .fg(THEME.read().unwrap().text_normal)
                                     .add_modifier(Modifier::BOLD),
                             ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "State:      ",
+                                "State:       ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
                             Span::styled(
-                                &m.state,
-                                Style::default().fg(if m.state == "active" {
-                                    THEME.read().unwrap().green
-                                } else {
-                                    THEME.read().unwrap().yellow
-                                }),
+                                m.state.to_uppercase(),
+                                Style::default()
+                                    .fg(if m.state == "active" {
+                                        THEME.read().unwrap().green
+                                    } else {
+                                        THEME.read().unwrap().red
+                                    })
+                                    .add_modifier(Modifier::BOLD),
                             ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Start Date: ",
+                                "Start Date:  ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
-                            Span::raw(m.start_date.as_deref().unwrap_or("N/A")),
+                            Span::styled(
+                                m.start_date.as_deref().unwrap_or("N/A"),
+                                Style::default().fg(THEME.read().unwrap().blue),
+                            ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Due Date:   ",
+                                "Due Date:    ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
-                            Span::raw(m.due_date.as_deref().unwrap_or("N/A")),
+                            Span::styled(
+                                m.due_date.as_deref().unwrap_or("N/A"),
+                                Style::default().fg(THEME.read().unwrap().yellow),
+                            ),
                         ]));
                         if let Some(desc) = &m.description {
-                            text.push(Line::from(""));
-                            text.push(Line::from(Span::styled(
-                                "Description:",
-                                Style::default().add_modifier(Modifier::BOLD),
-                            )));
-                            text.push(Line::from(desc.as_str()));
+                            if !desc.trim().is_empty() {
+                                text.push(Line::from(""));
+                                text.push(Line::from(Span::styled(
+                                    "Description:",
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().header_fg)
+                                        .add_modifier(Modifier::BOLD),
+                                )));
+                                text.push(Line::from(desc.as_str()));
+                            }
                         }
                         text.push(Line::from(""));
 
@@ -3428,12 +3440,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             text.push(Line::from(vec![
                                 Span::styled(
                                     "Issues Status: ",
-                                    Style::default().add_modifier(Modifier::BOLD),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().header_fg)
+                                        .add_modifier(Modifier::BOLD),
                                 ),
-                                Span::raw(format!(
-                                    "{} Closed / {} Open (Total {})",
-                                    closed, open, total
-                                )),
+                                Span::styled(
+                                    format!("{} Closed", closed),
+                                    Style::default().fg(THEME.read().unwrap().green),
+                                ),
+                                Span::raw(" / "),
+                                Span::styled(
+                                    format!("{} Open", open),
+                                    Style::default().fg(THEME.read().unwrap().yellow),
+                                ),
+                                Span::raw(format!(" (Total {})", total)),
                             ]));
 
                             let pct = if total > 0 {
@@ -3454,7 +3474,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             )));
                             text.push(Line::from(""));
                         } else {
-                            text.push(Line::from("Loading issues details..."));
+                            text.push(Line::from(Span::styled(
+                                "Loading issues details...",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            )));
                         }
 
                         f.render_widget(

@@ -6037,7 +6037,12 @@ async fn main() -> Result<()> {
                     }
 
                     if app.focus_column_checklist {
-                        let cols = app.active_tab.columns();
+                        let is_github = app
+                            .gitlab_client
+                            .as_ref()
+                            .map(|c| c.is_github)
+                            .unwrap_or(false);
+                        let cols = app.active_tab.columns(is_github);
                         let group_cols: Vec<&str> = cols.iter().copied().collect();
                         let cols_end = cols.len();
                         let group_end = cols_end + group_cols.len();

@@ -141,18 +141,16 @@ impl Tab {
         }
     }
 
-    pub fn columns(&self) -> Vec<&'static str> {
+    pub fn columns(&self, is_github: bool) -> Vec<&'static str> {
         match self {
-            Tab::Issues => vec![
-                "ID",
-                "State",
-                "Title",
-                "Assignees",
-                "Labels",
-                "Milestone",
-                "Due Date",
-                "Author",
-            ],
+            Tab::Issues => {
+                let mut cols = vec!["ID", "State", "Title", "Assignees", "Labels", "Milestone"];
+                if !is_github {
+                    cols.push("Due Date");
+                }
+                cols.push("Author");
+                cols
+            }
             Tab::MergeRequests => vec![
                 "ID",
                 "State",
@@ -181,9 +179,15 @@ impl Tab {
         }
     }
 
-    pub fn default_columns(&self) -> Vec<&'static str> {
+    pub fn default_columns(&self, is_github: bool) -> Vec<&'static str> {
         match self {
-            Tab::Issues => vec!["ID", "State", "Title", "Labels", "Due Date"],
+            Tab::Issues => {
+                let mut cols = vec!["ID", "State", "Title", "Labels"];
+                if !is_github {
+                    cols.push("Due Date");
+                }
+                cols
+            }
             Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
             Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
@@ -1275,7 +1279,7 @@ impl Default for App {
                 let mut ec = std::collections::HashMap::new();
                 for tab in Tab::ALL {
                     let set: std::collections::HashSet<String> = tab
-                        .default_columns()
+                        .default_columns(false)
                         .iter()
                         .map(|s| s.to_string())
                         .collect();
@@ -1315,6 +1319,16 @@ impl App {
     }
 
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
+        if tab == Tab::Issues && col == "Due Date" {
+            let is_github = self
+                .gitlab_client
+                .as_ref()
+                .map(|c| c.is_github)
+                .unwrap_or(false);
+            if is_github {
+                return false;
+            }
+        }
         if let Some(set) = self.enabled_columns.get(&tab) {
             set.contains(col)
         } else {
@@ -2994,7 +3008,7 @@ mod tests {
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
         let enabled_cols: std::collections::HashSet<String> = Tab::MergeRequests
-            .columns()
+            .columns(false)
             .iter()
             .map(|s| s.to_string())
             .collect();

@@ -2858,6 +2858,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     middle_chunks[2],
                 );
             } else {
+                let is_github = app
+                    .gitlab_client
+                    .as_ref()
+                    .map(|c| c.is_github)
+                    .unwrap_or(false);
                 let default_set = std::collections::HashSet::new();
                 let mut filtered_milestones = App::filter_milestones_list(
                     &app.milestones.items,
@@ -2879,7 +2884,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 );
 
                 let header_cells = Tab::Milestones
-                    .columns()
+                    .columns(is_github)
                     .into_iter()
                     .filter(|col| app.is_column_visible(Tab::Milestones, col))
                     .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
@@ -2890,7 +2895,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 let rows = filtered_milestones.iter().enumerate().map(|(idx, m)| {
                     let mut cells = Vec::new();
-                    let cols = Tab::Milestones.columns();
+                    let cols = Tab::Milestones.columns(is_github);
                     for col in cols {
                         if app.is_column_visible(Tab::Milestones, &col) {
                             let val = match col {
@@ -5308,7 +5313,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     if app.focus_column_checklist {
         let tab = app.active_tab;
-        let cols = tab.columns();
+        let is_github = app
+            .gitlab_client
+            .as_ref()
+            .map(|c| c.is_github)
+            .unwrap_or(false);
+        let cols = tab.columns(is_github);
         let active_idx = app.column_checklist_idx;
 
         let group_cols: Vec<&str> = cols.iter().copied().collect();

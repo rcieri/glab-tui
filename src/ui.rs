@@ -3356,7 +3356,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             "State" => widths.push(Constraint::Length(12)),
                             "Start Date" => widths.push(Constraint::Length(15)),
                             "Due Date" => widths.push(Constraint::Length(15)),
-                            "Progress" => widths.push(Constraint::Length(18)),
+                            "Progress" => widths.push(Constraint::Length(10)),
                             _ => widths.push(Constraint::Length(10)),
                         }
                     }
@@ -3391,22 +3391,39 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     ));
                                 }
                                 "State" => {
-                                    let state_color = if m.state == "active" {
-                                        THEME.read().unwrap().green
+                                    let (state_text, state_style) = if m.state == "active" {
+                                        (
+                                            "ACTIVE",
+                                            Style::default()
+                                                .fg(THEME.read().unwrap().green)
+                                                .bg(if is_selected {
+                                                    THEME.read().unwrap().highlight_bg
+                                                } else {
+                                                    THEME.read().unwrap().green_bg
+                                                })
+                                                .add_modifier(Modifier::BOLD),
+                                        )
                                     } else {
-                                        THEME.read().unwrap().red
+                                        (
+                                            "CLOSED",
+                                            Style::default()
+                                                .fg(THEME.read().unwrap().red)
+                                                .bg(if is_selected {
+                                                    THEME.read().unwrap().highlight_bg
+                                                } else {
+                                                    THEME.read().unwrap().red_bg
+                                                })
+                                                .add_modifier(Modifier::BOLD),
+                                        )
                                     };
-                                    cells.push(render_fuzzy_cell(
-                                        &m.state.to_uppercase(),
-                                        &app.search_query,
-                                        is_selected,
-                                        false,
-                                        Style::default()
-                                            .fg(state_color)
-                                            .add_modifier(Modifier::BOLD),
-                                        Alignment::Left,
-                                    ));
+                                    cells.push(
+                                        Cell::from(
+                                            Line::from(state_text).alignment(Alignment::Center),
+                                        )
+                                        .style(state_style),
+                                    );
                                 }
+
                                 "Start Date" => {
                                     let val =
                                         m.start_date.clone().unwrap_or_else(|| "N/A".to_string());
@@ -3450,13 +3467,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                                 } else {
                                                     THEME.read().unwrap().green
                                                 };
-                                                let bars = percent / 10;
-                                                let filled = "█".repeat(bars);
-                                                let empty = "░".repeat(10 - bars);
-                                                format!("|{}{}| {}%", filled, empty, percent)
+                                                format!("{}%", percent)
                                             } else {
                                                 color = THEME.read().unwrap().red;
-                                                "|░░░░░░░░░░| 0%".to_string()
+                                                "0%".to_string()
                                             }
                                         } else {
                                             "Loading...".to_string()
@@ -3608,11 +3622,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 "[{}{}] {:.1}%",
                                 "█".repeat(filled_len),
                                 "░".repeat(20 - filled_len),
-                                pct
+                                pct,
                             );
+                            let progress_color = if pct <= 33.0 {
+                                THEME.read().unwrap().red
+                            } else if pct <= 66.0 {
+                                THEME.read().unwrap().yellow
+                            } else {
+                                THEME.read().unwrap().green
+                            };
                             text.push(Line::from(Span::styled(
                                 bar,
-                                Style::default().fg(THEME.read().unwrap().green),
+                                Style::default().fg(progress_color),
                             )));
                             text.push(Line::from(""));
                         } else {

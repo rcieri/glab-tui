@@ -1,0 +1,103 @@
+name: Prepare Release
+
+on:
+    workflow_dispatch:
+        inputs:
+            version_increment:
+                description: "Select version bump type"
+                required: true
+                default: "patch"
+                type: choice
+                options:
+                    - patch
+                    - minor
+                    - major
+
+permissions:
+    contents: write
+    pull-requests: write
+
+jobs:
+    prepare-release:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+                  persist-credentials: true
+
+            - name: Configure Git
+              run: |
+                  git config --global user.name "opencode[bot]"
+                  git config --global user.email "opencode[bot]@users.noreply.github.com"
+
+            - name: Determine Next Version Tag
+              id: versioning
+              run: |
+                  # Get latest tag, defaulting to v0.0.0 if none exist
+                  LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+                  VERSION=${LATEST_TAG#v}
+
+                  # Split version into components
+                  IFS='.' read -r major minor patch <<< "$VERSION"
+
+                  # Increment based on input selection
+                  if [ "${{ github.event.inputs.version_increment }}" = "major" ]; then
+                      major=$((major + 1))
+                      minor=0
+                      patch=0
+                  elif [ "${{ github.event.inputs.version_increment }}" = "minor" ]; then
+                      minor=$((minor + 1))
+                      patch=0
+                  else
+                      patch=$((patch + 1))
+                  fi
+
+                  NEW_TAG="v$major.$minor.$patch"
+                  echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+                  echo "Calculated new version: $NEW_TAG"
+
+            - name: Create Release Preparation Branch
+              run: |
+                  BRANCH_NAME="release-prep/${{ env.NEW_TAG }}"
+                  git checkout -b "$BRANCH_NAME"
+                  echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+            - name: OpenCode Docs & Changelog Update
+              uses: anomalyco/opencode/github@latest
+              env:
+                  OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  model: opencode/big-pickle
+                  use_github_token: true
+                  prompt: |
+                      We are prepping a new repository release. The upcoming version tag is going to be: ${{ env.NEW_TAG }}.
+
+                      Your task is to analyze the git commits, merged pull requests, and codebase changes since the last version tag, and update the following three files directly in the workspace:
+
+                      1. CHANGELOG.md: Prepend a beautifully structured, developer-friendly update section for version ${{ env.NEW_TAG }} at the top of the file, cleanly breaking down Features, Bug Fixes, and Maintenance.
+                      2. AGENTS.md: Update any agent guidelines, automation logs, or architecture schemas affected by our latest feature set or dependencies. Ensure versioning matrices match ${{ env.NEW_TAG }}.
+                      3. README.md: Scan for installation commands, setup instructions, or documentation badges displaying the old version string, and replace them cleanly with version ${{ env.NEW_TAG }}.
+
+                      Save and write these file modifications directly back into the working directory.
+
+            - name: Push Changes and Create Pull Request
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  if [ -n "$(git status --porcelain)" ]; then
+                      git add CHANGELOG.md AGENTS.md README.md
+                      git commit -m "chore: release updates for ${{ env.NEW_TAG }}"
+                      git push origin ${{ env.BRANCH_NAME }}
+                      
+                      # Create the Pull Request using GitHub CLI
+                      gh pr create \
+                          --title "chore: prepare release ${{ env.NEW_TAG }}" \
+                          --body "This automated PR updates \`CHANGELOG.md\`, \`AGENTS.md\`, and \`README.md\` to reflect the changes for version **${{ env.NEW_TAG }}**. Review and merge this PR, then manually tag the release." \
+                          --base main \
+                          --head ${{ env.BRANCH_NAME }}
+                  else
+                      echo "No documentation or changelog updates were generated."
+                  fi

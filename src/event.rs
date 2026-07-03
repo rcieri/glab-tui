@@ -39,6 +39,12 @@ pub enum Event {
     },
     MilestonesFetched(Vec<crate::gitlab::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::gitlab::issues::Issue>),
+    MilestoneUpdated,
+    MilestoneClosed,
+    MilestoneReopened,
+    MilestoneDeleted,
+    ReleaseUpdated,
+    ReleaseDeleted,
 }
 
 #[derive(Debug)]

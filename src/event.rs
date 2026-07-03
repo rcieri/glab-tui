@@ -39,6 +39,7 @@ pub enum Event {
     },
     MilestonesFetched(Vec<crate::gitlab::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::gitlab::issues::Issue>),
+    JobTraceFetched(u64, Result<String, String>),
 }
 
 #[derive(Debug)]

@@ -74,6 +74,7 @@ pub async fn list_pipeline_jobs(
 pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
     // Parse matrix suffix from job names before deduplication.
     // GitLab matrix jobs look like: "build [ubuntu, run:test]"
+    // GitHub matrix jobs look like: "build (ubuntu, run:test)"
     let all_jobs: Vec<Job> = all_jobs
         .into_iter()
         .map(|mut job| {
@@ -84,6 +85,15 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
                     let matrix_content =
                         job.name[bracket_start + 1..bracket_end].trim().to_string();
                     let base_name = job.name[..bracket_start].trim().to_string();
+                    job.matrix = Some(matrix_content);
+                    job.name = base_name;
+                }
+            } else if let (Some(paren_start), Some(paren_end)) =
+                (job.name.rfind('('), job.name.rfind(')'))
+            {
+                if paren_end == job.name.len() - 1 {
+                    let matrix_content = job.name[paren_start + 1..paren_end].trim().to_string();
+                    let base_name = job.name[..paren_start].trim().to_string();
                     job.matrix = Some(matrix_content);
                     job.name = base_name;
                 }
@@ -259,5 +269,20 @@ mod tests {
 
         let lint = processed.iter().find(|j| j.name == "lint").unwrap();
         assert!(lint.matrix.is_none());
+    }
+
+    #[test]
+    fn test_process_pipeline_jobs_github_matrix_parsing() {
+        let input_jobs = vec![Job {
+            id: 301,
+            status: "success".to_string(),
+            stage: "test".to_string(),
+            name: "test-matrix (ubuntu-latest, 20)".to_string(),
+            matrix: None,
+        }];
+        let processed = process_pipeline_jobs(input_jobs);
+        assert_eq!(processed.len(), 1);
+        assert_eq!(processed[0].name, "test-matrix");
+        assert_eq!(processed[0].matrix.as_deref(), Some("ubuntu-latest, 20"));
     }
 }

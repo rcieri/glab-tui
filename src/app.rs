@@ -1213,6 +1213,8 @@ pub struct App {
     pub selected_jobs: std::collections::HashSet<u64>,
     pub details_zoomed: bool,
     pub job_trace_needs_scroll_to_bottom: bool,
+    pub job_trace_loading: bool,
+    pub collapse_matrix_jobs: bool,
     pub show_help: bool,
     pub help_search_query: String,
     pub diff_view: Option<DiffView>,
@@ -1282,6 +1284,8 @@ impl Default for App {
             selected_jobs: std::collections::HashSet::new(),
             details_zoomed: false,
             job_trace_needs_scroll_to_bottom: false,
+            job_trace_loading: false,
+            collapse_matrix_jobs: false,
             show_help: false,
             help_search_query: String::new(),
             diff_view: None,
@@ -2065,7 +2069,19 @@ impl App {
                     _ => vec![],
                 }
             });
-            list
+
+            if self.collapse_matrix_jobs {
+                let mut collapsed: Vec<&crate::gitlab::pipelines::Job> = Vec::new();
+                let mut seen_names = std::collections::HashSet::new();
+                for job in list {
+                    if seen_names.insert(&job.name) {
+                        collapsed.push(job);
+                    }
+                }
+                collapsed
+            } else {
+                list
+            }
         } else {
             vec![]
         }

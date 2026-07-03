@@ -1810,6 +1810,40 @@ async fn main() -> Result<()> {
                     app.job_trace_scroll = 0;
                     app.job_trace = None;
                 }
+                Event::JobTraceFetched(job_id, result) => {
+                    app.job_trace_loading = false;
+                    let current_selected_job_id = match app.active_tab {
+                        app::Tab::Jobs => {
+                            if let Some(idx) = app.selected_job_index {
+                                app.filtered_jobs().get(idx).map(|j| j.id)
+                            } else {
+                                None
+                            }
+                        }
+                        app::Tab::Pipelines => {
+                            if let Some(idx) = app.selected_job_index {
+                                app.selected_pipeline_jobs
+                                    .as_ref()
+                                    .and_then(|jobs| jobs.get(idx).map(|j| j.id))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if current_selected_job_id == Some(job_id) {
+                        match result {
+                            Ok(trace) => {
+                                app.job_trace = Some(trace);
+                                app.job_trace_needs_scroll_to_bottom = true;
+                                app.details_zoomed = true;
+                            }
+                            Err(e) => {
+                                app.error_message = Some(e);
+                            }
+                        }
+                    }
+                }
                 Event::IssuesFetched(issues) => {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
                     app.loaded_tabs.insert(app::Tab::Issues);
@@ -7171,15 +7205,27 @@ async fn main() -> Result<()> {
                                                     }
                                                     app.selected_jobs.clear();
                                                     tokio::spawn(async move {
-                                                        for j_id in job_ids {
+                                                        if client_clone.is_github {
                                                             let endpoint = format!(
-                                                                "projects/{}/jobs/{}/cancel",
+                                                                "projects/{}/pipelines/{}/cancel",
                                                                 project_context.replace("/", "%2F"),
-                                                                j_id
+                                                                pipe_id
                                                             );
                                                             let _ = client_clone
                                                                 .fetch_raw_api(&endpoint)
                                                                 .await;
+                                                        } else {
+                                                            for j_id in job_ids {
+                                                                let endpoint = format!(
+                                                                    "projects/{}/jobs/{}/cancel",
+                                                                    project_context
+                                                                        .replace("/", "%2F"),
+                                                                    j_id
+                                                                );
+                                                                let _ = client_clone
+                                                                    .fetch_raw_api(&endpoint)
+                                                                    .await;
+                                                            }
                                                         }
                                                         tokio::time::sleep(
                                                             std::time::Duration::from_secs(1),
@@ -7207,11 +7253,19 @@ async fn main() -> Result<()> {
                                                         }
                                                     }
                                                     tokio::spawn(async move {
-                                                        let endpoint = format!(
-                                                            "projects/{}/jobs/{}/cancel",
-                                                            project_context.replace("/", "%2F"),
-                                                            job_id
-                                                        );
+                                                        let endpoint = if client_clone.is_github {
+                                                            format!(
+                                                                "projects/{}/pipelines/{}/cancel",
+                                                                project_context.replace("/", "%2F"),
+                                                                pipe_id
+                                                            )
+                                                        } else {
+                                                            format!(
+                                                                "projects/{}/jobs/{}/cancel",
+                                                                project_context.replace("/", "%2F"),
+                                                                job_id
+                                                            )
+                                                        };
                                                         let _ = client_clone
                                                             .fetch_raw_api(&endpoint)
                                                             .await;
@@ -7342,21 +7396,22 @@ async fn main() -> Result<()> {
                                             if app.job_trace.is_some() {
                                                 app.details_zoomed = !app.details_zoomed;
                                             } else if let Some(client) = &app.gitlab_client {
-                                                if let Ok(trace) = gitlab::pipelines::get_job_trace(
-                                                    client,
-                                                    &app.project_context,
-                                                    job_id,
-                                                )
-                                                .await
-                                                {
-                                                    app.job_trace = Some(trace);
-                                                    app.job_trace_needs_scroll_to_bottom = true;
-                                                    app.details_zoomed = true;
-                                                } else {
-                                                    app.error_message = Some(
-                                                        "Failed to fetch job trace".to_string(),
-                                                    );
-                                                }
+                                                let client = client.clone();
+                                                let project_context = app.project_context.clone();
+                                                let tx = events.sender();
+                                                app.job_trace_loading = true;
+                                                tokio::spawn(async move {
+                                                    let res = gitlab::pipelines::get_job_trace(
+                                                        &client,
+                                                        &project_context,
+                                                        job_id,
+                                                    )
+                                                    .await;
+                                                    let _ = tx.send(Event::JobTraceFetched(
+                                                        job_id,
+                                                        res.map_err(|e| e.to_string()),
+                                                    ));
+                                                });
                                             }
                                         }
                                         _ => handled = false,
@@ -7668,10 +7723,20 @@ async fn main() -> Result<()> {
                                     app.quit();
                                 }
                             }
+                            KeyCode::Char('m') | KeyCode::Char('M')
+                                if app.active_tab == app::Tab::Jobs && app.job_trace.is_none() =>
+                            {
+                                app.collapse_matrix_jobs = !app.collapse_matrix_jobs;
+                                app.selected_job_index = Some(0);
+                                app.jobs_list_state.select(Some(0));
+                            }
 
                             KeyCode::Esc | KeyCode::Backspace => {
-                                if app.details_zoomed {
+                                if app.job_trace_loading {
+                                    app.job_trace_loading = false;
+                                } else if app.details_zoomed {
                                     app.details_zoomed = false;
+                                    app.job_trace = None;
                                 } else if app.active_tab == app::Tab::Jobs {
                                     if app.job_trace.is_some() {
                                         app.job_trace = None;
@@ -7781,21 +7846,22 @@ async fn main() -> Result<()> {
                                             .map(|j| (j.id, j.name.clone()));
                                         if let Some((job_id, _)) = job_info {
                                             if let Some(client) = &app.gitlab_client {
-                                                if let Ok(trace) = gitlab::pipelines::get_job_trace(
-                                                    client,
-                                                    &app.project_context,
-                                                    job_id,
-                                                )
-                                                .await
-                                                {
-                                                    app.job_trace = Some(trace);
-                                                    app.job_trace_needs_scroll_to_bottom = true;
-                                                    app.details_zoomed = true;
-                                                } else {
-                                                    app.error_message = Some(
-                                                        "Failed to fetch job trace".to_string(),
-                                                    );
-                                                }
+                                                let client = client.clone();
+                                                let project_context = app.project_context.clone();
+                                                let tx = events.sender();
+                                                app.job_trace_loading = true;
+                                                tokio::spawn(async move {
+                                                    let res = gitlab::pipelines::get_job_trace(
+                                                        &client,
+                                                        &project_context,
+                                                        job_id,
+                                                    )
+                                                    .await;
+                                                    let _ = tx.send(Event::JobTraceFetched(
+                                                        job_id,
+                                                        res.map_err(|e| e.to_string()),
+                                                    ));
+                                                });
                                             }
                                         }
                                     }

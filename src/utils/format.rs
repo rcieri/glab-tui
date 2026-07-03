@@ -255,6 +255,53 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
     spans
 }
 
+pub fn strip_ansi_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut bytes = s.bytes();
+    while let Some(b) = bytes.next() {
+        if b == 0x1b {
+            if let Some(next_b) = bytes.next() {
+                if next_b == b'[' {
+                    while let Some(next_c) = bytes.next() {
+                        if (0x40..=0x7e).contains(&next_c) {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
+}
+
+pub fn format_job_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'static>> {
+    let stripped = strip_ansi_escapes(trace);
+    stripped
+        .lines()
+        .map(|line| {
+            let mut style = Style::default().fg(theme.text_normal);
+            let lower = line.to_lowercase();
+            if lower.contains("error") || lower.contains("failed") || lower.contains("panic") {
+                style = style.fg(theme.red).add_modifier(Modifier::BOLD);
+            } else if lower.contains("warning") || lower.contains("warn") {
+                style = style.fg(theme.yellow);
+            } else if lower.contains("success")
+                || lower.contains("successfully")
+                || lower.contains("completed")
+            {
+                style = style.fg(theme.green);
+            } else if line.trim_start().starts_with('$') {
+                style = style.fg(theme.purple).add_modifier(Modifier::BOLD);
+            } else if lower.contains("info") {
+                style = style.fg(theme.blue);
+            }
+            Line::from(Span::styled(line.to_string(), style))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +362,15 @@ mod tests {
         assert_eq!(
             parse_mr_title_prefix("Title with 'single quotes' in it"),
             ("".to_string(), "single quotes".to_string())
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_escapes() {
+        let input = "\u{1b}[32m[SUCCESS]\u{1b}[0m Job finished successfully";
+        assert_eq!(
+            strip_ansi_escapes(input),
+            "[SUCCESS] Job finished successfully"
         );
     }
 }

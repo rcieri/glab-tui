@@ -2053,48 +2053,125 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 );
 
                 let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
-                    let (status_text, status_color, bg_color) = match j.status.as_str() {
-                        "success" => (
-                            "SUCCESS",
-                            THEME.read().unwrap().green,
-                            THEME.read().unwrap().green_bg,
-                        ),
-                        "failed" => (
-                            "FAILED",
-                            THEME.read().unwrap().red,
-                            THEME.read().unwrap().red_bg,
-                        ),
-                        "running" => (
-                            "RUNNING",
-                            THEME.read().unwrap().blue,
-                            THEME.read().unwrap().blue_bg,
-                        ),
-                        "canceled" => (
-                            "CANCEL",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "pending" => (
-                            "PENDING",
-                            THEME.read().unwrap().yellow,
-                            THEME.read().unwrap().yellow_bg,
-                        ),
-                        "skipped" => (
-                            "SKIP",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "manual" => (
-                            "MANUAL",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        _ => (
-                            "UNKNOWN",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
+                    let (
+                        matrix_display,
+                        status_text_display,
+                        status_color_display,
+                        status_bg_display,
+                    ) = if app.collapse_matrix_jobs {
+                        let variants: Vec<&crate::gitlab::pipelines::Job> = app
+                            .selected_pipeline_jobs
+                            .as_ref()
+                            .map(|jobs| jobs.iter().filter(|job| job.name == j.name).collect())
+                            .unwrap_or_default();
+
+                        let count = variants.len();
+                        let mut overall_status = "success";
+                        if variants.iter().any(|v| v.status == "failed") {
+                            overall_status = "failed";
+                        } else if variants.iter().any(|v| v.status == "running") {
+                            overall_status = "running";
+                        } else if variants
+                            .iter()
+                            .any(|v| v.status == "pending" || v.status == "preparing")
+                        {
+                            overall_status = "pending";
+                        } else if variants.iter().any(|v| v.status == "skipped")
+                            && variants
+                                .iter()
+                                .all(|v| v.status == "skipped" || v.status == "success")
+                        {
+                            overall_status = "skipped";
+                        }
+
+                        let (st, sc, sbg) = match overall_status {
+                            "success" => (
+                                "SUCCESS",
+                                THEME.read().unwrap().green,
+                                THEME.read().unwrap().green_bg,
+                            ),
+                            "failed" => (
+                                "FAILED",
+                                THEME.read().unwrap().red,
+                                THEME.read().unwrap().red_bg,
+                            ),
+                            "running" => (
+                                "RUNNING",
+                                THEME.read().unwrap().blue,
+                                THEME.read().unwrap().blue_bg,
+                            ),
+                            "pending" => (
+                                "PENDING",
+                                THEME.read().unwrap().yellow,
+                                THEME.read().unwrap().yellow_bg,
+                            ),
+                            _ => (
+                                "SKIP",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                        };
+
+                        let m_str = if count > 1 {
+                            format!("❖ [{} variants]", count)
+                        } else if let Some(m) = &j.matrix {
+                            format!("❖ [{}]", m)
+                        } else {
+                            String::new()
+                        };
+
+                        (m_str, st, sc, sbg)
+                    } else {
+                        let (status_text, status_color, bg_color) = match j.status.as_str() {
+                            "success" => (
+                                "SUCCESS",
+                                THEME.read().unwrap().green,
+                                THEME.read().unwrap().green_bg,
+                            ),
+                            "failed" => (
+                                "FAILED",
+                                THEME.read().unwrap().red,
+                                THEME.read().unwrap().red_bg,
+                            ),
+                            "running" => (
+                                "RUNNING",
+                                THEME.read().unwrap().blue,
+                                THEME.read().unwrap().blue_bg,
+                            ),
+                            "canceled" => (
+                                "CANCEL",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            "pending" => (
+                                "PENDING",
+                                THEME.read().unwrap().yellow,
+                                THEME.read().unwrap().yellow_bg,
+                            ),
+                            "skipped" => (
+                                "SKIP",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            "manual" => (
+                                "MANUAL",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            _ => (
+                                "UNKNOWN",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                        };
+                        let m_str = if let Some(m) = &j.matrix {
+                            format!("❖ [{}]", m)
+                        } else {
+                            String::new()
+                        };
+                        (m_str, status_text, status_color, bg_color)
                     };
+
                     let is_job_selected = Some(i) == app.selected_job_index;
                     let is_checked = app.selected_jobs.contains(&j.id);
                     let status_bg = if is_job_selected {
@@ -2102,10 +2179,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     } else if is_checked {
                         THEME.read().unwrap().checked_bg
                     } else {
-                        bg_color
+                        status_bg_display
                     };
 
-                    let matrix_str = j.matrix.as_deref().unwrap_or("").to_string();
+                    let matrix_str = matrix_display;
+                    let status_text = status_text_display;
+                    let status_color = status_color_display;
                     let mut row_cells = Vec::new();
                     if app.is_column_visible(Tab::Jobs, "ID") {
                         row_cells.push(render_fuzzy_cell(
@@ -2211,6 +2290,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     .fg(THEME.read().unwrap().header_fg)
                                     .add_modifier(Modifier::BOLD),
                             )
+                            .title_bottom(
+                                ratatui::text::Line::from(vec![Span::styled(
+                                    if app.collapse_matrix_jobs {
+                                        " m: Expand Matrix "
+                                    } else {
+                                        " m: Collapse Matrix "
+                                    },
+                                    Style::default().fg(THEME.read().unwrap().text_muted),
+                                )])
+                                .alignment(Alignment::Right),
+                            )
                             .border_style(
                                 Style::default().fg(THEME.read().unwrap().border_focused),
                             ),
@@ -2222,10 +2312,29 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 f.render_stateful_widget(table, content_area, &mut state);
                 app.jobs_list_state = state;
 
-                if let Some(trace) = &app.job_trace {
+                if app.job_trace_loading {
+                    let preview_block = Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Details / Trace ")
+                        .title_style(
+                            Style::default()
+                                .fg(THEME.read().unwrap().text_muted)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .border_style(Style::default().fg(THEME.read().unwrap().border));
+
+                    f.render_widget(
+                        Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
+                            .alignment(Alignment::Center)
+                            .block(preview_block)
+                            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                        middle_chunks[2],
+                    );
+                } else if let Some(trace) = &app.job_trace {
                     let width = middle_chunks[2].width.saturating_sub(2) as usize;
                     let height = middle_chunks[2].height.saturating_sub(2) as usize;
-                    let total_lines = count_wrapped_lines(trace, width);
+                    let stripped_trace = crate::utils::format::strip_ansi_escapes(trace);
+                    let total_lines = count_wrapped_lines(&stripped_trace, width);
                     let max_scroll = total_lines.saturating_sub(height) as u16;
 
                     if app.job_trace_needs_scroll_to_bottom {
@@ -2251,10 +2360,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 .fg(THEME.read().unwrap().text_muted)
                                 .add_modifier(Modifier::BOLD),
                         )
+                        .title_bottom(
+                            ratatui::text::Line::from(vec![Span::styled(
+                                " Esc: Back | Enter: Zoom | j/k: Scroll ",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            )])
+                            .alignment(Alignment::Right),
+                        )
                         .border_style(Style::default().fg(THEME.read().unwrap().border));
 
+                    let formatted_lines =
+                        crate::utils::format::format_job_trace(trace, &THEME.read().unwrap());
+
                     f.render_widget(
-                        Paragraph::new(trace.as_str())
+                        Paragraph::new(formatted_lines)
                             .block(preview_block)
                             .wrap(ratatui::widgets::Wrap { trim: false })
                             .scroll((app.job_trace_scroll, 0)),

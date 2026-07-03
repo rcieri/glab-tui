@@ -133,3 +133,28 @@ If asked to add a new Tab (e.g., "Deployments"):
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+
+## 7. CI/CD Automation
+
+The repository includes two CI/CD automation workflows powered by [OpenCode](https://opencode.ai):
+
+### OpenCode Automation (`.github/workflows/opencode.yml`)
+
+Triggered on issue/PR events, the workflow runs four distinct agents:
+
+| Agent | Trigger | Purpose |
+|---|---|---|
+| **opencode-comment-commands** | Comment containing `/oc` or `/opencode` | Executes ad-hoc OpenCode commands on comment |
+| **opencode-ticket-creation** | New issue opened | Fleshes out feature requests with structured engineering plans |
+| **opencode-tui-bug-hunter** | Issue labeled `bug` | Scans terminal rendering / layout code and suggests fixes |
+| **opencode-pr-review** | PR opened or synchronized | Reviews Rust code for bugs, security, style; commits fixes directly |
+
+All jobs use `actions/checkout@v7` with `fetch-depth: 0` (PR review) or `1` (others) and authenticate via `OPENCODE_API_KEY` secret + `GITHUB_TOKEN`.
+
+### Release Preparation (`.github/workflows/prepare-release.yml`)
+
+A `workflow_dispatch` workflow that:
+1. Reads the latest git tag and increments the version (patch/minor/major).
+2. Creates a `release-prep/vX.Y.Z` branch.
+3. Invokes OpenCode to regenerate `CHANGELOG.md`, `AGENTS.md`, and `README.md`.
+4. Commits the changes and opens a pull request against `main`.

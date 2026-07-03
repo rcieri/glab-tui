@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-07-03
+
+### Fixed
+- **Multi-byte character handling in label truncation** — `render_labels_cell` now uses `floor_char_boundary()` instead of raw byte indexing when truncating label text, preventing a panic when labels contain multi-byte characters such as emoji (👕) or accented UTF-8 letters. (#93)
+
+### Added
+- **OpenCode CI automation workflow** — new `.github/workflows/opencode.yml` adds four automated agents: comment-driven `/oc` command execution, issue triage & feature fleshing, TUI bug-hunting triage, and auto PR review with optional fix commits.
+- **Release preparation workflow** — new `.github/workflows/prepare-release.yml` provides a `workflow_dispatch` trigger to increment version (patch/minor/major), create a release-prep branch, run OpenCode to update docs/changelog, and open a release pull request.
+
+### CI/CD
+- Introduced `persist-credentials: false` across checkout steps in automation workflows.
+- Migrated OpenCode auth from legacy OpenAI key-based gateway to native `OPENCODE_API_KEY` + `GITHUB_TOKEN` authentication.
+
+---
+
 ## [2.3.0] - 2026-07-02
 
 ### Added

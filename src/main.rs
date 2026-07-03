@@ -4461,6 +4461,12 @@ async fn main() -> Result<()> {
                                                     .find(|i| i.iid == entity_iid)
                                                     .and_then(|i| i.description.clone())
                                                     .unwrap_or_default()
+                                            } else if entity_type == "release" {
+                                                app.releases
+                                                    .items
+                                                    .get(entity_iid as usize)
+                                                    .and_then(|r| r.description.clone())
+                                                    .unwrap_or_default()
                                             } else {
                                                 app.mrs
                                                     .items
@@ -4496,6 +4502,22 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
+                                                        let cli = app_cli(&app);
+                                                        let args = UpdateCmd::new(
+                                                            cli.is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                        )
+                                                        .flag("-d", &new_desc)
+                                                        .build();
+                                                        run_cli(
+                                                            &cli,
+                                                            &args,
+                                                            &mut terminal,
+                                                            events.sender(),
+                                                            app.active_tab,
+                                                        )
+                                                        .await;
                                                     } else if entity_type == "mr" {
                                                         if let Some(item) = app
                                                             .mrs
@@ -4506,23 +4528,68 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
+                                                        let cli = app_cli(&app);
+                                                        let args = UpdateCmd::new(
+                                                            cli.is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                        )
+                                                        .flag("-d", &new_desc)
+                                                        .build();
+                                                        run_cli(
+                                                            &cli,
+                                                            &args,
+                                                            &mut terminal,
+                                                            events.sender(),
+                                                            app.active_tab,
+                                                        )
+                                                        .await;
+                                                    } else if entity_type == "release" {
+                                                        let release_opt = app
+                                                            .releases
+                                                            .items
+                                                            .get(entity_iid as usize)
+                                                            .cloned();
+                                                        if let Some(release) = release_opt {
+                                                            let client =
+                                                                app.gitlab_client.clone().unwrap();
+                                                            let project_path =
+                                                                app.project_context.clone();
+                                                            let tag = release.tag_name.clone();
+                                                            let name = release.name.clone();
+                                                            let desc = new_desc.clone();
+                                                            let tx_spawn = events.sender();
+                                                            let _ = tx_spawn.send(
+                                                                Event::CommandStarted(format!(
+                                                                    "Updating release tag {}",
+                                                                    tag
+                                                                )),
+                                                            );
+                                                            tokio::spawn(async move {
+                                                                let res = crate::gitlab::releases::update_release(
+                                                                    &client,
+                                                                    &project_path,
+                                                                    &tag,
+                                                                    &name,
+                                                                    &desc,
+                                                                )
+                                                                .await;
+                                                                match res {
+                                                                    Ok(_) => {
+                                                                        let _ = tx_spawn.send(
+                                                                            Event::ReleaseUpdated,
+                                                                        );
+                                                                    }
+                                                                    Err(e) => {
+                                                                        let _ = tx_spawn.send(Event::CommandCompleted(
+                                                                            crate::app::Tab::Releases,
+                                                                            Err(e.to_string()),
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
                                                     }
-                                                    let cli = app_cli(&app);
-                                                    let args = UpdateCmd::new(
-                                                        cli.is_github,
-                                                        &entity_type,
-                                                        entity_iid,
-                                                    )
-                                                    .flag("-d", &new_desc)
-                                                    .build();
-                                                    run_cli(
-                                                        &cli,
-                                                        &args,
-                                                        &mut terminal,
-                                                        events.sender(),
-                                                        app.active_tab,
-                                                    )
-                                                    .await;
                                                 }
                                                 if let Some(client) = &app.gitlab_client {
                                                     if entity_type == "issue" {

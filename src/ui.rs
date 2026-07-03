@@ -2822,16 +2822,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Alignment::Left,
                         ));
                     }
-                    if app.is_column_visible(Tab::Releases, "Release Name") {
-                        row_cells.push(render_fuzzy_cell(
-                            &truncate(&r.name, 100),
-                            &app.search_query,
-                            is_row_highlighted,
-                            false,
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                            Alignment::Left,
-                        ));
-                    }
                     if app.is_column_visible(Tab::Releases, "Date") {
                         row_cells.push(render_fuzzy_cell(
                             &truncate(&r.released_at, 10),
@@ -2839,6 +2829,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             is_row_highlighted,
                             false,
                             Style::default().fg(THEME.read().unwrap().yellow),
+                            Alignment::Left,
+                        ));
+                    }
+                    if app.is_column_visible(Tab::Releases, "Release Name") {
+                        row_cells.push(render_fuzzy_cell(
+                            &truncate(&r.name, 100),
+                            &app.search_query,
+                            is_row_highlighted,
+                            false,
+                            Style::default().fg(THEME.read().unwrap().text_normal),
                             Alignment::Left,
                         ));
                     }
@@ -2879,13 +2879,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     header_cells.push(Cell::from("Tag"));
                     widths.push(Constraint::Length(20));
                 }
-                if app.is_column_visible(Tab::Releases, "Release Name") {
-                    header_cells.push(Cell::from("Release Name"));
-                    widths.push(Constraint::Fill(1));
-                }
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
                     widths.push(Constraint::Length(12));
+                }
+                if app.is_column_visible(Tab::Releases, "Release Name") {
+                    header_cells.push(Cell::from("Release Name"));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::Releases, "Description") {
                     header_cells.push(Cell::from("Description"));

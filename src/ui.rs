@@ -6262,6 +6262,64 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(message_p, chunks[0]);
         f.render_widget(footer_p, chunks[1]);
     }
+
+    if let Some(confirm) = &app.confirm_popup {
+        let (title, message) = match confirm {
+            crate::app::ConfirmAction::DeleteMilestone(iid) => (
+                " Delete Milestone? ",
+                format!("Are you sure you want to delete milestone #{}?", iid),
+            ),
+            crate::app::ConfirmAction::DeleteRelease(tag_name) => (
+                " Delete Release? ",
+                format!("Are you sure you want to delete release {}?", tag_name),
+            ),
+        };
+
+        let block = Block::default()
+            .title(title)
+            .title_style(
+                Style::default()
+                    .fg(THEME.read().unwrap().header_fg)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+            .border_type(BorderType::Double)
+            .style(Style::default().bg(Color::Reset));
+
+        let area = centered_rect_fixed(60, 9, size);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Min(0),    // Message
+                Constraint::Length(2), // Footer
+            ])
+            .split(area);
+
+        let message_p = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(message),
+        ])
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(THEME.read().unwrap().text_normal))
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+        let footer_p = Paragraph::new(" y: Yes (Confirm) • n/Esc: Cancel ")
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+        f.render_widget(message_p, chunks[0]);
+        f.render_widget(footer_p, chunks[1]);
+    }
 }
 
 fn format_comment_with_suggestions(

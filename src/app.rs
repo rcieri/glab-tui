@@ -1178,6 +1178,12 @@ pub enum GroupItem {
     Item(usize),
 }
 
+#[derive(Clone, Debug)]
+pub enum ConfirmAction {
+    DeleteMilestone(u64), // milestone iid
+    DeleteRelease(String), // release tag_name
+}
+
 pub struct App {
     pub config: Config,
     pub active_tab: Tab,
@@ -1221,6 +1227,7 @@ pub struct App {
     pub current_comments: Vec<crate::gitlab::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
     pub show_submit_review_prompt: Option<u64>,
+    pub confirm_popup: Option<ConfirmAction>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::gitlab::notifications::Notification>,
     pub status_message: Option<String>,
@@ -1292,6 +1299,7 @@ impl Default for App {
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             show_submit_review_prompt: None,
+            confirm_popup: None,
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
             status_message: None,
@@ -2777,6 +2785,45 @@ impl App {
                         "Stage" => j.stage.clone(),
                         "Name" => j.name.clone(),
                         "ID" => format!("#{}", j.id),
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Releases => {
+                let items = self.filtered_releases();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, r) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "Date" => {
+                            if r.released_at.len() >= 10 {
+                                r.released_at[..10].to_string()
+                            } else {
+                                r.released_at.clone()
+                            }
+                        }
+                        "Author" => r.author_name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                        "Tag" => r.tag_name.clone(),
+                        "Release Name" => r.name.clone(),
+                        _ => "Unknown".to_string(),
+                    };
+                    map.entry(key).or_default().push(idx);
+                }
+                map
+            }
+            Tab::Milestones => {
+                let items = self.filtered_milestones();
+                let mut map: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
+                for (idx, m) in items.iter().enumerate() {
+                    let key = match col.as_str() {
+                        "State" => m.state.clone(),
+                        "Start Date" => m.start_date.clone().unwrap_or_else(|| "None".to_string()),
+                        "Due Date" => m.due_date.clone().unwrap_or_else(|| "None".to_string()),
+                        "Title" => m.title.clone(),
+                        "ID" => format!("#{}", m.iid),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);

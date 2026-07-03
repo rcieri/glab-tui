@@ -315,7 +315,25 @@ pub struct KeybindingReleases {
     #[serde(default)]
     pub create_release: String,
     #[serde(default)]
+    pub edit_release: String,
+    #[serde(default)]
+    pub delete_release: String,
+    #[serde(default)]
+    pub open_in_browser: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingMilestones {
+    #[serde(default)]
     pub create_milestone: String,
+    #[serde(default)]
+    pub edit_milestone: String,
+    #[serde(default)]
+    pub close_milestone: String,
+    #[serde(default)]
+    pub reopen_milestone: String,
+    #[serde(default)]
+    pub delete_milestone: String,
     #[serde(default)]
     pub open_in_browser: String,
 }
@@ -332,6 +350,8 @@ pub struct KeybindingConfig {
     pub pipelines: KeybindingPipelines,
     #[serde(default)]
     pub releases: KeybindingReleases,
+    #[serde(default)]
+    pub milestones: KeybindingMilestones,
 }
 
 macro_rules! keybind_defaults {
@@ -366,7 +386,13 @@ keybind_defaults! {
     def_cancel = "d",
     def_download_artifact = "d",
     def_create_release = "n",
+    def_edit_release = "e",
+    def_delete_release = "d",
     def_create_milestone = "n",
+    def_edit_milestone = "e",
+    def_close_milestone = "c",
+    def_reopen_milestone = "r",
+    def_delete_milestone = "d",
     def_open_in_browser = "o",
 }
 
@@ -427,7 +453,21 @@ impl Default for KeybindingReleases {
     fn default() -> Self {
         Self {
             create_release: def_create_release(),
+            edit_release: def_edit_release(),
+            delete_release: def_delete_release(),
+            open_in_browser: def_open_in_browser(),
+        }
+    }
+}
+
+impl Default for KeybindingMilestones {
+    fn default() -> Self {
+        Self {
             create_milestone: def_create_milestone(),
+            edit_milestone: def_edit_milestone(),
+            close_milestone: def_close_milestone(),
+            reopen_milestone: def_reopen_milestone(),
+            delete_milestone: def_delete_milestone(),
             open_in_browser: def_open_in_browser(),
         }
     }
@@ -441,6 +481,7 @@ impl Default for KeybindingConfig {
             mrs: KeybindingMrs::default(),
             pipelines: KeybindingPipelines::default(),
             releases: KeybindingReleases::default(),
+            milestones: KeybindingMilestones::default(),
         }
     }
 }
@@ -576,7 +617,16 @@ download_artifact = "d"
 
 [keybindings.releases]
 create_release = "n"
+edit_release = "e"
+delete_release = "d"
+open_in_browser = "o"
+
+[keybindings.milestones]
 create_milestone = "n"
+edit_milestone = "e"
+close_milestone = "c"
+reopen_milestone = "r"
+delete_milestone = "d"
 open_in_browser = "o"
 
 # Per-pane column config (unset = show all columns)

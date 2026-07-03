@@ -80,6 +80,16 @@ fn get_label_color(label: &str) -> Color {
     colors[idx]
 }
 
+fn floor_char_boundary(s: &str, mut index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    while !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
 fn render_labels_cell(
     labels: &[String],
     query: &str,
@@ -149,7 +159,7 @@ fn render_labels_cell(
             if allowed > 1 {
                 // Snap to a valid char boundary to avoid panicking on multi-byte
                 // characters (emojis, accented letters, etc.).
-                let safe_end = text_to_add.floor_char_boundary(allowed - 1);
+                let safe_end = floor_char_boundary(text_to_add, allowed - 1);
                 text_to_add = &text_to_add[..safe_end];
                 truncated = true;
             } else {
@@ -6557,5 +6567,17 @@ mod tests {
         assert_eq!(formatted[3].2[1].1, "new line content");
         assert_eq!(formatted[4].2[0].1, "└─── End of Suggestion ───");
         assert_eq!(formatted[5].2[0].1, "outside suggestion");
+    }
+
+    #[test]
+    fn test_floor_char_boundary() {
+        let s = "👕hello";
+        assert_eq!(floor_char_boundary(s, 0), 0);
+        assert_eq!(floor_char_boundary(s, 1), 0);
+        assert_eq!(floor_char_boundary(s, 2), 0);
+        assert_eq!(floor_char_boundary(s, 3), 0);
+        assert_eq!(floor_char_boundary(s, 4), 4);
+        assert_eq!(floor_char_boundary(s, 5), 5);
+        assert_eq!(floor_char_boundary(s, 999), s.len());
     }
 }

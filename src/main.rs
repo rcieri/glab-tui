@@ -1829,23 +1829,28 @@ async fn main() -> Result<()> {
                     if let Some(iid) = milestone_iid {
                         if app.selected_milestone_iid != Some(iid) {
                             app.selected_milestone_iid = Some(iid);
-                            app.selected_milestone_issues = None;
-                            let client_clone = client.clone();
-                            let project_context = app.project_context.clone();
-                            let tx = events.sender();
-                            tokio::spawn(async move {
-                                if let Ok(issues) = gitlab::milestones::list_milestone_issues(
-                                    &client_clone,
-                                    &project_context,
-                                    iid,
-                                )
-                                .await
-                                {
-                                    let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
-                                } else {
-                                    let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
-                                }
-                            });
+                            // Use cached data if available; only fetch if not yet cached
+                            if let Some(cached) = app.milestone_issues_cache.get(&iid) {
+                                app.selected_milestone_issues = Some(cached.clone());
+                            } else {
+                                app.selected_milestone_issues = None;
+                                let client_clone = client.clone();
+                                let project_context = app.project_context.clone();
+                                let tx = events.sender();
+                                tokio::spawn(async move {
+                                    if let Ok(issues) = gitlab::milestones::list_milestone_issues(
+                                        &client_clone,
+                                        &project_context,
+                                        iid,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
+                                    } else {
+                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -2031,8 +2036,12 @@ async fn main() -> Result<()> {
                     cache.milestones = app.milestones.items.clone();
                     crate::utils::cache::save_cache(&app.project_context, &cache);
                 }
-                Event::MilestoneIssuesFetched(_, issues) => {
-                    app.selected_milestone_issues = Some(issues);
+                Event::MilestoneIssuesFetched(iid, issues) => {
+                    app.milestone_issues_cache.insert(iid, issues.clone());
+                    // Only update the displayed issues if we're still viewing this milestone
+                    if app.selected_milestone_iid == Some(iid) {
+                        app.selected_milestone_issues = Some(issues);
+                    }
                 }
                 Event::SelectorItemsFetched(items) => {
                     if let Some(mut selector) = app.selector.take() {

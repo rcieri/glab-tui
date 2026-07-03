@@ -3450,31 +3450,31 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 }
                                 "Progress" => {
                                     let mut color = THEME.read().unwrap().text_muted;
-                                    let progress_str = if app.selected_milestone_iid == Some(m.iid)
+                                    let progress_str = if let Some(issues) =
+                                        app.milestone_issues_cache.get(&m.iid)
                                     {
-                                        if let Some(issues) = &app.selected_milestone_issues {
-                                            let total = issues.len();
-                                            if total > 0 {
-                                                let closed = issues
-                                                    .iter()
-                                                    .filter(|i| i.state == "closed")
-                                                    .count();
-                                                let percent = (closed * 100) / total;
-                                                color = if percent <= 33 {
-                                                    THEME.read().unwrap().red
-                                                } else if percent <= 67 {
-                                                    THEME.read().unwrap().yellow
-                                                } else {
-                                                    THEME.read().unwrap().green
-                                                };
-                                                format!("{}%", percent)
+                                        let total = issues.len();
+                                        if total > 0 {
+                                            let closed = issues
+                                                .iter()
+                                                .filter(|i| i.state == "closed")
+                                                .count();
+                                            let percent = (closed * 100) / total;
+                                            color = if percent <= 33 {
+                                                THEME.read().unwrap().red
+                                            } else if percent <= 67 {
+                                                THEME.read().unwrap().yellow
                                             } else {
-                                                color = THEME.read().unwrap().red;
-                                                "0%".to_string()
-                                            }
+                                                THEME.read().unwrap().green
+                                            };
+                                            format!("{}%", percent)
                                         } else {
-                                            "Loading...".to_string()
+                                            color = THEME.read().unwrap().red;
+                                            "0%".to_string()
                                         }
+                                    } else if app.selected_milestone_iid == Some(m.iid) {
+                                        // Cache miss but this row is selected — fetch in progress
+                                        "Loading...".to_string()
                                     } else {
                                         "-".to_string()
                                     };

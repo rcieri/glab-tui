@@ -147,7 +147,10 @@ fn render_labels_cell(
         if current_len + text_to_add.len() > max_len {
             let allowed = max_len - current_len;
             if allowed > 1 {
-                text_to_add = &text_to_add[..allowed - 1];
+                // Snap to a valid char boundary to avoid panicking on multi-byte
+                // characters (emojis, accented letters, etc.).
+                let safe_end = text_to_add.floor_char_boundary(allowed - 1);
+                text_to_add = &text_to_add[..safe_end];
                 truncated = true;
             } else {
                 let mut style = Style::default().fg(THEME.read().unwrap().text_muted);

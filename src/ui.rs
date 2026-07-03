@@ -3356,7 +3356,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             "State" => widths.push(Constraint::Length(12)),
                             "Start Date" => widths.push(Constraint::Length(15)),
                             "Due Date" => widths.push(Constraint::Length(15)),
-                            "Progress" => widths.push(Constraint::Length(10)),
+                            "Progress" => widths.push(Constraint::Length(18)),
                             _ => widths.push(Constraint::Length(10)),
                         }
                     }
@@ -3432,6 +3432,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     ));
                                 }
                                 "Progress" => {
+                                    let mut color = THEME.read().unwrap().text_muted;
                                     let progress_str = if app.selected_milestone_iid == Some(m.iid)
                                     {
                                         if let Some(issues) = &app.selected_milestone_issues {
@@ -3442,9 +3443,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                                     .filter(|i| i.state == "closed")
                                                     .count();
                                                 let percent = (closed * 100) / total;
-                                                format!("{}%", percent)
+                                                color = if percent <= 33 {
+                                                    THEME.read().unwrap().red
+                                                } else if percent <= 67 {
+                                                    THEME.read().unwrap().yellow
+                                                } else {
+                                                    THEME.read().unwrap().green
+                                                };
+                                                let bars = percent / 10;
+                                                let filled = "█".repeat(bars);
+                                                let empty = "░".repeat(10 - bars);
+                                                format!("|{}{}| {}%", filled, empty, percent)
                                             } else {
-                                                "0%".to_string()
+                                                color = THEME.read().unwrap().red;
+                                                "|░░░░░░░░░░| 0%".to_string()
                                             }
                                         } else {
                                             "Loading...".to_string()
@@ -3457,7 +3469,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                         &app.search_query,
                                         is_selected,
                                         false,
-                                        Style::default().fg(THEME.read().unwrap().green),
+                                        Style::default().fg(color),
                                         Alignment::Left,
                                     ));
                                 }

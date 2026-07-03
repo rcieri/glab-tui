@@ -735,14 +735,21 @@ async fn apply_selector_changes(
         }
         "draft_status" => {
             if let Some(val) = values.first() {
-                let action = if val.to_lowercase() == "draft" {
-                    "--draft"
+                let going_ready = val.to_lowercase() != "draft";
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && going_ready && entity_type == "mr" {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
                 } else {
-                    "--ready"
+                    let action = if val.to_lowercase() == "draft" {
+                        "--draft"
+                    } else {
+                        "--ready"
+                    };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
                 };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if entity_type == "mr" {
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -1084,7 +1091,7 @@ async fn handle_entity_update(
                 }
             }
         }
-        KeyCode::Char('r') => {
+        KeyCode::Char('s') => {
             if entity_type == "mr" {
                 let is_draft = app
                     .mrs
@@ -1093,10 +1100,16 @@ async fn handle_entity_update(
                     .find(|m| m.iid == iid)
                     .map(|m| m.draft)
                     .unwrap_or(false);
-                let action = if is_draft { "--ready" } else { "--draft" };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && is_draft {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
+                } else {
+                    let action = if is_draft { "--ready" } else { "--draft" };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
+                };
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.draft = !is_draft;
@@ -7137,13 +7150,31 @@ async fn main() -> Result<()> {
                                             )) =>
                                         {
                                             let cli = app_cli(&app);
-                                            let is_draft = mr_title.starts_with("Draft:")
-                                                || mr_title.starts_with("WIP:");
-                                            let action =
-                                                if is_draft { "--ready" } else { "--draft" };
-                                            let args = UpdateCmd::new(cli.is_github, "mr", mr_iid)
-                                                .flag_bool(action)
-                                                .build();
+                                            let is_draft = app
+                                                .mrs
+                                                .items
+                                                .iter()
+                                                .find(|m| m.iid == mr_iid)
+                                                .map(|m| m.draft)
+                                                .unwrap_or_else(|| {
+                                                    mr_title.starts_with("Draft:")
+                                                        || mr_title.starts_with("WIP:")
+                                                });
+                                            // GitHub uses `gh pr ready <iid>` to mark ready;
+                                            // `gh pr edit --ready` is not a valid flag.
+                                            let args = if cli.is_github && is_draft {
+                                                vec![
+                                                    "pr".to_string(),
+                                                    "ready".to_string(),
+                                                    mr_iid.to_string(),
+                                                ]
+                                            } else {
+                                                let action =
+                                                    if is_draft { "--ready" } else { "--draft" };
+                                                UpdateCmd::new(cli.is_github, "mr", mr_iid)
+                                                    .flag_bool(action)
+                                                    .build()
+                                            };
                                             run_cli(
                                                 &cli,
                                                 &args,
@@ -7152,6 +7183,11 @@ async fn main() -> Result<()> {
                                                 app.active_tab,
                                             )
                                             .await;
+                                            if let Some(item) =
+                                                app.mrs.items.iter_mut().find(|m| m.iid == mr_iid)
+                                            {
+                                                item.draft = !is_draft;
+                                            }
                                         }
                                         _ if (key_event.code == KeyCode::Char('c')
                                             || keybinding_matches(

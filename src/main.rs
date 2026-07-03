@@ -444,7 +444,56 @@ async fn apply_field_text_change(
                 }
             }
         }
-        _ => {}
+        _ => {
+            if entity_type == "milestone" {
+                let milestone_opt = app.milestones.items.iter().find(|m| m.iid == iid).cloned();
+                if let Some(milestone) = milestone_opt {
+                    let mut title = milestone.title.clone();
+                    let mut start_date = milestone.start_date.clone();
+                    let mut due_date = milestone.due_date.clone();
+                    let mut description = milestone.description.clone().unwrap_or_default();
+
+                    match field_type {
+                        "title" => title = value.clone(),
+                        "start_date" => start_date = Some(value.clone()),
+                        "due_date" => due_date = Some(value.clone()),
+                        "description" => description = value.clone(),
+                        _ => {}
+                    }
+
+                    let client = app.gitlab_client.clone().unwrap();
+                    let project_path = app.project_context.clone();
+                    let tx_spawn = tx.clone();
+                    let _ = tx.send(Event::CommandStarted(format!(
+                        "Updating milestone #{}",
+                        iid
+                    )));
+                    tokio::spawn(async move {
+                        let res = crate::gitlab::milestones::update_milestone(
+                            &client,
+                            &project_path,
+                            iid,
+                            &title,
+                            &description,
+                            start_date.as_deref(),
+                            due_date.as_deref(),
+                        )
+                        .await;
+                        match res {
+                            Ok(_) => {
+                                let _ = tx_spawn.send(Event::MilestoneUpdated);
+                            }
+                            Err(e) => {
+                                let _ = tx_spawn.send(Event::CommandCompleted(
+                                    crate::app::Tab::Milestones,
+                                    Err(e.to_string()),
+                                ));
+                            }
+                        }
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -686,14 +735,21 @@ async fn apply_selector_changes(
         }
         "draft_status" => {
             if let Some(val) = values.first() {
-                let action = if val.to_lowercase() == "draft" {
-                    "--draft"
+                let going_ready = val.to_lowercase() != "draft";
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && going_ready && entity_type == "mr" {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
                 } else {
-                    "--ready"
+                    let action = if val.to_lowercase() == "draft" {
+                        "--draft"
+                    } else {
+                        "--ready"
+                    };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
                 };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if entity_type == "mr" {
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -955,6 +1011,39 @@ fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 },
             });
         }
+    } else if entity_type == "milestone" {
+        if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
+            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let cli = app_cli(app);
+            let mut fields = vec![("Title".to_string(), milestone.title.clone())];
+            if !cli.is_github {
+                fields.push((
+                    "Start Date".to_string(),
+                    milestone.start_date.clone().unwrap_or_default(),
+                ));
+            }
+            fields.push((
+                "Due Date".to_string(),
+                milestone.due_date.clone().unwrap_or_default(),
+            ));
+            fields.push((
+                "Description".to_string(),
+                milestone.description.clone().unwrap_or_default(),
+            ));
+
+            app.edit_menu = Some(crate::app::EditMenu {
+                title: format!("Edit Milestone #{}", milestone.iid),
+                fields,
+                selected_idx,
+                entity_iid: milestone.iid,
+                entity_type: "milestone".to_string(),
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(selected_idx));
+                    s
+                },
+            });
+        }
     }
 }
 
@@ -1002,7 +1091,7 @@ async fn handle_entity_update(
                 }
             }
         }
-        KeyCode::Char('r') => {
+        KeyCode::Char('s') => {
             if entity_type == "mr" {
                 let is_draft = app
                     .mrs
@@ -1011,10 +1100,16 @@ async fn handle_entity_update(
                     .find(|m| m.iid == iid)
                     .map(|m| m.draft)
                     .unwrap_or(false);
-                let action = if is_draft { "--ready" } else { "--draft" };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && is_draft {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
+                } else {
+                    let action = if is_draft { "--ready" } else { "--draft" };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
+                };
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.draft = !is_draft;
@@ -1331,6 +1426,76 @@ fn get_branches() -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+/// Returns a list of workflow/CI files available in the repo.
+/// For GitHub repos: scans `.github/workflows/*.yml` and `*.yaml`.
+/// For GitLab repos: returns `.gitlab-ci.yml` if it exists, else empty.
+fn get_workflow_files(is_github: bool) -> Vec<String> {
+    // Determine the repo root via `git rev-parse --show-toplevel`
+    let root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| ".".to_string());
+
+    if is_github {
+        let workflows_dir = std::path::Path::new(&root).join(".github").join("workflows");
+        let mut files: Vec<String> = std::fs::read_dir(&workflows_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if (ext == "yml" || ext == "yaml") && path.is_file() {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        files
+    } else {
+        // GitLab: the primary CI file is `.gitlab-ci.yml`; also check for
+        // include-able `.gitlab-ci-*.yml` files at the root.
+        let mut files: Vec<String> = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if !path.is_file() {
+                    return None;
+                }
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if (ext == "yml" || ext == "yaml")
+                    && (name == ".gitlab-ci.yml" || name.starts_with(".gitlab-ci-"))
+                {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        files
+    }
 }
 
 fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> bool {
@@ -4498,6 +4663,8 @@ async fn main() -> Result<()> {
                                                 "mr_pipeline" => "Merge Request Pipeline",
                                                 "source_branch" => "Source Branch",
                                                 "target_branch" => "Target Branch",
+                                                "pipeline_branch" => "Branch / Ref",
+                                                "workflow_file" => "Workflow / CI File (GitHub)",
                                                 _ => "",
                                             };
                                             if !target_field_name.is_empty() {
@@ -4910,6 +5077,153 @@ async fn main() -> Result<()> {
                                             );
                                         }
                                         continue;
+                                    } else if entity_type == "new_milestone" {
+                                        let title = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Title")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let description = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Description")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let start_date = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Start Date")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let due_date = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Due Date")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        let cli = app_cli(&app);
+                                        let is_github = cli.is_github;
+                                        let project_context = app.project_context.clone();
+                                        let encoded_path = project_context.replace("/", "%2F");
+                                        let tx = events.sender();
+                                        let _ = tx.send(Event::CommandStarted(format!(
+                                            "Creating milestone: {}",
+                                            title
+                                        )));
+                                        app.edit_menu = None;
+                                        tokio::spawn(async move {
+                                            if is_github {
+                                                let gh_repo = encoded_path.replace("%2F", "/");
+                                                let due_on = if !due_date.is_empty()
+                                                    && due_date != "YYYY-MM-DD"
+                                                {
+                                                    format!("{}T00:00:00Z", due_date.trim())
+                                                } else {
+                                                    "".to_string()
+                                                };
+                                                let mut args = vec![
+                                                    "api".to_string(),
+                                                    format!("repos/{}/milestones", gh_repo),
+                                                    "-f".to_string(),
+                                                    format!("title={}", title),
+                                                ];
+                                                if !description.is_empty() {
+                                                    args.push("-f".to_string());
+                                                    args.push(format!(
+                                                        "description={}",
+                                                        description
+                                                    ));
+                                                }
+                                                if !due_on.is_empty() {
+                                                    args.push("-f".to_string());
+                                                    args.push(format!("due_on={}", due_on));
+                                                }
+                                                let cmd = tokio::process::Command::new("gh")
+                                                    .args(&args)
+                                                    .output()
+                                                    .await;
+                                                match cmd {
+                                                    Ok(out) if out.status.success() => {
+                                                        let _ = tx.send(Event::MilestoneUpdated);
+                                                    }
+                                                    Ok(out) => {
+                                                        let err =
+                                                            String::from_utf8_lossy(&out.stderr)
+                                                                .trim()
+                                                                .to_string();
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            app::Tab::Milestones,
+                                                            Err(format!("Failed: {}", err)),
+                                                        ));
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            app::Tab::Milestones,
+                                                            Err(format!("Error: {}", e)),
+                                                        ));
+                                                    }
+                                                }
+                                            } else {
+                                                let endpoint = format!(
+                                                    "/projects/{}/milestones",
+                                                    encoded_path
+                                                );
+                                                let mut args = vec![
+                                                    "api".to_string(),
+                                                    "-X".to_string(),
+                                                    "POST".to_string(),
+                                                    endpoint,
+                                                    "-f".to_string(),
+                                                    format!("title={}", title),
+                                                ];
+                                                if !description.is_empty() {
+                                                    args.push("-f".to_string());
+                                                    args.push(format!(
+                                                        "description={}",
+                                                        description
+                                                    ));
+                                                }
+                                                if !start_date.is_empty()
+                                                    && start_date != "YYYY-MM-DD"
+                                                {
+                                                    args.push("-f".to_string());
+                                                    args.push(format!("start_date={}", start_date));
+                                                }
+                                                if !due_date.is_empty() && due_date != "YYYY-MM-DD"
+                                                {
+                                                    args.push("-f".to_string());
+                                                    args.push(format!("due_date={}", due_date));
+                                                }
+                                                let cmd = tokio::process::Command::new("glab")
+                                                    .args(&args)
+                                                    .output()
+                                                    .await;
+                                                match cmd {
+                                                    Ok(out) if out.status.success() => {
+                                                        let _ = tx.send(Event::MilestoneUpdated);
+                                                    }
+                                                    Ok(out) => {
+                                                        let err =
+                                                            String::from_utf8_lossy(&out.stderr)
+                                                                .trim()
+                                                                .to_string();
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            app::Tab::Milestones,
+                                                            Err(format!("Failed: {}", err)),
+                                                        ));
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            app::Tab::Milestones,
+                                                            Err(format!("Error: {}", e)),
+                                                        ));
+                                                    }
+                                                }
+                                            }
+                                        });
+                                        continue;
                                     } else if entity_type == "new_pipeline" {
                                         let cli = app_cli(&app);
                                         let branch = menu
@@ -5033,6 +5347,8 @@ async fn main() -> Result<()> {
                                     || field_name == "Merge Request Pipeline"
                                     || field_name == "Source Branch"
                                     || field_name == "Target Branch"
+                                    || field_name == "Branch / Ref"
+                                    || field_name == "Workflow / CI File (GitHub)"
                                 {
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
@@ -5045,6 +5361,8 @@ async fn main() -> Result<()> {
                                         "Merge Request Pipeline" => "mr_pipeline",
                                         "Source Branch" => "source_branch",
                                         "Target Branch" => "target_branch",
+                                        "Branch / Ref" => "pipeline_branch",
+                                        "Workflow / CI File (GitHub)" => "workflow_file",
                                         _ => "",
                                     };
                                     let multi_select = match field_type {
@@ -5100,6 +5418,27 @@ async fn main() -> Result<()> {
                                     {
                                         all_items = get_branches();
                                         is_loading = false;
+                                    } else if field_type == "pipeline_branch" {
+                                        all_items = get_branches();
+                                        is_loading = false;
+                                        // Pre-select the current branch value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
+                                    } else if field_type == "workflow_file" {
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map(|c| c.is_github)
+                                            .unwrap_or(false);
+                                        all_items = get_workflow_files(is_github);
+                                        is_loading = false;
+                                        // Pre-select any already-typed value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
@@ -5298,28 +5637,51 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
 
-                                if field_name == "Due Date" {
-                                    let current_val = if entity_iid == 0 {
-                                        menu.fields[menu.selected_idx].1.clone()
-                                    } else {
-                                        app.issues
-                                            .items
-                                            .iter()
-                                            .find(|i| i.iid == entity_iid)
-                                            .and_then(|i| i.due_date.clone())
-                                            .unwrap_or_default()
-                                    };
-                                    let action = if entity_iid == 0 {
-                                        crate::app::DatePickerAction::EditNewField {
-                                            field_idx: menu.selected_idx,
-                                        }
-                                    } else {
-                                        crate::app::DatePickerAction::EditField {
-                                            entity_iid,
-                                            entity_type: entity_type.clone(),
-                                            field_type: "due_date".to_string(),
-                                        }
-                                    };
+                                if field_name == "Due Date" || field_name == "Start Date" {
+                                    let current_val =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            menu.fields[menu.selected_idx].1.clone()
+                                        } else {
+                                            if entity_type == "issue" {
+                                                app.issues
+                                                    .items
+                                                    .iter()
+                                                    .find(|i| i.iid == entity_iid)
+                                                    .and_then(|i| i.due_date.clone())
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "milestone" {
+                                                let m = app
+                                                    .milestones
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid);
+                                                if field_name == "Start Date" {
+                                                    m.and_then(|m| m.start_date.clone())
+                                                        .unwrap_or_default()
+                                                } else {
+                                                    m.and_then(|m| m.due_date.clone())
+                                                        .unwrap_or_default()
+                                                }
+                                            } else {
+                                                String::new()
+                                            }
+                                        };
+                                    let action =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            crate::app::DatePickerAction::EditNewField {
+                                                field_idx: menu.selected_idx,
+                                            }
+                                        } else {
+                                            crate::app::DatePickerAction::EditField {
+                                                entity_iid,
+                                                entity_type: entity_type.clone(),
+                                                field_type: if field_name == "Start Date" {
+                                                    "start_date".to_string()
+                                                } else {
+                                                    "due_date".to_string()
+                                                },
+                                            }
+                                        };
                                     app.date_picker = Some(crate::app::DatePicker::new(
                                         format!(" Select {}", field_name),
                                         &current_val,
@@ -5353,6 +5715,13 @@ async fn main() -> Result<()> {
                                                         .iter()
                                                         .find(|i| i.iid == entity_iid)
                                                         .map(|i| i.title.clone())
+                                                        .unwrap_or_default()
+                                                } else if entity_type == "milestone" {
+                                                    app.milestones
+                                                        .items
+                                                        .iter()
+                                                        .find(|m| m.iid == entity_iid)
+                                                        .map(|m| m.title.clone())
                                                         .unwrap_or_default()
                                                 } else {
                                                     app.mrs
@@ -6781,13 +7150,31 @@ async fn main() -> Result<()> {
                                             )) =>
                                         {
                                             let cli = app_cli(&app);
-                                            let is_draft = mr_title.starts_with("Draft:")
-                                                || mr_title.starts_with("WIP:");
-                                            let action =
-                                                if is_draft { "--ready" } else { "--draft" };
-                                            let args = UpdateCmd::new(cli.is_github, "mr", mr_iid)
-                                                .flag_bool(action)
-                                                .build();
+                                            let is_draft = app
+                                                .mrs
+                                                .items
+                                                .iter()
+                                                .find(|m| m.iid == mr_iid)
+                                                .map(|m| m.draft)
+                                                .unwrap_or_else(|| {
+                                                    mr_title.starts_with("Draft:")
+                                                        || mr_title.starts_with("WIP:")
+                                                });
+                                            // GitHub uses `gh pr ready <iid>` to mark ready;
+                                            // `gh pr edit --ready` is not a valid flag.
+                                            let args = if cli.is_github && is_draft {
+                                                vec![
+                                                    "pr".to_string(),
+                                                    "ready".to_string(),
+                                                    mr_iid.to_string(),
+                                                ]
+                                            } else {
+                                                let action =
+                                                    if is_draft { "--ready" } else { "--draft" };
+                                                UpdateCmd::new(cli.is_github, "mr", mr_iid)
+                                                    .flag_bool(action)
+                                                    .build()
+                                            };
                                             run_cli(
                                                 &cli,
                                                 &args,
@@ -6796,6 +7183,11 @@ async fn main() -> Result<()> {
                                                 app.active_tab,
                                             )
                                             .await;
+                                            if let Some(item) =
+                                                app.mrs.items.iter_mut().find(|m| m.iid == mr_iid)
+                                            {
+                                                item.draft = !is_draft;
+                                            }
                                         }
                                         _ if (key_event.code == KeyCode::Char('c')
                                             || keybinding_matches(
@@ -6856,13 +7248,20 @@ async fn main() -> Result<()> {
                         }
                         app::Tab::Pipelines => {
                             if key_event.code == KeyCode::Char('n') {
+                                let is_github = app
+                                    .gitlab_client
+                                    .as_ref()
+                                    .map(|c| c.is_github)
+                                    .unwrap_or(false);
+                                let current_branch = get_current_branch()
+                                    .unwrap_or_else(|| "main".to_string());
+
                                 app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Run Pipeline".to_string(),
                                     fields: vec![
                                         (
                                             "Branch / Ref".to_string(),
-                                            get_current_branch()
-                                                .unwrap_or_else(|| "main".to_string()),
+                                            current_branch.clone(),
                                         ),
                                         ("Merge Request Pipeline".to_string(), "No".to_string()),
                                         ("Variables".to_string(), String::new()),
@@ -6878,6 +7277,63 @@ async fn main() -> Result<()> {
                                         s
                                     },
                                 });
+
+                                // Immediately open the appropriate selector as a dropdown:
+                                // GitHub → workflow file picker; GitLab → branch picker.
+                                if is_github {
+                                    let workflow_files = get_workflow_files(true);
+                                    let mut pre_selected = std::collections::HashSet::new();
+                                    // Pre-select the first workflow file if only one exists
+                                    if workflow_files.len() == 1 {
+                                        pre_selected
+                                            .insert(workflow_files[0].clone());
+                                    }
+                                    app.selector = Some(crate::app::Selector {
+                                        title: "Select Workflow / CI File".to_string(),
+                                        all_items: workflow_files,
+                                        selected_items: pre_selected,
+                                        cursor_idx: 0,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: 0,
+                                        entity_type: "new_pipeline".to_string(),
+                                        field_type: "workflow_file".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                } else {
+                                    let branches = get_branches();
+                                    let mut pre_selected = std::collections::HashSet::new();
+                                    pre_selected.insert(current_branch);
+                                    let start_idx = pre_selected
+                                        .iter()
+                                        .next()
+                                        .and_then(|sel| branches.iter().position(|b| b == sel))
+                                        .unwrap_or(0);
+                                    app.selector = Some(crate::app::Selector {
+                                        title: "Select Branch / Ref".to_string(),
+                                        all_items: branches,
+                                        selected_items: pre_selected,
+                                        cursor_idx: start_idx,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: 0,
+                                        entity_type: "new_pipeline".to_string(),
+                                        field_type: "pipeline_branch".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(start_idx));
+                                            s
+                                        },
+                                    });
+                                }
                             } else if key_event.code == KeyCode::Char('p')
                                 || keybinding_matches(
                                     &app.config.keybindings.pipelines.trigger_pipeline,
@@ -7521,44 +7977,73 @@ async fn main() -> Result<()> {
                                     action: crate::app::TextInputAction::CreateRelease,
                                 });
                             }
-                            _ => {
+                            _ if (key_event.code == KeyCode::Char('e')
+                                || keybinding_matches(
+                                    &app.config.keybindings.releases.edit_release,
+                                    &key_event,
+                                )) =>
+                            {
                                 if let Some(selected_idx) = app.releases.state.selected() {
-                                    if let Some(item) = app.filtered_releases().get(selected_idx) {
-                                        match key_event.code {
-                                            _ if (key_event.code == KeyCode::Char('o')
-                                                || keybinding_matches(
-                                                    &app.config
-                                                        .keybindings
-                                                        .releases
-                                                        .open_in_browser,
-                                                    &key_event,
-                                                )) =>
-                                            {
-                                                let cli = app_cli(&app);
-                                                let args = vec![
-                                                    "release".to_string(),
-                                                    "view".to_string(),
-                                                    item.tag_name.clone(),
-                                                    cli.flag_web().to_string(),
-                                                ];
-                                                run_cli(
-                                                    &cli,
-                                                    &args,
-                                                    &mut terminal,
-                                                    events.sender(),
-                                                    app.active_tab,
-                                                )
-                                                .await;
-                                            }
-                                            _ => handled = false,
+                                    let release_tag = {
+                                        let filtered = app.filtered_releases();
+                                        filtered.get(selected_idx).map(|r| r.tag_name.clone())
+                                    };
+                                    if let Some(tag_name) = release_tag {
+                                        if let Some(idx) = app
+                                            .releases
+                                            .items
+                                            .iter()
+                                            .position(|r| r.tag_name == tag_name)
+                                        {
+                                            rebuild_edit_menu(&mut app, "release", idx as u64);
                                         }
-                                    } else {
-                                        handled = false;
                                     }
-                                } else {
-                                    handled = false;
                                 }
                             }
+                            _ if (key_event.code == KeyCode::Char('d')
+                                || keybinding_matches(
+                                    &app.config.keybindings.releases.delete_release,
+                                    &key_event,
+                                )) =>
+                            {
+                                if let Some(selected_idx) = app.releases.state.selected() {
+                                    let filtered = app.filtered_releases();
+                                    if let Some(release) = filtered.get(selected_idx) {
+                                        app.confirm_popup =
+                                            Some(crate::app::ConfirmAction::DeleteRelease(
+                                                release.tag_name.clone(),
+                                            ));
+                                    }
+                                }
+                            }
+                            _ if (key_event.code == KeyCode::Char('o')
+                                || keybinding_matches(
+                                    &app.config.keybindings.releases.open_in_browser,
+                                    &key_event,
+                                )) =>
+                            {
+                                if let Some(selected_idx) = app.releases.state.selected() {
+                                    let filtered = app.filtered_releases();
+                                    if let Some(release) = filtered.get(selected_idx) {
+                                        let cli = app_cli(&app);
+                                        let args = vec![
+                                            "release".to_string(),
+                                            "view".to_string(),
+                                            release.tag_name.clone(),
+                                            cli.flag_web().to_string(),
+                                        ];
+                                        run_cli(
+                                            &cli,
+                                            &args,
+                                            &mut terminal,
+                                            events.sender(),
+                                            app.active_tab,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
+                            _ => handled = false,
                         },
                         app::Tab::Todos => {
                             if let Some(selected_idx) = app.todos.state.selected() {
@@ -7635,22 +8120,192 @@ async fn main() -> Result<()> {
                                 handled = false;
                             }
                         }
-                        app::Tab::Milestones => match key_event.code {
-                            _ if (key_event.code == KeyCode::Char('n')
-                                || keybinding_matches(
-                                    &app.config.keybindings.releases.create_milestone,
-                                    &key_event,
-                                )) =>
-                            {
-                                app.text_input = Some(crate::app::TextInput {
-                                    title: "Create Milestone".to_string(),
-                                    value: String::new(),
-                                    cursor_idx: 0,
-                                    action: crate::app::TextInputAction::CreateMilestone,
-                                });
+                        app::Tab::Milestones => {
+                            match key_event.code {
+                                _ if (key_event.code == KeyCode::Char('n')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.create_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    let is_github = app
+                                        .gitlab_client
+                                        .as_ref()
+                                        .map(|c| c.is_github)
+                                        .unwrap_or(false);
+                                    let mut fields = vec![
+                                        ("Title".to_string(), String::new()),
+                                        ("Description".to_string(), String::new()),
+                                    ];
+                                    if !is_github {
+                                        fields.push(("Start Date".to_string(), String::new()));
+                                    }
+                                    fields.push(("Due Date".to_string(), String::new()));
+                                    app.edit_menu = Some(crate::app::EditMenu {
+                                        title: "Create Milestone".to_string(),
+                                        fields,
+                                        selected_idx: 0,
+                                        entity_iid: 0,
+                                        entity_type: "new_milestone".to_string(),
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                }
+                                _ if (key_event.code == KeyCode::Char('e')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.edit_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let milestone_iid = {
+                                            let filtered = app.filtered_milestones();
+                                            filtered.get(selected_idx).map(|m| m.iid)
+                                        };
+                                        if let Some(iid) = milestone_iid {
+                                            rebuild_edit_menu(&mut app, "milestone", iid);
+                                        }
+                                    }
+                                }
+                                _ if (key_event.code == KeyCode::Char('c')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.close_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            let client = app.gitlab_client.clone().unwrap();
+                                            let project_path = app.project_context.clone();
+                                            let milestone_iid = milestone.iid;
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Closing milestone #{}",
+                                                milestone_iid
+                                            )));
+                                            tokio::spawn(async move {
+                                                let res = crate::gitlab::milestones::update_milestone_state(
+                                                &client,
+                                                &project_path,
+                                                milestone_iid,
+                                                true,
+                                            ).await;
+                                                match res {
+                                                    Ok(_) => {
+                                                        let _ = tx.send(Event::MilestoneClosed);
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            crate::app::Tab::Milestones,
+                                                            Err(e.to_string()),
+                                                        ));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                                _ if (key_event.code == KeyCode::Char('r')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.reopen_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            let client = app.gitlab_client.clone().unwrap();
+                                            let project_path = app.project_context.clone();
+                                            let milestone_iid = milestone.iid;
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Reopening milestone #{}",
+                                                milestone_iid
+                                            )));
+                                            tokio::spawn(async move {
+                                                let res = crate::gitlab::milestones::update_milestone_state(
+                                                &client,
+                                                &project_path,
+                                                milestone_iid,
+                                                false,
+                                            ).await;
+                                                match res {
+                                                    Ok(_) => {
+                                                        let _ = tx.send(Event::MilestoneReopened);
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            crate::app::Tab::Milestones,
+                                                            Err(e.to_string()),
+                                                        ));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                                _ if (key_event.code == KeyCode::Char('d')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.delete_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            app.confirm_popup =
+                                                Some(crate::app::ConfirmAction::DeleteMilestone(
+                                                    milestone.iid,
+                                                ));
+                                        }
+                                    }
+                                }
+                                _ if (key_event.code == KeyCode::Char('o')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.open_in_browser,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map(|c| c.is_github)
+                                                .unwrap_or(false);
+                                            let cli = app_cli(&app);
+                                            let args = if is_github {
+                                                vec![
+                                                    "browse".to_string(),
+                                                    format!("milestone/{}", milestone.iid),
+                                                ]
+                                            } else {
+                                                vec![
+                                                    "milestone".to_string(),
+                                                    "view".to_string(),
+                                                    milestone.iid.to_string(),
+                                                    cli.flag_web().to_string(),
+                                                ]
+                                            };
+                                            run_cli(
+                                                &cli,
+                                                &args,
+                                                &mut terminal,
+                                                events.sender(),
+                                                app.active_tab,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                _ => handled = false,
                             }
-                            _ => handled = false,
-                        },
+                        }
                         app::Tab::Terminal => {
                             handled = false;
                         }

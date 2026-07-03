@@ -3300,22 +3300,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     },
                 );
 
-                let header_cells = Tab::Milestones
-                    .columns(is_github)
-                    .into_iter()
-                    .filter(|col| app.is_column_visible(Tab::Milestones, col))
-                    .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
-                let header = Row::new(header_cells)
-                    .style(header_style)
-                    .height(1)
-                    .bottom_margin(1);
+                let mut header_cells = Vec::new();
+                let mut widths = Vec::new();
+                let cols = Tab::Milestones.columns(is_github);
+                for col in &cols {
+                    if app.is_column_visible(Tab::Milestones, col) {
+                        header_cells.push(Cell::from(*col));
+                        match *col {
+                            "ID" => widths.push(Constraint::Length(10)),
+                            "Title" => widths.push(Constraint::Fill(1)),
+                            "State" => widths.push(Constraint::Length(12)),
+                            "Start Date" => widths.push(Constraint::Length(15)),
+                            "Due Date" => widths.push(Constraint::Length(15)),
+                            _ => widths.push(Constraint::Length(10)),
+                        }
+                    }
+                }
 
                 let rows = filtered_milestones.iter().enumerate().map(|(idx, m)| {
                     let mut cells = Vec::new();
-                    let cols = Tab::Milestones.columns(is_github);
-                    for col in cols {
-                        if app.is_column_visible(Tab::Milestones, &col) {
-                            let val = match col {
+                    for col in &cols {
+                        if app.is_column_visible(Tab::Milestones, col) {
+                            let val = match *col {
                                 "ID" => m.iid.to_string(),
                                 "Title" => m.title.clone(),
                                 "State" => m.state.clone(),
@@ -3339,19 +3345,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Row::new(cells).style(row_style)
                 });
 
-                let table = Table::new(
-                    rows,
-                    [
-                        Constraint::Percentage(10),
-                        Constraint::Percentage(40),
-                        Constraint::Percentage(20),
-                        Constraint::Percentage(30),
-                    ],
-                )
-                .header(header)
-                .block(main_block.clone())
-                .row_highlight_style(highlight_style)
-                .highlight_symbol(" ❯ ");
+                if widths.is_empty() {
+                    widths.push(Constraint::Min(0));
+                }
+
+                let table = Table::new(rows, widths)
+                    .header(Row::new(header_cells).style(header_style).height(1))
+                    .block(main_block.clone())
+                    .row_highlight_style(highlight_style)
+                    .highlight_symbol(" ❯ ");
 
                 f.render_stateful_widget(table, content_area, &mut app.milestones.state);
 
@@ -3370,51 +3372,63 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         let mut text = Vec::new();
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Title:      ",
+                                "Title:       ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
                             Span::styled(
                                 &m.title,
                                 Style::default()
-                                    .fg(THEME.read().unwrap().blue)
+                                    .fg(THEME.read().unwrap().text_normal)
                                     .add_modifier(Modifier::BOLD),
                             ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "State:      ",
+                                "State:       ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
                             Span::styled(
-                                &m.state,
-                                Style::default().fg(if m.state == "active" {
-                                    THEME.read().unwrap().green
-                                } else {
-                                    THEME.read().unwrap().yellow
-                                }),
+                                m.state.to_uppercase(),
+                                Style::default()
+                                    .fg(if m.state == "active" {
+                                        THEME.read().unwrap().green
+                                    } else {
+                                        THEME.read().unwrap().red
+                                    })
+                                    .add_modifier(Modifier::BOLD),
                             ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Start Date: ",
+                                "Start Date:  ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
-                            Span::raw(m.start_date.as_deref().unwrap_or("N/A")),
+                            Span::styled(
+                                m.start_date.as_deref().unwrap_or("N/A"),
+                                Style::default().fg(THEME.read().unwrap().blue),
+                            ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Due Date:   ",
+                                "Due Date:    ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
-                            Span::raw(m.due_date.as_deref().unwrap_or("N/A")),
+                            Span::styled(
+                                m.due_date.as_deref().unwrap_or("N/A"),
+                                Style::default().fg(THEME.read().unwrap().yellow),
+                            ),
                         ]));
                         if let Some(desc) = &m.description {
-                            text.push(Line::from(""));
-                            text.push(Line::from(Span::styled(
-                                "Description:",
-                                Style::default().add_modifier(Modifier::BOLD),
-                            )));
-                            text.push(Line::from(desc.as_str()));
+                            if !desc.trim().is_empty() {
+                                text.push(Line::from(""));
+                                text.push(Line::from(Span::styled(
+                                    "Description:",
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().header_fg)
+                                        .add_modifier(Modifier::BOLD),
+                                )));
+                                text.push(Line::from(desc.as_str()));
+                            }
                         }
                         text.push(Line::from(""));
 
@@ -3426,12 +3440,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             text.push(Line::from(vec![
                                 Span::styled(
                                     "Issues Status: ",
-                                    Style::default().add_modifier(Modifier::BOLD),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().header_fg)
+                                        .add_modifier(Modifier::BOLD),
                                 ),
-                                Span::raw(format!(
-                                    "{} Closed / {} Open (Total {})",
-                                    closed, open, total
-                                )),
+                                Span::styled(
+                                    format!("{} Closed", closed),
+                                    Style::default().fg(THEME.read().unwrap().green),
+                                ),
+                                Span::raw(" / "),
+                                Span::styled(
+                                    format!("{} Open", open),
+                                    Style::default().fg(THEME.read().unwrap().yellow),
+                                ),
+                                Span::raw(format!(" (Total {})", total)),
                             ]));
 
                             let pct = if total > 0 {
@@ -3452,7 +3474,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             )));
                             text.push(Line::from(""));
                         } else {
-                            text.push(Line::from("Loading issues details..."));
+                            text.push(Line::from(Span::styled(
+                                "Loading issues details...",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            )));
                         }
 
                         f.render_widget(
@@ -6249,6 +6274,61 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .wrap(ratatui::widgets::Wrap { trim: true });
 
         let footer_p = Paragraph::new(" y: Yes (Submit) • n: No (Discard & Exit) • Esc: Cancel ")
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+        f.render_widget(message_p, chunks[0]);
+        f.render_widget(footer_p, chunks[1]);
+    }
+
+    if let Some(confirm) = &app.confirm_popup {
+        let (title, message) = match confirm {
+            crate::app::ConfirmAction::DeleteMilestone(iid) => (
+                " Delete Milestone? ",
+                format!("Are you sure you want to delete milestone #{}?", iid),
+            ),
+            crate::app::ConfirmAction::DeleteRelease(tag_name) => (
+                " Delete Release? ",
+                format!("Are you sure you want to delete release {}?", tag_name),
+            ),
+        };
+
+        let block = Block::default()
+            .title(title)
+            .title_style(
+                Style::default()
+                    .fg(THEME.read().unwrap().header_fg)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+            .border_type(BorderType::Double)
+            .style(Style::default().bg(Color::Reset));
+
+        let area = centered_rect_fixed(60, 9, size);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Min(0),    // Message
+                Constraint::Length(2), // Footer
+            ])
+            .split(area);
+
+        let message_p = Paragraph::new(vec![Line::from(""), Line::from(message)])
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(THEME.read().unwrap().text_normal))
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        let footer_p = Paragraph::new(" y: Yes (Confirm) • n/Esc: Cancel ")
             .alignment(Alignment::Center)
             .style(
                 Style::default()

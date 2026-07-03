@@ -1,28 +1,11 @@
 use ratatui::style::Color;
-use serde::Deserialize;
-use std::{path::PathBuf, sync::LazyLock};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::LazyLock as Lazy;
+use std::sync::RwLock;
 
-fn hex_to_color(s: &str) -> Option<Color> {
-    let s = s.trim_start_matches('#');
-    if s.len() == 6 {
-        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-        Some(Color::Rgb(r, g, b))
-    } else {
-        None
-    }
-}
-
-fn apply_color(field: &mut Color, override_val: &Option<String>) {
-    if let Some(s) = override_val {
-        if let Some(c) = hex_to_color(s) {
-            *field = c;
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub bg: Color,
     pub border: Color,
@@ -45,59 +28,201 @@ pub struct Theme {
     pub purple_bg: Color,
 }
 
-impl Default for Theme {
-    fn default() -> Self {
-        Self {
-            bg: Color::Rgb(18, 18, 20),
-            border: Color::Rgb(80, 80, 88),
-            border_focused: Color::Rgb(49, 191, 103),
-            header_fg: Color::Rgb(49, 191, 103),
-            highlight_bg: Color::Rgb(43, 43, 57),
-            inactive_bg: Color::Rgb(49, 50, 68),
-            text_normal: Color::Rgb(216, 222, 233),
-            text_muted: Color::Rgb(130, 130, 138),
-            checked_bg: Color::Rgb(28, 38, 55),
-            green: Color::Rgb(49, 191, 103),
-            green_bg: Color::Rgb(20, 45, 28),
-            red: Color::Rgb(224, 73, 83),
-            red_bg: Color::Rgb(50, 20, 25),
-            blue: Color::Rgb(61, 139, 255),
-            blue_bg: Color::Rgb(15, 35, 60),
-            yellow: Color::Rgb(235, 180, 50),
-            yellow_bg: Color::Rgb(45, 35, 15),
-            purple: Color::Rgb(168, 122, 243),
-            purple_bg: Color::Rgb(38, 25, 55),
+fn hex_to_color(s: &str) -> Option<Color> {
+    let s = s.trim_start_matches('#');
+    if s.len() == 6 {
+        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+        Some(Color::Rgb(r, g, b))
+    } else {
+        None
+    }
+}
+
+fn color_to_hex(c: Color) -> String {
+    match c {
+        Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
+        _ => "#000000".to_string(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ThemeToml {
+    bg: String,
+    border: String,
+    border_focused: String,
+    header_fg: String,
+    highlight_bg: String,
+    inactive_bg: String,
+    text_normal: String,
+    text_muted: String,
+    checked_bg: String,
+    green: String,
+    green_bg: String,
+    red: String,
+    red_bg: String,
+    blue: String,
+    blue_bg: String,
+    yellow: String,
+    yellow_bg: String,
+    purple: String,
+    purple_bg: String,
+}
+
+impl ThemeToml {
+    fn to_theme(&self) -> Option<Theme> {
+        Some(Theme {
+            bg: hex_to_color(&self.bg)?,
+            border: hex_to_color(&self.border)?,
+            border_focused: hex_to_color(&self.border_focused)?,
+            header_fg: hex_to_color(&self.header_fg)?,
+            highlight_bg: hex_to_color(&self.highlight_bg)?,
+            inactive_bg: hex_to_color(&self.inactive_bg)?,
+            text_normal: hex_to_color(&self.text_normal)?,
+            text_muted: hex_to_color(&self.text_muted)?,
+            checked_bg: hex_to_color(&self.checked_bg)?,
+            green: hex_to_color(&self.green)?,
+            green_bg: hex_to_color(&self.green_bg)?,
+            red: hex_to_color(&self.red)?,
+            red_bg: hex_to_color(&self.red_bg)?,
+            blue: hex_to_color(&self.blue)?,
+            blue_bg: hex_to_color(&self.blue_bg)?,
+            yellow: hex_to_color(&self.yellow)?,
+            yellow_bg: hex_to_color(&self.yellow_bg)?,
+            purple: hex_to_color(&self.purple)?,
+            purple_bg: hex_to_color(&self.purple_bg)?,
+        })
+    }
+}
+
+const BUNDLED_THEMES: &[(&str, &str)] = &[
+    ("default", include_str!("themes/default.toml")),
+    ("tokyo-night", include_str!("themes/tokyo-night.toml")),
+    ("gruvbox", include_str!("themes/gruvbox.toml")),
+    ("nord", include_str!("themes/nord.toml")),
+    (
+        "catppuccin-mocha",
+        include_str!("themes/catppuccin-mocha.toml"),
+    ),
+    ("dracula", include_str!("themes/dracula.toml")),
+];
+
+fn config_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("GLAB_TUI_CONFIG") {
+        let mut p = PathBuf::from(path);
+        p.pop();
+        return p;
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let xdg_config = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let mut p = PathBuf::from(&home);
+            p.push(".config");
+            p
+        });
+    let mut path = xdg_config;
+    path.push("glab-tui");
+    path
+}
+
+fn themes_dir() -> PathBuf {
+    let mut path = config_dir();
+    path.push("themes");
+    path
+}
+
+fn ensure_themes() {
+    let dir = themes_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    for (name, toml_str) in BUNDLED_THEMES {
+        let theme_path = dir.join(format!("{}.toml", name));
+        if !theme_path.exists() {
+            let _ = std::fs::write(&theme_path, toml_str);
         }
     }
 }
 
+#[rustfmt::skip]
 impl Theme {
-    fn apply_raw(&mut self, raw: &RawTheme) {
-        apply_color(&mut self.bg, &raw.bg);
-        apply_color(&mut self.border, &raw.border);
-        apply_color(&mut self.border_focused, &raw.border_focused);
-        apply_color(&mut self.header_fg, &raw.header_fg);
-        apply_color(&mut self.highlight_bg, &raw.highlight_bg);
-        apply_color(&mut self.inactive_bg, &raw.inactive_bg);
-        apply_color(&mut self.text_normal, &raw.text_normal);
-        apply_color(&mut self.text_muted, &raw.text_muted);
-        apply_color(&mut self.checked_bg, &raw.checked_bg);
-        apply_color(&mut self.green, &raw.green);
-        apply_color(&mut self.green_bg, &raw.green_bg);
-        apply_color(&mut self.red, &raw.red);
-        apply_color(&mut self.red_bg, &raw.red_bg);
-        apply_color(&mut self.blue, &raw.blue);
-        apply_color(&mut self.blue_bg, &raw.blue_bg);
-        apply_color(&mut self.yellow, &raw.yellow);
-        apply_color(&mut self.yellow_bg, &raw.yellow_bg);
-        apply_color(&mut self.purple, &raw.purple);
-        apply_color(&mut self.purple_bg, &raw.purple_bg);
+    pub fn default() -> Self {
+        Self {
+            bg:               Color::Rgb(18, 18, 20),
+            border:           Color::Rgb(80, 80, 88),
+            border_focused:   Color::Rgb(49, 191, 103),
+            header_fg:        Color::Rgb(49, 191, 103),
+            highlight_bg:     Color::Rgb(43, 43, 57),
+            inactive_bg:      Color::Rgb(49, 50, 68),
+            text_normal:      Color::Rgb(216, 222, 233),
+            text_muted:       Color::Rgb(130, 130, 138),
+            checked_bg:       Color::Rgb(28, 38, 55),
+            green:            Color::Rgb(49, 191, 103),
+            green_bg:         Color::Rgb(20, 45, 28),
+            red:              Color::Rgb(224, 73, 83),
+            red_bg:           Color::Rgb(50, 20, 25),
+            blue:             Color::Rgb(61, 139, 255),
+            blue_bg:          Color::Rgb(15, 35, 60),
+            yellow:           Color::Rgb(235, 180, 50),
+            yellow_bg:        Color::Rgb(45, 35, 15),
+            purple:           Color::Rgb(168, 122, 243),
+            purple_bg:        Color::Rgb(38, 25, 55),
+        }
+    }
+
+    pub fn preset(name: &str) -> Option<Self> {
+        // Check user's themes directory first
+        let theme_path = themes_dir().join(format!("{}.toml", name));
+        if theme_path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&theme_path) {
+                if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
+                    return tf.to_theme();
+                }
+            }
+        }
+        // Fall back to bundled theme
+        BUNDLED_THEMES
+            .iter()
+            .find(|(n, _)| *n == name)
+            .and_then(|(_, toml_str)| toml::from_str::<ThemeToml>(toml_str).ok())
+            .and_then(|tf| tf.to_theme())
+            .or_else(|| (name == "default").then(Self::default))
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+fn apply_color(field: &mut Color, override_val: &Option<String>) {
+    if let Some(s) = override_val {
+        if let Some(c) = hex_to_color(s) {
+            *field = c;
+        }
+    }
+}
+
+fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
+    apply_color(&mut base.bg, &overrides.bg);
+    apply_color(&mut base.border, &overrides.border);
+    apply_color(&mut base.border_focused, &overrides.border_focused);
+    apply_color(&mut base.header_fg, &overrides.header_fg);
+    apply_color(&mut base.highlight_bg, &overrides.highlight_bg);
+    apply_color(&mut base.inactive_bg, &overrides.inactive_bg);
+    apply_color(&mut base.text_normal, &overrides.text_normal);
+    apply_color(&mut base.text_muted, &overrides.text_muted);
+    apply_color(&mut base.checked_bg, &overrides.checked_bg);
+    apply_color(&mut base.green, &overrides.green);
+    apply_color(&mut base.green_bg, &overrides.green_bg);
+    apply_color(&mut base.red, &overrides.red);
+    apply_color(&mut base.red_bg, &overrides.red_bg);
+    apply_color(&mut base.blue, &overrides.blue);
+    apply_color(&mut base.blue_bg, &overrides.blue_bg);
+    apply_color(&mut base.yellow, &overrides.yellow);
+    apply_color(&mut base.yellow_bg, &overrides.yellow_bg);
+    apply_color(&mut base.purple, &overrides.purple);
+    apply_color(&mut base.purple_bg, &overrides.purple_bg);
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-struct RawTheme {
+pub struct ThemeOverrides {
     bg: Option<String>,
     border: Option<String>,
     border_focused: Option<String>,
@@ -119,91 +244,446 @@ struct RawTheme {
     purple_bg: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct FormattingConfig {
-    pub date_format: Option<String>,
-    pub release_name_trunc: Option<usize>,
-    pub release_tag_width: Option<u16>,
-    pub release_date_width: Option<u16>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingGlobal {
+    #[serde(default)]
+    pub quit: String,
+    #[serde(default)]
+    pub help: String,
+    #[serde(default)]
+    pub search: String,
+    #[serde(default)]
+    pub refresh: String,
+    #[serde(default)]
+    pub configure: String,
+    #[serde(default)]
+    pub next_tab: String,
+    #[serde(default)]
+    pub prev_tab: String,
+    #[serde(default)]
+    pub scroll_down: String,
+    #[serde(default)]
+    pub scroll_up: String,
+    #[serde(default)]
+    pub yank_url: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingIssues {
+    #[serde(default)]
+    pub create_issue: String,
+    #[serde(default)]
+    pub edit_entity: String,
+    #[serde(default)]
+    pub close_entity: String,
+    #[serde(default)]
+    pub reopen_entity: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingMrs {
+    #[serde(default)]
+    pub create_mr: String,
+    #[serde(default)]
+    pub approve_mr: String,
+    #[serde(default)]
+    pub merge_mr: String,
+    #[serde(default)]
+    pub toggle_draft: String,
+    #[serde(default)]
+    pub view_diff: String,
+    #[serde(default)]
+    pub edit_entity: String,
+    #[serde(default)]
+    pub close_entity: String,
+    #[serde(default)]
+    pub reopen_entity: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingPipelines {
+    #[serde(default)]
+    pub trigger_pipeline: String,
+    #[serde(default)]
+    pub retry: String,
+    #[serde(default)]
+    pub cancel: String,
+    #[serde(default)]
+    pub download_artifact: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingReleases {
+    #[serde(default)]
+    pub create_release: String,
+    #[serde(default)]
+    pub create_milestone: String,
+    #[serde(default)]
+    pub open_in_browser: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingConfig {
-    pub create_issue: Option<String>,
-    pub create_mr: Option<String>,
-    pub create_release: Option<String>,
-    pub create_milestone: Option<String>,
-    pub refresh: Option<String>,
-    pub help: Option<String>,
-    pub quit: Option<String>,
-    pub search: Option<String>,
-    pub configure: Option<String>,
-    pub next_tab: Option<String>,
-    pub prev_tab: Option<String>,
-    pub edit_entity: Option<String>,
-    pub close_entity: Option<String>,
-    pub open_in_browser: Option<String>,
+    #[serde(default)]
+    pub global: KeybindingGlobal,
+    #[serde(default)]
+    pub issues: KeybindingIssues,
+    #[serde(default)]
+    pub mrs: KeybindingMrs,
+    #[serde(default)]
+    pub pipelines: KeybindingPipelines,
+    #[serde(default)]
+    pub releases: KeybindingReleases,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+macro_rules! keybind_defaults {
+    ( $( $name:ident = $val:expr ),+ $(,)? ) => {
+        $(
+            fn $name() -> String { $val.to_string() }
+        )+
+    };
+}
+
+keybind_defaults! {
+    def_quit = "q",
+    def_help = "?",
+    def_search = "/",
+    def_refresh = "r",
+    def_configure = "Tab",
+    def_next_tab = "l",
+    def_prev_tab = "h",
+    def_scroll_down = "J",
+    def_scroll_up = "K",
+    def_yank_url = "y",
+    def_create_issue = "n",
+    def_edit_entity = "e",
+    def_close_entity = "c",
+    def_reopen_entity = "r",
+    def_create_mr = "n",
+    def_approve_mr = "a",
+    def_merge_mr = "m",
+    def_toggle_draft = "s",
+    def_view_diff = "v",
+    def_trigger_pipeline = "p",
+    def_retry = "r",
+    def_cancel = "c",
+    def_download_artifact = "d",
+    def_create_release = "n",
+    def_create_milestone = "n",
+    def_open_in_browser = "o",
+}
+
+impl Default for KeybindingGlobal {
+    fn default() -> Self {
+        Self {
+            quit: def_quit(),
+            help: def_help(),
+            search: def_search(),
+            refresh: def_refresh(),
+            configure: def_configure(),
+            next_tab: def_next_tab(),
+            prev_tab: def_prev_tab(),
+            scroll_down: def_scroll_down(),
+            scroll_up: def_scroll_up(),
+            yank_url: def_yank_url(),
+        }
+    }
+}
+
+impl Default for KeybindingIssues {
+    fn default() -> Self {
+        Self {
+            create_issue: def_create_issue(),
+            edit_entity: def_edit_entity(),
+            close_entity: def_close_entity(),
+            reopen_entity: def_reopen_entity(),
+        }
+    }
+}
+
+impl Default for KeybindingMrs {
+    fn default() -> Self {
+        Self {
+            create_mr: def_create_mr(),
+            approve_mr: def_approve_mr(),
+            merge_mr: def_merge_mr(),
+            toggle_draft: def_toggle_draft(),
+            view_diff: def_view_diff(),
+            edit_entity: def_edit_entity(),
+            close_entity: def_close_entity(),
+            reopen_entity: def_reopen_entity(),
+        }
+    }
+}
+
+impl Default for KeybindingPipelines {
+    fn default() -> Self {
+        Self {
+            trigger_pipeline: def_trigger_pipeline(),
+            retry: def_retry(),
+            cancel: def_cancel(),
+            download_artifact: def_download_artifact(),
+        }
+    }
+}
+
+impl Default for KeybindingReleases {
+    fn default() -> Self {
+        Self {
+            create_release: def_create_release(),
+            create_milestone: def_create_milestone(),
+            open_in_browser: def_open_in_browser(),
+        }
+    }
+}
+
+impl Default for KeybindingConfig {
+    fn default() -> Self {
+        Self {
+            global: KeybindingGlobal::default(),
+            issues: KeybindingIssues::default(),
+            mrs: KeybindingMrs::default(),
+            pipelines: KeybindingPipelines::default(),
+            releases: KeybindingReleases::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-struct RawConfig {
-    theme: RawTheme,
-    formatting: FormattingConfig,
-    keybindings: KeybindingConfig,
+pub struct PaneConfig {
+    pub columns: Option<Vec<String>>,
+    pub column_filters: HashMap<String, Vec<String>>,
+    pub group_by_column: Option<String>,
+    pub group_ascending: bool,
 }
 
-#[derive(Debug, Clone)]
+impl Default for PaneConfig {
+    fn default() -> Self {
+        Self {
+            columns: None,
+            column_filters: HashMap::new(),
+            group_by_column: None,
+            group_ascending: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
-    pub theme: Theme,
-    pub formatting: FormattingConfig,
+    pub theme_preset: Option<String>,
+    pub theme: ThemeOverrides,
     pub keybindings: KeybindingConfig,
+    pub issues: PaneConfig,
+    pub mrs: PaneConfig,
+    pub pipelines: PaneConfig,
+    pub jobs: PaneConfig,
+    pub runners: PaneConfig,
+    pub releases: PaneConfig,
+    pub todos: PaneConfig,
+    pub milestones: PaneConfig,
+    pub terminal: PaneConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            theme_preset: Some("default".to_string()),
+            theme: ThemeOverrides::default(),
+            keybindings: KeybindingConfig::default(),
+            issues: PaneConfig::default(),
+            mrs: PaneConfig::default(),
+            pipelines: PaneConfig::default(),
+            jobs: PaneConfig::default(),
+            runners: PaneConfig::default(),
+            releases: PaneConfig::default(),
+            todos: PaneConfig::default(),
+            milestones: PaneConfig::default(),
+            terminal: PaneConfig::default(),
+        }
+    }
 }
 
 impl Config {
-    fn load_from_path(path: &std::path::Path) -> Self {
-        let raw: RawConfig = match std::fs::read_to_string(path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => RawConfig::default(),
-        };
-
-        let mut theme = Theme::default();
-        theme.apply_raw(&raw.theme);
-
-        Self {
-            theme,
-            formatting: raw.formatting,
-            keybindings: raw.keybindings,
-        }
-    }
-
     fn config_path() -> PathBuf {
-        if let Ok(path) = std::env::var("GLAB_TUI_CONFIG") {
-            return PathBuf::from(path);
-        }
-
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-
-        let xdg_config = std::env::var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let mut p = PathBuf::from(&home);
-                p.push(".config");
-                p
-            });
-
-        let mut path = xdg_config;
-        path.push("glab-tui");
-        path.push("config.json");
+        let mut path = config_dir();
+        let _ = std::fs::create_dir_all(&path);
+        path.push("config.toml");
         path
     }
 
+    fn generate_default_toml() -> String {
+        let theme = Theme::default();
+        format!(
+            r##"# glab-tui configuration
+# See https://github.com/rcieri/glab-tui for documentation
+
+# Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula"
+theme_preset = "default"
+
+# Per-color overrides (takes precedence over theme_preset).
+# Uncomment the [theme] line and any colors you want to override.
+# [theme]
+# bg = "{bg}"
+# border = "{border}"
+# border_focused = "{border_focused}"
+# header_fg = "{header_fg}"
+# highlight_bg = "{highlight_bg}"
+# inactive_bg = "{inactive_bg}"
+# text_normal = "{text_normal}"
+# text_muted = "{text_muted}"
+# checked_bg = "{checked_bg}"
+# green = "{green}"
+# green_bg = "{green_bg}"
+# red = "{red}"
+# red_bg = "{red_bg}"
+# blue = "{blue}"
+# blue_bg = "{blue_bg}"
+# yellow = "{yellow}"
+# yellow_bg = "{yellow_bg}"
+# purple = "{purple}"
+# purple_bg = "{purple_bg}"
+
+[keybindings.global]
+quit = "q"
+help = "?"
+search = "/"
+refresh = "r"
+configure = "Tab"
+next_tab = "l"
+prev_tab = "h"
+scroll_down = "J"
+scroll_up = "K"
+yank_url = "y"
+
+[keybindings.issues]
+create_issue = "n"
+edit_entity = "e"
+close_entity = "c"
+reopen_entity = "r"
+
+[keybindings.mrs]
+create_mr = "n"
+approve_mr = "a"
+merge_mr = "m"
+toggle_draft = "s"
+view_diff = "v"
+edit_entity = "e"
+close_entity = "c"
+reopen_entity = "r"
+
+[keybindings.pipelines]
+trigger_pipeline = "p"
+retry = "r"
+cancel = "c"
+download_artifact = "d"
+
+[keybindings.releases]
+create_release = "n"
+create_milestone = "n"
+open_in_browser = "o"
+
+# Per-pane column config (unset = show all columns)
+# [issues]
+# columns = ["ID", "State", "Title", "Labels"]
+# [issues.column_filters]
+# State = ["opened"]
+# group_by_column = "State"
+# group_ascending = true
+
+# [mrs]
+# columns = ["ID", "State", "Status", "Title", "Labels"]
+"##,
+            bg = color_to_hex(theme.bg),
+            border = color_to_hex(theme.border),
+            border_focused = color_to_hex(theme.border_focused),
+            header_fg = color_to_hex(theme.header_fg),
+            highlight_bg = color_to_hex(theme.highlight_bg),
+            inactive_bg = color_to_hex(theme.inactive_bg),
+            text_normal = color_to_hex(theme.text_normal),
+            text_muted = color_to_hex(theme.text_muted),
+            checked_bg = color_to_hex(theme.checked_bg),
+            green = color_to_hex(theme.green),
+            green_bg = color_to_hex(theme.green_bg),
+            red = color_to_hex(theme.red),
+            red_bg = color_to_hex(theme.red_bg),
+            blue = color_to_hex(theme.blue),
+            blue_bg = color_to_hex(theme.blue_bg),
+            yellow = color_to_hex(theme.yellow),
+            yellow_bg = color_to_hex(theme.yellow_bg),
+            purple = color_to_hex(theme.purple),
+            purple_bg = color_to_hex(theme.purple_bg),
+        )
+    }
+
     pub fn load() -> Self {
+        ensure_themes();
         let path = Self::config_path();
-        Self::load_from_path(&path)
+        if !path.exists() {
+            let toml_str = Self::generate_default_toml();
+            let _ = std::fs::write(&path, &toml_str);
+            return Config::default();
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => match toml::from_str(&contents) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    eprintln!("Error parsing config: {}. Using defaults.", e);
+                    Config::default()
+                }
+            },
+            Err(e) => {
+                eprintln!("Error reading config: {}. Using defaults.", e);
+                Config::default()
+            }
+        }
+    }
+
+    pub fn save(&self) {
+        let path = Self::config_path();
+        match toml::to_string(self) {
+            Ok(toml_str) => {
+                let _ = std::fs::write(&path, &toml_str);
+            }
+            Err(e) => {
+                eprintln!("Error serializing config: {}", e);
+            }
+        }
+    }
+
+    pub fn resolve_theme(&self) -> Theme {
+        let mut theme = if let Some(ref preset) = self.theme_preset {
+            Theme::preset(preset).unwrap_or_else(Theme::default)
+        } else {
+            Theme::default()
+        };
+        apply_overrides(&mut theme, &self.theme);
+        theme
     }
 }
 
-pub static THEME: LazyLock<Theme> = LazyLock::new(|| Config::load().theme);
+pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
+
+pub const THEME_PRESETS: &[&str] = &[
+    "default",
+    "tokyo-night",
+    "gruvbox",
+    "nord",
+    "catppuccin-mocha",
+    "dracula",
+];
+
+pub fn reload_theme() {
+    if let Ok(mut theme) = THEME.write() {
+        *theme = Config::load().resolve_theme();
+    }
+}
+
+pub fn set_theme_preset(name: &str) {
+    if let Some(preset) = Theme::preset(name) {
+        if let Ok(mut theme) = THEME.write() {
+            *theme = preset;
+        }
+    }
+}

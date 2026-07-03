@@ -1341,36 +1341,36 @@ fn get_branches() -> Vec<String> {
     Vec::new()
 }
 
-fn save_configure_cache(
-    project_context: &str,
-    enabled_columns: &std::collections::HashMap<app::Tab, std::collections::HashSet<String>>,
-    group_by_column: &Option<String>,
-    group_ascending: bool,
-    column_filters: &std::collections::HashMap<
-        app::Tab,
-        std::collections::HashMap<String, std::collections::HashSet<String>>,
-    >,
-) {
-    let mut cache = crate::utils::cache::load_cache(project_context);
-    cache.enabled_columns = enabled_columns
-        .iter()
-        .map(|(tab, cols)| (format!("{tab:?}"), cols.iter().cloned().collect()))
-        .collect();
-    cache.group_by_column = group_by_column.clone();
-    cache.group_ascending = group_ascending;
-    cache.column_filters = column_filters
-        .iter()
-        .map(|(tab, filters)| {
-            (
-                format!("{tab:?}"),
-                filters
-                    .iter()
-                    .map(|(col, vals)| (col.clone(), vals.iter().cloned().collect()))
-                    .collect(),
-            )
-        })
-        .collect();
-    crate::utils::cache::save_cache(project_context, &cache);
+fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> bool {
+    match binding {
+        "Tab" => event.code == KeyCode::Tab && event.modifiers.is_empty(),
+        "Shift+Tab" => event.code == KeyCode::BackTab,
+        "Enter" => event.code == KeyCode::Enter,
+        "Esc" => event.code == KeyCode::Esc,
+        "Backspace" => event.code == KeyCode::Backspace,
+        "Space" => event.code == KeyCode::Char(' '),
+        "Up" => event.code == KeyCode::Up,
+        "Down" => event.code == KeyCode::Down,
+        "Left" => event.code == KeyCode::Left,
+        "Right" => event.code == KeyCode::Right,
+        "Home" => event.code == KeyCode::Home,
+        "End" => event.code == KeyCode::End,
+        "PageUp" => event.code == KeyCode::PageUp,
+        "PageDown" => event.code == KeyCode::PageDown,
+        "F5" => event.code == KeyCode::F(5),
+        other if other.starts_with("Ctrl+") && other.len() == 6 => {
+            let c = other.as_bytes()[5];
+            event.code == KeyCode::Char(c as char)
+                && event
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+        }
+        other if other.len() == 1 => {
+            let c = other.chars().next().unwrap();
+            event.code == KeyCode::Char(c) && event.modifiers.is_empty()
+        }
+        _ => false,
+    }
 }
 
 fn spawn_refresh_active_tab(
@@ -1647,33 +1647,6 @@ async fn main() -> Result<()> {
     app.todos.items = cache.todos;
     app.milestones.items = cache.milestones;
 
-    if !cache.enabled_columns.is_empty() {
-        for (tab_str, cols) in &cache.enabled_columns {
-            let col_set: std::collections::HashSet<String> = cols.iter().cloned().collect();
-            if let Some(tab) = app::Tab::ALL.iter().find(|t| format!("{t:?}") == *tab_str) {
-                app.enabled_columns.insert(*tab, col_set);
-            }
-        }
-    }
-
-    if let Some(col) = &cache.group_by_column {
-        app.group_by_column = Some(col.clone());
-    }
-    if cache.group_ascending != app.group_ascending {
-        app.group_ascending = cache.group_ascending;
-    }
-
-    if !cache.column_filters.is_empty() {
-        for (tab_str, filters) in &cache.column_filters {
-            if let Some(tab) = app::Tab::ALL.iter().find(|t| format!("{t:?}") == *tab_str) {
-                let entry = app.column_filters.entry(*tab).or_default();
-                for (col, vals) in filters {
-                    entry.insert(col.clone(), vals.iter().cloned().collect());
-                }
-            }
-        }
-    }
-
     if !app.issues.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Issues);
     }
@@ -1849,28 +1822,6 @@ async fn main() -> Result<()> {
                     app.update_filter_selection();
                     let mut cache = crate::utils::cache::load_cache(&app.project_context);
                     cache.issues = app.issues.items.clone();
-                    cache.enabled_columns = app
-                        .enabled_columns
-                        .iter()
-                        .map(|(tab, cols)| (format!("{tab:?}"), cols.iter().cloned().collect()))
-                        .collect();
-                    cache.group_by_column = app.group_by_column.clone();
-                    cache.group_ascending = app.group_ascending;
-                    cache.column_filters = app
-                        .column_filters
-                        .iter()
-                        .map(|(tab, filters)| {
-                            (
-                                format!("{tab:?}"),
-                                filters
-                                    .iter()
-                                    .map(|(col, vals)| {
-                                        (col.clone(), vals.iter().cloned().collect())
-                                    })
-                                    .collect(),
-                            )
-                        })
-                        .collect();
                     crate::utils::cache::save_cache(&app.project_context, &cache);
                 }
                 Event::MrsFetched(mrs) => {
@@ -2138,6 +2089,16 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
+                    if keybinding_matches(&app.config.keybindings.global.quit, &key_event)
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && !app.focus_column_checklist
+                    {
+                        app.quit();
+                        continue;
+                    }
+
                     if let Some(mr_iid) = app.show_submit_review_prompt {
                         match key_event.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
@@ -2172,6 +2133,18 @@ async fn main() -> Result<()> {
                             }
                             _ => {}
                         }
+                        continue;
+                    }
+
+                    if keybinding_matches(&app.config.keybindings.global.help, &key_event)
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && !app.show_help
+                        && !app.focus_column_checklist
+                    {
+                        app.show_help = true;
+                        app.help_search_query.clear();
                         continue;
                     }
 
@@ -2245,7 +2218,8 @@ async fn main() -> Result<()> {
                         || (key_event.code == KeyCode::Char('R')
                             && key_event
                                 .modifiers
-                                .contains(crossterm::event::KeyModifiers::CONTROL));
+                                .contains(crossterm::event::KeyModifiers::CONTROL))
+                        || keybinding_matches(&app.config.keybindings.global.refresh, &key_event);
 
                     if is_refresh
                         && app.text_input.is_none()
@@ -3525,13 +3499,6 @@ async fn main() -> Result<()> {
                                                 selector.selected_items.clone(),
                                             );
                                             app.update_filter_selection();
-                                            save_configure_cache(
-                                                &app.project_context,
-                                                &app.enabled_columns,
-                                                &app.group_by_column,
-                                                app.group_ascending,
-                                                &app.column_filters,
-                                            );
                                         }
                                         continue;
                                     }
@@ -6041,7 +6008,9 @@ async fn main() -> Result<()> {
                         let group_cols: Vec<&str> = cols.iter().copied().collect();
                         let cols_end = cols.len();
                         let group_end = cols_end + group_cols.len();
-                        let max_idx = group_end + 1;
+                        let order_end = group_end + 2;
+                        let theme_end = order_end + crate::config::THEME_PRESETS.len();
+                        let max_idx = theme_end.saturating_sub(1);
 
                         match key_event.code {
                             KeyCode::Esc | KeyCode::Char(',') => {
@@ -6065,14 +6034,15 @@ async fn main() -> Result<()> {
                                 app.column_checklist_idx = match app.column_checklist_idx {
                                     idx if idx < cols_end => cols_end,
                                     idx if idx < group_end => group_end,
+                                    idx if idx < order_end => order_end,
                                     _ => 0,
                                 };
                             }
                             KeyCode::Char('K') => {
                                 app.column_checklist_idx = match app.column_checklist_idx {
-                                    idx if idx >= group_end => cols_end,
-                                    idx if idx >= cols_end => 0,
-                                    _ => group_end,
+                                    idx if idx >= order_end => cols_end,
+                                    idx if idx >= group_end => 0,
+                                    _ => order_end,
                                 };
                             }
                             KeyCode::Char(' ') => {
@@ -6102,17 +6072,17 @@ async fn main() -> Result<()> {
                                         app.group_list_state.select(Some(0));
                                         app.update_filter_selection();
                                     }
-                                } else {
+                                } else if idx < order_end {
                                     app.group_ascending = idx == group_end;
                                     app.update_filter_selection();
+                                } else if idx < theme_end {
+                                    let theme_idx = idx - order_end;
+                                    if let Some(name) = crate::config::THEME_PRESETS.get(theme_idx)
+                                    {
+                                        crate::config::set_theme_preset(name);
+                                        app.config.theme_preset = Some(name.to_string());
+                                    }
                                 }
-                                save_configure_cache(
-                                    &app.project_context,
-                                    &app.enabled_columns,
-                                    &app.group_by_column,
-                                    app.group_ascending,
-                                    &app.column_filters,
-                                );
                                 if let Some(client) = app.gitlab_client.clone() {
                                     app.start_loading_tab(app.active_tab);
                                     spawn_refresh_active_tab(
@@ -6168,13 +6138,6 @@ async fn main() -> Result<()> {
                                         app.group_list_state.select(Some(0));
                                         app.update_filter_selection();
                                     }
-                                    save_configure_cache(
-                                        &app.project_context,
-                                        &app.enabled_columns,
-                                        &app.group_by_column,
-                                        app.group_ascending,
-                                        &app.column_filters,
-                                    );
                                     if let Some(client) = app.gitlab_client.clone() {
                                         app.start_loading_tab(app.active_tab);
                                         spawn_refresh_active_tab(
@@ -6184,16 +6147,9 @@ async fn main() -> Result<()> {
                                             events.sender(),
                                         );
                                     }
-                                } else {
+                                } else if idx < order_end {
                                     app.group_ascending = idx == group_end;
                                     app.update_filter_selection();
-                                    save_configure_cache(
-                                        &app.project_context,
-                                        &app.enabled_columns,
-                                        &app.group_by_column,
-                                        app.group_ascending,
-                                        &app.column_filters,
-                                    );
                                     if let Some(client) = app.gitlab_client.clone() {
                                         app.start_loading_tab(app.active_tab);
                                         spawn_refresh_active_tab(
@@ -6202,6 +6158,13 @@ async fn main() -> Result<()> {
                                             app.active_tab,
                                             events.sender(),
                                         );
+                                    }
+                                } else if idx < theme_end {
+                                    let theme_idx = idx - order_end;
+                                    if let Some(name) = crate::config::THEME_PRESETS.get(theme_idx)
+                                    {
+                                        crate::config::set_theme_preset(name);
+                                        app.config.theme_preset = Some(name.to_string());
                                     }
                                 }
                             }
@@ -6223,6 +6186,28 @@ async fn main() -> Result<()> {
                             }
                             _ => {}
                         }
+                        continue;
+                    }
+
+                    if keybinding_matches(&app.config.keybindings.global.search, &key_event)
+                        && !app.is_typing_search
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && !app.focus_column_checklist
+                    {
+                        app.is_typing_search = true;
+                        continue;
+                    }
+
+                    if keybinding_matches(&app.config.keybindings.global.configure, &key_event)
+                        && !app.focus_column_checklist
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                    {
+                        app.focus_column_checklist = true;
+                        app.column_checklist_idx = 0;
                         continue;
                     }
 
@@ -7528,6 +7513,34 @@ async fn main() -> Result<()> {
                     }
 
                     if !handled {
+                        if keybinding_matches(
+                            &app.config.keybindings.global.scroll_down,
+                            &key_event,
+                        ) {
+                            match app.active_tab {
+                                app::Tab::Issues => {
+                                    app.issues_scroll = app.issues_scroll.saturating_add(1);
+                                }
+                                app::Tab::MergeRequests => {
+                                    app.mrs_scroll = app.mrs_scroll.saturating_add(1);
+                                }
+                                _ => {}
+                            }
+                        } else if keybinding_matches(
+                            &app.config.keybindings.global.scroll_up,
+                            &key_event,
+                        ) {
+                            match app.active_tab {
+                                app::Tab::Issues => {
+                                    app.issues_scroll = app.issues_scroll.saturating_sub(1);
+                                }
+                                app::Tab::MergeRequests => {
+                                    app.mrs_scroll = app.mrs_scroll.saturating_sub(1);
+                                }
+                                _ => {}
+                            }
+                        }
+
                         match key_event.code {
                             KeyCode::Char('?') | KeyCode::F(1) => {
                                 app.show_help = true;
@@ -7567,24 +7580,6 @@ async fn main() -> Result<()> {
                                 }
                             }
 
-                            KeyCode::Char('J') => match app.active_tab {
-                                app::Tab::Issues => {
-                                    app.issues_scroll = app.issues_scroll.saturating_add(1);
-                                }
-                                app::Tab::MergeRequests => {
-                                    app.mrs_scroll = app.mrs_scroll.saturating_add(1);
-                                }
-                                _ => {}
-                            },
-                            KeyCode::Char('K') => match app.active_tab {
-                                app::Tab::Issues => {
-                                    app.issues_scroll = app.issues_scroll.saturating_sub(1);
-                                }
-                                app::Tab::MergeRequests => {
-                                    app.mrs_scroll = app.mrs_scroll.saturating_sub(1);
-                                }
-                                _ => {}
-                            },
                             KeyCode::Esc | KeyCode::Backspace => {
                                 if app.details_zoomed {
                                     app.details_zoomed = false;

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::config::Config;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -1160,6 +1161,7 @@ pub enum GroupItem {
 }
 
 pub struct App {
+    pub config: Config,
     pub active_tab: Tab,
     pub running: bool,
     pub project_context: String,
@@ -1226,7 +1228,9 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let config = Config::load();
         Self {
+            config,
             active_tab: Tab::default(),
             running: true,
             project_context: "group/repository".to_string(),
@@ -1357,7 +1361,37 @@ impl App {
     }
 
     pub fn new() -> Self {
-        Self::default()
+        let mut app = Self::default();
+        app.apply_config();
+        app
+    }
+
+    pub fn apply_config(&mut self) {
+        for tab in Tab::ALL {
+            let pane = match tab {
+                Tab::Issues => &self.config.issues,
+                Tab::MergeRequests => &self.config.mrs,
+                Tab::Pipelines => &self.config.pipelines,
+                Tab::Jobs => &self.config.jobs,
+                Tab::Runners => &self.config.runners,
+                Tab::Releases => &self.config.releases,
+                Tab::Todos => &self.config.todos,
+                Tab::Milestones => &self.config.milestones,
+                Tab::Terminal => &self.config.terminal,
+            };
+            if let Some(cols) = &pane.columns {
+                let col_set: std::collections::HashSet<String> = cols.iter().cloned().collect();
+                self.enabled_columns.insert(tab, col_set);
+            }
+            if let Some(col) = &pane.group_by_column {
+                self.group_by_column = Some(col.clone());
+            }
+            self.group_ascending = pane.group_ascending;
+            for (col, vals) in &pane.column_filters {
+                let entry = self.column_filters.entry(tab).or_default();
+                entry.insert(col.clone(), vals.iter().cloned().collect());
+            }
+        }
     }
 
     pub fn tick(&mut self) {}

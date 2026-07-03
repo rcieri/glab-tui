@@ -127,7 +127,21 @@ If asked to add a new Tab (e.g., "Deployments"):
 6.  **Handle Navigation:** In [src/main.rs](src/main.rs), handle `KeyCode::Down`/`Up` to navigate the table state.
 7.  **Render:** In [src/ui.rs](src/ui.rs), add a branch to `match app.active_tab` to construct the rows, table, and details preview pane.
 
-## 6. Development & Quality Standards
+## 6. CI/CD & Automation
+
+Two GitHub Actions workflows are defined under `.github/workflows/`:
+
+### `opencode.yml` — OpenCode AI Agent Automation
+Four jobs triggered on issues, PRs, and comments:
+1. **Comment Commands** — responds to `/oc` or `/opencode` in any comment with code analysis and edits.
+2. **Ticket Creation** — auto-fleshes new issues with structured engineering descriptions, implementation plans, and UX criteria.
+3. **TUI Bug Hunter** — triages bug-labelled issues by scanning terminal rendering/event code and suggesting fixes.
+4. **PR Review** — auto-reviews pull requests for logical bugs, security flaws, and style issues; commits straightforward fixes directly.
+
+### `prepare-release.yml` — Release Preparation
+Triggered manually via `workflow_dispatch` with a `patch`/`minor`/`major` selector. Determines the next version tag from `git describe`, invokes the OpenCode agent to update `CHANGELOG.md`, `AGENTS.md`, and `README.md`, then creates a standardized PR.
+
+## 7. Development & Quality Standards
 
 * **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `app.error_message`. Do not `unwrap()` or `panic!()` in UI or event handling code.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-07-03
+
+### Fixed
+- **Multi-byte label truncation panic** — labels containing emoji, accented characters, or other multi-byte UTF-8 glyphs no longer cause a panic when the cell is truncated. Added `floor_char_boundary()` helper to snap slice offsets to valid char boundaries in `src/ui.rs`.
+  ([#93](https://github.com/rcieri/glab-tui/pull/93))
+
+### CI/CD
+- **OpenCode automation workflows** (`opencode.yml`) — four new CI jobs: comment-driven agent commands (`/oc`, `/opencode`), structured issue fleshing on ticket creation, TUI bug triage for terminal rendering reports, and automated PR review with inline fix commits.
+- **Release preparation workflow** (`prepare-release.yml`) — `workflow_dispatch` with `patch`/`minor`/`major` selector; automates tag calculation, changelog/version bump via OpenCode agent, and PR creation with standardized title.
+
+### Dependencies
+- Bump `actions/checkout` from 7 to v7 *(pinned version in new workflows)*
+
+---
+
 ## [2.3.0] - 2026-07-02
 
 ### Added

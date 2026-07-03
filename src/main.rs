@@ -1037,6 +1037,29 @@ fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 },
             });
         }
+    } else if entity_type == "release" {
+        if let Some(release) = app.releases.items.get(entity_iid as usize) {
+            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            app.edit_menu = Some(crate::app::EditMenu {
+                title: format!("Edit Release {}", release.tag_name),
+                fields: vec![
+                    ("Tag".to_string(), release.tag_name.clone()),
+                    ("Release Name".to_string(), release.name.clone()),
+                    (
+                        "Description".to_string(),
+                        release.description.clone().unwrap_or_default(),
+                    ),
+                ],
+                selected_idx,
+                entity_iid,
+                entity_type: "release".to_string(),
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(selected_idx));
+                    s
+                },
+            });
+        }
     }
 }
 

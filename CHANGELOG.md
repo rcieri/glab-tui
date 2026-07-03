@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-07-03
+
+### Fixed
+- **Multi-byte label panic** — `render_labels_cell` no longer panics when truncating labels containing multi-byte characters (emoji, accented letters, etc.). Uses `floor_char_boundary()` to safely snap cut points to valid UTF-8 boundaries. Fixes #90 / (#93).
+
+### Maintenance
+- **OpenCode CI agent** — added `.github/workflows/opencode.yml` for AI-assisted automation on PRs and issues.
+- **Prepare Release workflow** — added `.github/workflows/prepare-release.yml` with dispatchable `patch`/`minor`/`major` version bumping, automated changelog generation via opencode, and atomic tag creation.
+
+---
+
 ## [2.3.0] - 2026-07-02
 
 ### Added

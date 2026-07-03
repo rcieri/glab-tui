@@ -133,3 +133,24 @@ If asked to add a new Tab (e.g., "Deployments"):
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+
+## 7. CI & Automation (v2.3.1)
+
+The following workflows are maintained alongside the source:
+
+* `.github/workflows/opencode.yml` — AI agent that responds to PRs, issues, and review comments using the `opencode/big-pickle` model. Triggered on `pull_request`, `pull_request_review_comment`, `issues`, and `issue_comment`.
+* `.github/workflows/prepare-release.yml` — Manually dispatched (`workflow_dispatch`) with `patch`/`minor`/`major` input. Fetches the full git history, increments the latest tag, invokes opencode to regenerate `CHANGELOG.md`/`AGENTS.md`/`README.md`, then commits the changes and pushes the new tag to trigger the release build.
+
+### Release Automation Contract
+
+When `prepare-release.yml` runs:
+1. It computes the next tag from the latest tag + the chosen increment.
+2. It delegates documentation updates to an opencode agent with the exact same prompt used in this file.
+3. The agent **must** write changes directly to `CHANGELOG.md`, `AGENTS.md`, and `README.md`.
+4. After the agent finishes, the workflow commits those files and pushes the tag.
+
+**Agent versioning:** The `prepare-release` workflow is versioned alongside the project. Always keep the `AGENTS.md` versioning matrix (this section) in sync with the release tag. Current release: **v2.3.1**.
+
+### Multi-byte Safe Truncation
+
+`src/ui.rs` now includes a `floor_char_boundary()` helper (mirroring `str::floor_char_boundary` stabilized in Rust 1.88). It is used in `render_labels_cell` to safely truncate label text at valid UTF-8 boundaries. When working with string slicing in UI code, prefer this helper over raw `&s[..n]` indexing.

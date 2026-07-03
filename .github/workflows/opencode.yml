@@ -1,0 +1,26 @@
+name: OpenCode
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  opencode:
+    if: contains(github.event.comment.body, '/opencode')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write # Required for Copilot auth
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run OpenCode
+        uses: anomalyco/opencode/github@latest
+        env:
+          # Use the built-in GitHub Token to authenticate your Copilot subscription
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Hardcode the model from the Copilot provider
+          model: github-copilot/gpt-4o

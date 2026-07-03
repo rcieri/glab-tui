@@ -175,7 +175,7 @@ impl Tab {
                 "Description",
             ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
-            Tab::Milestones => vec!["ID", "State", "Title", "Due Date", "Progress"],
+            Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Terminal => vec![],
         }
     }
@@ -193,16 +193,9 @@ impl Tab {
             Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
-            Tab::Releases => vec![
-                "Tag",
-                "Release Name",
-                "Date",
-                "Author",
-                "Assets",
-                "Description",
-            ],
+            Tab::Releases => vec!["Tag", "Release Name", "Date"],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
-            Tab::Milestones => vec!["ID", "State", "Title", "Due Date", "Progress"],
+            Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Terminal => vec![],
         }
     }

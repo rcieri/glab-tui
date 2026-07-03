@@ -6,21 +6,22 @@ on:
 
 jobs:
   opencode:
-    if: contains(github.event.comment.body, '/opencode')
+    if: contains(github.event.comment.body, '/opencode') || contains(github.event.comment.body, '/oc')
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: write
       pull-requests: write
       issues: write
-      id-token: write # Required for Copilot auth
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v6
       - name: Run OpenCode
         uses: anomalyco/opencode/github@latest
         env:
-          # Use the built-in GitHub Token to authenticate your Copilot subscription
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the Zen key here
+          OPENAI_API_KEY: ${{ secrets.OPENCODE_ZEN_API_KEY }}
+          # Set the Base URL to point to the Zen gateway
+          OPENAI_API_BASE: https://opencode.ai/zen/v1
         with:
-          # Hardcode the model from the Copilot provider
-          model: github-copilot/gpt-4o
+          # Select a model available through Zen (e.g., claude-sonnet-3-5)
+          model: openai/claude-sonnet-3-5

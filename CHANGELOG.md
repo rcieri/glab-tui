@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-07-03
+
+### Fixed
+- **Multi-byte label crash** — `render_labels_cell` no longer panics when a label contains multi-byte characters (emoji, accented letters). Raw byte indexing was replaced with `floor_char_boundary()` to safely slice at valid UTF-8 boundaries. (#93, fixes #90)
+
+### Maintenance
+- **OpenCode AI agent workflow** — added `.github/workflows/opencode.yml` for automated PR review and code review comments via `opencode github install`.
+- **Release preparation workflow** — added `.github/workflows/prepare-release.yml` to automate version bumping, changelog generation, and tag creation.
+- **OpenCode workflow regeneration** — migrated auth from Zen gateway (`OPENAI_API_KEY` + `OPENAI_API_BASE`) to native opencode auth (`OPENCODE_API_KEY` + `GITHUB_TOKEN`); upgraded `actions/checkout` from v4 to v7; added `pull_request_review_comment` trigger for diff review.
+- **CI workflow polish** — stripped redundant permissions from `prepare-release.yml`.
+
 ## [2.3.0] - 2026-07-02
 
 ### Added

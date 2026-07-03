@@ -115,6 +115,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * **Fuzzy Matching:** Use `SkimMatcherV2` from the `fuzzy-matcher` crate for filtering tables and selector overlays. The `render_fuzzy_cell` helper in [src/ui.rs](src/ui.rs) handles highlighting matched characters in yellow.
 * **Columns:** Table columns are dynamically configurable. Always check `app.is_column_visible(tab, "Column Name")` before rendering a cell or header. GitHub-only or GitLab-only columns must also gate on `app.gitlab_client.is_some()` / `is_github`.
 * **Layout:** Use `ratatui::layout::Layout` to split screens. Avoid hardcoded fixed sizes where possible, use `Constraint::Percentage` or `Constraint::Fill(1)`. Use `centered_rect_min()` for overlays to ensure minimum readable dimensions on small terminals.
+* **Multi-byte safe string truncation:** When slicing label text or any user-supplied string for display, use `floor_char_boundary()` (custom impl in `src/ui.rs` for MSRV 1.85 compatibility) instead of raw `&text[..n]` byte indexing to avoid panics on multi-byte characters (emoji, accented letters).
 
 ## 5. Adding a New Feature (Workflow)
 
@@ -133,3 +134,4 @@ If asked to add a new Tab (e.g., "Deployments"):
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+* **AI Code Review:** This repo uses an [OpenCode](https://opencode.ai) CI workflow (`.github/workflows/opencode.yml`) that runs automated AI code review on every pull request using the `opencode/big-pickle` model. Prefer small, focused PRs to keep review quality high.

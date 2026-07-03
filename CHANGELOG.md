@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-07-03
+
+### Fixed
+- **Multi-byte character panic in label rendering** — labels containing emoji,
+  accented characters, or other multi-byte Unicode no longer cause a panic when
+  truncated in table cells. Added `floor_char_boundary` helper to safely snap
+  string indices to valid char boundaries. (#93)
+
+### Added
+- **OpenCode AI automation workflows** — four GitHub Actions jobs in
+  `opencode.yml` for AI-assisted development: comment-triggered `/oc` commands,
+  automatic issue fleshing on creation, TUI bug triage on bug-labeled issues,
+  and automated PR review with inline fix commits.
+- **Release preparation workflow** — `prepare-release.yml` with manual
+  `workflow_dispatch` trigger supporting patch/minor/major version bumps,
+  automated CHANGELOG/AGENTS.md/README.md updates via OpenCode, and PR creation
+  on a `release-prep/<tag>` branch.
+
+### Maintenance
+- **CI/CD expansion** — `opencode.yml` upgraded from a single comment-triggered
+  job to four specialized automation jobs; `prepare-release.yml` added for
+  semi-automated release management.
+
 ## [2.3.0] - 2026-07-02
 
 ### Added

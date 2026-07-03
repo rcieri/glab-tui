@@ -133,3 +133,35 @@ If asked to add a new Tab (e.g., "Deployments"):
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+
+## 7. CI/CD Automation
+
+### OpenCode AI Workflows
+The repository uses four GitHub Actions jobs in `opencode.yml` for AI-assisted development:
+
+- **Comment Commands** — triggers on `/oc` or `/opencode` in issue/PR comments; runs
+  OpenCode with full repo checkout and write permissions.
+- **Ticket Creation** — auto-fleshes newly opened issues with structured engineering
+  descriptions (impact analysis, implementation plan, acceptance criteria).
+- **TUI Bug Hunter** — analyzes bug-labeled issues, scans terminal/layout/event
+  handling code, and suggests fixes or safeguards.
+- **PR Review** — auto-reviews pull requests with inline comments; commits obvious
+  fixes directly to the branch.
+
+### Release Automation
+The `prepare-release.yml` workflow semi-automates version bumps:
+
+| Trigger | Input | Behaviour |
+|---|---|---|
+| `workflow_dispatch` | `patch`, `minor`, or `major` | Calculates the next tag from the latest git tag |
+| Delegates to OpenCode | `$NEW_TAG` env var | Updates CHANGELOG.md, AGENTS.md, README.md |
+| Opens PR | `release-prep/<tag>` branch | Human reviews before merge + manual git tag |
+
+**Release workflow:**
+1. A maintainer triggers `Prepare Release` via the GitHub Actions UI, selecting the
+   version increment type.
+2. The workflow calculates the next version tag, runs OpenCode to update documentation
+   files, and opens a pull request.
+3. After review and merge, a maintainer tags the merge commit with the version tag. A
+   separate release workflow (or manual `git tag && git push --tags`) publishes the
+   release.

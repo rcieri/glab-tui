@@ -411,7 +411,7 @@ fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) -> Line<'stat
         if cmd_clean.starts_with("glab") || cmd_clean.starts_with("gh") {
             "RUNNING COMMAND".to_string()
         } else {
-            "SYSTEM LOG".to_string()
+            "RUNNING COMMAND".to_string()
         }
     } else {
         desc.to_uppercase()
@@ -2833,7 +2833,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     }
                     if app.is_column_visible(Tab::Releases, "Date") {
                         row_cells.push(render_fuzzy_cell(
-                            &truncate(&r.released_at, 10),
+                            &truncate(&r.released_at, 15),
                             &app.search_query,
                             is_row_highlighted,
                             false,
@@ -2891,11 +2891,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Releases, "Release Name") {
                     header_cells.push(Cell::from("Release Name"));
-                    widths.push(Constraint::Length(24));
+                    widths.push(Constraint::Length(30));
                 }
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
-                    widths.push(Constraint::Length(20));
+                    widths.push(Constraint::Length(15));
                 }
                 if app.is_column_visible(Tab::Releases, "Author") {
                     header_cells.push(Cell::from("Author"));

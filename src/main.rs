@@ -359,6 +359,109 @@ async fn apply_field_text_change(
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
+    // Milestones and releases use dedicated update functions, not UpdateCmd
+    if entity_type == "milestone" {
+        if let Some(item) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
+            match field_type {
+                "title" => item.title = value.clone(),
+                "start_date" => item.start_date = Some(value.clone()),
+                "due_date" => item.due_date = Some(value.clone()),
+                "description" => item.description = Some(value.clone()),
+                _ => {}
+            }
+        }
+        let milestone_opt = app.milestones.items.iter().find(|m| m.iid == iid).cloned();
+        if let Some(milestone) = milestone_opt {
+            let mut title = milestone.title.clone();
+            let mut start_date = milestone.start_date.clone();
+            let mut due_date = milestone.due_date.clone();
+            let mut description = milestone.description.clone().unwrap_or_default();
+
+            match field_type {
+                "title" => title = value.clone(),
+                "start_date" => start_date = Some(value.clone()),
+                "due_date" => due_date = Some(value.clone()),
+                "description" => description = value.clone(),
+                _ => {}
+            }
+
+            let client = app.gitlab_client.clone().unwrap();
+            let project_path = app.project_context.clone();
+            let tx_spawn = tx.clone();
+            let _ = tx.send(Event::CommandStarted(format!(
+                "Updating milestone #{}",
+                iid
+            )));
+            tokio::spawn(async move {
+                let res = crate::gitlab::milestones::update_milestone(
+                    &client,
+                    &project_path,
+                    iid,
+                    &title,
+                    &description,
+                    start_date.as_deref(),
+                    due_date.as_deref(),
+                )
+                .await;
+                match res {
+                    Ok(_) => {
+                        let _ = tx_spawn.send(Event::MilestoneUpdated);
+                    }
+                    Err(e) => {
+                        let _ = tx_spawn.send(Event::CommandCompleted(
+                            crate::app::Tab::Milestones,
+                            Err(e.to_string()),
+                        ));
+                    }
+                }
+            });
+        }
+        return;
+    }
+
+    if entity_type == "release" {
+        let release_opt = app.releases.items.get(iid as usize).cloned();
+        if let Some(release) = release_opt {
+            let mut name = release.name.clone();
+            let mut tag = release.tag_name.clone();
+            let mut description = release.description.clone().unwrap_or_default();
+
+            match field_type {
+                "title" | "release_name" => name = value.clone(),
+                "tag" => tag = value.clone(),
+                "description" => description = value.clone(),
+                _ => {}
+            }
+
+            let client = app.gitlab_client.clone().unwrap();
+            let project_path = app.project_context.clone();
+            let tx_spawn = tx.clone();
+            let _ = tx.send(Event::CommandStarted(format!("Updating release {}", tag)));
+            tokio::spawn(async move {
+                let res = crate::gitlab::releases::update_release(
+                    &client,
+                    &project_path,
+                    &tag,
+                    &name,
+                    &description,
+                )
+                .await;
+                match res {
+                    Ok(_) => {
+                        let _ = tx_spawn.send(Event::ReleaseUpdated);
+                    }
+                    Err(e) => {
+                        let _ = tx_spawn.send(Event::CommandCompleted(
+                            crate::app::Tab::Releases,
+                            Err(e.to_string()),
+                        ));
+                    }
+                }
+            });
+        }
+        return;
+    }
+
     let cli = app_cli(app);
     match field_type {
         "title" => {
@@ -444,56 +547,7 @@ async fn apply_field_text_change(
                 }
             }
         }
-        _ => {
-            if entity_type == "milestone" {
-                let milestone_opt = app.milestones.items.iter().find(|m| m.iid == iid).cloned();
-                if let Some(milestone) = milestone_opt {
-                    let mut title = milestone.title.clone();
-                    let mut start_date = milestone.start_date.clone();
-                    let mut due_date = milestone.due_date.clone();
-                    let mut description = milestone.description.clone().unwrap_or_default();
-
-                    match field_type {
-                        "title" => title = value.clone(),
-                        "start_date" => start_date = Some(value.clone()),
-                        "due_date" => due_date = Some(value.clone()),
-                        "description" => description = value.clone(),
-                        _ => {}
-                    }
-
-                    let client = app.gitlab_client.clone().unwrap();
-                    let project_path = app.project_context.clone();
-                    let tx_spawn = tx.clone();
-                    let _ = tx.send(Event::CommandStarted(format!(
-                        "Updating milestone #{}",
-                        iid
-                    )));
-                    tokio::spawn(async move {
-                        let res = crate::gitlab::milestones::update_milestone(
-                            &client,
-                            &project_path,
-                            iid,
-                            &title,
-                            &description,
-                            start_date.as_deref(),
-                            due_date.as_deref(),
-                        )
-                        .await;
-                        match res {
-                            Ok(_) => {
-                                let _ = tx_spawn.send(Event::MilestoneUpdated);
-                            }
-                            Err(e) => {
-                                let _ = tx_spawn.send(Event::CommandCompleted(
-                                    crate::app::Tab::Milestones,
-                                    Err(e.to_string()),
-                                ));
-                            }
-                        }
-                    });
-                }
-            }
-        }
+        _ => {}
     }
 }
 
@@ -2128,6 +2182,68 @@ async fn main() -> Result<()> {
                         app.selected_milestone_issues = Some(issues);
                     }
                 }
+                Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
+                    app.complete_loading_tab(app::Tab::Milestones, "Success");
+                    app.status_message = None;
+                    if let Some(client) = app.gitlab_client.clone() {
+                        if !app.loading_tabs.contains(&app::Tab::Milestones) {
+                            app.start_loading_tab(app::Tab::Milestones);
+                        }
+                        spawn_refresh_active_tab(
+                            &client,
+                            &app.project_context,
+                            app::Tab::Milestones,
+                            events.sender(),
+                        );
+                    }
+                }
+                Event::MilestoneDeleted => {
+                    app.complete_loading_tab(app::Tab::Milestones, "Success");
+                    app.status_message = None;
+                    app.milestones.items.clear();
+                    if let Some(client) = app.gitlab_client.clone() {
+                        if !app.loading_tabs.contains(&app::Tab::Milestones) {
+                            app.start_loading_tab(app::Tab::Milestones);
+                        }
+                        spawn_refresh_active_tab(
+                            &client,
+                            &app.project_context,
+                            app::Tab::Milestones,
+                            events.sender(),
+                        );
+                    }
+                }
+                Event::ReleaseUpdated => {
+                    app.complete_loading_tab(app::Tab::Releases, "Success");
+                    app.status_message = None;
+                    if let Some(client) = app.gitlab_client.clone() {
+                        if !app.loading_tabs.contains(&app::Tab::Releases) {
+                            app.start_loading_tab(app::Tab::Releases);
+                        }
+                        spawn_refresh_active_tab(
+                            &client,
+                            &app.project_context,
+                            app::Tab::Releases,
+                            events.sender(),
+                        );
+                    }
+                }
+                Event::ReleaseDeleted => {
+                    app.complete_loading_tab(app::Tab::Releases, "Success");
+                    app.status_message = None;
+                    app.releases.items.clear();
+                    if let Some(client) = app.gitlab_client.clone() {
+                        if !app.loading_tabs.contains(&app::Tab::Releases) {
+                            app.start_loading_tab(app::Tab::Releases);
+                        }
+                        spawn_refresh_active_tab(
+                            &client,
+                            &app.project_context,
+                            app::Tab::Releases,
+                            events.sender(),
+                        );
+                    }
+                }
                 Event::SelectorItemsFetched(items) => {
                     if let Some(mut selector) = app.selector.take() {
                         selector.all_items = items;
@@ -2365,6 +2481,77 @@ async fn main() -> Result<()> {
                                 app.show_submit_review_prompt = None;
                             }
                             _ => {}
+                        }
+                        continue;
+                    }
+
+                    if let Some(confirm_action) = app.confirm_popup.take() {
+                        match key_event.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                                match confirm_action {
+                                    crate::app::ConfirmAction::DeleteMilestone(iid) => {
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project_path = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let _ = tx.send(Event::CommandStarted(format!(
+                                            "Deleting milestone #{}",
+                                            iid
+                                        )));
+                                        tokio::spawn(async move {
+                                            let res = crate::gitlab::milestones::delete_milestone(
+                                                &client,
+                                                &project_path,
+                                                iid,
+                                            )
+                                            .await;
+                                            match res {
+                                                Ok(_) => {
+                                                    let _ = tx.send(Event::MilestoneDeleted);
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        crate::app::Tab::Milestones,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                }
+                                            }
+                                        });
+                                    }
+                                    crate::app::ConfirmAction::DeleteRelease(tag_name) => {
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project_path = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let _ = tx.send(Event::CommandStarted(format!(
+                                            "Deleting release {}",
+                                            tag_name
+                                        )));
+                                        tokio::spawn(async move {
+                                            let res = crate::gitlab::releases::delete_release(
+                                                &client,
+                                                &project_path,
+                                                &tag_name,
+                                            )
+                                            .await;
+                                            match res {
+                                                Ok(_) => {
+                                                    let _ = tx.send(Event::ReleaseDeleted);
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        crate::app::Tab::Releases,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {}
+                            _ => {
+                                app.confirm_popup = Some(confirm_action);
+                                continue;
+                            }
                         }
                         continue;
                     }
@@ -4584,6 +4771,13 @@ async fn main() -> Result<()> {
                                                     .get(entity_iid as usize)
                                                     .and_then(|r| r.description.clone())
                                                     .unwrap_or_default()
+                                            } else if entity_type == "milestone" {
+                                                app.milestones
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
                                             } else {
                                                 app.mrs
                                                     .items
@@ -4661,6 +4855,52 @@ async fn main() -> Result<()> {
                                                             app.active_tab,
                                                         )
                                                         .await;
+                                                    } else if entity_type == "milestone" {
+                                                        if let Some(item) = app
+                                                            .milestones
+                                                            .items
+                                                            .iter_mut()
+                                                            .find(|m| m.iid == entity_iid)
+                                                        {
+                                                            item.description =
+                                                                Some(new_desc.clone());
+                                                        }
+                                                        let client =
+                                                            app.gitlab_client.clone().unwrap();
+                                                        let project_path =
+                                                            app.project_context.clone();
+                                                        let tx_spawn = events.sender();
+                                                        let _ = tx_spawn.send(
+                                                            Event::CommandStarted(format!(
+                                                                "Updating milestone #{}",
+                                                                entity_iid
+                                                            )),
+                                                        );
+                                                        tokio::spawn(async move {
+                                                            let res = crate::gitlab::milestones::update_milestone(
+                                                                &client,
+                                                                &project_path,
+                                                                entity_iid,
+                                                                "",
+                                                                &new_desc,
+                                                                None,
+                                                                None,
+                                                            )
+                                                            .await;
+                                                            match res {
+                                                                Ok(_) => {
+                                                                    let _ = tx_spawn.send(
+                                                                        Event::MilestoneUpdated,
+                                                                    );
+                                                                }
+                                                                Err(e) => {
+                                                                    let _ = tx_spawn.send(Event::CommandCompleted(
+                                                                        crate::app::Tab::Milestones,
+                                                                        Err(e.to_string()),
+                                                                    ));
+                                                                }
+                                                            }
+                                                        });
                                                     } else if entity_type == "release" {
                                                         let release_opt = app
                                                             .releases

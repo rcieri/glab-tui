@@ -1,7 +1,6 @@
 ## Description
 
-<!-- Closes #123 -->
+<!-- Closes #123. Design notes: -->
 
 - [ ] Tested with both `glab` and `gh`
-- [ ] `cargo fmt --check` passes
 - [ ] `cargo clippy -- -D warnings` passes

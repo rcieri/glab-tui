@@ -4125,6 +4125,7 @@ async fn main() -> Result<()> {
                                                 Some(filtered_items[selector.cursor_idx].clone());
                                         }
                                         let choice = selected_val.unwrap_or_default();
+                                        let mut desc_val = String::new();
                                         if choice != "None (blank)" {
                                             let templates = list_templates("issue");
                                             if let Some(content) = templates
@@ -4132,16 +4133,27 @@ async fn main() -> Result<()> {
                                                 .find(|(n, _)| n == &choice)
                                                 .map(|(_, c)| c)
                                             {
-                                                if let Some(ref mut menu) = app.edit_menu {
-                                                    if let Some(f) = menu
-                                                        .fields
-                                                        .iter_mut()
-                                                        .find(|f| f.0 == "Description")
-                                                    {
-                                                        f.1 = content.clone();
-                                                    }
-                                                }
+                                                desc_val = content.clone();
                                             }
+                                        }
+                                        if let Some(ref mut menu) = app.edit_menu {
+                                            if let Some(f) = menu
+                                                .fields
+                                                .iter_mut()
+                                                .find(|f| f.0 == "Description")
+                                            {
+                                                f.1 = desc_val.clone();
+                                            }
+                                            let field_idx = menu.selected_idx;
+                                            let cursor_idx = desc_val.len();
+                                            app.text_input = Some(crate::app::TextInput {
+                                                title: " Edit Description ".to_string(),
+                                                value: desc_val,
+                                                cursor_idx,
+                                                action: crate::app::TextInputAction::EditNewField {
+                                                    field_idx,
+                                                },
+                                            });
                                         }
                                         continue;
                                     }
@@ -4155,6 +4167,7 @@ async fn main() -> Result<()> {
                                                 Some(filtered_items[selector.cursor_idx].clone());
                                         }
                                         let choice = selected_val.unwrap_or_default();
+                                        let mut desc_val = String::new();
                                         if choice != "None (blank)" {
                                             let templates = list_templates("mr");
                                             if let Some(content) = templates
@@ -4163,23 +4176,36 @@ async fn main() -> Result<()> {
                                                 .map(|(_, c)| c)
                                             {
                                                 if let Some(ref mut menu) = app.edit_menu {
-                                                    if let Some(f) = menu
-                                                        .fields
-                                                        .iter_mut()
-                                                        .find(|f| f.0 == "Description")
-                                                    {
-                                                        let issue_iid = menu.entity_iid;
-                                                        if issue_iid > 0 {
-                                                            f.1 = format!(
-                                                                "Closes #{}\n\n{}",
-                                                                issue_iid, content
-                                                            );
-                                                        } else {
-                                                            f.1 = content.clone();
-                                                        }
+                                                    let issue_iid = menu.entity_iid;
+                                                    if issue_iid > 0 {
+                                                        desc_val = format!(
+                                                            "Closes #{}\n\n{}",
+                                                            issue_iid, content
+                                                        );
+                                                    } else {
+                                                        desc_val = content.clone();
                                                     }
                                                 }
                                             }
+                                        }
+                                        if let Some(ref mut menu) = app.edit_menu {
+                                            if let Some(f) = menu
+                                                .fields
+                                                .iter_mut()
+                                                .find(|f| f.0 == "Description")
+                                            {
+                                                f.1 = desc_val.clone();
+                                            }
+                                            let field_idx = menu.selected_idx;
+                                            let cursor_idx = desc_val.len();
+                                            app.text_input = Some(crate::app::TextInput {
+                                                title: " Edit Description ".to_string(),
+                                                value: desc_val,
+                                                cursor_idx,
+                                                action: crate::app::TextInputAction::EditNewField {
+                                                    field_idx,
+                                                },
+                                            });
                                         }
                                         continue;
                                     }
@@ -4264,26 +4290,18 @@ async fn main() -> Result<()> {
                                                                 issue.iid, d
                                                             );
                                                         } else {
-                                                            let mr_templates = list_templates("mr");
-                                                            if mr_templates.is_empty() {
-                                                                let mr_tmpl =
-                                                                    get_default_template("mr")
-                                                                        .unwrap_or_default();
-                                                                if mr_tmpl.is_empty() {
-                                                                    description_val = format!(
-                                                                        "Closes #{}",
-                                                                        issue.iid
-                                                                    );
-                                                                } else {
-                                                                    description_val = format!(
-                                                                        "Closes #{}\n\n{}",
-                                                                        issue.iid, mr_tmpl
-                                                                    );
-                                                                }
-                                                            } else {
+                                                            let mr_tmpl =
+                                                                get_default_template("mr")
+                                                                    .unwrap_or_default();
+                                                            if mr_tmpl.is_empty() {
                                                                 description_val = format!(
                                                                     "Closes #{}",
                                                                     issue.iid
+                                                                );
+                                                            } else {
+                                                                description_val = format!(
+                                                                    "Closes #{}\n\n{}",
+                                                                    issue.iid, mr_tmpl
                                                                 );
                                                             }
                                                         }
@@ -4321,33 +4339,6 @@ async fn main() -> Result<()> {
                                                 s
                                             },
                                         });
-                                        let mr_templates = list_templates("mr");
-                                        if !mr_templates.is_empty() {
-                                            let template_names: Vec<String> =
-                                                std::iter::once("None (blank)".to_string())
-                                                    .chain(
-                                                        mr_templates.iter().map(|(n, _)| n.clone()),
-                                                    )
-                                                    .collect();
-                                            app.selector = Some(crate::app::Selector {
-                                                title: format!(" Select {} Template ", pr_suffix),
-                                                all_items: template_names,
-                                                selected_items: std::collections::HashSet::new(),
-                                                cursor_idx: 0,
-                                                search_query: String::new(),
-                                                is_filtering: false,
-                                                is_loading: false,
-                                                entity_iid: issue_iid,
-                                                entity_type: "new_mr".to_string(),
-                                                field_type: "mr_template_selector".to_string(),
-                                                multi_select: false,
-                                                state: {
-                                                    let mut s = ListState::default();
-                                                    s.select(Some(0));
-                                                    s
-                                                },
-                                            });
-                                        }
                                         continue;
                                     }
 
@@ -6101,6 +6092,60 @@ async fn main() -> Result<()> {
                                 }
 
                                 if field_name == "Description" {
+                                    if entity_iid == 0 || entity_type.starts_with("new_") {
+                                        let raw_val = menu.fields[menu.selected_idx].1.clone();
+                                        if raw_val.trim().is_empty() {
+                                            let template_type = if entity_type == "new_mr" {
+                                                "mr"
+                                            } else {
+                                                "issue"
+                                            };
+                                            let templates = list_templates(template_type);
+                                            if !templates.is_empty() {
+                                                let template_names: Vec<String> =
+                                                    std::iter::once("None (blank)".to_string())
+                                                        .chain(
+                                                            templates
+                                                                .iter()
+                                                                .map(|(n, _)| n.clone()),
+                                                        )
+                                                        .collect();
+                                                let field_type = if entity_type == "new_mr" {
+                                                    "mr_template_selector"
+                                                } else {
+                                                    "issue_template_selector"
+                                                };
+                                                app.selector = Some(crate::app::Selector {
+                                                    title: format!(
+                                                        " Select {} Template ",
+                                                        if template_type == "mr" {
+                                                            "Merge Request"
+                                                        } else {
+                                                            "Issue"
+                                                        }
+                                                    ),
+                                                    all_items: template_names,
+                                                    selected_items: std::collections::HashSet::new(
+                                                    ),
+                                                    cursor_idx: 0,
+                                                    search_query: String::new(),
+                                                    is_filtering: false,
+                                                    is_loading: false,
+                                                    entity_iid: 0,
+                                                    entity_type: entity_type.clone(),
+                                                    field_type: field_type.to_string(),
+                                                    multi_select: false,
+                                                    state: {
+                                                        let mut s = ListState::default();
+                                                        s.select(Some(0));
+                                                        s
+                                                    },
+                                                });
+                                                app.edit_menu = Some(menu);
+                                                continue;
+                                            }
+                                        }
+                                    }
                                     let current_val = if entity_iid == 0
                                         || entity_type.starts_with("new_")
                                     {
@@ -7191,7 +7236,6 @@ async fn main() -> Result<()> {
                                     fields.push(("Weight".to_string(), "0".to_string()));
                                 }
                                 fields.push(("Description".to_string(), String::new()));
-                                let templates = list_templates("issue");
                                 app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Create Issue".to_string(),
                                     fields,
@@ -7204,30 +7248,6 @@ async fn main() -> Result<()> {
                                         s
                                     },
                                 });
-                                if !templates.is_empty() {
-                                    let template_names: Vec<String> =
-                                        std::iter::once("None (blank)".to_string())
-                                            .chain(templates.iter().map(|(n, _)| n.clone()))
-                                            .collect();
-                                    app.selector = Some(crate::app::Selector {
-                                        title: " Select Issue Template ".to_string(),
-                                        all_items: template_names,
-                                        selected_items: std::collections::HashSet::new(),
-                                        cursor_idx: 0,
-                                        search_query: String::new(),
-                                        is_filtering: false,
-                                        is_loading: false,
-                                        entity_iid: 0,
-                                        entity_type: "new_issue".to_string(),
-                                        field_type: "issue_template_selector".to_string(),
-                                        multi_select: false,
-                                        state: {
-                                            let mut s = ListState::default();
-                                            s.select(Some(0));
-                                            s
-                                        },
-                                    });
-                                }
                             }
                             _ if (key_event.code == KeyCode::Char('e')
                                 || keybinding_matches(

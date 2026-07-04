@@ -735,14 +735,21 @@ async fn apply_selector_changes(
         }
         "draft_status" => {
             if let Some(val) = values.first() {
-                let action = if val.to_lowercase() == "draft" {
-                    "--draft"
+                let going_ready = val.to_lowercase() != "draft";
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && going_ready && entity_type == "mr" {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
                 } else {
-                    "--ready"
+                    let action = if val.to_lowercase() == "draft" {
+                        "--draft"
+                    } else {
+                        "--ready"
+                    };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
                 };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if entity_type == "mr" {
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -1107,7 +1114,7 @@ async fn handle_entity_update(
                 }
             }
         }
-        KeyCode::Char('r') => {
+        KeyCode::Char('s') => {
             if entity_type == "mr" {
                 let is_draft = app
                     .mrs
@@ -1116,10 +1123,16 @@ async fn handle_entity_update(
                     .find(|m| m.iid == iid)
                     .map(|m| m.draft)
                     .unwrap_or(false);
-                let action = if is_draft { "--ready" } else { "--draft" };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && is_draft {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
+                } else {
+                    let action = if is_draft { "--ready" } else { "--draft" };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
+                };
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.draft = !is_draft;
@@ -1436,6 +1449,78 @@ fn get_branches() -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+/// Returns a list of workflow/CI files available in the repo.
+/// For GitHub repos: scans `.github/workflows/*.yml` and `*.yaml`.
+/// For GitLab repos: returns `.gitlab-ci.yml` if it exists, else empty.
+fn get_workflow_files(is_github: bool) -> Vec<String> {
+    // Determine the repo root via `git rev-parse --show-toplevel`
+    let root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| ".".to_string());
+
+    if is_github {
+        let workflows_dir = std::path::Path::new(&root)
+            .join(".github")
+            .join("workflows");
+        let mut files: Vec<String> = std::fs::read_dir(&workflows_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if (ext == "yml" || ext == "yaml") && path.is_file() {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        files
+    } else {
+        // GitLab: the primary CI file is `.gitlab-ci.yml`; also check for
+        // include-able `.gitlab-ci-*.yml` files at the root.
+        let mut files: Vec<String> = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if !path.is_file() {
+                    return None;
+                }
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if (ext == "yml" || ext == "yaml")
+                    && (name == ".gitlab-ci.yml" || name.starts_with(".gitlab-ci-"))
+                {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        files
+    }
 }
 
 fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> bool {
@@ -4679,6 +4764,8 @@ async fn main() -> Result<()> {
                                                 "mr_pipeline" => "Merge Request Pipeline",
                                                 "source_branch" => "Source Branch",
                                                 "target_branch" => "Target Branch",
+                                                "pipeline_branch" => "Branch / Ref",
+                                                "workflow_file" => "Workflow / CI File (GitHub)",
                                                 _ => "",
                                             };
                                             if !target_field_name.is_empty() {
@@ -5420,6 +5507,8 @@ async fn main() -> Result<()> {
                                     || field_name == "Merge Request Pipeline"
                                     || field_name == "Source Branch"
                                     || field_name == "Target Branch"
+                                    || field_name == "Branch / Ref"
+                                    || field_name == "Workflow / CI File (GitHub)"
                                 {
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
@@ -5432,6 +5521,8 @@ async fn main() -> Result<()> {
                                         "Merge Request Pipeline" => "mr_pipeline",
                                         "Source Branch" => "source_branch",
                                         "Target Branch" => "target_branch",
+                                        "Branch / Ref" => "pipeline_branch",
+                                        "Workflow / CI File (GitHub)" => "workflow_file",
                                         _ => "",
                                     };
                                     let multi_select = match field_type {
@@ -5487,6 +5578,27 @@ async fn main() -> Result<()> {
                                     {
                                         all_items = get_branches();
                                         is_loading = false;
+                                    } else if field_type == "pipeline_branch" {
+                                        all_items = get_branches();
+                                        is_loading = false;
+                                        // Pre-select the current branch value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
+                                    } else if field_type == "workflow_file" {
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map(|c| c.is_github)
+                                            .unwrap_or(false);
+                                        all_items = get_workflow_files(is_github);
+                                        is_loading = false;
+                                        // Pre-select any already-typed value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
@@ -7218,13 +7330,31 @@ async fn main() -> Result<()> {
                                             )) =>
                                         {
                                             let cli = app_cli(&app);
-                                            let is_draft = mr_title.starts_with("Draft:")
-                                                || mr_title.starts_with("WIP:");
-                                            let action =
-                                                if is_draft { "--ready" } else { "--draft" };
-                                            let args = UpdateCmd::new(cli.is_github, "mr", mr_iid)
-                                                .flag_bool(action)
-                                                .build();
+                                            let is_draft = app
+                                                .mrs
+                                                .items
+                                                .iter()
+                                                .find(|m| m.iid == mr_iid)
+                                                .map(|m| m.draft)
+                                                .unwrap_or_else(|| {
+                                                    mr_title.starts_with("Draft:")
+                                                        || mr_title.starts_with("WIP:")
+                                                });
+                                            // GitHub uses `gh pr ready <iid>` to mark ready;
+                                            // `gh pr edit --ready` is not a valid flag.
+                                            let args = if cli.is_github && is_draft {
+                                                vec![
+                                                    "pr".to_string(),
+                                                    "ready".to_string(),
+                                                    mr_iid.to_string(),
+                                                ]
+                                            } else {
+                                                let action =
+                                                    if is_draft { "--ready" } else { "--draft" };
+                                                UpdateCmd::new(cli.is_github, "mr", mr_iid)
+                                                    .flag_bool(action)
+                                                    .build()
+                                            };
                                             run_cli(
                                                 &cli,
                                                 &args,
@@ -7233,6 +7363,11 @@ async fn main() -> Result<()> {
                                                 app.active_tab,
                                             )
                                             .await;
+                                            if let Some(item) =
+                                                app.mrs.items.iter_mut().find(|m| m.iid == mr_iid)
+                                            {
+                                                item.draft = !is_draft;
+                                            }
                                         }
                                         _ if (key_event.code == KeyCode::Char('c')
                                             || keybinding_matches(
@@ -7293,14 +7428,18 @@ async fn main() -> Result<()> {
                         }
                         app::Tab::Pipelines => {
                             if key_event.code == KeyCode::Char('n') {
+                                let is_github = app
+                                    .gitlab_client
+                                    .as_ref()
+                                    .map(|c| c.is_github)
+                                    .unwrap_or(false);
+                                let current_branch =
+                                    get_current_branch().unwrap_or_else(|| "main".to_string());
+
                                 app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Run Pipeline".to_string(),
                                     fields: vec![
-                                        (
-                                            "Branch / Ref".to_string(),
-                                            get_current_branch()
-                                                .unwrap_or_else(|| "main".to_string()),
-                                        ),
+                                        ("Branch / Ref".to_string(), current_branch.clone()),
                                         ("Merge Request Pipeline".to_string(), "No".to_string()),
                                         ("Variables".to_string(), String::new()),
                                         ("Inputs".to_string(), String::new()),
@@ -7315,6 +7454,62 @@ async fn main() -> Result<()> {
                                         s
                                     },
                                 });
+
+                                // Immediately open the appropriate selector as a dropdown:
+                                // GitHub → workflow file picker; GitLab → branch picker.
+                                if is_github {
+                                    let workflow_files = get_workflow_files(true);
+                                    let mut pre_selected = std::collections::HashSet::new();
+                                    // Pre-select the first workflow file if only one exists
+                                    if workflow_files.len() == 1 {
+                                        pre_selected.insert(workflow_files[0].clone());
+                                    }
+                                    app.selector = Some(crate::app::Selector {
+                                        title: "Select Workflow / CI File".to_string(),
+                                        all_items: workflow_files,
+                                        selected_items: pre_selected,
+                                        cursor_idx: 0,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: 0,
+                                        entity_type: "new_pipeline".to_string(),
+                                        field_type: "workflow_file".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                } else {
+                                    let branches = get_branches();
+                                    let mut pre_selected = std::collections::HashSet::new();
+                                    pre_selected.insert(current_branch);
+                                    let start_idx = pre_selected
+                                        .iter()
+                                        .next()
+                                        .and_then(|sel| branches.iter().position(|b| b == sel))
+                                        .unwrap_or(0);
+                                    app.selector = Some(crate::app::Selector {
+                                        title: "Select Branch / Ref".to_string(),
+                                        all_items: branches,
+                                        selected_items: pre_selected,
+                                        cursor_idx: start_idx,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: 0,
+                                        entity_type: "new_pipeline".to_string(),
+                                        field_type: "pipeline_branch".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(start_idx));
+                                            s
+                                        },
+                                    });
+                                }
                             } else if key_event.code == KeyCode::Char('p')
                                 || keybinding_matches(
                                     &app.config.keybindings.pipelines.trigger_pipeline,

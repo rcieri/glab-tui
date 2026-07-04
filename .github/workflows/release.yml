@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build-and-release:
@@ -93,3 +94,48 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker-push:
+    name: Docker
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+
+  update-manifests:
+    name: Update package manifests
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew formula and Scoop manifest
+        run: bash scripts/update-manifests.sh ${{ github.ref_name }}
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "glab-tui-bot"
+          git config user.email "bot@glab-tui"
+          git add Formula/ scoop/
+          git diff --cached --quiet || \
+            git commit -m "chore: bump package manifests to ${{ github.ref_name }}"
+          git push

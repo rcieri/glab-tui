@@ -614,9 +614,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Constraint::Length(0)
     };
 
-    // Responsive details pane: hide when terminal is narrow
-    let details_width = if size.width < 90 {
-        Constraint::Length(0)
+    // Responsive details pane: hide when terminal is narrow or detail not activated
+    let details_width = if !app.detail_visible || size.width < 90 {
+        Constraint::Max(0)
     } else if size.width > 150 {
         Constraint::Percentage(35)
     } else if size.width > 100 {
@@ -625,7 +625,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Constraint::Length(30)
     };
 
-    let middle_chunks = if app.details_zoomed && can_zoom {
+    let middle_chunks_raw = if app.details_zoomed && can_zoom {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -645,6 +645,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .constraints([sidebar_width, Constraint::Min(0), details_width])
             .split(chunks[1])
     };
+    let [sidebar_rect, content_rect, mut detail_rect] = [
+        middle_chunks_raw[0],
+        middle_chunks_raw[1],
+        middle_chunks_raw[2],
+    ];
+    if !app.detail_visible {
+        detail_rect = Rect::default();
+    }
+    let middle_chunks = [sidebar_rect, content_rect, detail_rect];
 
     // Split middle column vertically: main content area + compact terminal pane
     let term_height = if app.active_tab != Tab::Terminal && size.height >= 18 {
@@ -668,7 +677,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .as_ref()
         .map(|c| c.is_github)
         .unwrap_or(false);
-    let sidebar_items: Vec<ListItem> = Tab::ALL
+    let sidebar_items: Vec<ListItem> = app
+        .available_tabs()
         .iter()
         .map(|t| {
             let title = format!("  {}  ", t.title(is_github).to_uppercase());
@@ -905,7 +915,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 if app.is_column_visible(Tab::Issues, "ID") {
                     header_cells.push(Cell::from("ID"));
-                    widths.push(Constraint::Length(10));
+                    widths.push(Constraint::Length(8));
                 }
                 if app.is_column_visible(Tab::Issues, "State") {
                     header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
@@ -917,11 +927,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Issues, "Assignees") {
                     header_cells.push(Cell::from("Assignees"));
-                    widths.push(Constraint::Length(20));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::Issues, "Labels") {
                     header_cells.push(Cell::from("Labels"));
-                    widths.push(Constraint::Length(24));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::Issues, "Milestone") {
                     header_cells.push(Cell::from("Milestone"));
@@ -933,7 +943,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Issues, "Author") {
                     header_cells.push(Cell::from("Author"));
-                    widths.push(Constraint::Length(15));
+                    widths.push(Constraint::Fill(1));
                 }
 
                 if widths.is_empty() {
@@ -1106,11 +1116,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         let viewport_height = middle_chunks[2].height.saturating_sub(2) as usize;
                         let content_length = text.len();
                         let max_scroll = content_length.saturating_sub(viewport_height) as u16;
-                        app.issues_scroll = app.issues_scroll.min(max_scroll);
+                        app.detail_scroll = app.detail_scroll.min(max_scroll);
 
                         let title_suffix = if content_length > viewport_height {
                             let percent =
-                                (app.issues_scroll as usize * 100) / max_scroll.max(1) as usize;
+                                (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
                             format!(" [Shift+J/K | {}%] ", percent.min(100))
                         } else {
                             String::new()
@@ -1130,7 +1140,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Paragraph::new(text)
                                 .block(preview_block)
                                 .wrap(ratatui::widgets::Wrap { trim: true })
-                                .scroll((app.issues_scroll, 0)),
+                                .scroll((app.detail_scroll, 0)),
                             middle_chunks[2],
                         );
                     } else {
@@ -1414,7 +1424,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 if app.is_column_visible(Tab::MergeRequests, "ID") {
                     header_cells.push(Cell::from("ID"));
-                    widths.push(Constraint::Length(10));
+                    widths.push(Constraint::Length(8));
                 }
                 if app.is_column_visible(Tab::MergeRequests, "State") {
                     header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
@@ -1424,7 +1434,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     header_cells.push(Cell::from(
                         Line::from("Status").alignment(Alignment::Center),
                     ));
-                    widths.push(Constraint::Length(11));
+                    widths.push(Constraint::Length(12));
                 }
                 if app.is_column_visible(Tab::MergeRequests, "Title") {
                     header_cells.push(Cell::from("Title"));
@@ -1432,15 +1442,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::MergeRequests, "Assignees") {
                     header_cells.push(Cell::from("Assignees"));
-                    widths.push(Constraint::Length(20));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
                     header_cells.push(Cell::from("Reviewers"));
-                    widths.push(Constraint::Length(20));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::MergeRequests, "Labels") {
                     header_cells.push(Cell::from("Labels"));
-                    widths.push(Constraint::Length(24));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::MergeRequests, "Milestone") {
                     header_cells.push(Cell::from("Milestone"));
@@ -1448,7 +1458,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::MergeRequests, "Author") {
                     header_cells.push(Cell::from("Author"));
-                    widths.push(Constraint::Length(15));
+                    widths.push(Constraint::Fill(1));
                 }
 
                 if widths.is_empty() {
@@ -1681,11 +1691,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         let viewport_height = middle_chunks[2].height.saturating_sub(2) as usize;
                         let content_length = text.len();
                         let max_scroll = content_length.saturating_sub(viewport_height) as u16;
-                        app.mrs_scroll = app.mrs_scroll.min(max_scroll);
+                        app.detail_scroll = app.detail_scroll.min(max_scroll);
 
                         let title_suffix = if content_length > viewport_height {
                             let percent =
-                                (app.mrs_scroll as usize * 100) / max_scroll.max(1) as usize;
+                                (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
                             format!(" [Shift+J/K | {}%] ", percent.min(100))
                         } else {
                             String::new()
@@ -1705,7 +1715,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Paragraph::new(text)
                                 .block(preview_block)
                                 .wrap(ratatui::widgets::Wrap { trim: true })
-                                .scroll((app.mrs_scroll, 0)),
+                                .scroll((app.detail_scroll, 0)),
                             middle_chunks[2],
                         );
                     } else {
@@ -1878,7 +1888,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 if app.is_column_visible(Tab::Pipelines, "ID") {
                     header_cells.push(Cell::from("ID"));
-                    widths.push(Constraint::Length(14));
+                    widths.push(Constraint::Length(8));
                 }
                 if app.is_column_visible(Tab::Pipelines, "Status") {
                     header_cells.push(Cell::from(
@@ -1888,7 +1898,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Pipelines, "Stages") {
                     header_cells.push(Cell::from("Stages"));
-                    widths.push(Constraint::Length(24));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::Pipelines, "Ref") {
                     header_cells.push(Cell::from("Ref"));
@@ -2254,11 +2264,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 if app.is_column_visible(Tab::Jobs, "ID") {
                     header_cells.push(Cell::from("ID"));
-                    widths.push(Constraint::Length(14));
+                    widths.push(Constraint::Length(8));
                 }
                 if app.is_column_visible(Tab::Jobs, "Stage") {
                     header_cells.push(Cell::from("Stage"));
-                    widths.push(Constraint::Length(15));
+                    widths.push(Constraint::Length(14));
                 }
                 if app.is_column_visible(Tab::Jobs, "Status") {
                     header_cells.push(Cell::from(
@@ -2272,7 +2282,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Jobs, "Matrix") {
                     header_cells.push(Cell::from("Matrix"));
-                    widths.push(Constraint::Length(20));
+                    widths.push(Constraint::Length(10));
                 }
 
                 if widths.is_empty() {
@@ -2327,15 +2337,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let max_scroll = total_lines.saturating_sub(height) as u16;
 
                     if app.job_trace_needs_scroll_to_bottom {
-                        app.job_trace_scroll = max_scroll;
+                        app.detail_scroll = max_scroll;
                         app.job_trace_needs_scroll_to_bottom = false;
                     } else {
-                        app.job_trace_scroll = app.job_trace_scroll.min(max_scroll);
+                        app.detail_scroll = app.detail_scroll.min(max_scroll);
                     }
 
                     let title_suffix = if total_lines > height {
                         let percent =
-                            (app.job_trace_scroll as usize * 100) / max_scroll.max(1) as usize;
+                            (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
                         format!(" [j/k | {}%] ", percent.min(100))
                     } else {
                         String::new()
@@ -2365,7 +2375,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         Paragraph::new(formatted_lines)
                             .block(preview_block)
                             .wrap(ratatui::widgets::Wrap { trim: false })
-                            .scroll((app.job_trace_scroll, 0)),
+                            .scroll((app.detail_scroll, 0)),
                         middle_chunks[2],
                     );
                 } else {
@@ -2534,7 +2544,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 if app.is_column_visible(Tab::Runners, "ID") {
                     header_cells.push(Cell::from("ID"));
-                    widths.push(Constraint::Length(12));
+                    widths.push(Constraint::Length(8));
                 }
                 if app.is_column_visible(Tab::Runners, "Description") {
                     header_cells.push(Cell::from("Description"));
@@ -2544,11 +2554,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     header_cells.push(Cell::from(
                         Line::from("Status").alignment(Alignment::Center),
                     ));
-                    widths.push(Constraint::Length(14));
+                    widths.push(Constraint::Length(12));
                 }
                 if app.is_column_visible(Tab::Runners, "Active") {
                     header_cells.push(Cell::from("Active"));
-                    widths.push(Constraint::Length(10));
+                    widths.push(Constraint::Length(8));
                 }
 
                 if widths.is_empty() {
@@ -2877,11 +2887,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 if app.is_column_visible(Tab::Releases, "Tag") {
                     header_cells.push(Cell::from("Tag"));
-                    widths.push(Constraint::Length(20));
+                    widths.push(Constraint::Length(16));
                 }
                 if app.is_column_visible(Tab::Releases, "Release Name") {
                     header_cells.push(Cell::from("Release Name"));
-                    widths.push(Constraint::Fill(2));
+                    widths.push(Constraint::Length(24));
                 }
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
@@ -2889,15 +2899,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Releases, "Author") {
                     header_cells.push(Cell::from("Author"));
-                    widths.push(Constraint::Length(16));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::Releases, "Assets") {
                     header_cells.push(Cell::from("Assets"));
-                    widths.push(Constraint::Length(20));
+                    widths.push(Constraint::Length(10));
                 }
                 if app.is_column_visible(Tab::Releases, "Description") {
                     header_cells.push(Cell::from("Description"));
-                    widths.push(Constraint::Fill(3));
+                    widths.push(Constraint::Fill(1));
                 }
 
                 if widths.is_empty() {
@@ -3160,11 +3170,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 if app.is_column_visible(Tab::Todos, "State") {
                     header_cells.push(Cell::from(""));
-                    widths.push(Constraint::Length(2));
+                    widths.push(Constraint::Length(10));
                 }
                 if app.is_column_visible(Tab::Todos, "Project") {
                     header_cells.push(Cell::from("Project"));
-                    widths.push(Constraint::Length(25));
+                    widths.push(Constraint::Fill(1));
                 }
                 if app.is_column_visible(Tab::Todos, "Type") {
                     header_cells.push(Cell::from("Type"));
@@ -3340,13 +3350,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     if app.is_column_visible(Tab::Milestones, col) {
                         header_cells.push(Cell::from(*col));
                         match *col {
-                            "ID" => widths.push(Constraint::Length(10)),
-                            "Title" => widths.push(Constraint::Fill(1)),
-                            "State" => widths.push(Constraint::Length(12)),
-                            "Start Date" => widths.push(Constraint::Length(15)),
-                            "Due Date" => widths.push(Constraint::Length(15)),
-                            "Progress" => widths.push(Constraint::Length(10)),
-                            _ => widths.push(Constraint::Length(10)),
+                            "ID" => widths.push(Constraint::Length(8)),
+                            "Title" => widths.push(Constraint::Length(30)),
+                            "State" => widths.push(Constraint::Length(10)),
+                            "Start Date" => widths.push(Constraint::Length(12)),
+                            "Due Date" => widths.push(Constraint::Length(12)),
+                            "Progress" => widths.push(Constraint::Length(8)),
+                            _ => widths.push(Constraint::Fill(1)),
                         }
                     }
                 }

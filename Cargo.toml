@@ -2,6 +2,13 @@
 name = "glab-tui"
 version = "2.3.0"
 edition = "2024"
+description = "A terminal user interface for GitLab and GitHub"
+license = "MIT"
+repository = "https://github.com/rcieri/glab-tui"
+homepage = "https://github.com/rcieri/glab-tui"
+readme = "README.md"
+keywords = ["gitlab", "github", "tui", "terminal", "git"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.30.1"

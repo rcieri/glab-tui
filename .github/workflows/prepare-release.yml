@@ -73,6 +73,26 @@ jobs:
 
                       Save and write these file modifications directly back into the working directory.
 
+            - name: Update package manifests
+              run: bash scripts/update-manifests.sh ${{ env.NEW_TAG }}
+
+            - name: Commit manifest updates and push to release branch
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  sleep 3
+                  PR_NUMBER=$(gh pr list --state open --json number,headRefName,headRepository \
+                    --jq '.[] | select(.headRefName | contains("opencode-release") or startswith("opencode/")) | .number' | head -n 1)
+                  if [ -z "$PR_NUMBER" ]; then
+                      echo "No PR found; changes remain local."
+                      exit 0
+                  fi
+                  BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
+                  git add Formula/ scoop/
+                  git diff --cached --quiet && echo "No manifest changes" && exit 0
+                  git commit -m "chore: bump package manifests to ${{ env.NEW_TAG }}"
+                  git push origin "$BRANCH"
+
             - name: Standardize Pull Request Title
               if: always()
               env:

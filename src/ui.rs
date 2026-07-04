@@ -2885,7 +2885,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
-                    widths.push(Constraint::Length(12));
+                    widths.push(Constraint::Length(15));
                 }
                 if app.is_column_visible(Tab::Releases, "Author") {
                     header_cells.push(Cell::from("Author"));

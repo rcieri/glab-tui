@@ -2290,17 +2290,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     .fg(THEME.read().unwrap().header_fg)
                                     .add_modifier(Modifier::BOLD),
                             )
-                            .title_bottom(
-                                ratatui::text::Line::from(vec![Span::styled(
-                                    if app.collapse_matrix_jobs {
-                                        " m: Expand Matrix "
-                                    } else {
-                                        " m: Collapse Matrix "
-                                    },
-                                    Style::default().fg(THEME.read().unwrap().text_muted),
-                                )])
-                                .alignment(Alignment::Right),
-                            )
                             .border_style(
                                 Style::default().fg(THEME.read().unwrap().border_focused),
                             ),
@@ -5752,6 +5741,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 category: "Jobs",
                 key: s("e"),
                 action: "Open job trace in external $EDITOR",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: s("m"),
+                action: "Collapse / expand matrix jobs",
             },
             Shortcut {
                 category: "Jobs",

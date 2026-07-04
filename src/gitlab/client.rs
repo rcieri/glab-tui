@@ -833,7 +833,8 @@ fn translate_release(v: &serde_json::Value) -> serde_json::Value {
         .unwrap_or_else(|| tag_name.clone());
     let released_at = v
         .get("published_at")
-        .cloned()
+        .and_then(|v| v.as_str())
+        .map(|s| serde_json::Value::String(s.chars().take(10).collect()))
         .unwrap_or(serde_json::Value::Null);
     let description = v.get("body").cloned().unwrap_or(serde_json::Value::Null);
     let author_name = v
@@ -1028,9 +1029,7 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
                     let due_on = m
                         .get("due_on")
                         .and_then(|v| v.as_str())
-                        .map(|s| {
-                            serde_json::Value::String(s.chars().take(10).collect())
-                        })
+                        .map(|s| serde_json::Value::String(s.chars().take(10).collect()))
                         .unwrap_or(serde_json::Value::Null);
                     let created_at = m
                         .get("created_at")

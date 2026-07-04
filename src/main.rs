@@ -388,7 +388,10 @@ async fn apply_field_text_change(
             let client = app.gitlab_client.clone().unwrap();
             let project_path = app.project_context.clone();
             let tx_spawn = tx.clone();
-            let _ = tx.send(Event::CommandStarted(format!("Updating milestone #{}", iid)));
+            let _ = tx.send(Event::CommandStarted(format!(
+                "Updating milestone #{}",
+                iid
+            )));
             tokio::spawn(async move {
                 let res = crate::gitlab::milestones::update_milestone(
                     &client,

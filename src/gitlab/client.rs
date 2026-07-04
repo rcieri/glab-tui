@@ -210,9 +210,24 @@ impl GitlabClient {
     pub async fn fetch_raw_api(&self, endpoint: &str) -> Result<String> {
         let desc = get_api_description(endpoint, self.is_github);
         let is_post = endpoint.contains("/retry") || endpoint.contains("/cancel");
-        let cmd_str = if self.is_github {
+        let is_logs = self.is_github && endpoint.contains("/jobs/") && endpoint.contains("/trace");
+        let cmd_str = if is_logs {
+            let parts: Vec<&str> = endpoint.split("/").collect();
+            let mut job_id = "";
+            for i in 0..parts.len() {
+                if parts[i] == "jobs" && i + 1 < parts.len() {
+                    job_id = parts[i + 1];
+                    break;
+                }
+            }
+            format!("{}: gh run view --job {} --log", desc, job_id)
+        } else if self.is_github {
             let gh_endpoint = gitlab_to_github_endpoint(endpoint);
-            let method = if is_post { "-X POST " } else { "" };
+            let method = if is_post {
+                "-X POST -H \"Content-Length: 0\" "
+            } else {
+                ""
+            };
             format!("{}: gh api {}{}", desc, method, gh_endpoint)
         } else {
             let method = if is_post { "-X POST " } else { "" };
@@ -227,13 +242,86 @@ impl GitlabClient {
             });
         }
 
-        let res = if self.is_github {
+        let res = if is_logs {
+            let parts: Vec<&str> = endpoint.split("/").collect();
+            let mut job_id = "";
+            for i in 0..parts.len() {
+                if parts[i] == "jobs" && i + 1 < parts.len() {
+                    job_id = parts[i + 1];
+                    break;
+                }
+            }
+            let mut cmd = Command::new("gh");
+            cmd.arg("run");
+            cmd.arg("view");
+            cmd.arg("--job");
+            cmd.arg(job_id);
+            cmd.arg("--log");
+            let output = cmd
+                .output()
+                .await
+                .context("Failed to execute gh run view --job command");
+
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        let raw_str = String::from_utf8(out.stdout).map_err(|e| e.into());
+                        match raw_str {
+                            Ok(s) => {
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: "Success".to_string(),
+                                    });
+                                }
+                                Ok(s)
+                            }
+                            Err(e) => {
+                                let err_msg = format!("UTF-8 error: {}", e);
+                                if let Some(ref tx) = self.tx {
+                                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                        timestamp: timestamp.clone(),
+                                        command: cmd_str.clone(),
+                                        status: format!("Failed: {}", err_msg),
+                                    });
+                                }
+                                Err(e)
+                            }
+                        }
+                    } else {
+                        let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                        if let Some(ref tx) = self.tx {
+                            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                                timestamp: timestamp.clone(),
+                                command: cmd_str.clone(),
+                                status: format!("Failed: {}", err_msg),
+                            });
+                        }
+                        anyhow::bail!("gh run view failed: {}", err_msg)
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    if let Some(ref tx) = self.tx {
+                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                            timestamp: timestamp.clone(),
+                            command: cmd_str.clone(),
+                            status: format!("Failed: {}", err_msg),
+                        });
+                    }
+                    Err(e.into())
+                }
+            }
+        } else if self.is_github {
             let gh_endpoint = gitlab_to_github_endpoint(endpoint);
             let mut cmd = Command::new("gh");
             cmd.arg("api");
             if is_post {
                 cmd.arg("-X");
                 cmd.arg("POST");
+                cmd.arg("-H");
+                cmd.arg("Content-Length: 0");
             }
             cmd.arg(&gh_endpoint);
             let output = cmd
@@ -431,7 +519,11 @@ pub async fn get_project_context() -> Result<String> {
 }
 
 fn gitlab_to_github_endpoint(endpoint: &str) -> String {
-    let decoded = endpoint.replace("%2F", "/");
+    let mut normalized = endpoint.to_string();
+    if !normalized.starts_with('/') {
+        normalized = format!("/{}", normalized);
+    }
+    let decoded = normalized.replace("%2F", "/");
     let mut path = decoded.replace("/projects/", "/repos/");
     path = path.replace("state=opened", "state=open");
     path = path.replace("state=active", "state=open");
@@ -1012,6 +1104,11 @@ mod tests {
         assert_eq!(
             gitlab_to_github_endpoint("/projects/owner%2Frepo/jobs/123/trace"),
             "/repos/owner/repo/actions/jobs/123/logs"
+        );
+        // Test endpoints without leading slash
+        assert_eq!(
+            gitlab_to_github_endpoint("projects/owner%2Frepo/pipelines/123/cancel"),
+            "/repos/owner/repo/actions/runs/123/cancel"
         );
     }
 

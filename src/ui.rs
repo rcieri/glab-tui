@@ -2053,48 +2053,125 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 );
 
                 let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
-                    let (status_text, status_color, bg_color) = match j.status.as_str() {
-                        "success" => (
-                            "SUCCESS",
-                            THEME.read().unwrap().green,
-                            THEME.read().unwrap().green_bg,
-                        ),
-                        "failed" => (
-                            "FAILED",
-                            THEME.read().unwrap().red,
-                            THEME.read().unwrap().red_bg,
-                        ),
-                        "running" => (
-                            "RUNNING",
-                            THEME.read().unwrap().blue,
-                            THEME.read().unwrap().blue_bg,
-                        ),
-                        "canceled" => (
-                            "CANCEL",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "pending" => (
-                            "PENDING",
-                            THEME.read().unwrap().yellow,
-                            THEME.read().unwrap().yellow_bg,
-                        ),
-                        "skipped" => (
-                            "SKIP",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "manual" => (
-                            "MANUAL",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        _ => (
-                            "UNKNOWN",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
+                    let (
+                        matrix_display,
+                        status_text_display,
+                        status_color_display,
+                        status_bg_display,
+                    ) = if app.collapse_matrix_jobs {
+                        let variants: Vec<&crate::gitlab::pipelines::Job> = app
+                            .selected_pipeline_jobs
+                            .as_ref()
+                            .map(|jobs| jobs.iter().filter(|job| job.name == j.name).collect())
+                            .unwrap_or_default();
+
+                        let count = variants.len();
+                        let mut overall_status = "success";
+                        if variants.iter().any(|v| v.status == "failed") {
+                            overall_status = "failed";
+                        } else if variants.iter().any(|v| v.status == "running") {
+                            overall_status = "running";
+                        } else if variants
+                            .iter()
+                            .any(|v| v.status == "pending" || v.status == "preparing")
+                        {
+                            overall_status = "pending";
+                        } else if variants.iter().any(|v| v.status == "skipped")
+                            && variants
+                                .iter()
+                                .all(|v| v.status == "skipped" || v.status == "success")
+                        {
+                            overall_status = "skipped";
+                        }
+
+                        let (st, sc, sbg) = match overall_status {
+                            "success" => (
+                                "SUCCESS",
+                                THEME.read().unwrap().green,
+                                THEME.read().unwrap().green_bg,
+                            ),
+                            "failed" => (
+                                "FAILED",
+                                THEME.read().unwrap().red,
+                                THEME.read().unwrap().red_bg,
+                            ),
+                            "running" => (
+                                "RUNNING",
+                                THEME.read().unwrap().blue,
+                                THEME.read().unwrap().blue_bg,
+                            ),
+                            "pending" => (
+                                "PENDING",
+                                THEME.read().unwrap().yellow,
+                                THEME.read().unwrap().yellow_bg,
+                            ),
+                            _ => (
+                                "SKIP",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                        };
+
+                        let m_str = if count > 1 {
+                            format!("❖ [{} variants]", count)
+                        } else if let Some(m) = &j.matrix {
+                            format!("❖ [{}]", m)
+                        } else {
+                            String::new()
+                        };
+
+                        (m_str, st, sc, sbg)
+                    } else {
+                        let (status_text, status_color, bg_color) = match j.status.as_str() {
+                            "success" => (
+                                "SUCCESS",
+                                THEME.read().unwrap().green,
+                                THEME.read().unwrap().green_bg,
+                            ),
+                            "failed" => (
+                                "FAILED",
+                                THEME.read().unwrap().red,
+                                THEME.read().unwrap().red_bg,
+                            ),
+                            "running" => (
+                                "RUNNING",
+                                THEME.read().unwrap().blue,
+                                THEME.read().unwrap().blue_bg,
+                            ),
+                            "canceled" => (
+                                "CANCEL",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            "pending" => (
+                                "PENDING",
+                                THEME.read().unwrap().yellow,
+                                THEME.read().unwrap().yellow_bg,
+                            ),
+                            "skipped" => (
+                                "SKIP",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            "manual" => (
+                                "MANUAL",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            _ => (
+                                "UNKNOWN",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                        };
+                        let m_str = if let Some(m) = &j.matrix {
+                            format!("❖ [{}]", m)
+                        } else {
+                            String::new()
+                        };
+                        (m_str, status_text, status_color, bg_color)
                     };
+
                     let is_job_selected = Some(i) == app.selected_job_index;
                     let is_checked = app.selected_jobs.contains(&j.id);
                     let status_bg = if is_job_selected {
@@ -2102,10 +2179,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     } else if is_checked {
                         THEME.read().unwrap().checked_bg
                     } else {
-                        bg_color
+                        status_bg_display
                     };
 
-                    let matrix_str = j.matrix.as_deref().unwrap_or("").to_string();
+                    let matrix_str = matrix_display;
+                    let status_text = status_text_display;
+                    let status_color = status_color_display;
                     let mut row_cells = Vec::new();
                     if app.is_column_visible(Tab::Jobs, "ID") {
                         row_cells.push(render_fuzzy_cell(
@@ -2222,10 +2301,29 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 f.render_stateful_widget(table, content_area, &mut state);
                 app.jobs_list_state = state;
 
-                if let Some(trace) = &app.job_trace {
+                if app.job_trace_loading {
+                    let preview_block = Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Details / Trace ")
+                        .title_style(
+                            Style::default()
+                                .fg(THEME.read().unwrap().text_muted)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                        .border_style(Style::default().fg(THEME.read().unwrap().border));
+
+                    f.render_widget(
+                        Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
+                            .alignment(Alignment::Center)
+                            .block(preview_block)
+                            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                        middle_chunks[2],
+                    );
+                } else if let Some(trace) = &app.job_trace {
                     let width = middle_chunks[2].width.saturating_sub(2) as usize;
                     let height = middle_chunks[2].height.saturating_sub(2) as usize;
-                    let total_lines = count_wrapped_lines(trace, width);
+                    let stripped_trace = crate::utils::format::strip_ansi_escapes(trace);
+                    let total_lines = count_wrapped_lines(&stripped_trace, width);
                     let max_scroll = total_lines.saturating_sub(height) as u16;
 
                     if app.job_trace_needs_scroll_to_bottom {
@@ -2251,10 +2349,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 .fg(THEME.read().unwrap().text_muted)
                                 .add_modifier(Modifier::BOLD),
                         )
+                        .title_bottom(
+                            ratatui::text::Line::from(vec![Span::styled(
+                                " Esc: Back | Enter: Zoom | j/k: Scroll ",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            )])
+                            .alignment(Alignment::Right),
+                        )
                         .border_style(Style::default().fg(THEME.read().unwrap().border));
 
+                    let formatted_lines =
+                        crate::utils::format::format_job_trace(trace, &THEME.read().unwrap());
+
                     f.render_widget(
-                        Paragraph::new(trace.as_str())
+                        Paragraph::new(formatted_lines)
                             .block(preview_block)
                             .wrap(ratatui::widgets::Wrap { trim: false })
                             .scroll((app.job_trace_scroll, 0)),
@@ -2723,17 +2831,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             Alignment::Left,
                         ));
                     }
-                    if app.is_column_visible(Tab::Releases, "Description") {
-                        let desc = r.description.as_deref().unwrap_or("");
-                        row_cells.push(render_fuzzy_cell(
-                            &truncate(desc, 80),
-                            &app.search_query,
-                            is_row_highlighted,
-                            false,
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                            Alignment::Left,
-                        ));
-                    }
                     if app.is_column_visible(Tab::Releases, "Author") {
                         let author = r.author_name.as_deref().unwrap_or("");
                         row_cells.push(render_fuzzy_cell(
@@ -2742,6 +2839,28 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             is_row_highlighted,
                             false,
                             Style::default().fg(THEME.read().unwrap().blue),
+                            Alignment::Left,
+                        ));
+                    }
+                    if app.is_column_visible(Tab::Releases, "Assets") {
+                        let assets = r.assets_link.as_deref().unwrap_or("");
+                        row_cells.push(render_fuzzy_cell(
+                            &truncate(assets, 50),
+                            &app.search_query,
+                            is_row_highlighted,
+                            false,
+                            Style::default().fg(THEME.read().unwrap().blue),
+                            Alignment::Left,
+                        ));
+                    }
+                    if app.is_column_visible(Tab::Releases, "Description") {
+                        let desc = r.description.as_deref().unwrap_or("");
+                        row_cells.push(render_fuzzy_cell(
+                            &truncate(desc, 80),
+                            &app.search_query,
+                            is_row_highlighted,
+                            false,
+                            Style::default().fg(THEME.read().unwrap().text_muted),
                             Alignment::Left,
                         ));
                     }
@@ -2762,19 +2881,23 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Releases, "Release Name") {
                     header_cells.push(Cell::from("Release Name"));
-                    widths.push(Constraint::Fill(1));
+                    widths.push(Constraint::Fill(2));
                 }
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
                     widths.push(Constraint::Length(12));
                 }
-                if app.is_column_visible(Tab::Releases, "Description") {
-                    header_cells.push(Cell::from("Description"));
-                    widths.push(Constraint::Fill(2));
-                }
                 if app.is_column_visible(Tab::Releases, "Author") {
                     header_cells.push(Cell::from("Author"));
                     widths.push(Constraint::Length(16));
+                }
+                if app.is_column_visible(Tab::Releases, "Assets") {
+                    header_cells.push(Cell::from("Assets"));
+                    widths.push(Constraint::Length(20));
+                }
+                if app.is_column_visible(Tab::Releases, "Description") {
+                    header_cells.push(Cell::from("Description"));
+                    widths.push(Constraint::Fill(3));
                 }
 
                 if widths.is_empty() {
@@ -2849,16 +2972,45 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 ),
                             ]));
                         }
+                        if let Some(ref cid) = r.commit_id {
+                            text.push(Line::from(vec![
+                                Span::styled(
+                                    "Commit:  ",
+                                    Style::default().fg(THEME.read().unwrap().text_muted),
+                                ),
+                                Span::styled(
+                                    truncate(cid, 8),
+                                    Style::default().fg(THEME.read().unwrap().purple),
+                                ),
+                                Span::raw(" "),
+                                Span::styled(
+                                    r.commit_title.as_deref().unwrap_or(""),
+                                    Style::default().fg(THEME.read().unwrap().text_normal),
+                                ),
+                            ]));
+                        }
+                        if let Some(ref assets) = r.assets_link {
+                            text.push(Line::from(vec![
+                                Span::styled(
+                                    "Assets:  ",
+                                    Style::default().fg(THEME.read().unwrap().text_muted),
+                                ),
+                                Span::styled(
+                                    assets,
+                                    Style::default().fg(THEME.read().unwrap().blue),
+                                ),
+                            ]));
+                        }
                         if let Some(ref desc) = r.description {
                             if !desc.is_empty() {
+                                text.push(Line::from(""));
                                 text.push(Line::from(Span::styled(
-                                    "---",
-                                    Style::default().fg(THEME.read().unwrap().text_muted),
+                                    "Description:",
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().header_fg)
+                                        .add_modifier(Modifier::BOLD),
                                 )));
-                                text.push(Line::from(Span::styled(
-                                    truncate(desc, 200),
-                                    Style::default().fg(THEME.read().unwrap().text_normal),
-                                )));
+                                text.push(Line::from(desc.as_str()));
                             }
                         }
                         f.render_widget(
@@ -3181,58 +3333,172 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     },
                 );
 
-                let header_cells = Tab::Milestones
-                    .columns(is_github)
-                    .into_iter()
-                    .filter(|col| app.is_column_visible(Tab::Milestones, col))
-                    .map(|h| Cell::from(h).style(Style::default().add_modifier(Modifier::BOLD)));
-                let header = Row::new(header_cells)
-                    .style(header_style)
-                    .height(1)
-                    .bottom_margin(1);
+                let mut header_cells = Vec::new();
+                let mut widths = Vec::new();
+                let cols = Tab::Milestones.columns(is_github);
+                for col in &cols {
+                    if app.is_column_visible(Tab::Milestones, col) {
+                        header_cells.push(Cell::from(*col));
+                        match *col {
+                            "ID" => widths.push(Constraint::Length(10)),
+                            "Title" => widths.push(Constraint::Fill(1)),
+                            "State" => widths.push(Constraint::Length(12)),
+                            "Start Date" => widths.push(Constraint::Length(15)),
+                            "Due Date" => widths.push(Constraint::Length(15)),
+                            "Progress" => widths.push(Constraint::Length(10)),
+                            _ => widths.push(Constraint::Length(10)),
+                        }
+                    }
+                }
 
                 let rows = filtered_milestones.iter().enumerate().map(|(idx, m)| {
                     let mut cells = Vec::new();
-                    let cols = Tab::Milestones.columns(is_github);
-                    for col in cols {
-                        if app.is_column_visible(Tab::Milestones, &col) {
-                            let val = match col {
-                                "ID" => m.iid.to_string(),
-                                "Title" => m.title.clone(),
-                                "State" => m.state.clone(),
+                    let is_selected = app.milestones.state.selected() == Some(idx);
+                    for col in &cols {
+                        if app.is_column_visible(Tab::Milestones, col) {
+                            match *col {
+                                "ID" => {
+                                    cells.push(render_fuzzy_cell(
+                                        &m.iid.to_string(),
+                                        &app.search_query,
+                                        is_selected,
+                                        false,
+                                        Style::default().fg(THEME.read().unwrap().text_normal),
+                                        Alignment::Left,
+                                    ));
+                                }
+                                "Title" => {
+                                    cells.push(render_fuzzy_cell(
+                                        &m.title,
+                                        &app.search_query,
+                                        is_selected,
+                                        false,
+                                        Style::default()
+                                            .fg(THEME.read().unwrap().text_normal)
+                                            .add_modifier(Modifier::BOLD),
+                                        Alignment::Left,
+                                    ));
+                                }
+                                "State" => {
+                                    let (state_text, state_style) = if m.state == "active" {
+                                        (
+                                            "ACTIVE",
+                                            Style::default()
+                                                .fg(THEME.read().unwrap().green)
+                                                .bg(if is_selected {
+                                                    THEME.read().unwrap().highlight_bg
+                                                } else {
+                                                    THEME.read().unwrap().green_bg
+                                                })
+                                                .add_modifier(Modifier::BOLD),
+                                        )
+                                    } else {
+                                        (
+                                            "CLOSED",
+                                            Style::default()
+                                                .fg(THEME.read().unwrap().red)
+                                                .bg(if is_selected {
+                                                    THEME.read().unwrap().highlight_bg
+                                                } else {
+                                                    THEME.read().unwrap().red_bg
+                                                })
+                                                .add_modifier(Modifier::BOLD),
+                                        )
+                                    };
+                                    cells.push(
+                                        Cell::from(
+                                            Line::from(state_text).alignment(Alignment::Center),
+                                        )
+                                        .style(state_style),
+                                    );
+                                }
+
                                 "Start Date" => {
-                                    m.start_date.clone().unwrap_or_else(|| "N/A".to_string())
+                                    let val =
+                                        m.start_date.clone().unwrap_or_else(|| "N/A".to_string());
+                                    cells.push(render_fuzzy_cell(
+                                        &val,
+                                        &app.search_query,
+                                        is_selected,
+                                        false,
+                                        Style::default().fg(THEME.read().unwrap().blue),
+                                        Alignment::Left,
+                                    ));
                                 }
                                 "Due Date" => {
-                                    m.due_date.clone().unwrap_or_else(|| "N/A".to_string())
+                                    let val =
+                                        m.due_date.clone().unwrap_or_else(|| "N/A".to_string());
+                                    cells.push(render_fuzzy_cell(
+                                        &val,
+                                        &app.search_query,
+                                        is_selected,
+                                        false,
+                                        Style::default().fg(THEME.read().unwrap().yellow),
+                                        Alignment::Left,
+                                    ));
                                 }
-                                _ => "".to_string(),
-                            };
-                            cells.push(Cell::from(val));
+                                "Progress" => {
+                                    let mut color = THEME.read().unwrap().text_muted;
+                                    let progress_str = if let Some(issues) =
+                                        app.milestone_issues_cache.get(&m.iid)
+                                    {
+                                        let total = issues.len();
+                                        if total > 0 {
+                                            let closed = issues
+                                                .iter()
+                                                .filter(|i| i.state == "closed")
+                                                .count();
+                                            let percent = (closed * 100) / total;
+                                            color = if percent <= 33 {
+                                                THEME.read().unwrap().red
+                                            } else if percent <= 67 {
+                                                THEME.read().unwrap().yellow
+                                            } else {
+                                                THEME.read().unwrap().green
+                                            };
+                                            format!("{}%", percent)
+                                        } else {
+                                            color = THEME.read().unwrap().red;
+                                            "0%".to_string()
+                                        }
+                                    } else if app.selected_milestone_iid == Some(m.iid) {
+                                        // Cache miss but this row is selected — fetch in progress
+                                        "Loading...".to_string()
+                                    } else {
+                                        "-".to_string()
+                                    };
+                                    cells.push(render_fuzzy_cell(
+                                        &progress_str,
+                                        &app.search_query,
+                                        is_selected,
+                                        false,
+                                        Style::default().fg(color),
+                                        Alignment::Left,
+                                    ));
+                                }
+                                _ => {
+                                    cells.push(Cell::from(String::new()));
+                                }
+                            }
                         }
                     }
-                    let is_selected = app.milestones.state.selected() == Some(idx);
                     let row_style = if is_selected {
                         Style::default().bg(THEME.read().unwrap().highlight_bg)
                     } else {
-                        Style::default().fg(THEME.read().unwrap().text_normal)
+                        Style::default()
                     };
                     Row::new(cells).style(row_style)
                 });
 
-                let table = Table::new(
-                    rows,
-                    [
-                        Constraint::Percentage(10),
-                        Constraint::Percentage(40),
-                        Constraint::Percentage(20),
-                        Constraint::Percentage(30),
-                    ],
-                )
-                .header(header)
-                .block(main_block.clone())
-                .row_highlight_style(highlight_style)
-                .highlight_symbol(" ❯ ");
+                if widths.is_empty() {
+                    widths.push(Constraint::Min(0));
+                }
+
+                let table = Table::new(rows, widths)
+                    .header(Row::new(header_cells).style(header_style).height(1))
+                    .block(main_block.clone())
+                    .row_highlight_style(highlight_style)
+                    .highlight_symbol(" ❯ ");
 
                 f.render_stateful_widget(table, content_area, &mut app.milestones.state);
 
@@ -3251,51 +3517,63 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         let mut text = Vec::new();
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Title:      ",
+                                "Title:       ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
                             Span::styled(
                                 &m.title,
                                 Style::default()
-                                    .fg(THEME.read().unwrap().blue)
+                                    .fg(THEME.read().unwrap().text_normal)
                                     .add_modifier(Modifier::BOLD),
                             ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "State:      ",
+                                "State:       ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
                             Span::styled(
-                                &m.state,
-                                Style::default().fg(if m.state == "active" {
-                                    THEME.read().unwrap().green
-                                } else {
-                                    THEME.read().unwrap().yellow
-                                }),
+                                m.state.to_uppercase(),
+                                Style::default()
+                                    .fg(if m.state == "active" {
+                                        THEME.read().unwrap().green
+                                    } else {
+                                        THEME.read().unwrap().red
+                                    })
+                                    .add_modifier(Modifier::BOLD),
                             ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Start Date: ",
+                                "Start Date:  ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
-                            Span::raw(m.start_date.as_deref().unwrap_or("N/A")),
+                            Span::styled(
+                                m.start_date.as_deref().unwrap_or("N/A"),
+                                Style::default().fg(THEME.read().unwrap().blue),
+                            ),
                         ]));
                         text.push(Line::from(vec![
                             Span::styled(
-                                "Due Date:   ",
+                                "Due Date:    ",
                                 Style::default().fg(THEME.read().unwrap().text_muted),
                             ),
-                            Span::raw(m.due_date.as_deref().unwrap_or("N/A")),
+                            Span::styled(
+                                m.due_date.as_deref().unwrap_or("N/A"),
+                                Style::default().fg(THEME.read().unwrap().yellow),
+                            ),
                         ]));
                         if let Some(desc) = &m.description {
-                            text.push(Line::from(""));
-                            text.push(Line::from(Span::styled(
-                                "Description:",
-                                Style::default().add_modifier(Modifier::BOLD),
-                            )));
-                            text.push(Line::from(desc.as_str()));
+                            if !desc.trim().is_empty() {
+                                text.push(Line::from(""));
+                                text.push(Line::from(Span::styled(
+                                    "Description:",
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().header_fg)
+                                        .add_modifier(Modifier::BOLD),
+                                )));
+                                text.push(Line::from(desc.as_str()));
+                            }
                         }
                         text.push(Line::from(""));
 
@@ -3307,12 +3585,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             text.push(Line::from(vec![
                                 Span::styled(
                                     "Issues Status: ",
-                                    Style::default().add_modifier(Modifier::BOLD),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().header_fg)
+                                        .add_modifier(Modifier::BOLD),
                                 ),
-                                Span::raw(format!(
-                                    "{} Closed / {} Open (Total {})",
-                                    closed, open, total
-                                )),
+                                Span::styled(
+                                    format!("{} Closed", closed),
+                                    Style::default().fg(THEME.read().unwrap().green),
+                                ),
+                                Span::raw(" / "),
+                                Span::styled(
+                                    format!("{} Open", open),
+                                    Style::default().fg(THEME.read().unwrap().yellow),
+                                ),
+                                Span::raw(format!(" (Total {})", total)),
                             ]));
 
                             let pct = if total > 0 {
@@ -3325,15 +3611,25 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 "[{}{}] {:.1}%",
                                 "█".repeat(filled_len),
                                 "░".repeat(20 - filled_len),
-                                pct
+                                pct,
                             );
+                            let progress_color = if pct <= 33.0 {
+                                THEME.read().unwrap().red
+                            } else if pct <= 66.0 {
+                                THEME.read().unwrap().yellow
+                            } else {
+                                THEME.read().unwrap().green
+                            };
                             text.push(Line::from(Span::styled(
                                 bar,
-                                Style::default().fg(THEME.read().unwrap().green),
+                                Style::default().fg(progress_color),
                             )));
                             text.push(Line::from(""));
                         } else {
-                            text.push(Line::from("Loading issues details..."));
+                            text.push(Line::from(Span::styled(
+                                "Loading issues details...",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            )));
                         }
 
                         f.render_widget(
@@ -5448,6 +5744,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
             },
             Shortcut {
                 category: "Jobs",
+                key: s("m"),
+                action: "Collapse / expand matrix jobs",
+            },
+            Shortcut {
+                category: "Jobs",
                 key: s("o"),
                 action: "Open selected job in browser",
             },
@@ -6179,13 +6480,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
             ])
             .split(area);
 
-        let message_p = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(message),
-        ])
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(THEME.read().unwrap().text_normal))
-        .wrap(ratatui::widgets::Wrap { trim: true });
+        let message_p = Paragraph::new(vec![Line::from(""), Line::from(message)])
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(THEME.read().unwrap().text_normal))
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         let footer_p = Paragraph::new(" y: Yes (Confirm) • n/Esc: Cancel ")
             .alignment(Alignment::Center)

@@ -1,41 +1,81 @@
-name: OpenCode
-on:
-  issue_comment:
-    types:
-      - created
-  pull_request_review_comment:
-    types:
-      - created
+name: OpenCode Automation
 
+on:
+    issue_comment:
+        types:
+            - created
+    pull_request_review_comment:
+        types:
+            - created
+    issues:
+        types:
+            - opened
+            - labeled
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  id-token: write
+    contents: write
+    issues: write
+    pull-requests: write
+    id-token: write
 
 jobs:
-  opencode:
-    # Triggers only when someone comments /oc or /opencode
-    if: contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
+    # JOB 1: Triggers only when a comment contains /oc or /opencode
+    opencode-comment-commands:
+        if: |
+            github.event.comment && 
+            (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode'))
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+              with:
+                  fetch-depth: 1
+                  persist-credentials: false
 
-      - name: Configure Git
-        run: |
-          git config --global user.name "opencode[bot]"
-          git config --global user.email "opencode[bot]@users.noreply.github.com"
+            - name: Configure Git
+              run: |
+                  git config --global user.name "opencode[bot]"
+                  git config --global user.email "opencode[bot]@users.noreply.github.com"
 
-      - name: Run OpenCode
-        uses: anomalyco/opencode/github@latest
-        env:
-          # Ensure this secret exists in your Repo Settings > Secrets
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          model: opencode/big-pickle
-          use_github_token: true
+            - name: Run OpenCode on Comment
+              uses: anomalyco/opencode/github@latest
+              env:
+                  OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  model: opencode/big-pickle
+                  use_github_token: true
+
+    # JOB 2: Triggers automatically when a brand new ticket is opened (Fleshes out layout/features)
+    opencode-ticket-creation:
+        if: github.event_name == 'issues' && github.event.action == 'opened'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+              with:
+                  fetch-depth: 1
+                  persist-credentials: false
+
+            - name: Configure Git
+              run: |
+                  git config --global user.name "opencode[bot]"
+                  git config --global user.email "opencode[bot]@users.noreply.github.com"
+
+            - name: Run OpenCode to Flush Out Ticket
+              uses: anomalyco/opencode/github@latest
+              env:
+                  OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  model: opencode/big-pickle
+                  use_github_token: true
+                  prompt: |
+                      Analyze the title and initial body of this issue. If it is a feature request or layout improvement for glab-tui (e.g. adding a new view, improving keybindings, adjusting ratatui layouts, or handling state), look at our codebase to identify the files responsible for UI rendering, application state, or event handling that will need modifications. 
+
+                      Flesh out a structured engineering description containing:
+                      1. Summary
+                      2. Impact on current TUI layers (e.g., event loop, UI rendering modules)
+                      3. Implementation Plan (which modules need changing and rough code approach)
+                      4. Design/UX Acceptance Criteria.
+
+                      Update the body, labels, and milestones of the issue accordingly with your findings. Please leave the original attributes as well.

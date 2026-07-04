@@ -366,7 +366,7 @@ keybind_defaults! {
     def_quit = "q",
     def_help = "?",
     def_search = "/",
-    def_refresh = "r",
+    def_refresh = "Ctrl+r",
     def_configure = "Tab",
     def_next_tab = "l",
     def_prev_tab = "h",
@@ -586,7 +586,7 @@ theme_preset = "default"
 quit = "q"
 help = "?"
 search = "/"
-refresh = "r"
+refresh = "Ctrl+r"
 configure = "Tab"
 next_tab = "l"
 prev_tab = "h"

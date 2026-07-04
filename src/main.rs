@@ -444,7 +444,56 @@ async fn apply_field_text_change(
                 }
             }
         }
-        _ => {}
+        _ => {
+            if entity_type == "milestone" {
+                let milestone_opt = app.milestones.items.iter().find(|m| m.iid == iid).cloned();
+                if let Some(milestone) = milestone_opt {
+                    let mut title = milestone.title.clone();
+                    let mut start_date = milestone.start_date.clone();
+                    let mut due_date = milestone.due_date.clone();
+                    let mut description = milestone.description.clone().unwrap_or_default();
+
+                    match field_type {
+                        "title" => title = value.clone(),
+                        "start_date" => start_date = Some(value.clone()),
+                        "due_date" => due_date = Some(value.clone()),
+                        "description" => description = value.clone(),
+                        _ => {}
+                    }
+
+                    let client = app.gitlab_client.clone().unwrap();
+                    let project_path = app.project_context.clone();
+                    let tx_spawn = tx.clone();
+                    let _ = tx.send(Event::CommandStarted(format!(
+                        "Updating milestone #{}",
+                        iid
+                    )));
+                    tokio::spawn(async move {
+                        let res = crate::gitlab::milestones::update_milestone(
+                            &client,
+                            &project_path,
+                            iid,
+                            &title,
+                            &description,
+                            start_date.as_deref(),
+                            due_date.as_deref(),
+                        )
+                        .await;
+                        match res {
+                            Ok(_) => {
+                                let _ = tx_spawn.send(Event::MilestoneUpdated);
+                            }
+                            Err(e) => {
+                                let _ = tx_spawn.send(Event::CommandCompleted(
+                                    crate::app::Tab::Milestones,
+                                    Err(e.to_string()),
+                                ));
+                            }
+                        }
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -686,14 +735,21 @@ async fn apply_selector_changes(
         }
         "draft_status" => {
             if let Some(val) = values.first() {
-                let action = if val.to_lowercase() == "draft" {
-                    "--draft"
+                let going_ready = val.to_lowercase() != "draft";
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && going_ready && entity_type == "mr" {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
                 } else {
-                    "--ready"
+                    let action = if val.to_lowercase() == "draft" {
+                        "--draft"
+                    } else {
+                        "--ready"
+                    };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
                 };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if entity_type == "mr" {
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -955,6 +1011,62 @@ fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 },
             });
         }
+    } else if entity_type == "milestone" {
+        if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
+            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let cli = app_cli(app);
+            let mut fields = vec![("Title".to_string(), milestone.title.clone())];
+            if !cli.is_github {
+                fields.push((
+                    "Start Date".to_string(),
+                    milestone.start_date.clone().unwrap_or_default(),
+                ));
+            }
+            fields.push((
+                "Due Date".to_string(),
+                milestone.due_date.clone().unwrap_or_default(),
+            ));
+            fields.push((
+                "Description".to_string(),
+                milestone.description.clone().unwrap_or_default(),
+            ));
+
+            app.edit_menu = Some(crate::app::EditMenu {
+                title: format!("Edit Milestone #{}", milestone.iid),
+                fields,
+                selected_idx,
+                entity_iid: milestone.iid,
+                entity_type: "milestone".to_string(),
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(selected_idx));
+                    s
+                },
+            });
+        }
+    } else if entity_type == "release" {
+        if let Some(release) = app.releases.items.get(entity_iid as usize) {
+            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            app.edit_menu = Some(crate::app::EditMenu {
+                title: format!("Edit Release {}", release.tag_name),
+                fields: vec![
+                    ("Tag".to_string(), release.tag_name.clone()),
+                    ("Release Name".to_string(), release.name.clone()),
+                    (
+                        "Description".to_string(),
+                        release.description.clone().unwrap_or_default(),
+                    ),
+                ],
+                selected_idx,
+                entity_iid,
+                entity_type: "release".to_string(),
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(selected_idx));
+                    s
+                },
+            });
+        }
     }
 }
 
@@ -1002,7 +1114,7 @@ async fn handle_entity_update(
                 }
             }
         }
-        KeyCode::Char('r') => {
+        KeyCode::Char('s') => {
             if entity_type == "mr" {
                 let is_draft = app
                     .mrs
@@ -1011,10 +1123,16 @@ async fn handle_entity_update(
                     .find(|m| m.iid == iid)
                     .map(|m| m.draft)
                     .unwrap_or(false);
-                let action = if is_draft { "--ready" } else { "--draft" };
-                let args = UpdateCmd::new(cli.is_github, entity_type, iid)
-                    .flag_bool(action)
-                    .build();
+                // GitHub uses `gh pr ready <iid>` to mark ready for review;
+                // `gh pr edit --ready` is not a valid flag.
+                let args = if cli.is_github && is_draft {
+                    vec!["pr".to_string(), "ready".to_string(), iid.to_string()]
+                } else {
+                    let action = if is_draft { "--ready" } else { "--draft" };
+                    UpdateCmd::new(cli.is_github, entity_type, iid)
+                        .flag_bool(action)
+                        .build()
+                };
                 run_cli(&cli, &args, terminal, tx.clone(), tab).await;
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.draft = !is_draft;
@@ -1331,6 +1449,78 @@ fn get_branches() -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+/// Returns a list of workflow/CI files available in the repo.
+/// For GitHub repos: scans `.github/workflows/*.yml` and `*.yaml`.
+/// For GitLab repos: returns `.gitlab-ci.yml` if it exists, else empty.
+fn get_workflow_files(is_github: bool) -> Vec<String> {
+    // Determine the repo root via `git rev-parse --show-toplevel`
+    let root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| ".".to_string());
+
+    if is_github {
+        let workflows_dir = std::path::Path::new(&root)
+            .join(".github")
+            .join("workflows");
+        let mut files: Vec<String> = std::fs::read_dir(&workflows_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if (ext == "yml" || ext == "yaml") && path.is_file() {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        files
+    } else {
+        // GitLab: the primary CI file is `.gitlab-ci.yml`; also check for
+        // include-able `.gitlab-ci-*.yml` files at the root.
+        let mut files: Vec<String> = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if !path.is_file() {
+                    return None;
+                }
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if (ext == "yml" || ext == "yaml")
+                    && (name == ".gitlab-ci.yml" || name.starts_with(".gitlab-ci-"))
+                {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        files
+    }
 }
 
 fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> bool {
@@ -1724,23 +1914,28 @@ async fn main() -> Result<()> {
                     if let Some(iid) = milestone_iid {
                         if app.selected_milestone_iid != Some(iid) {
                             app.selected_milestone_iid = Some(iid);
-                            app.selected_milestone_issues = None;
-                            let client_clone = client.clone();
-                            let project_context = app.project_context.clone();
-                            let tx = events.sender();
-                            tokio::spawn(async move {
-                                if let Ok(issues) = gitlab::milestones::list_milestone_issues(
-                                    &client_clone,
-                                    &project_context,
-                                    iid,
-                                )
-                                .await
-                                {
-                                    let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
-                                } else {
-                                    let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
-                                }
-                            });
+                            // Use cached data if available; only fetch if not yet cached
+                            if let Some(cached) = app.milestone_issues_cache.get(&iid) {
+                                app.selected_milestone_issues = Some(cached.clone());
+                            } else {
+                                app.selected_milestone_issues = None;
+                                let client_clone = client.clone();
+                                let project_context = app.project_context.clone();
+                                let tx = events.sender();
+                                tokio::spawn(async move {
+                                    if let Ok(issues) = gitlab::milestones::list_milestone_issues(
+                                        &client_clone,
+                                        &project_context,
+                                        iid,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
+                                    } else {
+                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -1809,6 +2004,40 @@ async fn main() -> Result<()> {
                     app.jobs_list_state.select(Some(0));
                     app.job_trace_scroll = 0;
                     app.job_trace = None;
+                }
+                Event::JobTraceFetched(job_id, result) => {
+                    app.job_trace_loading = false;
+                    let current_selected_job_id = match app.active_tab {
+                        app::Tab::Jobs => {
+                            if let Some(idx) = app.selected_job_index {
+                                app.filtered_jobs().get(idx).map(|j| j.id)
+                            } else {
+                                None
+                            }
+                        }
+                        app::Tab::Pipelines => {
+                            if let Some(idx) = app.selected_job_index {
+                                app.selected_pipeline_jobs
+                                    .as_ref()
+                                    .and_then(|jobs| jobs.get(idx).map(|j| j.id))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if current_selected_job_id == Some(job_id) {
+                        match result {
+                            Ok(trace) => {
+                                app.job_trace = Some(trace);
+                                app.job_trace_needs_scroll_to_bottom = true;
+                                app.details_zoomed = true;
+                            }
+                            Err(e) => {
+                                app.error_message = Some(e);
+                            }
+                        }
+                    }
                 }
                 Event::IssuesFetched(issues) => {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
@@ -1892,8 +2121,12 @@ async fn main() -> Result<()> {
                     cache.milestones = app.milestones.items.clone();
                     crate::utils::cache::save_cache(&app.project_context, &cache);
                 }
-                Event::MilestoneIssuesFetched(_, issues) => {
-                    app.selected_milestone_issues = Some(issues);
+                Event::MilestoneIssuesFetched(iid, issues) => {
+                    app.milestone_issues_cache.insert(iid, issues.clone());
+                    // Only update the displayed issues if we're still viewing this milestone
+                    if app.selected_milestone_iid == Some(iid) {
+                        app.selected_milestone_issues = Some(issues);
+                    }
                 }
                 Event::SelectorItemsFetched(items) => {
                     if let Some(mut selector) = app.selector.take() {
@@ -4345,6 +4578,12 @@ async fn main() -> Result<()> {
                                                     .find(|i| i.iid == entity_iid)
                                                     .and_then(|i| i.description.clone())
                                                     .unwrap_or_default()
+                                            } else if entity_type == "release" {
+                                                app.releases
+                                                    .items
+                                                    .get(entity_iid as usize)
+                                                    .and_then(|r| r.description.clone())
+                                                    .unwrap_or_default()
                                             } else {
                                                 app.mrs
                                                     .items
@@ -4380,6 +4619,22 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
+                                                        let cli = app_cli(&app);
+                                                        let args = UpdateCmd::new(
+                                                            cli.is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                        )
+                                                        .flag("-d", &new_desc)
+                                                        .build();
+                                                        run_cli(
+                                                            &cli,
+                                                            &args,
+                                                            &mut terminal,
+                                                            events.sender(),
+                                                            app.active_tab,
+                                                        )
+                                                        .await;
                                                     } else if entity_type == "mr" {
                                                         if let Some(item) = app
                                                             .mrs
@@ -4390,23 +4645,68 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
+                                                        let cli = app_cli(&app);
+                                                        let args = UpdateCmd::new(
+                                                            cli.is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                        )
+                                                        .flag("-d", &new_desc)
+                                                        .build();
+                                                        run_cli(
+                                                            &cli,
+                                                            &args,
+                                                            &mut terminal,
+                                                            events.sender(),
+                                                            app.active_tab,
+                                                        )
+                                                        .await;
+                                                    } else if entity_type == "release" {
+                                                        let release_opt = app
+                                                            .releases
+                                                            .items
+                                                            .get(entity_iid as usize)
+                                                            .cloned();
+                                                        if let Some(release) = release_opt {
+                                                            let client =
+                                                                app.gitlab_client.clone().unwrap();
+                                                            let project_path =
+                                                                app.project_context.clone();
+                                                            let tag = release.tag_name.clone();
+                                                            let name = release.name.clone();
+                                                            let desc = new_desc.clone();
+                                                            let tx_spawn = events.sender();
+                                                            let _ = tx_spawn.send(
+                                                                Event::CommandStarted(format!(
+                                                                    "Updating release tag {}",
+                                                                    tag
+                                                                )),
+                                                            );
+                                                            tokio::spawn(async move {
+                                                                let res = crate::gitlab::releases::update_release(
+                                                                    &client,
+                                                                    &project_path,
+                                                                    &tag,
+                                                                    &name,
+                                                                    &desc,
+                                                                )
+                                                                .await;
+                                                                match res {
+                                                                    Ok(_) => {
+                                                                        let _ = tx_spawn.send(
+                                                                            Event::ReleaseUpdated,
+                                                                        );
+                                                                    }
+                                                                    Err(e) => {
+                                                                        let _ = tx_spawn.send(Event::CommandCompleted(
+                                                                            crate::app::Tab::Releases,
+                                                                            Err(e.to_string()),
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
                                                     }
-                                                    let cli = app_cli(&app);
-                                                    let args = UpdateCmd::new(
-                                                        cli.is_github,
-                                                        &entity_type,
-                                                        entity_iid,
-                                                    )
-                                                    .flag("-d", &new_desc)
-                                                    .build();
-                                                    run_cli(
-                                                        &cli,
-                                                        &args,
-                                                        &mut terminal,
-                                                        events.sender(),
-                                                        app.active_tab,
-                                                    )
-                                                    .await;
                                                 }
                                                 if let Some(client) = &app.gitlab_client {
                                                     if entity_type == "issue" {
@@ -4464,6 +4764,8 @@ async fn main() -> Result<()> {
                                                 "mr_pipeline" => "Merge Request Pipeline",
                                                 "source_branch" => "Source Branch",
                                                 "target_branch" => "Target Branch",
+                                                "pipeline_branch" => "Branch / Ref",
+                                                "workflow_file" => "Workflow / CI File (GitHub)",
                                                 _ => "",
                                             };
                                             if !target_field_name.is_empty() {
@@ -4915,7 +5217,9 @@ async fn main() -> Result<()> {
                                         tokio::spawn(async move {
                                             if is_github {
                                                 let gh_repo = encoded_path.replace("%2F", "/");
-                                                let due_on = if !due_date.is_empty() && due_date != "YYYY-MM-DD" {
+                                                let due_on = if !due_date.is_empty()
+                                                    && due_date != "YYYY-MM-DD"
+                                                {
                                                     format!("{}T00:00:00Z", due_date.trim())
                                                 } else {
                                                     "".to_string()
@@ -4928,7 +5232,10 @@ async fn main() -> Result<()> {
                                                 ];
                                                 if !description.is_empty() {
                                                     args.push("-f".to_string());
-                                                    args.push(format!("description={}", description));
+                                                    args.push(format!(
+                                                        "description={}",
+                                                        description
+                                                    ));
                                                 }
                                                 if !due_on.is_empty() {
                                                     args.push("-f".to_string());
@@ -4943,7 +5250,10 @@ async fn main() -> Result<()> {
                                                         let _ = tx.send(Event::MilestoneUpdated);
                                                     }
                                                     Ok(out) => {
-                                                        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                                                        let err =
+                                                            String::from_utf8_lossy(&out.stderr)
+                                                                .trim()
+                                                                .to_string();
                                                         let _ = tx.send(Event::CommandCompleted(
                                                             app::Tab::Milestones,
                                                             Err(format!("Failed: {}", err)),
@@ -4957,7 +5267,10 @@ async fn main() -> Result<()> {
                                                     }
                                                 }
                                             } else {
-                                                let endpoint = format!("/projects/{}/milestones", encoded_path);
+                                                let endpoint = format!(
+                                                    "/projects/{}/milestones",
+                                                    encoded_path
+                                                );
                                                 let mut args = vec![
                                                     "api".to_string(),
                                                     "-X".to_string(),
@@ -4968,13 +5281,19 @@ async fn main() -> Result<()> {
                                                 ];
                                                 if !description.is_empty() {
                                                     args.push("-f".to_string());
-                                                    args.push(format!("description={}", description));
+                                                    args.push(format!(
+                                                        "description={}",
+                                                        description
+                                                    ));
                                                 }
-                                                if !start_date.is_empty() && start_date != "YYYY-MM-DD" {
+                                                if !start_date.is_empty()
+                                                    && start_date != "YYYY-MM-DD"
+                                                {
                                                     args.push("-f".to_string());
                                                     args.push(format!("start_date={}", start_date));
                                                 }
-                                                if !due_date.is_empty() && due_date != "YYYY-MM-DD" {
+                                                if !due_date.is_empty() && due_date != "YYYY-MM-DD"
+                                                {
                                                     args.push("-f".to_string());
                                                     args.push(format!("due_date={}", due_date));
                                                 }
@@ -4987,7 +5306,10 @@ async fn main() -> Result<()> {
                                                         let _ = tx.send(Event::MilestoneUpdated);
                                                     }
                                                     Ok(out) => {
-                                                        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                                                        let err =
+                                                            String::from_utf8_lossy(&out.stderr)
+                                                                .trim()
+                                                                .to_string();
                                                         let _ = tx.send(Event::CommandCompleted(
                                                             app::Tab::Milestones,
                                                             Err(format!("Failed: {}", err)),
@@ -5106,6 +5428,65 @@ async fn main() -> Result<()> {
                                                 events.sender(),
                                             );
                                         }
+                                    } else if entity_type == "new_release" {
+                                        let tag = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Tag")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let name = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Release Name")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let description = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Description")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        if !tag.is_empty() {
+                                            let cli = app_cli(&app);
+                                            let mut cmd_args = vec![
+                                                "release".to_string(),
+                                                "create".to_string(),
+                                                tag,
+                                            ];
+                                            if !name.is_empty() {
+                                                cmd_args.push("-n".to_string());
+                                                cmd_args.push(name);
+                                            }
+                                            if !description.is_empty() {
+                                                if cli.is_github {
+                                                    cmd_args.push("-n".to_string());
+                                                    cmd_args.push(description);
+                                                } else {
+                                                    cmd_args.push("-N".to_string());
+                                                    cmd_args.push(description);
+                                                }
+                                            }
+                                            app.edit_menu = None;
+                                            run_cli(
+                                                &cli,
+                                                &cmd_args,
+                                                &mut terminal,
+                                                events.sender(),
+                                                app.active_tab,
+                                            )
+                                            .await;
+
+                                            if let Some(client) = &app.gitlab_client {
+                                                spawn_refresh_active_tab(
+                                                    client,
+                                                    &app.project_context,
+                                                    app.active_tab,
+                                                    events.sender(),
+                                                );
+                                            }
+                                        }
                                         continue;
                                     }
                                 }
@@ -5126,6 +5507,8 @@ async fn main() -> Result<()> {
                                     || field_name == "Merge Request Pipeline"
                                     || field_name == "Source Branch"
                                     || field_name == "Target Branch"
+                                    || field_name == "Branch / Ref"
+                                    || field_name == "Workflow / CI File (GitHub)"
                                 {
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
@@ -5138,6 +5521,8 @@ async fn main() -> Result<()> {
                                         "Merge Request Pipeline" => "mr_pipeline",
                                         "Source Branch" => "source_branch",
                                         "Target Branch" => "target_branch",
+                                        "Branch / Ref" => "pipeline_branch",
+                                        "Workflow / CI File (GitHub)" => "workflow_file",
                                         _ => "",
                                     };
                                     let multi_select = match field_type {
@@ -5193,6 +5578,27 @@ async fn main() -> Result<()> {
                                     {
                                         all_items = get_branches();
                                         is_loading = false;
+                                    } else if field_type == "pipeline_branch" {
+                                        all_items = get_branches();
+                                        is_loading = false;
+                                        // Pre-select the current branch value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
+                                    } else if field_type == "workflow_file" {
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map(|c| c.is_github)
+                                            .unwrap_or(false);
+                                        all_items = get_workflow_files(is_github);
+                                        is_loading = false;
+                                        // Pre-select any already-typed value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
@@ -5391,28 +5797,51 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
 
-                                if field_name == "Due Date" {
-                                    let current_val = if entity_iid == 0 {
-                                        menu.fields[menu.selected_idx].1.clone()
-                                    } else {
-                                        app.issues
-                                            .items
-                                            .iter()
-                                            .find(|i| i.iid == entity_iid)
-                                            .and_then(|i| i.due_date.clone())
-                                            .unwrap_or_default()
-                                    };
-                                    let action = if entity_iid == 0 {
-                                        crate::app::DatePickerAction::EditNewField {
-                                            field_idx: menu.selected_idx,
-                                        }
-                                    } else {
-                                        crate::app::DatePickerAction::EditField {
-                                            entity_iid,
-                                            entity_type: entity_type.clone(),
-                                            field_type: "due_date".to_string(),
-                                        }
-                                    };
+                                if field_name == "Due Date" || field_name == "Start Date" {
+                                    let current_val =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            menu.fields[menu.selected_idx].1.clone()
+                                        } else {
+                                            if entity_type == "issue" {
+                                                app.issues
+                                                    .items
+                                                    .iter()
+                                                    .find(|i| i.iid == entity_iid)
+                                                    .and_then(|i| i.due_date.clone())
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "milestone" {
+                                                let m = app
+                                                    .milestones
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid);
+                                                if field_name == "Start Date" {
+                                                    m.and_then(|m| m.start_date.clone())
+                                                        .unwrap_or_default()
+                                                } else {
+                                                    m.and_then(|m| m.due_date.clone())
+                                                        .unwrap_or_default()
+                                                }
+                                            } else {
+                                                String::new()
+                                            }
+                                        };
+                                    let action =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            crate::app::DatePickerAction::EditNewField {
+                                                field_idx: menu.selected_idx,
+                                            }
+                                        } else {
+                                            crate::app::DatePickerAction::EditField {
+                                                entity_iid,
+                                                entity_type: entity_type.clone(),
+                                                field_type: if field_name == "Start Date" {
+                                                    "start_date".to_string()
+                                                } else {
+                                                    "due_date".to_string()
+                                                },
+                                            }
+                                        };
                                     app.date_picker = Some(crate::app::DatePicker::new(
                                         format!(" Select {}", field_name),
                                         &current_val,
@@ -5428,63 +5857,90 @@ async fn main() -> Result<()> {
                                     || field_name == "Variables"
                                     || field_name == "Inputs"
                                     || field_name == "Workflow / CI File (GitHub)"
+                                    || field_name == "Release Name"
+                                    || field_name == "Tag"
                                 {
-                                    let current_val = if entity_iid == 0 {
-                                        menu.fields[menu.selected_idx].1.clone()
-                                    } else {
-                                        let field_type = match field_name.as_str() {
-                                            "Title" => "title",
-                                            "Target Branch" => "target_branch",
-                                            "Weight" => "weight",
-                                            _ => "",
-                                        };
-                                        match field_type {
-                                            "title" => {
-                                                if entity_type == "issue" {
-                                                    app.issues
-                                                        .items
-                                                        .iter()
-                                                        .find(|i| i.iid == entity_iid)
-                                                        .map(|i| i.title.clone())
-                                                        .unwrap_or_default()
-                                                } else {
-                                                    app.mrs
-                                                        .items
-                                                        .iter()
-                                                        .find(|m| m.iid == entity_iid)
-                                                        .map(|m| m.title.clone())
-                                                        .unwrap_or_default()
+                                    let current_val =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            menu.fields[menu.selected_idx].1.clone()
+                                        } else {
+                                            let field_type = match field_name.as_str() {
+                                                "Title" => "title",
+                                                "Target Branch" => "target_branch",
+                                                "Weight" => "weight",
+                                                "Release Name" => "release_name",
+                                                "Tag" => "tag",
+                                                _ => "",
+                                            };
+                                            match field_type {
+                                                "title" => {
+                                                    if entity_type == "issue" {
+                                                        app.issues
+                                                            .items
+                                                            .iter()
+                                                            .find(|i| i.iid == entity_iid)
+                                                            .map(|i| i.title.clone())
+                                                            .unwrap_or_default()
+                                                    } else if entity_type == "milestone" {
+                                                        app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default()
+                                                    } else {
+                                                        app.mrs
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default()
+                                                    }
                                                 }
+                                                "target_branch" => app
+                                                    .mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .map(|m| m.target_branch.clone())
+                                                    .unwrap_or_default(),
+                                                "weight" => "0".to_string(),
+                                                "release_name" => app
+                                                    .releases
+                                                    .items
+                                                    .get(entity_iid as usize)
+                                                    .map(|r| r.name.clone())
+                                                    .unwrap_or_default(),
+                                                "tag" => app
+                                                    .releases
+                                                    .items
+                                                    .get(entity_iid as usize)
+                                                    .map(|r| r.tag_name.clone())
+                                                    .unwrap_or_default(),
+                                                _ => String::new(),
                                             }
-                                            "target_branch" => app
-                                                .mrs
-                                                .items
-                                                .iter()
-                                                .find(|m| m.iid == entity_iid)
-                                                .map(|m| m.target_branch.clone())
-                                                .unwrap_or_default(),
-                                            "weight" => "0".to_string(),
-                                            _ => String::new(),
-                                        }
-                                    };
-
-                                    let action = if entity_iid == 0 {
-                                        crate::app::TextInputAction::EditNewField {
-                                            field_idx: menu.selected_idx,
-                                        }
-                                    } else {
-                                        let field_type = match field_name.as_str() {
-                                            "Title" => "title",
-                                            "Target Branch" => "target_branch",
-                                            "Weight" => "weight",
-                                            _ => "",
                                         };
-                                        crate::app::TextInputAction::EditField {
-                                            entity_iid,
-                                            entity_type: entity_type.clone(),
-                                            field_type: field_type.to_string(),
-                                        }
-                                    };
+
+                                    let action =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            crate::app::TextInputAction::EditNewField {
+                                                field_idx: menu.selected_idx,
+                                            }
+                                        } else {
+                                            let field_type = match field_name.as_str() {
+                                                "Title" => "title",
+                                                "Target Branch" => "target_branch",
+                                                "Weight" => "weight",
+                                                "Release Name" => "release_name",
+                                                "Tag" => "tag",
+                                                _ => "",
+                                            };
+                                            crate::app::TextInputAction::EditField {
+                                                entity_iid,
+                                                entity_type: entity_type.clone(),
+                                                field_type: field_type.to_string(),
+                                            }
+                                        };
 
                                     app.text_input = Some(crate::app::TextInput {
                                         title: format!("Edit {}", field_name),
@@ -6874,13 +7330,31 @@ async fn main() -> Result<()> {
                                             )) =>
                                         {
                                             let cli = app_cli(&app);
-                                            let is_draft = mr_title.starts_with("Draft:")
-                                                || mr_title.starts_with("WIP:");
-                                            let action =
-                                                if is_draft { "--ready" } else { "--draft" };
-                                            let args = UpdateCmd::new(cli.is_github, "mr", mr_iid)
-                                                .flag_bool(action)
-                                                .build();
+                                            let is_draft = app
+                                                .mrs
+                                                .items
+                                                .iter()
+                                                .find(|m| m.iid == mr_iid)
+                                                .map(|m| m.draft)
+                                                .unwrap_or_else(|| {
+                                                    mr_title.starts_with("Draft:")
+                                                        || mr_title.starts_with("WIP:")
+                                                });
+                                            // GitHub uses `gh pr ready <iid>` to mark ready;
+                                            // `gh pr edit --ready` is not a valid flag.
+                                            let args = if cli.is_github && is_draft {
+                                                vec![
+                                                    "pr".to_string(),
+                                                    "ready".to_string(),
+                                                    mr_iid.to_string(),
+                                                ]
+                                            } else {
+                                                let action =
+                                                    if is_draft { "--ready" } else { "--draft" };
+                                                UpdateCmd::new(cli.is_github, "mr", mr_iid)
+                                                    .flag_bool(action)
+                                                    .build()
+                                            };
                                             run_cli(
                                                 &cli,
                                                 &args,
@@ -6889,6 +7363,11 @@ async fn main() -> Result<()> {
                                                 app.active_tab,
                                             )
                                             .await;
+                                            if let Some(item) =
+                                                app.mrs.items.iter_mut().find(|m| m.iid == mr_iid)
+                                            {
+                                                item.draft = !is_draft;
+                                            }
                                         }
                                         _ if (key_event.code == KeyCode::Char('c')
                                             || keybinding_matches(
@@ -6949,14 +7428,18 @@ async fn main() -> Result<()> {
                         }
                         app::Tab::Pipelines => {
                             if key_event.code == KeyCode::Char('n') {
+                                let is_github = app
+                                    .gitlab_client
+                                    .as_ref()
+                                    .map(|c| c.is_github)
+                                    .unwrap_or(false);
+                                let current_branch =
+                                    get_current_branch().unwrap_or_else(|| "main".to_string());
+
                                 app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Run Pipeline".to_string(),
                                     fields: vec![
-                                        (
-                                            "Branch / Ref".to_string(),
-                                            get_current_branch()
-                                                .unwrap_or_else(|| "main".to_string()),
-                                        ),
+                                        ("Branch / Ref".to_string(), current_branch.clone()),
                                         ("Merge Request Pipeline".to_string(), "No".to_string()),
                                         ("Variables".to_string(), String::new()),
                                         ("Inputs".to_string(), String::new()),
@@ -6971,6 +7454,62 @@ async fn main() -> Result<()> {
                                         s
                                     },
                                 });
+
+                                // Immediately open the appropriate selector as a dropdown:
+                                // GitHub → workflow file picker; GitLab → branch picker.
+                                if is_github {
+                                    let workflow_files = get_workflow_files(true);
+                                    let mut pre_selected = std::collections::HashSet::new();
+                                    // Pre-select the first workflow file if only one exists
+                                    if workflow_files.len() == 1 {
+                                        pre_selected.insert(workflow_files[0].clone());
+                                    }
+                                    app.selector = Some(crate::app::Selector {
+                                        title: "Select Workflow / CI File".to_string(),
+                                        all_items: workflow_files,
+                                        selected_items: pre_selected,
+                                        cursor_idx: 0,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: 0,
+                                        entity_type: "new_pipeline".to_string(),
+                                        field_type: "workflow_file".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                } else {
+                                    let branches = get_branches();
+                                    let mut pre_selected = std::collections::HashSet::new();
+                                    pre_selected.insert(current_branch);
+                                    let start_idx = pre_selected
+                                        .iter()
+                                        .next()
+                                        .and_then(|sel| branches.iter().position(|b| b == sel))
+                                        .unwrap_or(0);
+                                    app.selector = Some(crate::app::Selector {
+                                        title: "Select Branch / Ref".to_string(),
+                                        all_items: branches,
+                                        selected_items: pre_selected,
+                                        cursor_idx: start_idx,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: 0,
+                                        entity_type: "new_pipeline".to_string(),
+                                        field_type: "pipeline_branch".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(start_idx));
+                                            s
+                                        },
+                                    });
+                                }
                             } else if key_event.code == KeyCode::Char('p')
                                 || keybinding_matches(
                                     &app.config.keybindings.pipelines.trigger_pipeline,
@@ -7298,15 +7837,27 @@ async fn main() -> Result<()> {
                                                     }
                                                     app.selected_jobs.clear();
                                                     tokio::spawn(async move {
-                                                        for j_id in job_ids {
+                                                        if client_clone.is_github {
                                                             let endpoint = format!(
-                                                                "projects/{}/jobs/{}/cancel",
+                                                                "projects/{}/pipelines/{}/cancel",
                                                                 project_context.replace("/", "%2F"),
-                                                                j_id
+                                                                pipe_id
                                                             );
                                                             let _ = client_clone
                                                                 .fetch_raw_api(&endpoint)
                                                                 .await;
+                                                        } else {
+                                                            for j_id in job_ids {
+                                                                let endpoint = format!(
+                                                                    "projects/{}/jobs/{}/cancel",
+                                                                    project_context
+                                                                        .replace("/", "%2F"),
+                                                                    j_id
+                                                                );
+                                                                let _ = client_clone
+                                                                    .fetch_raw_api(&endpoint)
+                                                                    .await;
+                                                            }
                                                         }
                                                         tokio::time::sleep(
                                                             std::time::Duration::from_secs(1),
@@ -7334,11 +7885,19 @@ async fn main() -> Result<()> {
                                                         }
                                                     }
                                                     tokio::spawn(async move {
-                                                        let endpoint = format!(
-                                                            "projects/{}/jobs/{}/cancel",
-                                                            project_context.replace("/", "%2F"),
-                                                            job_id
-                                                        );
+                                                        let endpoint = if client_clone.is_github {
+                                                            format!(
+                                                                "projects/{}/pipelines/{}/cancel",
+                                                                project_context.replace("/", "%2F"),
+                                                                pipe_id
+                                                            )
+                                                        } else {
+                                                            format!(
+                                                                "projects/{}/jobs/{}/cancel",
+                                                                project_context.replace("/", "%2F"),
+                                                                job_id
+                                                            )
+                                                        };
                                                         let _ = client_clone
                                                             .fetch_raw_api(&endpoint)
                                                             .await;
@@ -7469,21 +8028,22 @@ async fn main() -> Result<()> {
                                             if app.job_trace.is_some() {
                                                 app.details_zoomed = !app.details_zoomed;
                                             } else if let Some(client) = &app.gitlab_client {
-                                                if let Ok(trace) = gitlab::pipelines::get_job_trace(
-                                                    client,
-                                                    &app.project_context,
-                                                    job_id,
-                                                )
-                                                .await
-                                                {
-                                                    app.job_trace = Some(trace);
-                                                    app.job_trace_needs_scroll_to_bottom = true;
-                                                    app.details_zoomed = true;
-                                                } else {
-                                                    app.error_message = Some(
-                                                        "Failed to fetch job trace".to_string(),
-                                                    );
-                                                }
+                                                let client = client.clone();
+                                                let project_context = app.project_context.clone();
+                                                let tx = events.sender();
+                                                app.job_trace_loading = true;
+                                                tokio::spawn(async move {
+                                                    let res = gitlab::pipelines::get_job_trace(
+                                                        &client,
+                                                        &project_context,
+                                                        job_id,
+                                                    )
+                                                    .await;
+                                                    let _ = tx.send(Event::JobTraceFetched(
+                                                        job_id,
+                                                        res.map_err(|e| e.to_string()),
+                                                    ));
+                                                });
                                             }
                                         }
                                         _ => handled = false,
@@ -7586,11 +8146,21 @@ async fn main() -> Result<()> {
                                     &key_event,
                                 )) =>
                             {
-                                app.text_input = Some(crate::app::TextInput {
+                                app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Create Release".to_string(),
-                                    value: String::new(),
-                                    cursor_idx: 0,
-                                    action: crate::app::TextInputAction::CreateRelease,
+                                    fields: vec![
+                                        ("Tag".to_string(), String::new()),
+                                        ("Release Name".to_string(), String::new()),
+                                        ("Description".to_string(), String::new()),
+                                    ],
+                                    selected_idx: 0,
+                                    entity_iid: 0,
+                                    entity_type: "new_release".to_string(),
+                                    state: {
+                                        let mut s = ListState::default();
+                                        s.select(Some(0));
+                                        s
+                                    },
                                 });
                             }
                             _ if (key_event.code == KeyCode::Char('e')
@@ -7605,7 +8175,12 @@ async fn main() -> Result<()> {
                                         filtered.get(selected_idx).map(|r| r.tag_name.clone())
                                     };
                                     if let Some(tag_name) = release_tag {
-                                        if let Some(idx) = app.releases.items.iter().position(|r| r.tag_name == tag_name) {
+                                        if let Some(idx) = app
+                                            .releases
+                                            .items
+                                            .iter()
+                                            .position(|r| r.tag_name == tag_name)
+                                        {
                                             rebuild_edit_menu(&mut app, "release", idx as u64);
                                         }
                                     }
@@ -7620,7 +8195,10 @@ async fn main() -> Result<()> {
                                 if let Some(selected_idx) = app.releases.state.selected() {
                                     let filtered = app.filtered_releases();
                                     if let Some(release) = filtered.get(selected_idx) {
-                                        app.confirm_popup = Some(crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()));
+                                        app.confirm_popup =
+                                            Some(crate::app::ConfirmAction::DeleteRelease(
+                                                release.tag_name.clone(),
+                                            ));
                                     }
                                 }
                             }
@@ -7728,173 +8306,192 @@ async fn main() -> Result<()> {
                                 handled = false;
                             }
                         }
-                        app::Tab::Milestones => match key_event.code {
-                            _ if (key_event.code == KeyCode::Char('n')
-                                || keybinding_matches(
-                                    &app.config.keybindings.milestones.create_milestone,
-                                    &key_event,
-                                )) =>
-                            {
-                                let is_github = app.gitlab_client.as_ref().map(|c| c.is_github).unwrap_or(false);
-                                let mut fields = vec![
-                                    ("Title".to_string(), String::new()),
-                                    ("Description".to_string(), String::new()),
-                                ];
-                                if !is_github {
-                                    fields.push(("Start Date".to_string(), String::new()));
+                        app::Tab::Milestones => {
+                            match key_event.code {
+                                _ if (key_event.code == KeyCode::Char('n')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.create_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    let is_github = app
+                                        .gitlab_client
+                                        .as_ref()
+                                        .map(|c| c.is_github)
+                                        .unwrap_or(false);
+                                    let mut fields = vec![
+                                        ("Title".to_string(), String::new()),
+                                        ("Description".to_string(), String::new()),
+                                    ];
+                                    if !is_github {
+                                        fields.push(("Start Date".to_string(), String::new()));
+                                    }
+                                    fields.push(("Due Date".to_string(), String::new()));
+                                    app.edit_menu = Some(crate::app::EditMenu {
+                                        title: "Create Milestone".to_string(),
+                                        fields,
+                                        selected_idx: 0,
+                                        entity_iid: 0,
+                                        entity_type: "new_milestone".to_string(),
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
                                 }
-                                fields.push(("Due Date".to_string(), String::new()));
-                                app.edit_menu = Some(crate::app::EditMenu {
-                                    title: "Create Milestone".to_string(),
-                                    fields,
-                                    selected_idx: 0,
-                                    entity_iid: 0,
-                                    entity_type: "new_milestone".to_string(),
-                                    state: {
-                                        let mut s = ListState::default();
-                                        s.select(Some(0));
-                                        s
-                                    },
-                                });
-                            }
-                            _ if (key_event.code == KeyCode::Char('e')
-                                || keybinding_matches(
-                                    &app.config.keybindings.milestones.edit_milestone,
-                                    &key_event,
-                                )) =>
-                            {
-                                if let Some(selected_idx) = app.milestones.state.selected() {
-                                    let milestone_iid = {
-                                        let filtered = app.filtered_milestones();
-                                        filtered.get(selected_idx).map(|m| m.iid)
-                                    };
-                                    if let Some(iid) = milestone_iid {
-                                        rebuild_edit_menu(&mut app, "milestone", iid);
+                                _ if (key_event.code == KeyCode::Char('e')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.edit_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let milestone_iid = {
+                                            let filtered = app.filtered_milestones();
+                                            filtered.get(selected_idx).map(|m| m.iid)
+                                        };
+                                        if let Some(iid) = milestone_iid {
+                                            rebuild_edit_menu(&mut app, "milestone", iid);
+                                        }
                                     }
                                 }
-                            }
-                            _ if (key_event.code == KeyCode::Char('c')
-                                || keybinding_matches(
-                                    &app.config.keybindings.milestones.close_milestone,
-                                    &key_event,
-                                )) =>
-                            {
-                                if let Some(selected_idx) = app.milestones.state.selected() {
-                                    let filtered = app.filtered_milestones();
-                                    if let Some(milestone) = filtered.get(selected_idx) {
-                                        let client = app.gitlab_client.clone().unwrap();
-                                        let project_path = app.project_context.clone();
-                                        let milestone_iid = milestone.iid;
-                                        let tx = events.sender();
-                                        let _ = tx.send(Event::CommandStarted(format!("Closing milestone #{}", milestone_iid)));
-                                        tokio::spawn(async move {
-                                            let res = crate::gitlab::milestones::update_milestone_state(
+                                _ if (key_event.code == KeyCode::Char('c')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.close_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            let client = app.gitlab_client.clone().unwrap();
+                                            let project_path = app.project_context.clone();
+                                            let milestone_iid = milestone.iid;
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Closing milestone #{}",
+                                                milestone_iid
+                                            )));
+                                            tokio::spawn(async move {
+                                                let res = crate::gitlab::milestones::update_milestone_state(
                                                 &client,
                                                 &project_path,
                                                 milestone_iid,
                                                 true,
                                             ).await;
-                                            match res {
-                                                Ok(_) => {
-                                                    let _ = tx.send(Event::MilestoneClosed);
+                                                match res {
+                                                    Ok(_) => {
+                                                        let _ = tx.send(Event::MilestoneClosed);
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            crate::app::Tab::Milestones,
+                                                            Err(e.to_string()),
+                                                        ));
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        crate::app::Tab::Milestones,
-                                                        Err(e.to_string()),
-                                                    ));
-                                                }
-                                            }
-                                        });
+                                            });
+                                        }
                                     }
                                 }
-                            }
-                            _ if (key_event.code == KeyCode::Char('r')
-                                || keybinding_matches(
-                                    &app.config.keybindings.milestones.reopen_milestone,
-                                    &key_event,
-                                )) =>
-                            {
-                                if let Some(selected_idx) = app.milestones.state.selected() {
-                                    let filtered = app.filtered_milestones();
-                                    if let Some(milestone) = filtered.get(selected_idx) {
-                                        let client = app.gitlab_client.clone().unwrap();
-                                        let project_path = app.project_context.clone();
-                                        let milestone_iid = milestone.iid;
-                                        let tx = events.sender();
-                                        let _ = tx.send(Event::CommandStarted(format!("Reopening milestone #{}", milestone_iid)));
-                                        tokio::spawn(async move {
-                                            let res = crate::gitlab::milestones::update_milestone_state(
+                                _ if (key_event.code == KeyCode::Char('r')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.reopen_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            let client = app.gitlab_client.clone().unwrap();
+                                            let project_path = app.project_context.clone();
+                                            let milestone_iid = milestone.iid;
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Reopening milestone #{}",
+                                                milestone_iid
+                                            )));
+                                            tokio::spawn(async move {
+                                                let res = crate::gitlab::milestones::update_milestone_state(
                                                 &client,
                                                 &project_path,
                                                 milestone_iid,
                                                 false,
                                             ).await;
-                                            match res {
-                                                Ok(_) => {
-                                                    let _ = tx.send(Event::MilestoneReopened);
+                                                match res {
+                                                    Ok(_) => {
+                                                        let _ = tx.send(Event::MilestoneReopened);
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            crate::app::Tab::Milestones,
+                                                            Err(e.to_string()),
+                                                        ));
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        crate::app::Tab::Milestones,
-                                                        Err(e.to_string()),
-                                                    ));
-                                                }
-                                            }
-                                        });
+                                            });
+                                        }
                                     }
                                 }
-                            }
-                            _ if (key_event.code == KeyCode::Char('d')
-                                || keybinding_matches(
-                                    &app.config.keybindings.milestones.delete_milestone,
-                                    &key_event,
-                                )) =>
-                            {
-                                if let Some(selected_idx) = app.milestones.state.selected() {
-                                    let filtered = app.filtered_milestones();
-                                    if let Some(milestone) = filtered.get(selected_idx) {
-                                        app.confirm_popup = Some(crate::app::ConfirmAction::DeleteMilestone(milestone.iid));
+                                _ if (key_event.code == KeyCode::Char('d')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.delete_milestone,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            app.confirm_popup =
+                                                Some(crate::app::ConfirmAction::DeleteMilestone(
+                                                    milestone.iid,
+                                                ));
+                                        }
                                     }
                                 }
-                            }
-                            _ if (key_event.code == KeyCode::Char('o')
-                                || keybinding_matches(
-                                    &app.config.keybindings.milestones.open_in_browser,
-                                    &key_event,
-                                )) =>
-                            {
-                                if let Some(selected_idx) = app.milestones.state.selected() {
-                                    let filtered = app.filtered_milestones();
-                                    if let Some(milestone) = filtered.get(selected_idx) {
-                                        let is_github = app.gitlab_client.as_ref().map(|c| c.is_github).unwrap_or(false);
-                                        let cli = app_cli(&app);
-                                        let args = if is_github {
-                                            vec![
-                                                "browse".to_string(),
-                                                format!("milestone/{}", milestone.iid),
-                                            ]
-                                        } else {
-                                            vec![
-                                                "milestone".to_string(),
-                                                "view".to_string(),
-                                                milestone.iid.to_string(),
-                                                cli.flag_web().to_string(),
-                                            ]
-                                        };
-                                        run_cli(
-                                            &cli,
-                                            &args,
-                                            &mut terminal,
-                                            events.sender(),
-                                            app.active_tab,
-                                        )
-                                        .await;
+                                _ if (key_event.code == KeyCode::Char('o')
+                                    || keybinding_matches(
+                                        &app.config.keybindings.milestones.open_in_browser,
+                                        &key_event,
+                                    )) =>
+                                {
+                                    if let Some(selected_idx) = app.milestones.state.selected() {
+                                        let filtered = app.filtered_milestones();
+                                        if let Some(milestone) = filtered.get(selected_idx) {
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map(|c| c.is_github)
+                                                .unwrap_or(false);
+                                            let cli = app_cli(&app);
+                                            let args = if is_github {
+                                                vec![
+                                                    "browse".to_string(),
+                                                    format!("milestone/{}", milestone.iid),
+                                                ]
+                                            } else {
+                                                vec![
+                                                    "milestone".to_string(),
+                                                    "view".to_string(),
+                                                    milestone.iid.to_string(),
+                                                    cli.flag_web().to_string(),
+                                                ]
+                                            };
+                                            run_cli(
+                                                &cli,
+                                                &args,
+                                                &mut terminal,
+                                                events.sender(),
+                                                app.active_tab,
+                                            )
+                                            .await;
+                                        }
                                     }
                                 }
+                                _ => handled = false,
                             }
-                            _ => handled = false,
-                        },
+                        }
                         app::Tab::Terminal => {
                             handled = false;
                         }
@@ -7967,10 +8564,20 @@ async fn main() -> Result<()> {
                                     app.quit();
                                 }
                             }
+                            KeyCode::Char('m') | KeyCode::Char('M')
+                                if app.active_tab == app::Tab::Jobs && app.job_trace.is_none() =>
+                            {
+                                app.collapse_matrix_jobs = !app.collapse_matrix_jobs;
+                                app.selected_job_index = Some(0);
+                                app.jobs_list_state.select(Some(0));
+                            }
 
                             KeyCode::Esc | KeyCode::Backspace => {
-                                if app.details_zoomed {
+                                if app.job_trace_loading {
+                                    app.job_trace_loading = false;
+                                } else if app.details_zoomed {
                                     app.details_zoomed = false;
+                                    app.job_trace = None;
                                 } else if app.active_tab == app::Tab::Jobs {
                                     if app.job_trace.is_some() {
                                         app.job_trace = None;
@@ -8080,21 +8687,22 @@ async fn main() -> Result<()> {
                                             .map(|j| (j.id, j.name.clone()));
                                         if let Some((job_id, _)) = job_info {
                                             if let Some(client) = &app.gitlab_client {
-                                                if let Ok(trace) = gitlab::pipelines::get_job_trace(
-                                                    client,
-                                                    &app.project_context,
-                                                    job_id,
-                                                )
-                                                .await
-                                                {
-                                                    app.job_trace = Some(trace);
-                                                    app.job_trace_needs_scroll_to_bottom = true;
-                                                    app.details_zoomed = true;
-                                                } else {
-                                                    app.error_message = Some(
-                                                        "Failed to fetch job trace".to_string(),
-                                                    );
-                                                }
+                                                let client = client.clone();
+                                                let project_context = app.project_context.clone();
+                                                let tx = events.sender();
+                                                app.job_trace_loading = true;
+                                                tokio::spawn(async move {
+                                                    let res = gitlab::pipelines::get_job_trace(
+                                                        &client,
+                                                        &project_context,
+                                                        job_id,
+                                                    )
+                                                    .await;
+                                                    let _ = tx.send(Event::JobTraceFetched(
+                                                        job_id,
+                                                        res.map_err(|e| e.to_string()),
+                                                    ));
+                                                });
                                             }
                                         }
                                     }

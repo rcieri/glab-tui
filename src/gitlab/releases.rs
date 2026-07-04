@@ -82,14 +82,7 @@ pub async fn delete_release(
     if client.is_github {
         let gh_repo = project_path;
         let out = tokio::process::Command::new("gh")
-            .args([
-                "release",
-                "delete",
-                tag_name,
-                "-R",
-                gh_repo,
-                "-y",
-            ])
+            .args(["release", "delete", tag_name, "-R", gh_repo, "-y"])
             .output()
             .await?;
         if out.status.success() {
@@ -101,14 +94,7 @@ pub async fn delete_release(
     } else {
         let encoded_path = project_path.replace("/", "%2F");
         let out = tokio::process::Command::new("glab")
-            .args([
-                "release",
-                "delete",
-                tag_name,
-                "-R",
-                &encoded_path,
-                "-y",
-            ])
+            .args(["release", "delete", tag_name, "-R", &encoded_path, "-y"])
             .output()
             .await?;
         if out.status.success() {

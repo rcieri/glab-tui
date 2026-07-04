@@ -1316,7 +1316,9 @@ async fn handle_entity_update(
     }
 }
 
-fn get_default_template(template_type: &str) -> Option<String> {
+fn list_templates(template_type: &str) -> Vec<(String, String)> {
+    let mut templates: Vec<(String, String)> = Vec::new();
+
     let paths = if template_type == "issue" {
         vec![
             ".github/issue_template.md",
@@ -1333,7 +1335,13 @@ fn get_default_template(template_type: &str) -> Option<String> {
 
     for path in &paths {
         if let Ok(content) = std::fs::read_to_string(path) {
-            return Some(content);
+            let name = std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string());
+            if !templates.iter().any(|(n, _)| n == &name) {
+                templates.push((name, content));
+            }
         }
     }
 
@@ -1356,23 +1364,29 @@ fn get_default_template(template_type: &str) -> Option<String> {
                 }
             }
             md_files.sort();
-            if let Some(default_path) = md_files
-                .iter()
-                .find(|p| p.file_name().map(|n| n == "default.md").unwrap_or(false))
-            {
-                if let Ok(content) = std::fs::read_to_string(default_path) {
-                    return Some(content);
-                }
-            }
-            if let Some(first_path) = md_files.first() {
-                if let Ok(content) = std::fs::read_to_string(first_path) {
-                    return Some(content);
+            for file_path in &md_files {
+                if let Ok(content) = std::fs::read_to_string(file_path) {
+                    let name = file_path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !templates.iter().any(|(n, _)| n == &name) {
+                        templates.push((name, content));
+                    }
                 }
             }
         }
     }
 
-    None
+    templates
+}
+
+fn get_default_template(template_type: &str) -> Option<String> {
+    let templates = list_templates(template_type);
+    if let Some((_, content)) = templates.iter().find(|(n, _)| n == "default") {
+        return Some(content.clone());
+    }
+    templates.into_iter().next().map(|(_, content)| content)
 }
 
 fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
@@ -4102,6 +4116,74 @@ async fn main() -> Result<()> {
                                         continue;
                                     }
 
+                                    if field_type == "issue_template_selector" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        let choice = selected_val.unwrap_or_default();
+                                        if choice != "None (blank)" {
+                                            let templates = list_templates("issue");
+                                            if let Some(content) = templates
+                                                .iter()
+                                                .find(|(n, _)| n == &choice)
+                                                .map(|(_, c)| c)
+                                            {
+                                                if let Some(ref mut menu) = app.edit_menu {
+                                                    if let Some(f) = menu
+                                                        .fields
+                                                        .iter_mut()
+                                                        .find(|f| f.0 == "Description")
+                                                    {
+                                                        f.1 = content.clone();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    if field_type == "mr_template_selector" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        let choice = selected_val.unwrap_or_default();
+                                        if choice != "None (blank)" {
+                                            let templates = list_templates("mr");
+                                            if let Some(content) = templates
+                                                .iter()
+                                                .find(|(n, _)| n == &choice)
+                                                .map(|(_, c)| c)
+                                            {
+                                                if let Some(ref mut menu) = app.edit_menu {
+                                                    if let Some(f) = menu
+                                                        .fields
+                                                        .iter_mut()
+                                                        .find(|f| f.0 == "Description")
+                                                    {
+                                                        let issue_iid = menu.entity_iid;
+                                                        if issue_iid > 0 {
+                                                            f.1 = format!(
+                                                                "Closes #{}\n\n{}",
+                                                                issue_iid, content
+                                                            );
+                                                        } else {
+                                                            f.1 = content.clone();
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+
                                     if field_type == "create_mr" {
                                         let filtered_items = selector.get_filtered_items();
                                         let mut selected_val =
@@ -4182,18 +4264,26 @@ async fn main() -> Result<()> {
                                                                 issue.iid, d
                                                             );
                                                         } else {
-                                                            let mr_tmpl =
-                                                                get_default_template("mr")
-                                                                    .unwrap_or_default();
-                                                            if mr_tmpl.is_empty() {
+                                                            let mr_templates = list_templates("mr");
+                                                            if mr_templates.is_empty() {
+                                                                let mr_tmpl =
+                                                                    get_default_template("mr")
+                                                                        .unwrap_or_default();
+                                                                if mr_tmpl.is_empty() {
+                                                                    description_val = format!(
+                                                                        "Closes #{}",
+                                                                        issue.iid
+                                                                    );
+                                                                } else {
+                                                                    description_val = format!(
+                                                                        "Closes #{}\n\n{}",
+                                                                        issue.iid, mr_tmpl
+                                                                    );
+                                                                }
+                                                            } else {
                                                                 description_val = format!(
                                                                     "Closes #{}",
                                                                     issue.iid
-                                                                );
-                                                            } else {
-                                                                description_val = format!(
-                                                                    "Closes #{}\n\n{}",
-                                                                    issue.iid, mr_tmpl
                                                                 );
                                                             }
                                                         }
@@ -4231,6 +4321,33 @@ async fn main() -> Result<()> {
                                                 s
                                             },
                                         });
+                                        let mr_templates = list_templates("mr");
+                                        if !mr_templates.is_empty() {
+                                            let template_names: Vec<String> =
+                                                std::iter::once("None (blank)".to_string())
+                                                    .chain(
+                                                        mr_templates.iter().map(|(n, _)| n.clone()),
+                                                    )
+                                                    .collect();
+                                            app.selector = Some(crate::app::Selector {
+                                                title: format!(" Select {} Template ", pr_suffix),
+                                                all_items: template_names,
+                                                selected_items: std::collections::HashSet::new(),
+                                                cursor_idx: 0,
+                                                search_query: String::new(),
+                                                is_filtering: false,
+                                                is_loading: false,
+                                                entity_iid: issue_iid,
+                                                entity_type: "new_mr".to_string(),
+                                                field_type: "mr_template_selector".to_string(),
+                                                multi_select: false,
+                                                state: {
+                                                    let mut s = ListState::default();
+                                                    s.select(Some(0));
+                                                    s
+                                                },
+                                            });
+                                        }
                                         continue;
                                     }
 
@@ -7074,6 +7191,7 @@ async fn main() -> Result<()> {
                                     fields.push(("Weight".to_string(), "0".to_string()));
                                 }
                                 fields.push(("Description".to_string(), String::new()));
+                                let templates = list_templates("issue");
                                 app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Create Issue".to_string(),
                                     fields,
@@ -7086,6 +7204,30 @@ async fn main() -> Result<()> {
                                         s
                                     },
                                 });
+                                if !templates.is_empty() {
+                                    let template_names: Vec<String> =
+                                        std::iter::once("None (blank)".to_string())
+                                            .chain(templates.iter().map(|(n, _)| n.clone()))
+                                            .collect();
+                                    app.selector = Some(crate::app::Selector {
+                                        title: " Select Issue Template ".to_string(),
+                                        all_items: template_names,
+                                        selected_items: std::collections::HashSet::new(),
+                                        cursor_idx: 0,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: 0,
+                                        entity_type: "new_issue".to_string(),
+                                        field_type: "issue_template_selector".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                }
                             }
                             _ if (key_event.code == KeyCode::Char('e')
                                 || keybinding_matches(

@@ -131,11 +131,21 @@ jobs:
       - name: Update Homebrew formula and Scoop manifest
         run: bash scripts/update-manifests.sh ${{ github.ref_name }}
 
-      - name: Commit and push changes
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          BRANCH="bot/update-manifests-${{ github.ref_name }}"
           git config user.name "glab-tui-bot"
           git config user.email "bot@glab-tui"
+          git checkout -b "$BRANCH"
           git add Formula/ scoop/
-          git diff --cached --quiet || \
-            git commit -m "chore: bump package manifests to ${{ github.ref_name }}"
-          git push
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: bump package manifests to ${{ github.ref_name }}"
+          git push origin "$BRANCH"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: bump package manifests to ${{ github.ref_name }}" \
+            --body "Automated update of Homebrew formula and Scoop manifest after release ${{ github.ref_name }}." \
+            --label automated

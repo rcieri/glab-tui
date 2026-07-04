@@ -939,7 +939,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Issues, "Due Date") {
                     header_cells.push(Cell::from("Due Date"));
-                    widths.push(Constraint::Length(12));
+                    widths.push(Constraint::Length(20));
                 }
                 if app.is_column_visible(Tab::Issues, "Author") {
                     header_cells.push(Cell::from("Author"));
@@ -2895,7 +2895,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
                 if app.is_column_visible(Tab::Releases, "Date") {
                     header_cells.push(Cell::from("Date"));
-                    widths.push(Constraint::Length(12));
+                    widths.push(Constraint::Length(20));
                 }
                 if app.is_column_visible(Tab::Releases, "Author") {
                     header_cells.push(Cell::from("Author"));
@@ -3353,8 +3353,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             "ID" => widths.push(Constraint::Length(8)),
                             "Title" => widths.push(Constraint::Length(30)),
                             "State" => widths.push(Constraint::Length(10)),
-                            "Start Date" => widths.push(Constraint::Length(12)),
-                            "Due Date" => widths.push(Constraint::Length(12)),
+                            "Start Date" => widths.push(Constraint::Length(20)),
+                            "Due Date" => widths.push(Constraint::Length(20)),
                             "Progress" => widths.push(Constraint::Length(8)),
                             _ => widths.push(Constraint::Fill(1)),
                         }

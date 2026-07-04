@@ -87,6 +87,30 @@ iwr -useb https://raw.githubusercontent.com/rcieri/glab-tui/main/install.ps1 | i
 
 The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter).
 
+### Docker
+
+```sh
+docker run --rm -it -v "$PWD:/workspace" ghcr.io/rcieri/glab-tui:latest
+```
+
+The image includes `gh` and expects a Git repository mounted at `/workspace`.
+
+### Homebrew
+
+```sh
+brew install https://raw.githubusercontent.com/rcieri/glab-tui/main/Formula/glab-tui.rb
+```
+
+Installs the `glab-tui` binary on macOS (Intel and Apple Silicon) and Linux (x86_64 and ARM64). Requires `gh`; `glab` is optional.
+
+### Scoop (Windows)
+
+```powershell
+scoop install https://raw.githubusercontent.com/rcieri/glab-tui/main/scoop/glab-tui.json
+```
+
+The manifest uses Scoop's `autoupdate` — version bumps are pulled automatically from GitHub releases.
+
 ---
 
 ## Configuration

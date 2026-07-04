@@ -65,6 +65,28 @@ cp target/release/glab-tui ~/.local/bin/
 cargo install --path .
 ```
 
+### Install script (Linux / macOS)
+
+```sh
+curl -sSfL https://raw.githubusercontent.com/rcieri/glab-tui/main/install.sh | sh
+```
+
+Or with `wget`:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/rcieri/glab-tui/main/install.sh | sh
+```
+
+The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environment variable).
+
+### Install script (Windows)
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/rcieri/glab-tui/main/install.ps1 | iex
+```
+
+The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter).
+
 ---
 
 ## Configuration

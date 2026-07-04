@@ -80,10 +80,15 @@ jobs:
             -Path target\${{ matrix.target }}\release\${{ matrix.artifact_name }} `
             -DestinationPath ${{ matrix.asset_name }}
 
+      - name: Generate checksums
+        run: sha256sum ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256
+
       - name: Upload binaries to Release
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ matrix.asset_name }}
+          files: |
+            ${{ matrix.asset_name }}
+            ${{ matrix.asset_name }}.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
         env:

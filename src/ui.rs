@@ -411,7 +411,7 @@ fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) -> Line<'stat
         if cmd_clean.starts_with("glab") || cmd_clean.starts_with("gh") {
             "RUNNING COMMAND".to_string()
         } else {
-            "SYSTEM LOG".to_string()
+            "RUNNING COMMAND".to_string()
         }
     } else {
         desc.to_uppercase()

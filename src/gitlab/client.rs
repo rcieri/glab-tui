@@ -1025,7 +1025,13 @@ fn translate_json_to_gitlab(endpoint: &str, val: serde_json::Value) -> Result<se
                         .unwrap_or(serde_json::Value::Null);
                     let state = m.get("state").and_then(|s| s.as_str()).unwrap_or("open");
                     let gl_state = if state == "open" { "active" } else { "closed" };
-                    let due_on = m.get("due_on").cloned().unwrap_or(serde_json::Value::Null);
+                    let due_on = m
+                        .get("due_on")
+                        .and_then(|v| v.as_str())
+                        .map(|s| {
+                            serde_json::Value::String(s.chars().take(10).collect())
+                        })
+                        .unwrap_or(serde_json::Value::Null);
                     let created_at = m
                         .get("created_at")
                         .cloned()

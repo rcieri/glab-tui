@@ -54,7 +54,7 @@ pub async fn update_release(
         let out = tokio::process::Command::new("glab")
             .args([
                 "release",
-                "create",
+                "update",
                 tag_name,
                 "-R",
                 &encoded_path,

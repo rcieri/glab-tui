@@ -512,6 +512,7 @@ pub struct Config {
     pub theme_preset: Option<String>,
     pub theme: ThemeOverrides,
     pub keybindings: KeybindingConfig,
+    pub disabled_tabs: Option<Vec<String>>,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -529,6 +530,7 @@ impl Default for Config {
             theme_preset: Some("default".to_string()),
             theme: ThemeOverrides::default(),
             keybindings: KeybindingConfig::default(),
+            disabled_tabs: None,
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -628,6 +630,10 @@ close_milestone = "c"
 reopen_milestone = "r"
 delete_milestone = "d"
 open_in_browser = "o"
+
+# Tabs to disable/hide from the sidebar.
+# Uncomment to disable specific tabs:
+# disabled_tabs = ["Runners", "Terminal"]
 
 # Per-pane column config (unset = show all columns)
 # [issues]

@@ -2002,7 +2002,7 @@ async fn main() -> Result<()> {
                     app.active_pipeline_id = Some(pipeline_id);
                     app.selected_job_index = Some(0);
                     app.jobs_list_state.select(Some(0));
-                    app.job_trace_scroll = 0;
+                    app.detail_scroll = 0;
                     app.job_trace = None;
                 }
                 Event::JobTraceFetched(job_id, result) => {
@@ -8498,32 +8498,20 @@ async fn main() -> Result<()> {
                     }
 
                     if !handled {
-                        if keybinding_matches(
-                            &app.config.keybindings.global.scroll_down,
-                            &key_event,
-                        ) {
-                            match app.active_tab {
-                                app::Tab::Issues => {
-                                    app.issues_scroll = app.issues_scroll.saturating_add(1);
-                                }
-                                app::Tab::MergeRequests => {
-                                    app.mrs_scroll = app.mrs_scroll.saturating_add(1);
-                                }
-                                _ => {}
-                            }
-                        } else if keybinding_matches(
-                            &app.config.keybindings.global.scroll_up,
-                            &key_event,
-                        ) {
-                            match app.active_tab {
-                                app::Tab::Issues => {
-                                    app.issues_scroll = app.issues_scroll.saturating_sub(1);
-                                }
-                                app::Tab::MergeRequests => {
-                                    app.mrs_scroll = app.mrs_scroll.saturating_sub(1);
-                                }
-                                _ => {}
-                            }
+                        if app.detail_visible
+                            && keybinding_matches(
+                                &app.config.keybindings.global.scroll_down,
+                                &key_event,
+                            )
+                        {
+                            app.detail_scroll = app.detail_scroll.saturating_add(1);
+                        } else if app.detail_visible
+                            && keybinding_matches(
+                                &app.config.keybindings.global.scroll_up,
+                                &key_event,
+                            )
+                        {
+                            app.detail_scroll = app.detail_scroll.saturating_sub(1);
                         }
 
                         match key_event.code {
@@ -8560,6 +8548,8 @@ async fn main() -> Result<()> {
                             KeyCode::Char('q') => {
                                 if app.details_zoomed {
                                     app.details_zoomed = false;
+                                } else if app.detail_visible {
+                                    app.detail_visible = false;
                                 } else {
                                     app.quit();
                                 }
@@ -8578,6 +8568,8 @@ async fn main() -> Result<()> {
                                 } else if app.details_zoomed {
                                     app.details_zoomed = false;
                                     app.job_trace = None;
+                                } else if app.detail_visible {
+                                    app.detail_visible = false;
                                 } else if app.active_tab == app::Tab::Jobs {
                                     if app.job_trace.is_some() {
                                         app.job_trace = None;
@@ -8664,7 +8656,7 @@ async fn main() -> Result<()> {
                                                     app.active_pipeline_id = Some(pipeline_id);
                                                     app.selected_job_index = Some(0);
                                                     app.jobs_list_state.select(Some(0));
-                                                    app.job_trace_scroll = 0;
+                                                    app.detail_scroll = 0;
                                                     app.job_trace = None;
                                                     app.active_tab = app::Tab::Jobs;
                                                     app.loading_tabs.remove(&app::Tab::Jobs);
@@ -8708,7 +8700,12 @@ async fn main() -> Result<()> {
                                     }
                                 }
                                 _ => {
-                                    app.details_zoomed = !app.details_zoomed;
+                                    if !app.detail_visible {
+                                        app.detail_visible = true;
+                                        app.details_zoomed = false;
+                                    } else {
+                                        app.details_zoomed = !app.details_zoomed;
+                                    }
                                 }
                             },
                             _ if (key_event.code == KeyCode::Right
@@ -8759,85 +8756,94 @@ async fn main() -> Result<()> {
                                     }
                                 }
                             }
-                            KeyCode::Down | KeyCode::Char('j') => match app.active_tab {
-                                app::Tab::Issues => {
-                                    app.issues.next(app.filtered_issues().len());
-                                    app.issues_scroll = 0;
-                                }
-                                app::Tab::MergeRequests => {
-                                    app.mrs.next(app.filtered_mrs().len());
-                                    app.mrs_scroll = 0;
-                                }
-                                app::Tab::Pipelines => {
-                                    app.pipelines.next(app.filtered_pipelines().len());
-                                }
-                                app::Tab::Jobs => {
-                                    if app.job_trace.is_some() {
-                                        app.job_trace_scroll =
-                                            app.job_trace_scroll.saturating_add(1);
-                                    } else {
-                                        let len = app.filtered_jobs().len();
-                                        if let Some(idx) = &mut app.selected_job_index {
-                                            if len > 0 && *idx + 1 < len {
-                                                *idx += 1;
-                                                app.jobs_list_state.select(Some(*idx));
-                                                app.job_trace = None;
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if app.details_zoomed {
+                                    app.detail_scroll = app.detail_scroll.saturating_add(1);
+                                } else {
+                                    app.detail_scroll = 0;
+                                    match app.active_tab {
+                                        app::Tab::Issues => {
+                                            app.issues.next(app.filtered_issues().len());
+                                        }
+                                        app::Tab::MergeRequests => {
+                                            app.mrs.next(app.filtered_mrs().len());
+                                        }
+                                        app::Tab::Pipelines => {
+                                            app.pipelines.next(app.filtered_pipelines().len());
+                                        }
+                                        app::Tab::Jobs => {
+                                            let len = app.filtered_jobs().len();
+                                            if let Some(idx) = &mut app.selected_job_index {
+                                                if len > 0 && *idx + 1 < len {
+                                                    *idx += 1;
+                                                    app.jobs_list_state.select(Some(*idx));
+                                                    app.job_trace = None;
+                                                }
                                             }
+                                        }
+                                        app::Tab::Runners => {
+                                            app.runners.next(app.filtered_runners().len());
+                                        }
+                                        app::Tab::Releases => {
+                                            app.releases.next(app.filtered_releases().len());
+                                        }
+                                        app::Tab::Todos => {
+                                            app.todos.next(app.filtered_todos().len());
+                                        }
+                                        app::Tab::Milestones => {
+                                            app.milestones.next(app.filtered_milestones().len());
+                                        }
+                                        app::Tab::Terminal => {
+                                            app.terminal_scroll =
+                                                app.terminal_scroll.saturating_sub(1);
                                         }
                                     }
                                 }
-                                app::Tab::Runners => app.runners.next(app.filtered_runners().len()),
-                                app::Tab::Releases => {
-                                    app.releases.next(app.filtered_releases().len())
-                                }
-                                app::Tab::Todos => app.todos.next(app.filtered_todos().len()),
-                                app::Tab::Milestones => {
-                                    app.milestones.next(app.filtered_milestones().len())
-                                }
-                                app::Tab::Terminal => {
-                                    app.terminal_scroll = app.terminal_scroll.saturating_sub(1);
-                                }
-                            },
-                            KeyCode::Up | KeyCode::Char('k') => match app.active_tab {
-                                app::Tab::Issues => {
-                                    app.issues.previous(app.filtered_issues().len());
-                                    app.issues_scroll = 0;
-                                }
-                                app::Tab::MergeRequests => {
-                                    app.mrs.previous(app.filtered_mrs().len());
-                                    app.mrs_scroll = 0;
-                                }
-                                app::Tab::Pipelines => {
-                                    app.pipelines.previous(app.filtered_pipelines().len());
-                                }
-                                app::Tab::Jobs => {
-                                    if app.job_trace.is_some() {
-                                        app.job_trace_scroll =
-                                            app.job_trace_scroll.saturating_sub(1);
-                                    } else {
-                                        if let Some(idx) = &mut app.selected_job_index {
-                                            if *idx > 0 {
-                                                *idx -= 1;
-                                                app.jobs_list_state.select(Some(*idx));
-                                                app.job_trace = None;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if app.details_zoomed {
+                                    app.detail_scroll = app.detail_scroll.saturating_sub(1);
+                                } else {
+                                    app.detail_scroll = 0;
+                                    match app.active_tab {
+                                        app::Tab::Issues => {
+                                            app.issues.previous(app.filtered_issues().len());
+                                        }
+                                        app::Tab::MergeRequests => {
+                                            app.mrs.previous(app.filtered_mrs().len());
+                                        }
+                                        app::Tab::Pipelines => {
+                                            app.pipelines.previous(app.filtered_pipelines().len());
+                                        }
+                                        app::Tab::Jobs => {
+                                            if let Some(idx) = &mut app.selected_job_index {
+                                                if *idx > 0 {
+                                                    *idx -= 1;
+                                                    app.jobs_list_state.select(Some(*idx));
+                                                    app.job_trace = None;
+                                                }
                                             }
+                                        }
+                                        app::Tab::Runners => {
+                                            app.runners.previous(app.filtered_runners().len());
+                                        }
+                                        app::Tab::Releases => {
+                                            app.releases.previous(app.filtered_releases().len());
+                                        }
+                                        app::Tab::Todos => {
+                                            app.todos.next(app.filtered_todos().len())
+                                        }
+                                        app::Tab::Milestones => {
+                                            app.milestones
+                                                .previous(app.filtered_milestones().len());
+                                        }
+                                        app::Tab::Terminal => {
+                                            app.terminal_scroll =
+                                                app.terminal_scroll.saturating_add(1);
                                         }
                                     }
                                 }
-                                app::Tab::Runners => {
-                                    app.runners.previous(app.filtered_runners().len())
-                                }
-                                app::Tab::Releases => {
-                                    app.releases.previous(app.filtered_releases().len())
-                                }
-                                app::Tab::Todos => app.todos.next(app.filtered_todos().len()),
-                                app::Tab::Milestones => {
-                                    app.milestones.previous(app.filtered_milestones().len())
-                                }
-                                app::Tab::Terminal => {
-                                    app.terminal_scroll = app.terminal_scroll.saturating_add(1);
-                                }
-                            },
+                            }
                             _ => {}
                         }
                     }

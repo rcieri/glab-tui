@@ -199,6 +199,10 @@ impl Tab {
             Tab::Terminal => vec![],
         }
     }
+
+    pub fn available_on_platform(&self, _is_github: bool) -> bool {
+        true
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1207,12 +1211,11 @@ pub struct App {
     pub text_input: Option<TextInput>,
     pub date_picker: Option<DatePicker>,
     pub jobs_list_state: TableState,
-    pub job_trace_scroll: u16,
-    pub issues_scroll: u16,
-    pub mrs_scroll: u16,
+    pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
     pub details_zoomed: bool,
+    pub detail_visible: bool,
     pub job_trace_needs_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
     pub collapse_matrix_jobs: bool,
@@ -1280,12 +1283,11 @@ impl Default for App {
             text_input: None,
             date_picker: None,
             jobs_list_state: TableState::default(),
-            job_trace_scroll: 0,
-            issues_scroll: 0,
-            mrs_scroll: 0,
+            detail_scroll: 0,
             selected_pipelines: std::collections::HashSet::new(),
             selected_jobs: std::collections::HashSet::new(),
             details_zoomed: false,
+            detail_visible: false,
             job_trace_needs_scroll_to_bottom: false,
             job_trace_loading: false,
             collapse_matrix_jobs: false,
@@ -1364,6 +1366,23 @@ impl App {
         } else {
             true
         }
+    }
+
+    pub fn available_tabs(&self) -> Vec<Tab> {
+        let is_github = self
+            .gitlab_client
+            .as_ref()
+            .map(|c| c.is_github)
+            .unwrap_or(false);
+        let mut tabs: Vec<Tab> = Tab::ALL
+            .iter()
+            .filter(|t| t.available_on_platform(is_github))
+            .copied()
+            .collect();
+        if let Some(disabled) = &self.config.disabled_tabs {
+            tabs.retain(|t| !disabled.iter().any(|d| d == t.title(is_github)));
+        }
+        tabs
     }
 
     pub fn get_column_filter(
@@ -1503,32 +1522,36 @@ impl App {
     }
 
     pub fn next_tab(&mut self) {
-        let current_index = Tab::ALL
-            .iter()
-            .position(|t| t == &self.active_tab)
-            .unwrap_or(0);
-        let next_index = (current_index + 1) % Tab::ALL.len();
-        self.active_tab = Tab::ALL[next_index];
+        let tabs = self.available_tabs();
+        if tabs.is_empty() {
+            return;
+        }
+        let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
+        let next_index = (current_index + 1) % tabs.len();
+        self.active_tab = tabs[next_index];
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
         self.details_zoomed = false;
+        self.detail_visible = false;
         self.update_filter_selection();
     }
 
     pub fn previous_tab(&mut self) {
-        let current_index = Tab::ALL
-            .iter()
-            .position(|t| t == &self.active_tab)
-            .unwrap_or(0);
+        let tabs = self.available_tabs();
+        if tabs.is_empty() {
+            return;
+        }
+        let current_index = tabs.iter().position(|t| t == &self.active_tab).unwrap_or(0);
         let prev_index = if current_index == 0 {
-            Tab::ALL.len() - 1
+            tabs.len() - 1
         } else {
             current_index - 1
         };
-        self.active_tab = Tab::ALL[prev_index];
+        self.active_tab = tabs[prev_index];
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
         self.details_zoomed = false;
+        self.detail_visible = false;
         self.update_filter_selection();
     }
 

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.3.0] - 2026-07-02
+## [0.4.0] - 2026-07-02
 
 ### Added
 - **TOML config file** — `~/.config/glab-tui/config.toml` (or `$GLAB_TUI_CONFIG`) auto-generated on first run with all options documented inline.
@@ -38,7 +38,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [2.2.0] - 2026-06-13
+## [0.3.0] - 2026-06-13
 
 ### Added
 - **Code review system** with draft comments, multi-line comments, and code suggestions in diff view.

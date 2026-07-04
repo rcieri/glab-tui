@@ -1044,6 +1044,29 @@ fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 },
             });
         }
+    } else if entity_type == "release" {
+        if let Some(release) = app.releases.items.get(entity_iid as usize) {
+            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            app.edit_menu = Some(crate::app::EditMenu {
+                title: format!("Edit Release {}", release.tag_name),
+                fields: vec![
+                    ("Tag".to_string(), release.tag_name.clone()),
+                    ("Release Name".to_string(), release.name.clone()),
+                    (
+                        "Description".to_string(),
+                        release.description.clone().unwrap_or_default(),
+                    ),
+                ],
+                selected_idx,
+                entity_iid,
+                entity_type: "release".to_string(),
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(selected_idx));
+                    s
+                },
+            });
+        }
     }
 }
 
@@ -1447,7 +1470,9 @@ fn get_workflow_files(is_github: bool) -> Vec<String> {
         .unwrap_or_else(|| ".".to_string());
 
     if is_github {
-        let workflows_dir = std::path::Path::new(&root).join(".github").join("workflows");
+        let workflows_dir = std::path::Path::new(&root)
+            .join(".github")
+            .join("workflows");
         let mut files: Vec<String> = std::fs::read_dir(&workflows_dir)
             .into_iter()
             .flatten()
@@ -1889,23 +1914,28 @@ async fn main() -> Result<()> {
                     if let Some(iid) = milestone_iid {
                         if app.selected_milestone_iid != Some(iid) {
                             app.selected_milestone_iid = Some(iid);
-                            app.selected_milestone_issues = None;
-                            let client_clone = client.clone();
-                            let project_context = app.project_context.clone();
-                            let tx = events.sender();
-                            tokio::spawn(async move {
-                                if let Ok(issues) = gitlab::milestones::list_milestone_issues(
-                                    &client_clone,
-                                    &project_context,
-                                    iid,
-                                )
-                                .await
-                                {
-                                    let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
-                                } else {
-                                    let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
-                                }
-                            });
+                            // Use cached data if available; only fetch if not yet cached
+                            if let Some(cached) = app.milestone_issues_cache.get(&iid) {
+                                app.selected_milestone_issues = Some(cached.clone());
+                            } else {
+                                app.selected_milestone_issues = None;
+                                let client_clone = client.clone();
+                                let project_context = app.project_context.clone();
+                                let tx = events.sender();
+                                tokio::spawn(async move {
+                                    if let Ok(issues) = gitlab::milestones::list_milestone_issues(
+                                        &client_clone,
+                                        &project_context,
+                                        iid,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
+                                    } else {
+                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -2091,8 +2121,12 @@ async fn main() -> Result<()> {
                     cache.milestones = app.milestones.items.clone();
                     crate::utils::cache::save_cache(&app.project_context, &cache);
                 }
-                Event::MilestoneIssuesFetched(_, issues) => {
-                    app.selected_milestone_issues = Some(issues);
+                Event::MilestoneIssuesFetched(iid, issues) => {
+                    app.milestone_issues_cache.insert(iid, issues.clone());
+                    // Only update the displayed issues if we're still viewing this milestone
+                    if app.selected_milestone_iid == Some(iid) {
+                        app.selected_milestone_issues = Some(issues);
+                    }
                 }
                 Event::SelectorItemsFetched(items) => {
                     if let Some(mut selector) = app.selector.take() {
@@ -4544,6 +4578,12 @@ async fn main() -> Result<()> {
                                                     .find(|i| i.iid == entity_iid)
                                                     .and_then(|i| i.description.clone())
                                                     .unwrap_or_default()
+                                            } else if entity_type == "release" {
+                                                app.releases
+                                                    .items
+                                                    .get(entity_iid as usize)
+                                                    .and_then(|r| r.description.clone())
+                                                    .unwrap_or_default()
                                             } else {
                                                 app.mrs
                                                     .items
@@ -4579,6 +4619,22 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
+                                                        let cli = app_cli(&app);
+                                                        let args = UpdateCmd::new(
+                                                            cli.is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                        )
+                                                        .flag("-d", &new_desc)
+                                                        .build();
+                                                        run_cli(
+                                                            &cli,
+                                                            &args,
+                                                            &mut terminal,
+                                                            events.sender(),
+                                                            app.active_tab,
+                                                        )
+                                                        .await;
                                                     } else if entity_type == "mr" {
                                                         if let Some(item) = app
                                                             .mrs
@@ -4589,23 +4645,68 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
+                                                        let cli = app_cli(&app);
+                                                        let args = UpdateCmd::new(
+                                                            cli.is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                        )
+                                                        .flag("-d", &new_desc)
+                                                        .build();
+                                                        run_cli(
+                                                            &cli,
+                                                            &args,
+                                                            &mut terminal,
+                                                            events.sender(),
+                                                            app.active_tab,
+                                                        )
+                                                        .await;
+                                                    } else if entity_type == "release" {
+                                                        let release_opt = app
+                                                            .releases
+                                                            .items
+                                                            .get(entity_iid as usize)
+                                                            .cloned();
+                                                        if let Some(release) = release_opt {
+                                                            let client =
+                                                                app.gitlab_client.clone().unwrap();
+                                                            let project_path =
+                                                                app.project_context.clone();
+                                                            let tag = release.tag_name.clone();
+                                                            let name = release.name.clone();
+                                                            let desc = new_desc.clone();
+                                                            let tx_spawn = events.sender();
+                                                            let _ = tx_spawn.send(
+                                                                Event::CommandStarted(format!(
+                                                                    "Updating release tag {}",
+                                                                    tag
+                                                                )),
+                                                            );
+                                                            tokio::spawn(async move {
+                                                                let res = crate::gitlab::releases::update_release(
+                                                                    &client,
+                                                                    &project_path,
+                                                                    &tag,
+                                                                    &name,
+                                                                    &desc,
+                                                                )
+                                                                .await;
+                                                                match res {
+                                                                    Ok(_) => {
+                                                                        let _ = tx_spawn.send(
+                                                                            Event::ReleaseUpdated,
+                                                                        );
+                                                                    }
+                                                                    Err(e) => {
+                                                                        let _ = tx_spawn.send(Event::CommandCompleted(
+                                                                            crate::app::Tab::Releases,
+                                                                            Err(e.to_string()),
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
                                                     }
-                                                    let cli = app_cli(&app);
-                                                    let args = UpdateCmd::new(
-                                                        cli.is_github,
-                                                        &entity_type,
-                                                        entity_iid,
-                                                    )
-                                                    .flag("-d", &new_desc)
-                                                    .build();
-                                                    run_cli(
-                                                        &cli,
-                                                        &args,
-                                                        &mut terminal,
-                                                        events.sender(),
-                                                        app.active_tab,
-                                                    )
-                                                    .await;
                                                 }
                                                 if let Some(client) = &app.gitlab_client {
                                                     if entity_type == "issue" {
@@ -5327,6 +5428,65 @@ async fn main() -> Result<()> {
                                                 events.sender(),
                                             );
                                         }
+                                    } else if entity_type == "new_release" {
+                                        let tag = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Tag")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let name = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Release Name")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let description = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Description")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        if !tag.is_empty() {
+                                            let cli = app_cli(&app);
+                                            let mut cmd_args = vec![
+                                                "release".to_string(),
+                                                "create".to_string(),
+                                                tag,
+                                            ];
+                                            if !name.is_empty() {
+                                                cmd_args.push("-n".to_string());
+                                                cmd_args.push(name);
+                                            }
+                                            if !description.is_empty() {
+                                                if cli.is_github {
+                                                    cmd_args.push("-n".to_string());
+                                                    cmd_args.push(description);
+                                                } else {
+                                                    cmd_args.push("-N".to_string());
+                                                    cmd_args.push(description);
+                                                }
+                                            }
+                                            app.edit_menu = None;
+                                            run_cli(
+                                                &cli,
+                                                &cmd_args,
+                                                &mut terminal,
+                                                events.sender(),
+                                                app.active_tab,
+                                            )
+                                            .await;
+
+                                            if let Some(client) = &app.gitlab_client {
+                                                spawn_refresh_active_tab(
+                                                    client,
+                                                    &app.project_context,
+                                                    app.active_tab,
+                                                    events.sender(),
+                                                );
+                                            }
+                                        }
                                         continue;
                                     }
                                 }
@@ -5697,70 +5857,90 @@ async fn main() -> Result<()> {
                                     || field_name == "Variables"
                                     || field_name == "Inputs"
                                     || field_name == "Workflow / CI File (GitHub)"
+                                    || field_name == "Release Name"
+                                    || field_name == "Tag"
                                 {
-                                    let current_val = if entity_iid == 0 {
-                                        menu.fields[menu.selected_idx].1.clone()
-                                    } else {
-                                        let field_type = match field_name.as_str() {
-                                            "Title" => "title",
-                                            "Target Branch" => "target_branch",
-                                            "Weight" => "weight",
-                                            _ => "",
-                                        };
-                                        match field_type {
-                                            "title" => {
-                                                if entity_type == "issue" {
-                                                    app.issues
-                                                        .items
-                                                        .iter()
-                                                        .find(|i| i.iid == entity_iid)
-                                                        .map(|i| i.title.clone())
-                                                        .unwrap_or_default()
-                                                } else if entity_type == "milestone" {
-                                                    app.milestones
-                                                        .items
-                                                        .iter()
-                                                        .find(|m| m.iid == entity_iid)
-                                                        .map(|m| m.title.clone())
-                                                        .unwrap_or_default()
-                                                } else {
-                                                    app.mrs
-                                                        .items
-                                                        .iter()
-                                                        .find(|m| m.iid == entity_iid)
-                                                        .map(|m| m.title.clone())
-                                                        .unwrap_or_default()
+                                    let current_val =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            menu.fields[menu.selected_idx].1.clone()
+                                        } else {
+                                            let field_type = match field_name.as_str() {
+                                                "Title" => "title",
+                                                "Target Branch" => "target_branch",
+                                                "Weight" => "weight",
+                                                "Release Name" => "release_name",
+                                                "Tag" => "tag",
+                                                _ => "",
+                                            };
+                                            match field_type {
+                                                "title" => {
+                                                    if entity_type == "issue" {
+                                                        app.issues
+                                                            .items
+                                                            .iter()
+                                                            .find(|i| i.iid == entity_iid)
+                                                            .map(|i| i.title.clone())
+                                                            .unwrap_or_default()
+                                                    } else if entity_type == "milestone" {
+                                                        app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default()
+                                                    } else {
+                                                        app.mrs
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default()
+                                                    }
                                                 }
+                                                "target_branch" => app
+                                                    .mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .map(|m| m.target_branch.clone())
+                                                    .unwrap_or_default(),
+                                                "weight" => "0".to_string(),
+                                                "release_name" => app
+                                                    .releases
+                                                    .items
+                                                    .get(entity_iid as usize)
+                                                    .map(|r| r.name.clone())
+                                                    .unwrap_or_default(),
+                                                "tag" => app
+                                                    .releases
+                                                    .items
+                                                    .get(entity_iid as usize)
+                                                    .map(|r| r.tag_name.clone())
+                                                    .unwrap_or_default(),
+                                                _ => String::new(),
                                             }
-                                            "target_branch" => app
-                                                .mrs
-                                                .items
-                                                .iter()
-                                                .find(|m| m.iid == entity_iid)
-                                                .map(|m| m.target_branch.clone())
-                                                .unwrap_or_default(),
-                                            "weight" => "0".to_string(),
-                                            _ => String::new(),
-                                        }
-                                    };
-
-                                    let action = if entity_iid == 0 {
-                                        crate::app::TextInputAction::EditNewField {
-                                            field_idx: menu.selected_idx,
-                                        }
-                                    } else {
-                                        let field_type = match field_name.as_str() {
-                                            "Title" => "title",
-                                            "Target Branch" => "target_branch",
-                                            "Weight" => "weight",
-                                            _ => "",
                                         };
-                                        crate::app::TextInputAction::EditField {
-                                            entity_iid,
-                                            entity_type: entity_type.clone(),
-                                            field_type: field_type.to_string(),
-                                        }
-                                    };
+
+                                    let action =
+                                        if entity_iid == 0 || entity_type.starts_with("new_") {
+                                            crate::app::TextInputAction::EditNewField {
+                                                field_idx: menu.selected_idx,
+                                            }
+                                        } else {
+                                            let field_type = match field_name.as_str() {
+                                                "Title" => "title",
+                                                "Target Branch" => "target_branch",
+                                                "Weight" => "weight",
+                                                "Release Name" => "release_name",
+                                                "Tag" => "tag",
+                                                _ => "",
+                                            };
+                                            crate::app::TextInputAction::EditField {
+                                                entity_iid,
+                                                entity_type: entity_type.clone(),
+                                                field_type: field_type.to_string(),
+                                            }
+                                        };
 
                                     app.text_input = Some(crate::app::TextInput {
                                         title: format!("Edit {}", field_name),
@@ -7253,16 +7433,13 @@ async fn main() -> Result<()> {
                                     .as_ref()
                                     .map(|c| c.is_github)
                                     .unwrap_or(false);
-                                let current_branch = get_current_branch()
-                                    .unwrap_or_else(|| "main".to_string());
+                                let current_branch =
+                                    get_current_branch().unwrap_or_else(|| "main".to_string());
 
                                 app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Run Pipeline".to_string(),
                                     fields: vec![
-                                        (
-                                            "Branch / Ref".to_string(),
-                                            current_branch.clone(),
-                                        ),
+                                        ("Branch / Ref".to_string(), current_branch.clone()),
                                         ("Merge Request Pipeline".to_string(), "No".to_string()),
                                         ("Variables".to_string(), String::new()),
                                         ("Inputs".to_string(), String::new()),
@@ -7285,8 +7462,7 @@ async fn main() -> Result<()> {
                                     let mut pre_selected = std::collections::HashSet::new();
                                     // Pre-select the first workflow file if only one exists
                                     if workflow_files.len() == 1 {
-                                        pre_selected
-                                            .insert(workflow_files[0].clone());
+                                        pre_selected.insert(workflow_files[0].clone());
                                     }
                                     app.selector = Some(crate::app::Selector {
                                         title: "Select Workflow / CI File".to_string(),
@@ -7970,11 +8146,21 @@ async fn main() -> Result<()> {
                                     &key_event,
                                 )) =>
                             {
-                                app.text_input = Some(crate::app::TextInput {
+                                app.edit_menu = Some(crate::app::EditMenu {
                                     title: "Create Release".to_string(),
-                                    value: String::new(),
-                                    cursor_idx: 0,
-                                    action: crate::app::TextInputAction::CreateRelease,
+                                    fields: vec![
+                                        ("Tag".to_string(), String::new()),
+                                        ("Release Name".to_string(), String::new()),
+                                        ("Description".to_string(), String::new()),
+                                    ],
+                                    selected_idx: 0,
+                                    entity_iid: 0,
+                                    entity_type: "new_release".to_string(),
+                                    state: {
+                                        let mut s = ListState::default();
+                                        s.select(Some(0));
+                                        s
+                                    },
                                 });
                             }
                             _ if (key_event.code == KeyCode::Char('e')

@@ -170,19 +170,12 @@ impl Tab {
                 "Tag",
                 "Release Name",
                 "Date",
-                "Description",
                 "Author",
                 "Assets",
+                "Description",
             ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
-            Tab::Milestones => {
-                let mut cols = vec!["ID", "Title", "State"];
-                if !is_github {
-                    cols.push("Start Date");
-                }
-                cols.push("Due Date");
-                cols
-            }
+            Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Terminal => vec![],
         }
     }
@@ -202,14 +195,7 @@ impl Tab {
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec!["Tag", "Release Name", "Date"],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
-            Tab::Milestones => {
-                let mut cols = vec!["ID", "Title", "State"];
-                if !is_github {
-                    cols.push("Start Date");
-                }
-                cols.push("Due Date");
-                cols
-            }
+            Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Terminal => vec![],
         }
     }
@@ -1250,6 +1236,7 @@ pub struct App {
     pub milestones: StatefulTable<crate::gitlab::milestones::Milestone>,
     pub selected_milestone_issues: Option<Vec<crate::gitlab::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
+    pub milestone_issues_cache: std::collections::HashMap<u64, Vec<crate::gitlab::issues::Issue>>,
     pub terminal_scroll: usize,
     pub group_by_column: Option<String>,
     pub group_ascending: bool,
@@ -1333,6 +1320,7 @@ impl Default for App {
             milestones: StatefulTable::with_items(vec![]),
             selected_milestone_issues: None,
             selected_milestone_iid: None,
+            milestone_issues_cache: std::collections::HashMap::new(),
             terminal_scroll: 0,
             group_by_column: None,
             group_ascending: true,

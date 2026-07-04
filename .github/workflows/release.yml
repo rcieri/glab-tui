@@ -109,43 +109,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine Docker tags
+        id: docker_tags
+        run: |
+          TAGS="ghcr.io/${{ github.repository }}:${{ github.ref_name }}"
+          if ! echo "${{ github.ref_name }}" | grep -q '-'; then
+            TAGS="$TAGS,ghcr.io/${{ github.repository }}:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
-
-  update-manifests:
-    name: Update package manifests
-    runs-on: ubuntu-latest
-    needs: build-and-release
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update Homebrew formula and Scoop manifest
-        run: bash scripts/update-manifests.sh ${{ github.ref_name }}
-
-      - name: Create pull request
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          BRANCH="bot/update-manifests-${{ github.ref_name }}"
-          git config user.name "glab-tui-bot"
-          git config user.email "bot@glab-tui"
-          git checkout -b "$BRANCH"
-          git add Formula/ scoop/
-          git diff --cached --quiet && echo "No changes to commit" && exit 0
-          git commit -m "chore: bump package manifests to ${{ github.ref_name }}"
-          git push origin "$BRANCH"
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "chore: bump package manifests to ${{ github.ref_name }}" \
-            --body "Automated update of Homebrew formula and Scoop manifest after release ${{ github.ref_name }}." \
-            --label automated
+          tags: ${{ steps.docker_tags.outputs.tags }}

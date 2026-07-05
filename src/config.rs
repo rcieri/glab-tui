@@ -338,6 +338,65 @@ pub struct KeybindingMilestones {
     pub open_in_browser: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct KeybindingJobs {
+    #[serde(default)]
+    pub retry: String,
+    #[serde(default)]
+    pub cancel: String,
+    #[serde(default)]
+    pub download_artifact: String,
+    #[serde(default)]
+    pub select_stage: String,
+    #[serde(default)]
+    pub open_in_browser: String,
+    #[serde(default)]
+    pub open_trace_in_editor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingRunners {
+    #[serde(default)]
+    pub pause: String,
+    #[serde(default)]
+    pub resume: String,
+    #[serde(default)]
+    pub edit_description: String,
+    #[serde(default)]
+    pub open_in_browser: String,
+}
+
+impl Default for KeybindingRunners {
+    fn default() -> Self {
+        Self {
+            pause: " ".to_string(),
+            resume: " ".to_string(),
+            edit_description: " ".to_string(),
+            open_in_browser: def_open_in_browser(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingTodos {
+    #[serde(default)]
+    pub mark_read: String,
+    #[serde(default)]
+    pub open_in_browser: String,
+    #[serde(default)]
+    pub refresh: String,
+}
+
+impl Default for KeybindingTodos {
+    fn default() -> Self {
+        Self {
+            mark_read: " ".to_string(),
+            open_in_browser: def_open_in_browser(),
+            refresh: def_refresh(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingConfig {
     #[serde(default)]
@@ -352,6 +411,12 @@ pub struct KeybindingConfig {
     pub releases: KeybindingReleases,
     #[serde(default)]
     pub milestones: KeybindingMilestones,
+    #[serde(default)]
+    pub jobs: KeybindingJobs,
+    #[serde(default)]
+    pub runners: KeybindingRunners,
+    #[serde(default)]
+    pub todos: KeybindingTodos,
 }
 
 macro_rules! keybind_defaults {
@@ -394,6 +459,12 @@ keybind_defaults! {
     def_reopen_milestone = "r",
     def_delete_milestone = "d",
     def_open_in_browser = "o",
+    def_select_stage = " ",
+    def_open_trace_in_editor = " ",
+    def_pause = " ",
+    def_resume = " ",
+    def_edit_description = " ",
+    def_mark_read = " ",
 }
 
 impl Default for KeybindingGlobal {
@@ -482,6 +553,9 @@ impl Default for KeybindingConfig {
             pipelines: KeybindingPipelines::default(),
             releases: KeybindingReleases::default(),
             milestones: KeybindingMilestones::default(),
+            jobs: KeybindingJobs::default(),
+            runners: KeybindingRunners::default(),
+            todos: KeybindingTodos::default(),
         }
     }
 }
@@ -513,6 +587,7 @@ pub struct Config {
     pub theme: ThemeOverrides,
     pub keybindings: KeybindingConfig,
     pub disabled_tabs: Option<Vec<String>>,
+    pub page_limit: Option<u32>,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -531,6 +606,7 @@ impl Default for Config {
             theme: ThemeOverrides::default(),
             keybindings: KeybindingConfig::default(),
             disabled_tabs: None,
+            page_limit: Some(100),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),

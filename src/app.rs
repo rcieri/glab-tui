@@ -2237,14 +2237,49 @@ impl App {
             .collect()
     }
 
-    pub fn filtered_releases(&self) -> Vec<&crate::gitlab::releases::Release> {
+    pub fn filtered_releases_list<'a>(
+        items: &'a [crate::gitlab::releases::Release],
+        query: &str,
+        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
+        ascending: bool,
+        group_by_column: &Option<String>,
+    ) -> Vec<&'a crate::gitlab::releases::Release> {
         let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Releases)
-            .unwrap_or(&default_set);
-        let mut list =
-            Self::filter_releases_list(&self.releases.items, &self.search_query, enabled_cols);
+        let enabled_cols = enabled_columns.get(&Tab::Releases).unwrap_or(&default_set);
+        let mut list = Self::filter_releases_list(items, query, enabled_cols);
+        if let Some(col) = group_by_column {
+            list.sort_by(|a, b| {
+                let val_a = match col.as_str() {
+                    "Tag" => a.tag_name.clone(),
+                    "Release Name" => a.name.clone(),
+                    "Date" => a.released_at.clone(),
+                    "Description" => a.description.clone().unwrap_or_default(),
+                    "Author" => a.author_name.clone().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                let val_b = match col.as_str() {
+                    "Tag" => b.tag_name.clone(),
+                    "Release Name" => b.name.clone(),
+                    "Date" => b.released_at.clone(),
+                    "Description" => b.description.clone().unwrap_or_default(),
+                    "Author" => b.author_name.clone().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                let cmp = val_a.cmp(&val_b);
+                if !ascending { cmp.reverse() } else { cmp }
+            });
+        }
+        list
+    }
+
+    pub fn filtered_releases(&self) -> Vec<&crate::gitlab::releases::Release> {
+        let mut list = Self::filtered_releases_list(
+            &self.releases.items,
+            &self.search_query,
+            &self.enabled_columns,
+            self.group_ascending,
+            &self.group_by_column,
+        );
         Self::apply_column_filters(
             &mut list,
             &self.column_filters,
@@ -2409,14 +2444,84 @@ impl App {
             .collect()
     }
 
-    pub fn filtered_milestones(&self) -> Vec<&crate::gitlab::milestones::Milestone> {
+    pub fn filtered_milestones_list<'a>(
+        items: &'a [crate::gitlab::milestones::Milestone],
+        query: &str,
+        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
+        ascending: bool,
+        group_by_column: &Option<String>,
+        milestone_issues_cache: &std::collections::HashMap<u64, Vec<crate::gitlab::issues::Issue>>,
+    ) -> Vec<&'a crate::gitlab::milestones::Milestone> {
         let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
+        let enabled_cols = enabled_columns
             .get(&Tab::Milestones)
             .unwrap_or(&default_set);
-        let mut list: Vec<&crate::gitlab::milestones::Milestone> =
-            Self::filter_milestones_list(&self.milestones.items, &self.search_query, enabled_cols);
+        let mut list = Self::filter_milestones_list(items, query, enabled_cols);
+        if let Some(col) = group_by_column {
+            list.sort_by(|a, b| {
+                let val_a = match col.as_str() {
+                    "ID" => a.iid.to_string(),
+                    "Title" => a.title.clone(),
+                    "State" => a.state.clone(),
+                    "Start Date" => a.start_date.clone().unwrap_or_default(),
+                    "Due Date" => a.due_date.clone().unwrap_or_default(),
+                    "Progress" => {
+                        if let Some(issues) = milestone_issues_cache.get(&a.iid) {
+                            let total = issues.len();
+                            if total > 0 {
+                                let closed = issues.iter().filter(|i| i.state == "closed").count();
+                                let percent = (closed * 100) / total;
+                                format!("{:03}%", percent)
+                            } else {
+                                "000%".to_string()
+                            }
+                        } else {
+                            "000%".to_string()
+                        }
+                    }
+                    _ => String::new(),
+                };
+                let val_b = match col.as_str() {
+                    "ID" => b.iid.to_string(),
+                    "Title" => b.title.clone(),
+                    "State" => b.state.clone(),
+                    "Start Date" => b.start_date.clone().unwrap_or_default(),
+                    "Due Date" => b.due_date.clone().unwrap_or_default(),
+                    "Progress" => {
+                        if let Some(issues) = milestone_issues_cache.get(&b.iid) {
+                            let total = issues.len();
+                            if total > 0 {
+                                let closed = issues.iter().filter(|i| i.state == "closed").count();
+                                let percent = (closed * 100) / total;
+                                format!("{:03}%", percent)
+                            } else {
+                                "000%".to_string()
+                            }
+                        } else {
+                            "000%".to_string()
+                        }
+                    }
+                    _ => String::new(),
+                };
+                let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
+                    (Ok(a_num), Ok(b_num)) => a_num.cmp(&b_num),
+                    _ => val_a.cmp(&val_b),
+                };
+                if !ascending { cmp.reverse() } else { cmp }
+            });
+        }
+        list
+    }
+
+    pub fn filtered_milestones(&self) -> Vec<&crate::gitlab::milestones::Milestone> {
+        let mut list = Self::filtered_milestones_list(
+            &self.milestones.items,
+            &self.search_query,
+            &self.enabled_columns,
+            self.group_ascending,
+            &self.group_by_column,
+            &self.milestone_issues_cache,
+        );
         Self::apply_column_filters(
             &mut list,
             &self.column_filters,

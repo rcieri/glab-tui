@@ -97,7 +97,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(title, title_area);
 
     // Middle: Sidebar | Main Area | Preview Area
-    let can_zoom = app.active_tab != Tab::Pipelines || app.selected_pipeline_jobs.is_some();
+    let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 
     let sidebar_width = if size.width >= 80 {
         Constraint::Length(22)

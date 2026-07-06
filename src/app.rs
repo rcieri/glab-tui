@@ -5,7 +5,7 @@ use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::style::Modifier;
-use ratatui::widgets::{ListState, TableState};
+use ratatui::widgets::ListState;
 use std::sync::LazyLock;
 use syntect::highlighting::Style as SyntectStyle;
 use syntect::highlighting::ThemeSet;
@@ -1195,8 +1195,6 @@ pub struct App {
     pub pipelines: StatefulTable<crate::gitlab::pipelines::Pipeline>,
     pub search_query: String,
     pub is_typing_search: bool,
-    pub selected_pipeline_jobs: Option<Vec<crate::gitlab::pipelines::Job>>,
-    pub selected_job_index: Option<usize>,
     pub active_pipeline_id: Option<u64>,
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
@@ -1210,7 +1208,7 @@ pub struct App {
     pub selector: Option<Selector>,
     pub text_input: Option<TextInput>,
     pub date_picker: Option<DatePicker>,
-    pub jobs_list_state: TableState,
+    pub jobs: StatefulTable<crate::gitlab::pipelines::Job>,
     pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
@@ -1267,8 +1265,6 @@ impl Default for App {
             pipelines: StatefulTable::with_items(vec![]),
             search_query: String::new(),
             is_typing_search: false,
-            selected_pipeline_jobs: None,
-            selected_job_index: None,
             active_pipeline_id: None,
             job_trace: None,
             error_message: None,
@@ -1282,7 +1278,7 @@ impl Default for App {
             selector: None,
             text_input: None,
             date_picker: None,
-            jobs_list_state: TableState::default(),
+            jobs: StatefulTable::with_items(vec![]),
             detail_scroll: 0,
             selected_pipelines: std::collections::HashSet::new(),
             selected_jobs: std::collections::HashSet::new(),
@@ -2098,38 +2094,37 @@ impl App {
     }
 
     pub fn filtered_jobs(&self) -> Vec<&crate::gitlab::pipelines::Job> {
-        if let Some(jobs) = &self.selected_pipeline_jobs {
-            let mut list = Self::filtered_jobs_list(
-                jobs,
-                &self.search_query,
-                &self.enabled_columns,
-                self.group_ascending,
-                &self.group_by_column,
-            );
-            Self::apply_column_filters(&mut list, &self.column_filters, Tab::Jobs, |item, col| {
-                match col {
-                    "ID" => vec![item.id.to_string()],
-                    "Stage" => vec![item.stage.clone()],
-                    "Status" => vec![item.status.clone()],
-                    "Name" => vec![item.name.clone()],
-                    _ => vec![],
-                }
-            });
+        let mut list = Self::filtered_jobs_list(
+            &self.jobs.items,
+            &self.search_query,
+            &self.enabled_columns,
+            self.group_ascending,
+            &self.group_by_column,
+        );
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Jobs,
+            |item, col| match col {
+                "ID" => vec![item.id.to_string()],
+                "Stage" => vec![item.stage.clone()],
+                "Status" => vec![item.status.clone()],
+                "Name" => vec![item.name.clone()],
+                _ => vec![],
+            },
+        );
 
-            if self.collapse_matrix_jobs {
-                let mut collapsed: Vec<&crate::gitlab::pipelines::Job> = Vec::new();
-                let mut seen_names = std::collections::HashSet::new();
-                for job in list {
-                    if seen_names.insert(&job.name) {
-                        collapsed.push(job);
-                    }
+        if self.collapse_matrix_jobs {
+            let mut collapsed: Vec<&crate::gitlab::pipelines::Job> = Vec::new();
+            let mut seen_names = std::collections::HashSet::new();
+            for job in list {
+                if seen_names.insert(&job.name) {
+                    collapsed.push(job);
                 }
-                collapsed
-            } else {
-                list
             }
+            collapsed
         } else {
-            vec![]
+            list
         }
     }
 
@@ -2672,23 +2667,21 @@ impl App {
                 }
             }
             Tab::Jobs => {
-                if let Some(jobs) = &self.selected_pipeline_jobs {
-                    for item in jobs {
-                        match col {
-                            "ID" => {
-                                values.insert(item.id.to_string());
-                            }
-                            "Stage" => {
-                                values.insert(item.stage.clone());
-                            }
-                            "Status" => {
-                                values.insert(item.status.clone());
-                            }
-                            "Name" => {
-                                values.insert(item.name.clone());
-                            }
-                            _ => {}
+                for item in &self.jobs.items {
+                    match col {
+                        "ID" => {
+                            values.insert(item.id.to_string());
                         }
+                        "Stage" => {
+                            values.insert(item.stage.clone());
+                        }
+                        "Status" => {
+                            values.insert(item.status.clone());
+                        }
+                        "Name" => {
+                            values.insert(item.name.clone());
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3111,13 +3104,20 @@ impl App {
             }
             Tab::Jobs => {
                 let len = self.filtered_jobs().len();
+                let sel = self.jobs.state.selected();
                 if len == 0 {
-                    self.selected_job_index = None;
-                    self.jobs_list_state.select(None);
+                    self.jobs.state.select(None);
                 } else {
-                    let idx = self.selected_job_index.unwrap_or(0).min(len - 1);
-                    self.selected_job_index = Some(idx);
-                    self.jobs_list_state.select(Some(idx));
+                    match sel {
+                        Some(idx) => {
+                            if idx >= len {
+                                self.jobs.state.select(Some(len - 1));
+                            }
+                        }
+                        None => {
+                            self.jobs.state.select(Some(0));
+                        }
+                    }
                 }
             }
             Tab::Milestones => {

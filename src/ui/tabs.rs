@@ -1305,7 +1305,7 @@ pub(crate) fn render_tab_jobs(
     highlight_style: Style,
     header_style: Style,
 ) {
-    if app.selected_pipeline_jobs.is_none() && app.loading_tabs.contains(&app.active_tab) {
+    if app.jobs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new("\n\n Loading jobs...")
                 .alignment(Alignment::Center)
@@ -1324,9 +1324,9 @@ pub(crate) fn render_tab_jobs(
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
             detail_rect,
         );
-    } else if let Some(jobs) = &app.selected_pipeline_jobs {
+    } else if !app.jobs.items.is_empty() {
         let mut filtered_jobs = App::filtered_jobs_list(
-            jobs,
+            &app.jobs.items,
             &app.search_query,
             &app.enabled_columns,
             app.group_ascending,
@@ -1350,10 +1350,11 @@ pub(crate) fn render_tab_jobs(
             let (matrix_display, status_text_display, status_color_display, status_bg_display) =
                 if app.collapse_matrix_jobs {
                     let variants: Vec<&crate::gitlab::pipelines::Job> = app
-                        .selected_pipeline_jobs
-                        .as_ref()
-                        .map(|jobs| jobs.iter().filter(|job| job.name == j.name).collect())
-                        .unwrap_or_default();
+                        .jobs
+                        .items
+                        .iter()
+                        .filter(|job| job.name == j.name)
+                        .collect();
 
                     let count = variants.len();
                     let mut overall_status = "success";
@@ -1462,7 +1463,7 @@ pub(crate) fn render_tab_jobs(
                     (m_str, status_text, status_color, bg_color)
                 };
 
-            let is_job_selected = Some(i) == app.selected_job_index;
+            let is_job_selected = Some(i) == app.jobs.state.selected();
             let is_checked = app.selected_jobs.contains(&j.id);
             let status_bg = if is_job_selected {
                 THEME.read().unwrap().highlight_bg
@@ -1585,9 +1586,9 @@ pub(crate) fn render_tab_jobs(
             .row_highlight_style(highlight_style)
             .highlight_symbol(" ❯ ");
 
-        let mut state = app.jobs_list_state.clone();
+        let mut state = app.jobs.state.clone();
         f.render_stateful_widget(table, content_area, &mut state);
-        app.jobs_list_state = state;
+        app.jobs.state = state;
 
         if app.job_trace_loading {
             let preview_block = Block::default()
@@ -1673,7 +1674,7 @@ pub(crate) fn render_tab_jobs(
                     .add_modifier(Modifier::BOLD),
             )]));
             text.push(Line::from(""));
-            super::helpers::append_stage_summaries(&mut text, jobs);
+            super::helpers::append_stage_summaries(&mut text, &app.jobs.items);
             f.render_widget(Paragraph::new(text).block(preview_block), detail_rect);
         }
     } else {

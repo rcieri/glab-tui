@@ -510,9 +510,8 @@ async fn main() -> Result<()> {
                     }
 
                     if is_active {
-                        app.selected_pipeline_jobs = Some(jobs);
-                        app.jobs_list_state
-                            .select(app.selected_job_index.or(Some(0)));
+                        app.jobs.items = jobs;
+                        app.jobs.state.select(app.jobs.state.selected().or(Some(0)));
                     }
 
                     let mut cache = crate::utils::cache::load_cache(&app.project_context);
@@ -522,10 +521,9 @@ async fn main() -> Result<()> {
                 Event::JobsTabFetched(pipeline_id, jobs) => {
                     app.complete_loading_tab(app::Tab::Jobs, "Success");
                     app.loaded_tabs.insert(app::Tab::Jobs);
-                    app.selected_pipeline_jobs = Some(jobs);
+                    app.jobs.items = jobs;
                     app.active_pipeline_id = Some(pipeline_id);
-                    app.selected_job_index = Some(0);
-                    app.jobs_list_state.select(Some(0));
+                    app.jobs.state.select(Some(0));
                     app.detail_scroll = 0;
                     app.job_trace = None;
                 }
@@ -533,17 +531,15 @@ async fn main() -> Result<()> {
                     app.job_trace_loading = false;
                     let current_selected_job_id = match app.active_tab {
                         app::Tab::Jobs => {
-                            if let Some(idx) = app.selected_job_index {
+                            if let Some(idx) = app.jobs.state.selected() {
                                 app.filtered_jobs().get(idx).map(|j| j.id)
                             } else {
                                 None
                             }
                         }
                         app::Tab::Pipelines => {
-                            if let Some(idx) = app.selected_job_index {
-                                app.selected_pipeline_jobs
-                                    .as_ref()
-                                    .and_then(|jobs| jobs.get(idx).map(|j| j.id))
+                            if let Some(idx) = app.jobs.state.selected() {
+                                app.jobs.items.get(idx).map(|j| j.id)
                             } else {
                                 None
                             }

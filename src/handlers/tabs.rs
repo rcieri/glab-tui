@@ -760,7 +760,7 @@ pub async fn handle_active_tab_key(
                     cursor_idx: 0,
                     action: crate::app::TextInputAction::EnterPipelineId,
                 });
-            } else if let Some(idx) = app.selected_job_index {
+            } else if let Some(idx) = app.jobs.state.selected() {
                 let job_info = app.filtered_jobs().get(idx).map(|j| (j.id, j.name.clone()));
                 if let Some((job_id, job_name)) = job_info {
                     match key_event.code {
@@ -781,11 +781,9 @@ pub async fn handle_active_tab_key(
                                 if !app.selected_jobs.is_empty() {
                                     let job_ids: Vec<u64> =
                                         app.selected_jobs.iter().cloned().collect();
-                                    if let Some(jobs_mut) = &mut app.selected_pipeline_jobs {
-                                        for j in jobs_mut.iter_mut() {
-                                            if app.selected_jobs.contains(&j.id) {
-                                                j.status = "running".to_string();
-                                            }
+                                    for j in app.jobs.items.iter_mut() {
+                                        if app.selected_jobs.contains(&j.id) {
+                                            j.status = "running".to_string();
                                         }
                                     }
                                     app.selected_jobs.clear();
@@ -811,10 +809,8 @@ pub async fn handle_active_tab_key(
                                         }
                                     });
                                 } else {
-                                    if let Some(jobs_mut) = &mut app.selected_pipeline_jobs {
-                                        if let Some(j) = jobs_mut.get_mut(idx) {
-                                            j.status = "running".to_string();
-                                        }
+                                    if let Some(j) = app.jobs.items.get_mut(idx) {
+                                        j.status = "running".to_string();
                                     }
                                     tokio::spawn(async move {
                                         let endpoint = format!(
@@ -839,19 +835,16 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         KeyCode::Char('s') => {
-                            if let Some(jobs) = &app.selected_pipeline_jobs {
-                                if let Some(highlighted_job) = jobs.get(idx) {
-                                    let stage_name = &highlighted_job.stage;
-                                    for job in jobs {
-                                        if &job.stage == stage_name {
-                                            app.selected_jobs.insert(job.id);
-                                        }
+                            let jobs = &app.jobs.items;
+                            if let Some(highlighted_job) = jobs.get(idx) {
+                                let stage_name = &highlighted_job.stage;
+                                for job in jobs {
+                                    if &job.stage == stage_name {
+                                        app.selected_jobs.insert(job.id);
                                     }
-                                    app.status_message = Some(format!(
-                                        "Selected all jobs in stage '{}'",
-                                        stage_name
-                                    ));
                                 }
+                                app.status_message =
+                                    Some(format!("Selected all jobs in stage '{}'", stage_name));
                             }
                         }
                         KeyCode::Char('c') => {
@@ -864,11 +857,9 @@ pub async fn handle_active_tab_key(
                                 if !app.selected_jobs.is_empty() {
                                     let job_ids: Vec<u64> =
                                         app.selected_jobs.iter().cloned().collect();
-                                    if let Some(jobs_mut) = &mut app.selected_pipeline_jobs {
-                                        for j in jobs_mut.iter_mut() {
-                                            if app.selected_jobs.contains(&j.id) {
-                                                j.status = "canceled".to_string();
-                                            }
+                                    for j in app.jobs.items.iter_mut() {
+                                        if app.selected_jobs.contains(&j.id) {
+                                            j.status = "canceled".to_string();
                                         }
                                     }
                                     app.selected_jobs.clear();
@@ -903,10 +894,8 @@ pub async fn handle_active_tab_key(
                                         }
                                     });
                                 } else {
-                                    if let Some(jobs_mut) = &mut app.selected_pipeline_jobs {
-                                        if let Some(j) = jobs_mut.get_mut(idx) {
-                                            j.status = "canceled".to_string();
-                                        }
+                                    if let Some(j) = app.jobs.items.get_mut(idx) {
+                                        j.status = "canceled".to_string();
                                     }
                                     tokio::spawn(async move {
                                         let endpoint = if client_clone.is_github {
@@ -1498,8 +1487,7 @@ pub async fn handle_active_tab_key(
                 if app.active_tab == crate::app::Tab::Jobs && app.job_trace.is_none() =>
             {
                 app.collapse_matrix_jobs = !app.collapse_matrix_jobs;
-                app.selected_job_index = Some(0);
-                app.jobs_list_state.select(Some(0));
+                app.jobs.state.select(Some(0));
             }
 
             KeyCode::Esc | KeyCode::Backspace => {
@@ -1516,14 +1504,13 @@ pub async fn handle_active_tab_key(
                     } else {
                         app.active_tab = crate::app::Tab::Pipelines;
                     }
-                } else if app.active_tab == crate::app::Tab::Pipelines
-                    && app.selected_pipeline_jobs.is_some()
+                } else if app.active_tab == crate::app::Tab::Pipelines && !app.jobs.items.is_empty()
                 {
                     if app.job_trace.is_some() {
                         app.job_trace = None;
                     } else {
-                        app.selected_pipeline_jobs = None;
-                        app.selected_job_index = None;
+                        app.jobs.items.clear();
+                        app.jobs.state.select(None);
                         app.selected_jobs.clear();
                     }
                 }
@@ -1587,10 +1574,9 @@ pub async fn handle_active_tab_key(
                                 .await
                                 {
                                     app.pipeline_jobs.insert(pipeline_id, jobs.clone());
-                                    app.selected_pipeline_jobs = Some(jobs);
+                                    app.jobs.items = jobs;
                                     app.active_pipeline_id = Some(pipeline_id);
-                                    app.selected_job_index = Some(0);
-                                    app.jobs_list_state.select(Some(0));
+                                    app.jobs.state.select(Some(0));
                                     app.detail_scroll = 0;
                                     app.job_trace = None;
                                     app.active_tab = crate::app::Tab::Jobs;
@@ -1606,7 +1592,7 @@ pub async fn handle_active_tab_key(
                 crate::app::Tab::Jobs => {
                     if app.job_trace.is_some() {
                         app.details_zoomed = !app.details_zoomed;
-                    } else if let Some(idx) = app.selected_job_index {
+                    } else if let Some(idx) = app.jobs.state.selected() {
                         let job_info = app.filtered_jobs().get(idx).map(|j| (j.id, j.name.clone()));
                         if let Some((job_id, _)) = job_info {
                             if let Some(client) = &app.gitlab_client {
@@ -1698,13 +1684,8 @@ pub async fn handle_active_tab_key(
                         }
                         crate::app::Tab::Jobs => {
                             let len = app.filtered_jobs().len();
-                            if let Some(idx) = &mut app.selected_job_index {
-                                if len > 0 && *idx + 1 < len {
-                                    *idx += 1;
-                                    app.jobs_list_state.select(Some(*idx));
-                                    app.job_trace = None;
-                                }
-                            }
+                            app.jobs.next(len);
+                            app.job_trace = None;
                         }
                         crate::app::Tab::Runners => {
                             app.runners.next(app.filtered_runners().len());
@@ -1740,13 +1721,9 @@ pub async fn handle_active_tab_key(
                             app.pipelines.previous(app.filtered_pipelines().len());
                         }
                         crate::app::Tab::Jobs => {
-                            if let Some(idx) = &mut app.selected_job_index {
-                                if *idx > 0 {
-                                    *idx -= 1;
-                                    app.jobs_list_state.select(Some(*idx));
-                                    app.job_trace = None;
-                                }
-                            }
+                            let len = app.filtered_jobs().len();
+                            app.jobs.previous(len);
+                            app.job_trace = None;
                         }
                         crate::app::Tab::Runners => {
                             app.runners.previous(app.filtered_runners().len());

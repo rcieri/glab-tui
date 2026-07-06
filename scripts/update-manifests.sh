@@ -39,48 +39,6 @@ MACOS_AMD64=$(sha256sum "${TMPDIR}/glab-tui-macos-amd64.tar.gz" | cut -d' ' -f1)
 MACOS_ARM64=$(sha256sum "${TMPDIR}/glab-tui-macos-arm64.tar.gz" | cut -d' ' -f1)
 WINDOWS_AMD64=$(sha256sum "${TMPDIR}/glab-tui-windows-amd64.zip" | cut -d' ' -f1)
 
-# ---- Update Homebrew formula ----
-echo "Updating Formula/glab-tui.rb..."
-cat > Formula/glab-tui.rb <<FORMULA
-class GlabTui < Formula
-  desc "Terminal user interface for GitLab and GitHub"
-  homepage "https://github.com/rcieri/glab-tui"
-  license "MIT"
-
-  on_macos do
-    on_intel do
-      url "https://github.com/${REPO}/releases/download/v${VERSION}/glab-tui-macos-amd64.tar.gz"
-      sha256 "${MACOS_AMD64}"
-    end
-    on_arm do
-      url "https://github.com/${REPO}/releases/download/v${VERSION}/glab-tui-macos-arm64.tar.gz"
-      sha256 "${MACOS_ARM64}"
-    end
-  end
-
-  on_linux do
-    on_intel do
-      url "https://github.com/${REPO}/releases/download/v${VERSION}/glab-tui-linux-amd64.tar.gz"
-      sha256 "${LINUX_AMD64}"
-    end
-    on_arm do
-      url "https://github.com/${REPO}/releases/download/v${VERSION}/glab-tui-linux-arm64.tar.gz"
-      sha256 "${LINUX_ARM64}"
-    end
-  end
-
-  depends_on "gh"
-  depends_on "glab" => :recommended
-
-  def install
-    bin.install "glab-tui"
-  end
-
-  test do
-    system "\#{bin}/glab-tui", "--help"
-  end
-end
-FORMULA
 
 # ---- Update Scoop manifest ----
 echo "Updating scoop/glab-tui.json..."

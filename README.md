@@ -97,11 +97,7 @@ The image includes `gh` and expects a Git repository mounted at `/workspace`.
 
 ### Homebrew
 
-```sh
-brew install https://raw.githubusercontent.com/rcieri/glab-tui/main/Formula/glab-tui.rb
-```
-
-Installs the `glab-tui` binary on macOS (Intel and Apple Silicon) and Linux (x86_64 and ARM64). Requires `gh`; `glab` is optional.
+TBD (see [issue #137](https://github.com/rcieri/glab-tui/issues/137))
 
 ### Scoop (Windows)
 

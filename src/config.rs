@@ -28,6 +28,13 @@ pub struct Theme {
     pub purple_bg: Color,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SaveMenu {
+    Local,
+    Global,
+    Cancel,
+}
+
 fn hex_to_color(s: &str) -> Option<Color> {
     let s = s.trim_start_matches('#');
     if s.len() == 6 {
@@ -264,6 +271,8 @@ pub struct KeybindingGlobal {
     pub scroll_down: String,
     #[serde(default)]
     pub scroll_up: String,
+    #[serde(default)]
+    pub save_view: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -436,6 +445,7 @@ keybind_defaults! {
     def_prev_tab = "h",
     def_scroll_down = "J",
     def_scroll_up = "K",
+    def_save_view = "s",
     def_create_issue = "n",
     def_edit_entity = "e",
     def_close_entity = "c",
@@ -489,6 +499,7 @@ impl Default for KeybindingGlobal {
             prev_tab: def_prev_tab(),
             scroll_down: def_scroll_down(),
             scroll_up: def_scroll_up(),
+            save_view: def_save_view(),
         }
     }
 }
@@ -631,6 +642,7 @@ pub struct PaneConfig {
     pub column_filters: HashMap<String, Vec<String>>,
     pub group_by_column: Option<String>,
     pub group_ascending: bool,
+    pub page_size: Option<usize>,
 }
 
 impl Default for PaneConfig {
@@ -640,6 +652,7 @@ impl Default for PaneConfig {
             column_filters: HashMap::new(),
             group_by_column: None,
             group_ascending: true,
+            page_size: None,
         }
     }
 }
@@ -652,6 +665,7 @@ fn def_page_size() -> usize {
 #[serde(default)]
 pub struct Config {
     pub theme_preset: Option<String>,
+    pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
     pub keybindings: KeybindingConfig,
     #[serde(default = "def_page_size")]
@@ -675,6 +689,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme_preset: Some("default".to_string()),
+            active_tab: None,
             theme: ThemeOverrides::default(),
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
@@ -748,6 +763,7 @@ next_tab = "l"
 prev_tab = "h"
 scroll_down = "J"
 scroll_up = "K"
+save_view = "s"
 
 [keybindings.issues]
 create_issue = "n"
@@ -875,6 +891,32 @@ view_deployments = "Enter"
             None
         }
 
+        if let Some(root) = find_git_root() {
+            let repo_config_dir = root.join(".glab-tui");
+            let repo_config_path = repo_config_dir.join("config.toml");
+            if !repo_config_path.exists() {
+                let toml_str = Self::generate_default_toml();
+                let _ = std::fs::create_dir_all(&repo_config_dir);
+                let _ = std::fs::write(&repo_config_path, &toml_str);
+            }
+
+            let paths = [
+                repo_config_dir.join("config.toml"),
+                root.join(".config").join("glab-tui").join("config.toml"),
+            ];
+            for p in &paths {
+                if p.exists() {
+                    if let Ok(workspace_contents) = std::fs::read_to_string(p) {
+                        if let Ok(workspace_val) =
+                            toml::from_str::<toml::Value>(&workspace_contents)
+                        {
+                            merge_toml_values(&mut merged_value, workspace_val);
+                        }
+                    }
+                }
+            }
+        }
+
         fn merge_toml_values(base: &mut toml::Value, overrides: toml::Value) {
             match (base, overrides) {
                 (toml::Value::Table(base_table), toml::Value::Table(overrides_table)) => {
@@ -959,8 +1001,10 @@ pub const THEME_PRESETS: &[&str] = &[
 impl Config {
     /// Save layout state (columns, grouping, filters) back to config.toml.
     /// If inside a git repo, saves to repo-level config, otherwise global.
-    pub fn save_layout(&self) -> anyhow::Result<()> {
-        let mut merged_value = toml::Value::Table(toml::Table::new());
+    pub fn save_layout(&self, target: SaveMenu) -> anyhow::Result<()> {
+        if target == SaveMenu::Cancel {
+            return Ok(());
+        }
 
         fn find_git_root() -> Option<std::path::PathBuf> {
             let mut current = std::env::current_dir().ok()?;
@@ -975,6 +1019,49 @@ impl Config {
             }
             None
         }
+
+        // Determine target path
+        let target_path = match target {
+            SaveMenu::Local => {
+                if let Some(root) = find_git_root() {
+                    let repo_config_dir = root.join(".glab-tui");
+                    let _ = std::fs::create_dir_all(&repo_config_dir);
+                    repo_config_dir.join("config.toml")
+                } else {
+                    Self::config_path()
+                }
+            }
+            SaveMenu::Global => Self::config_path(),
+            SaveMenu::Cancel => unreachable!(),
+        };
+
+        let mut merged_value = if target_path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&target_path) {
+                toml::from_str(&contents).unwrap_or_else(|_| toml::Value::Table(toml::Table::new()))
+            } else {
+                toml::Value::Table(toml::Table::new())
+            }
+        } else {
+            toml::Value::Table(toml::Table::new())
+        };
+
+        if !merged_value.is_table() {
+            merged_value = toml::Value::Table(toml::Table::new());
+        }
+
+        let table = merged_value.as_table_mut().unwrap();
+
+        if let Some(preset) = &self.theme_preset {
+            table.insert(
+                "theme_preset".to_string(),
+                toml::Value::String(preset.clone()),
+            );
+        }
+
+        table.insert(
+            "page_size".to_string(),
+            toml::Value::Integer(self.page_size as i64),
+        );
 
         fn pane_to_value(pane: &PaneConfig) -> toml::Value {
             let mut table = toml::Table::new();
@@ -1029,24 +1116,13 @@ impl Config {
         ] {
             let val = pane_to_value(pane);
             if val.as_table().map_or(false, |t| !t.is_empty()) {
-                merged_value
-                    .as_table_mut()
-                    .unwrap()
-                    .insert(tab_name.to_string(), val);
+                table.insert(tab_name.to_string(), val);
             }
         }
 
-        // Determine target path
-        let target_path = if let Some(root) = find_git_root() {
-            let repo_config_dir = root.join(".glab-tui");
-            let _ = std::fs::create_dir_all(&repo_config_dir);
-            repo_config_dir.join("config.toml")
-        } else {
-            Self::config_path()
-        };
-
         let toml_str = toml::to_string_pretty(&merged_value)?;
         std::fs::write(&target_path, &toml_str)?;
+
         Ok(())
     }
 }

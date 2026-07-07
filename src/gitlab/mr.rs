@@ -162,25 +162,61 @@ pub async fn list_mrs(
     project_path: &str,
     show_closed: bool,
 ) -> Result<Vec<MergeRequest>> {
+    let page_size = client.page_size.min(100);
+    let pages_to_fetch = ((client.page_size + 99) / 100).max(1);
+    let mut all_mrs = Vec::new();
+
     if client.is_github {
         let state_param = if show_closed { "all" } else { "open" };
-        let endpoint = format!(
-            "/repos/{}/pulls?state={}&per_page={}",
-            project_path, state_param, client.page_size
-        );
-        let raw = client.execute_github_api(&endpoint, "GET", None).await?;
-        let gh_prs: Vec<GithubPullRequest> = serde_json::from_str(&raw)?;
-        Ok(gh_prs.into_iter().map(MergeRequest::from).collect())
+        for page in 1..=pages_to_fetch {
+            let endpoint = format!(
+                "/repos/{}/pulls?state={}&per_page={}&page={}",
+                project_path, state_param, page_size, page
+            );
+            let raw = match client.execute_github_api(&endpoint, "GET", None).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if page == 1 {
+                        return Err(e);
+                    } else {
+                        break;
+                    }
+                }
+            };
+            let gh_prs: Vec<GithubPullRequest> = serde_json::from_str(&raw)?;
+            let len = gh_prs.len();
+            all_mrs.extend(gh_prs.into_iter().map(MergeRequest::from));
+            if len < page_size {
+                break;
+            }
+        }
+        Ok(all_mrs)
     } else {
         let encoded_path = project_path.replace("/", "%2F");
         let state_param = if show_closed { "all" } else { "opened" };
-        let endpoint = format!(
-            "/projects/{}/merge_requests?state={}&per_page={}",
-            encoded_path, state_param, client.page_size
-        );
-        let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
-        let gl_mrs: Vec<GitlabMergeRequest> = serde_json::from_str(&raw)?;
-        Ok(gl_mrs.into_iter().map(MergeRequest::from).collect())
+        for page in 1..=pages_to_fetch {
+            let endpoint = format!(
+                "/projects/{}/merge_requests?state={}&per_page={}&page={}",
+                encoded_path, state_param, page_size, page
+            );
+            let raw = match client.execute_gitlab_api(&endpoint, "GET", None).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if page == 1 {
+                        return Err(e);
+                    } else {
+                        break;
+                    }
+                }
+            };
+            let gl_mrs: Vec<GitlabMergeRequest> = serde_json::from_str(&raw)?;
+            let len = gl_mrs.len();
+            all_mrs.extend(gl_mrs.into_iter().map(MergeRequest::from));
+            if len < page_size {
+                break;
+            }
+        }
+        Ok(all_mrs)
     }
 }
 

@@ -10,10 +10,78 @@ pub struct Pipeline {
     pub updated_at: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GitlabPipeline {
+    pub id: u64,
+    pub status: String,
+    pub r#ref: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GithubWorkflowRun {
+    pub id: u64,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub head_branch: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GithubWorkflowRuns {
+    pub workflow_runs: Vec<GithubWorkflowRun>,
+}
+
+impl From<GitlabPipeline> for Pipeline {
+    fn from(gl: GitlabPipeline) -> Self {
+        Self {
+            id: gl.id,
+            status: gl.status,
+            r#ref: gl.r#ref,
+            updated_at: gl.updated_at,
+        }
+    }
+}
+
+impl From<GithubWorkflowRun> for Pipeline {
+    fn from(gh: GithubWorkflowRun) -> Self {
+        let status = if gh.status == "completed" {
+            match gh.conclusion.as_deref() {
+                Some("success") => "success",
+                Some("failure") => "failed",
+                Some("cancelled") => "canceled",
+                Some("skipped") => "skipped",
+                _ => "failed",
+            }
+        } else if gh.status == "in_progress" {
+            "running"
+        } else {
+            "pending"
+        }
+        .to_string();
+
+        Self {
+            id: gh.id,
+            status,
+            r#ref: gh.head_branch,
+            updated_at: gh.updated_at,
+        }
+    }
+}
+
 pub async fn list_pipelines(client: &GitlabClient, project_path: &str) -> Result<Vec<Pipeline>> {
-    let encoded_path = project_path.replace("/", "%2F");
-    let endpoint = format!("/projects/{}/pipelines?per_page=100", encoded_path);
-    client.fetch_api(&endpoint).await
+    if client.is_github {
+        let endpoint = format!("/repos/{}/actions/runs?per_page=100", project_path);
+        let raw = client.execute_github_api(&endpoint, "GET", None).await?;
+        let runs: GithubWorkflowRuns = serde_json::from_str(&raw)?;
+        Ok(runs.workflow_runs.into_iter().map(Pipeline::from).collect())
+    } else {
+        let encoded_path = project_path.replace("/", "%2F");
+        let endpoint = format!("/projects/{}/pipelines?per_page=100", encoded_path);
+        let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
+        let gl_pipes: Vec<GitlabPipeline> = serde_json::from_str(&raw)?;
+        Ok(gl_pipes.into_iter().map(Pipeline::from).collect())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -28,53 +96,172 @@ pub struct Job {
     pub matrix: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GitlabJob {
+    pub id: u64,
+    pub status: String,
+    pub stage: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GithubActionJob {
+    pub id: u64,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GithubWorkflowJobs {
+    pub jobs: Vec<GithubActionJob>,
+}
+
+impl From<GitlabJob> for Job {
+    fn from(gl: GitlabJob) -> Self {
+        Self {
+            id: gl.id,
+            status: gl.status,
+            stage: gl.stage,
+            name: gl.name,
+            matrix: None,
+        }
+    }
+}
+
+impl From<GithubActionJob> for Job {
+    fn from(gh: GithubActionJob) -> Self {
+        let status = if gh.status == "completed" {
+            match gh.conclusion.as_deref() {
+                Some("success") => "success",
+                Some("failure") => "failed",
+                Some("cancelled") => "canceled",
+                Some("skipped") => "skipped",
+                _ => "failed",
+            }
+        } else if gh.status == "in_progress" {
+            "running"
+        } else {
+            "pending"
+        }
+        .to_string();
+
+        Self {
+            id: gh.id,
+            status,
+            stage: "build".to_string(),
+            name: gh.name,
+            matrix: None,
+        }
+    }
+}
+
 pub async fn list_pipeline_jobs(
     client: &GitlabClient,
     project_path: &str,
     pipeline_id: u64,
 ) -> Result<Vec<Job>> {
-    let encoded_path = project_path.replace("/", "%2F");
-    let endpoint_page1 = format!(
-        "/projects/{}/pipelines/{}/jobs?per_page=100&page=1",
-        encoded_path, pipeline_id
-    );
-    let mut all_jobs: Vec<Job> = client.fetch_api(&endpoint_page1).await?;
+    if client.is_github {
+        let endpoint_page1 = format!(
+            "/repos/{}/actions/runs/{}/jobs?per_page=100&page=1",
+            project_path, pipeline_id
+        );
+        let raw = client
+            .execute_github_api(&endpoint_page1, "GET", None)
+            .await?;
+        let gh_jobs_res: GithubWorkflowJobs = serde_json::from_str(&raw)?;
+        let mut all_jobs: Vec<Job> = gh_jobs_res.jobs.into_iter().map(Job::from).collect();
 
-    if all_jobs.len() == 100 {
-        let mut handles = Vec::new();
-        for page in 2..=10 {
-            let endpoint = format!(
-                "/projects/{}/pipelines/{}/jobs?per_page=100&page={}",
-                encoded_path, pipeline_id, page
-            );
-            let client_clone = client.clone();
-            handles.push(tokio::spawn(async move {
-                client_clone.fetch_api::<Vec<Job>>(&endpoint).await
-            }));
-        }
+        if all_jobs.len() == 100 {
+            let mut handles = Vec::new();
+            for page in 2..=10 {
+                let endpoint = format!(
+                    "/repos/{}/actions/runs/{}/jobs?per_page=100&page={}",
+                    project_path, pipeline_id, page
+                );
+                let client_clone = client.clone();
+                handles.push(tokio::spawn(async move {
+                    if let Ok(raw) = client_clone
+                        .execute_github_api(&endpoint, "GET", None)
+                        .await
+                    {
+                        if let Ok(res) = serde_json::from_str::<GithubWorkflowJobs>(&raw) {
+                            return res.jobs.into_iter().map(Job::from).collect::<Vec<Job>>();
+                        }
+                    }
+                    vec![]
+                }));
+            }
 
-        for handle in handles {
-            if let Ok(Ok(jobs)) = handle.await {
-                if jobs.is_empty() {
+            for handle in handles {
+                if let Ok(jobs) = handle.await {
+                    if jobs.is_empty() {
+                        break;
+                    }
+                    let jobs_len = jobs.len();
+                    all_jobs.extend(jobs);
+                    if jobs_len < 100 {
+                        break;
+                    }
+                } else {
                     break;
                 }
-                let jobs_len = jobs.len();
-                all_jobs.extend(jobs);
-                if jobs_len < 100 {
-                    break;
-                }
-            } else {
-                break;
             }
         }
+        Ok(process_pipeline_jobs(all_jobs))
+    } else {
+        let encoded_path = project_path.replace("/", "%2F");
+        let endpoint_page1 = format!(
+            "/projects/{}/pipelines/{}/jobs?per_page=100&page=1",
+            encoded_path, pipeline_id
+        );
+        let raw = client
+            .execute_gitlab_api(&endpoint_page1, "GET", None)
+            .await?;
+        let gl_jobs: Vec<GitlabJob> = serde_json::from_str(&raw)?;
+        let mut all_jobs: Vec<Job> = gl_jobs.into_iter().map(Job::from).collect();
+
+        if all_jobs.len() == 100 {
+            let mut handles = Vec::new();
+            for page in 2..=10 {
+                let endpoint = format!(
+                    "/projects/{}/pipelines/{}/jobs?per_page=100&page={}",
+                    encoded_path, pipeline_id, page
+                );
+                let client_clone = client.clone();
+                handles.push(tokio::spawn(async move {
+                    if let Ok(raw) = client_clone
+                        .execute_gitlab_api(&endpoint, "GET", None)
+                        .await
+                    {
+                        if let Ok(res) = serde_json::from_str::<Vec<GitlabJob>>(&raw) {
+                            return res.into_iter().map(Job::from).collect::<Vec<Job>>();
+                        }
+                    }
+                    vec![]
+                }));
+            }
+
+            for handle in handles {
+                if let Ok(jobs) = handle.await {
+                    if jobs.is_empty() {
+                        break;
+                    }
+                    let jobs_len = jobs.len();
+                    all_jobs.extend(jobs);
+                    if jobs_len < 100 {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        Ok(process_pipeline_jobs(all_jobs))
     }
-    Ok(process_pipeline_jobs(all_jobs))
 }
 
 pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
-    // Parse matrix suffix from job names before deduplication.
-    // GitLab matrix jobs look like: "build [ubuntu, run:test]"
-    // GitHub matrix jobs look like: "build (ubuntu, run:test)"
     let all_jobs: Vec<Job> = all_jobs
         .into_iter()
         .map(|mut job| {
@@ -110,7 +297,6 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
         }
     }
 
-    // Deduplicate jobs by (name, matrix) key, keeping only the one with the maximum ID (latest retry)
     let mut deduplicated: std::collections::HashMap<(String, Option<String>), Job> =
         std::collections::HashMap::new();
     for job in all_jobs {
@@ -168,7 +354,6 @@ mod tests {
                 name: "run-tests".to_string(),
                 matrix: None,
             },
-            // A retry of the failed job in the "test" stage
             Job {
                 id: 103,
                 status: "success".to_string(),
@@ -176,7 +361,6 @@ mod tests {
                 name: "run-tests".to_string(),
                 matrix: None,
             },
-            // A retry of the build job (which was already success but let's say retried anyway)
             Job {
                 id: 104,
                 status: "running".to_string(),
@@ -188,13 +372,8 @@ mod tests {
 
         let processed = process_pipeline_jobs(input_jobs);
 
-        // Deduplication check:
-        // We expect only 2 jobs, because 'compile-code' (id 101 and 104) and 'run-tests' (id 102 and 103) were deduplicated.
         assert_eq!(processed.len(), 2);
 
-        // Maximum ID (latest retry) check:
-        // For 'compile-code', the latest is ID 104 (status: running)
-        // For 'run-tests', the latest is ID 103 (status: success)
         let build_job = processed.iter().find(|j| j.name == "compile-code").unwrap();
         assert_eq!(build_job.id, 104);
         assert_eq!(build_job.status, "running");
@@ -203,11 +382,6 @@ mod tests {
         assert_eq!(test_job.id, 103);
         assert_eq!(test_job.status, "success");
 
-        // Stage ordering check:
-        // The first run ID for 'build' stage is 101.
-        // The first run ID for 'test' stage is 102.
-        // Therefore, 'build' (101) < 'test' (102).
-        // The processed jobs should be ordered by stage: build then test.
         assert_eq!(processed[0].stage, "build");
         assert_eq!(processed[1].stage, "test");
     }
@@ -229,7 +403,6 @@ mod tests {
                 name: "run-tests [windows, integration]".to_string(),
                 matrix: None,
             },
-            // A retry of the ubuntu variant — should deduplicate by (name, matrix) not just name.
             Job {
                 id: 203,
                 status: "running".to_string(),
@@ -237,7 +410,6 @@ mod tests {
                 name: "run-tests [ubuntu, unit]".to_string(),
                 matrix: None,
             },
-            // A non-matrix job in the same stage.
             Job {
                 id: 204,
                 status: "success".to_string(),
@@ -249,16 +421,14 @@ mod tests {
 
         let processed = process_pipeline_jobs(input_jobs);
 
-        // 3 unique (name, matrix) combinations: (run-tests, ubuntu/unit), (run-tests, windows/integration), (lint, None)
         assert_eq!(processed.len(), 3);
 
-        // Matrix field should be populated, base name should have brackets stripped
         let ubuntu = processed
             .iter()
             .find(|j| j.matrix.as_deref() == Some("ubuntu, unit"))
             .unwrap();
         assert_eq!(ubuntu.name, "run-tests");
-        assert_eq!(ubuntu.id, 203); // latest retry wins
+        assert_eq!(ubuntu.id, 203);
 
         let windows = processed
             .iter()

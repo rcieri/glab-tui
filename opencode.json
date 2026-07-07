@@ -1,0 +1,74 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "rust-dev",
+  "instructions": ["AGENTS.md"],
+
+  "agent": {
+    "rust-dev": {
+      "description": "Primary agent for Rust development. Build, test, lint, and refactor Rust code with cargo fmt/clippy enforcement.",
+      "mode": "primary",
+      "model": "opencode/big-pickle",
+      "permission": {
+        "edit": "allow",
+        "bash": {
+          "cargo *": "allow",
+          "rustup *": "allow",
+          "git *": "allow",
+          "*": "ask"
+        }
+      }
+    },
+    "git-workflow": {
+      "description": "Dedicated agent for Git operations: commit messages, branching, rebasing, changelog management.",
+      "mode": "subagent",
+      "model": "google/gemini-2.5-pro",
+      "permission": {
+        "bash": {
+          "git *": "allow",
+          "cargo *": "allow",
+          "*": "ask"
+        }
+      }
+    },
+    "glab-cli": {
+      "description": "Specialized agent for GitLab API operations via the glab CLI: issues, MRs, pipelines, runners, releases.",
+      "mode": "subagent",
+      "model": "google/gemini-2.5-pro",
+      "permission": {
+        "bash": {
+          "glab *": "allow",
+          "git *": "allow",
+          "*": "ask"
+        }
+      }
+    },
+    "gh-cli": {
+      "description": "Specialized agent for GitHub API operations via the gh CLI: issues, PRs, actions, releases, notifications.",
+      "mode": "subagent",
+      "model": "google/gemini-2.5-pro",
+      "permission": {
+        "bash": {
+          "gh *": "allow",
+          "git *": "allow",
+          "*": "ask"
+        }
+      }
+    }
+  },
+
+  "skills": {
+    "paths": [".opencode/skills"]
+  },
+
+  "references": {
+    "src": {
+      "path": "src",
+      "description": "Rust source code for glab-tui. Use for understanding patterns, architecture, and implementation details."
+    },
+    "docs": {
+      "path": ".",
+      "description": "Project documentation, README, and config templates.",
+      "hidden": true
+    }
+  }
+}

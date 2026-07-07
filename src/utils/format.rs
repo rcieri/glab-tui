@@ -49,7 +49,22 @@ pub fn time_ago(date_str: &str) -> String {
 }
 
 pub fn format_ref(r#ref: &str) -> String {
-    if let Some(mr_id) = r#ref
+    if let Some(pr_id) = r#ref
+        .strip_prefix("refs/pull/")
+        .and_then(|s| s.strip_suffix("/merge"))
+    {
+        format!("PR #{}", pr_id)
+    } else if let Some(pr_id) = r#ref
+        .strip_prefix("refs/pull/")
+        .and_then(|s| s.strip_suffix("/head"))
+    {
+        format!("PR #{}", pr_id)
+    } else if let Some(pr_id) = r#ref
+        .strip_prefix("refs/pull/")
+        .and_then(|s| s.split('/').next())
+    {
+        format!("PR #{}", pr_id)
+    } else if let Some(mr_id) = r#ref
         .strip_prefix("refs/merge-requests/")
         .and_then(|s| s.strip_suffix("/merge"))
     {
@@ -310,6 +325,8 @@ mod tests {
     fn test_format_ref() {
         assert_eq!(format_ref("refs/merge-requests/123/merge"), "MR !123");
         assert_eq!(format_ref("refs/merge-requests/456/head"), "MR !456");
+        assert_eq!(format_ref("refs/pull/789/merge"), "PR #789");
+        assert_eq!(format_ref("refs/pull/101/head"), "PR #101");
         assert_eq!(format_ref("refs/heads/feature/login"), "feature/login");
         assert_eq!(format_ref("refs/tags/v1.2.3"), "v1.2.3");
         assert_eq!(format_ref("main"), "main");

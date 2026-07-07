@@ -33,6 +33,57 @@ type AppTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
 
 pub use cli::*;
 
+fn generate_cli_desc(program: &str, args: &[String]) -> String {
+    let action = if args.iter().any(|arg| arg == "create") {
+        "CREATING"
+    } else if args.iter().any(|arg| {
+        arg == "update"
+            || arg == "edit"
+            || arg.starts_with("--")
+            || arg == "ready"
+            || arg == "ready-pr"
+    }) {
+        "UPDATING"
+    } else if args.iter().any(|arg| arg == "delete") {
+        "DELETING"
+    } else if args.iter().any(|arg| arg == "view" || arg == "list") {
+        "FETCHING"
+    } else {
+        "RUNNING"
+    };
+
+    let target = if args.iter().any(|arg| arg == "issue") {
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "ISSUES" } else { "ISSUE" }
+    } else if args
+        .iter()
+        .any(|arg| arg == "mr" || arg == "pr" || arg == "pulls")
+    {
+        let is_list = args.iter().any(|arg| arg == "list");
+        if program == "gh" {
+            if is_list { "PRS" } else { "PR" }
+        } else {
+            if is_list { "MRS" } else { "MR" }
+        }
+    } else if args.iter().any(|arg| arg == "release") {
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "RELEASES" } else { "RELEASE" }
+    } else if args.iter().any(|arg| arg == "milestone") {
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "MILESTONES" } else { "MILESTONE" }
+    } else if args.iter().any(|arg| arg == "branch" || arg == "branches") {
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "BRANCHES" } else { "BRANCH" }
+    } else if args.iter().any(|arg| arg == "runner" || arg == "runners") {
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "RUNNERS" } else { "RUNNER" }
+    } else {
+        "COMMAND"
+    };
+
+    format!("{} {}", action, target)
+}
+
 async fn run_cli(
     cli: &Cli,
     args: &[String],
@@ -151,7 +202,8 @@ async fn run_cli(
             let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
         }
     } else {
-        let status_msg = format!("{} {}", program, args.join(" "));
+        let desc = generate_cli_desc(program, args);
+        let status_msg = format!("{}: {} {}", desc, program, args.join(" "));
         let _ = tx.send(Event::CommandStarted(status_msg));
 
         let tx_clone = tx.clone();
@@ -353,6 +405,8 @@ async fn main() -> Result<()> {
     app.todos.items = cache.todos;
     app.milestones.items = cache.milestones;
     app.pipeline_jobs = cache.pipeline_jobs;
+    app.branches.items = cache.branches;
+    app.environments.items = cache.environments;
 
     if !app.issues.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Issues);
@@ -375,9 +429,17 @@ async fn main() -> Result<()> {
     if !app.milestones.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Milestones);
     }
+    if !app.branches.items.is_empty() {
+        app.loaded_tabs.insert(app::Tab::Branches);
+    }
+    if !app.environments.items.is_empty() {
+        app.loaded_tabs.insert(app::Tab::Environments);
+    }
     app.update_filter_selection();
 
     if let Ok(mut client) = gitlab::client::GitlabClient::new().await {
+        client.page_size = app.config.page_size;
+        client.page_limit = app.config.page_limit;
         client.tx = Some(events.sender());
         app.gitlab_client = Some(client.clone());
         let tx = events.sender();
@@ -710,12 +772,40 @@ async fn main() -> Result<()> {
                         );
                     }
                 }
+                Event::BranchesFetched(branches) => {
+                    app.complete_loading_tab(app::Tab::Branches, "Success");
+                    app.loaded_tabs.insert(app::Tab::Branches);
+                    app.refreshed_tabs.insert(app::Tab::Branches);
+                    app.status_message = None;
+                    app.branches.items = branches;
+                    app.update_filter_selection();
+                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
+                    cache.branches = app.branches.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                }
+                Event::EnvironmentsFetched(envs) => {
+                    app.complete_loading_tab(app::Tab::Environments, "Success");
+                    app.loaded_tabs.insert(app::Tab::Environments);
+                    app.refreshed_tabs.insert(app::Tab::Environments);
+                    app.status_message = None;
+                    app.environments.items = envs;
+                    app.update_filter_selection();
+                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
+                    cache.environments = app.environments.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                }
                 Event::SelectorItemsFetched(items) => {
                     if let Some(mut selector) = app.selector.take() {
                         selector.all_items = items;
                         selector.is_loading = false;
                         app.selector = Some(selector);
                     }
+                }
+                Event::DeploymentsFetched(deployments) => {
+                    app.deployments.items = deployments;
+                    app.deployments.state.select(Some(0));
+                    app.status_message = None;
+                    app.update_filter_selection();
                 }
                 Event::FetchFailed(tab, err_msg) => {
                     app.complete_loading_tab(tab, &format!("Failed: {}", err_msg));
@@ -727,6 +817,8 @@ async fn main() -> Result<()> {
                         app::Tab::Releases => !app.releases.items.is_empty(),
                         app::Tab::Todos => !app.todos.items.is_empty(),
                         app::Tab::Milestones => !app.milestones.items.is_empty(),
+                        app::Tab::Branches => !app.branches.items.is_empty(),
+                        app::Tab::Environments => !app.environments.items.is_empty(),
                         _ => false,
                     };
                     if has_cached_items {
@@ -1275,6 +1367,46 @@ async fn main() -> Result<()> {
                                                         active_tab,
                                                         Err("Failed to write temporary changelog file".to_string()),
                                                     ));
+                                                }
+                                            });
+                                        }
+                                    }
+                                    crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
+                                        if !value.trim().is_empty() {
+                                            let branch_name = value.trim().to_string();
+                                            let client = app.gitlab_client.clone();
+                                            let project_context = app.project_context.clone();
+                                            let ref_branch = ref_branch.clone();
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Creating branch: {} from {}",
+                                                branch_name, ref_branch
+                                            )));
+                                            tokio::spawn(async move {
+                                                if let Some(client) = client {
+                                                    match crate::gitlab::branches::create_branch(
+                                                        &client,
+                                                        &project_context,
+                                                        &branch_name,
+                                                        &ref_branch,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(_) => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Branches,
+                                                                    Ok(()),
+                                                                ));
+                                                        }
+                                                        Err(e) => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Branches,
+                                                                    Err(format!("Failed: {}", e)),
+                                                                ));
+                                                        }
+                                                    }
                                                 }
                                             });
                                         }
@@ -2161,6 +2293,9 @@ async fn main() -> Result<()> {
                                                     crate::utils::cache::add_recent_repo(
                                                         &target_path_str,
                                                     );
+                                                    app.config = crate::config::Config::load();
+                                                    app.apply_config();
+                                                    crate::config::reload_theme();
 
                                                     if let Ok(context) =
                                                         gitlab::client::get_project_context().await
@@ -2170,6 +2305,8 @@ async fn main() -> Result<()> {
                                                     if let Ok(mut client) =
                                                         gitlab::client::GitlabClient::new().await
                                                     {
+                                                        client.page_size = app.config.page_size;
+                                                        client.page_limit = app.config.page_limit;
                                                         client.tx = Some(events.sender());
                                                         app.gitlab_client = Some(client.clone());
                                                     } else {
@@ -5198,6 +5335,7 @@ async fn main() -> Result<()> {
                         match key_event.code {
                             KeyCode::Esc | KeyCode::Char(',') => {
                                 app.focus_column_checklist = false;
+                                app.save_layout();
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if app.column_checklist_idx < max_idx {

@@ -1,0 +1,15 @@
+[
+  {
+    "id": 100,
+    "iid": 1,
+    "status": "success",
+    "ref": "main",
+    "created_at": "2026-07-06T10:00:00Z",
+    "updated_at": "2026-07-06T10:05:00Z",
+    "environment": {
+      "id": 1,
+      "name": "production",
+      "external_url": "https://production.example.com"
+    }
+  }
+]

@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "project": {
+      "path_with_namespace": "test-owner/test-repo"
+    },
+    "target": {
+      "title": "Todo Item 1",
+      "iid": 1
+    },
+    "target_type": "Issue",
+    "state": "pending",
+    "updated_at": "2026-07-06T12:00:00Z"
+  }
+]

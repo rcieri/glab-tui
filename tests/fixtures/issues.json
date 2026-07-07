@@ -1,0 +1,17 @@
+[
+  {
+    "iid": 1,
+    "number": 1,
+    "title": "Bug: Crash on startup",
+    "state": "opened",
+    "labels": ["bug"],
+    "updated_at": "2026-07-06T12:00:00Z",
+    "created_at": "2026-07-06T10:00:00Z",
+    "author": { "username": "test-user" },
+    "user": { "login": "test-user" },
+    "milestone": { "title": "v1.0" },
+    "assignees": [ { "username": "test-user", "login": "test-user" } ],
+    "description": "App crashes immediately.",
+    "due_date": "2026-07-10"
+  }
+]

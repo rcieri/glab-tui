@@ -157,6 +157,32 @@ pub fn spawn_refresh_active_tab(
                     }
                 }
             }
+            app::Tab::Branches => {
+                match gitlab::branches::list_branches(&client, &project_context).await {
+                    Ok(branches) => {
+                        let _ = tx.send(Event::BranchesFetched(branches));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::FetchFailed(
+                            tab,
+                            format!("Failed to fetch branches: {}", e),
+                        ));
+                    }
+                }
+            }
+            app::Tab::Environments => {
+                match gitlab::deployments::list_environments(&client, &project_context).await {
+                    Ok(envs) => {
+                        let _ = tx.send(Event::EnvironmentsFetched(envs));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Event::FetchFailed(
+                            tab,
+                            format!("Failed to fetch environments: {}", e),
+                        ));
+                    }
+                }
+            }
             app::Tab::Terminal => {}
         }
     });

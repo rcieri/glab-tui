@@ -1,0 +1,50 @@
+#!/bin/bash
+LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
+FIXTURES_DIR="${TEST_FIXTURES_DIR:-/home/rcieri/repos/glab-tui/tests/fixtures}"
+
+echo "gh $*" >> "$LOG_FILE"
+
+# Match arguments to determine response
+if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
+    echo "mock github job trace output"
+    exit 0
+fi
+
+if [[ "$*" == *"api"* ]]; then
+    if [[ "$*" == *"/issues"* ]]; then
+        cat "$FIXTURES_DIR/issues.json"
+    elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
+        cat "$FIXTURES_DIR/mrs.json"
+    elif [[ "$*" == *"/commits"* ]]; then
+        cat "$FIXTURES_DIR/commits.json"
+    elif [[ "$*" == *"/branches"* ]]; then
+        cat "$FIXTURES_DIR/branches.json"
+    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
+        cat "$FIXTURES_DIR/deployments.json"
+    elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
+        # For Github actions runs, we wrap pipelines.json into GithubWorkflowRuns
+        # pipelines.json is: [{"id": 12345, "status": "success", "ref": "main", "updated_at": "..."}]
+        # GithubWorkflowRuns is: {"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "..."}]}
+        echo '{"workflow_runs": [{"id": 12345, "status": "completed", "conclusion": "success", "head_branch": "main", "updated_at": "2026-07-06T12:00:00Z"}]}'
+    elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
+        # For Github runners, we wrap runners.json into GithubRunners
+        echo '{"runners": [{"id": 9876, "name": "Shared Runner 1", "status": "online"}]}'
+    elif [[ "$*" == *"/notifications"* ]]; then
+        # GitHub notifications:
+        echo '[{
+            "id": "1",
+            "repository": {"full_name": "test-owner/test-repo"},
+            "subject": {"title": "Todo Item 1", "type": "Issue", "url": "https://api.github.com/repos/test-owner/test-repo/issues/1"},
+            "unread": true,
+            "updated_at": "2026-07-06T12:00:00Z"
+        }]'
+    elif [[ "$*" == *"/milestones"* ]]; then
+        cat "$FIXTURES_DIR/milestones.json"
+    elif [[ "$*" == *"/jobs"* ]]; then
+        echo '{"jobs": [{"id": 54321, "status": "completed", "conclusion": "success", "name": "rspec"}]}'
+    else
+        echo "{}"
+    fi
+else
+    echo "[]"
+fi

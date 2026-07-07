@@ -267,6 +267,10 @@ pub async fn apply_selector_changes(
             }
         }
         "assignees" => {
+            let clean_values: Vec<String> = values
+                .iter()
+                .map(|v| v.trim_start_matches('@').to_string())
+                .collect();
             let current_assignees: Vec<String> = if entity_type == "issue" {
                 app.issues
                     .items
@@ -283,7 +287,8 @@ pub async fn apply_selector_changes(
                     .unwrap_or_default()
             };
 
-            let value_set: std::collections::HashSet<String> = values.iter().cloned().collect();
+            let value_set: std::collections::HashSet<String> =
+                clean_values.iter().cloned().collect();
             let current_set: std::collections::HashSet<String> =
                 current_assignees.iter().cloned().collect();
 
@@ -304,7 +309,7 @@ pub async fn apply_selector_changes(
 
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                    item.assignees = values
+                    item.assignees = clean_values
                         .iter()
                         .map(|username| crate::gitlab::issues::Assignee {
                             username: username.clone(),
@@ -313,7 +318,7 @@ pub async fn apply_selector_changes(
                 }
             } else if entity_type == "mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.assignees = values
+                    item.assignees = clean_values
                         .iter()
                         .map(|username| crate::gitlab::mr::Assignee {
                             username: username.clone(),
@@ -324,6 +329,10 @@ pub async fn apply_selector_changes(
         }
         "reviewers" => {
             if entity_type == "mr" {
+                let clean_values: Vec<String> = values
+                    .iter()
+                    .map(|v| v.trim_start_matches('@').to_string())
+                    .collect();
                 let current_reviewers: Vec<String> = app
                     .mrs
                     .items
@@ -332,7 +341,8 @@ pub async fn apply_selector_changes(
                     .map(|m| m.reviewers.iter().map(|r| r.username.clone()).collect())
                     .unwrap_or_default();
 
-                let value_set: std::collections::HashSet<String> = values.iter().cloned().collect();
+                let value_set: std::collections::HashSet<String> =
+                    clean_values.iter().cloned().collect();
                 let current_set: std::collections::HashSet<String> =
                     current_reviewers.iter().cloned().collect();
 
@@ -344,7 +354,7 @@ pub async fn apply_selector_changes(
                     args = args.flag("--reviewer", reviewer);
                 }
                 for reviewer in &to_remove {
-                    args = args.flag("--unassign", reviewer);
+                    args = args.flag("--unreviewer", reviewer);
                 }
                 let final_args = args.build();
                 if !final_args.is_empty() {
@@ -352,7 +362,7 @@ pub async fn apply_selector_changes(
                 }
 
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.reviewers = values
+                    item.reviewers = clean_values
                         .iter()
                         .map(|username| crate::gitlab::mr::Reviewer {
                             username: username.clone(),

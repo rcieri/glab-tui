@@ -96,13 +96,19 @@ impl From<GithubRelease> for Release {
 
 pub async fn list_releases(client: &GitlabClient, project_path: &str) -> Result<Vec<Release>> {
     if client.is_github {
-        let endpoint = format!("/repos/{}/releases?per_page=100", project_path);
+        let endpoint = format!(
+            "/repos/{}/releases?per_page={}",
+            project_path, client.page_size
+        );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let gh_rels: Vec<GithubRelease> = serde_json::from_str(&raw)?;
         Ok(gh_rels.into_iter().map(Release::from).collect())
     } else {
         let encoded_path = project_path.replace("/", "%2F");
-        let endpoint = format!("/projects/{}/releases?per_page=100", encoded_path);
+        let endpoint = format!(
+            "/projects/{}/releases?per_page={}",
+            encoded_path, client.page_size
+        );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_rels: Vec<GitlabRelease> = serde_json::from_str(&raw)?;
         Ok(gl_rels.into_iter().map(Release::from).collect())

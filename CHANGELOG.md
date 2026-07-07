@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-07-07
+
+### Added
+- **Save view configurations** — Inline page size editing, multi-page fetching, and config persistence validation in the configuration view (#142).
+- **Milestone tracker & editing** — Support editing milestone fields, color-coded progress bars, caching milestone issues to avoid redundant network fetches, and dynamically rendering milestones column headers (#106, #110, #140).
+- **Release creation & editing** — Support structured release creation and editing via `EditMenu`, along with commit metadata and assets link rendering in the release preview (#106, #110).
+- **Issue, MR, and PR description templates** — Choose from description templates when creating new issues or merge/pull requests (#123).
+- **Fuzzy matching improvements** — Upgrade pipelines, jobs, and branch/workflow selectors to use `SkimMatcherV2` fuzzy matching, matching the merge request list (#103).
+- **Run pipeline workflow/branch selectors** — Autocomplete and search local/remote branches and CI configuration files when triggering pipelines (#103).
+- **Packaging and manifests** — Add Docker container support, Scoop, and Homebrew formula packages with manifest auto-bumping utilities (#107).
+
+### Fixed
+- **GitHub PR Ready** — Use correct `gh pr ready` subcommand instead of the invalid `gh pr edit --ready` flag when marking GitHub PRs ready (#103).
+- **Runner details panel** — Hide details pane if not applicable/empty (#109).
+- **UTF-8 characters in labels** — Prevent panic on label truncation with multi-byte characters by ensuring truncation snaps down to character boundaries (#93).
+
+### Changed
+- Reordered Date column to the left of Release Name in the releases table.
+- Moved collapse/expand matrix hint from jobs pane to help view.
+
+---
+
 ## [0.4.0] - 2026-07-02
 
 ### Added

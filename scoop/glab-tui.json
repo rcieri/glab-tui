@@ -1,12 +1,12 @@
 {
-    "version": "2.3.0",
+    "version": "0.5.0",
     "description": "A terminal user interface for GitLab and GitHub",
     "homepage": "https://github.com/rcieri/glab-tui",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/rcieri/glab-tui/releases/download/v2.3.0/glab-tui-windows-amd64.zip",
-            "hash": "sha256:db1f5b5e9c1f2875a3e2f7d75d132826a262b78fb91d7aa713dcf14bfa411da8"
+            "url": "https://github.com/rcieri/glab-tui/releases/download/v0.5.0/glab-tui-windows-amd64.zip",
+            "hash": "sha256:69439b2be8702343553133489e33b302ecdc988618cfd2dce79fbfbaf3799d6a"
         }
     },
     "bin": "glab-tui.exe",

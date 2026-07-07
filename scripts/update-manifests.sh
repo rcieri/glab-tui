@@ -47,6 +47,9 @@ class GlabTui < Formula
   homepage "https://github.com/rcieri/glab-tui"
   license "MIT"
 
+  depends_on "gh"
+  depends_on "glab" => :recommended
+
   on_macos do
     on_intel do
       url "https://github.com/${REPO}/releases/download/v${VERSION}/glab-tui-macos-amd64.tar.gz"
@@ -68,9 +71,6 @@ class GlabTui < Formula
       sha256 "${LINUX_ARM64}"
     end
   end
-
-  depends_on "gh"
-  depends_on "glab" => :recommended
 
   def install
     bin.install "glab-tui"

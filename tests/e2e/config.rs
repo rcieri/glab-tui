@@ -90,7 +90,7 @@ page_size = 20
 fn test_missing_config_presets() {
     let mut session = TestSession::new(false, 24, 80);
     // When no configuration exists, it should automatically generate default config.toml
-    let _ = session.wait_for_screen_contains("Issues", 2000);
+    session.wait_for_screen_contains("Issues", 10000).unwrap();
     let default_config_path = session
         .sandbox
         .config_dir

@@ -489,7 +489,7 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
     let time_len = 11; // "[HH:MM:SS] "
     let status_len = 7; // "SUCCESS"
     let sep1_len = 3; // " • "
-    let action_len = 20; // Action padded to 20 chars
+    let action_len = 21; // Action padded to 21 chars
     let sep2_len = 3; // " • "
     let err_len = err_detail.map(|d| d.len() + 3).unwrap_or(0); // " (Error)"
 
@@ -523,7 +523,7 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
         Span::styled(" • ", Style::default().fg(THEME.read().unwrap().text_muted)),
         // 4. Action
         Span::styled(
-            format!("{: <20}", desc_str),
+            format!("{: <21}", desc_str),
             Style::default()
                 .fg(THEME.read().unwrap().blue)
                 .add_modifier(Modifier::BOLD),

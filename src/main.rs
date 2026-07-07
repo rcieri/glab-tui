@@ -5443,7 +5443,6 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Esc | KeyCode::Char(',') => {
                                 app.focus_column_checklist = false;
-                                app.save_layout(SaveMenu::Local);
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if app.column_checklist_idx < max_idx {

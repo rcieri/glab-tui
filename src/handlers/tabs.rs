@@ -369,11 +369,8 @@ pub async fn handle_active_tab_key(
                                 };
                                 let cmd_args =
                                     vec![entity.to_string(), sub.to_string(), mr_iid_str.clone()];
-                                let status_msg = format!(
-                                    "Fetching Diff & Comments: {} {}",
-                                    program,
-                                    cmd_args.join(" ")
-                                );
+                                let status_msg =
+                                    format!("Fetching Diff: {} {}", program, cmd_args.join(" "));
                                 let _ = tx.send(Event::CommandStarted(status_msg));
 
                                 let mut cmd = tokio::process::Command::new(program);

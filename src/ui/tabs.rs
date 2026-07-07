@@ -3220,6 +3220,45 @@ pub(crate) fn render_tab_environments(
                     f.render_widget(detail, detail_rect);
                 }
             }
+        } else {
+            // Show fetched deployments in the detail pane
+            let deploy_rows: Vec<Row> = app
+                .deployments
+                .items
+                .iter()
+                .map(|d| {
+                    let cells = vec![
+                        Cell::from(Span::raw(d.status.as_str())),
+                        Cell::from(Span::raw(crate::utils::format::truncate(&d.ref_name, 20))),
+                        Cell::from(Span::raw(crate::utils::format::truncate(&d.sha, 10))),
+                        Cell::from(Span::raw(crate::utils::format::time_ago(&d.created_at))),
+                    ];
+                    Row::new(cells)
+                })
+                .collect();
+            let deploy_widths = [
+                Constraint::Length(14),
+                Constraint::Fill(1),
+                Constraint::Length(14),
+                Constraint::Length(20),
+            ];
+            let deploy_table = Table::new(deploy_rows, deploy_widths)
+                .header(
+                    Row::new(
+                        ["Status", "Ref", "SHA", "Date"]
+                            .iter()
+                            .map(|h| Cell::from(*h).style(header_style)),
+                    )
+                    .style(Style::default().add_modifier(Modifier::BOLD)),
+                )
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Deployments ")
+                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                )
+                .row_highlight_style(highlight_style);
+            f.render_stateful_widget(deploy_table, detail_rect, &mut app.deployments.state);
         }
     }
 }

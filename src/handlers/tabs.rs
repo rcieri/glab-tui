@@ -1485,11 +1485,13 @@ pub async fn handle_active_tab_key(
             handled = false;
         }
         crate::app::Tab::Environments => {
+            let mut matched = false;
             if let Some(selected_idx) = app.environments.state.selected() {
                 if keybinding_matches(
                     &app.config.keybindings.environments.view_deployments,
                     key_event,
                 ) {
+                    matched = true;
                     let filtered = app.filtered_environments();
                     if let Some(env) = filtered.get(selected_idx) {
                         let env_name = env.name.clone();
@@ -1528,7 +1530,9 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            handled = false;
+            if !matched {
+                handled = false;
+            }
         }
         crate::app::Tab::Terminal => {
             handled = false;

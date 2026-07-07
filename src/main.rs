@@ -750,6 +750,7 @@ async fn main() -> Result<()> {
                 }
                 Event::DeploymentsFetched(deployments) => {
                     app.deployments.items = deployments;
+                    app.deployments.state.select(Some(0));
                     app.status_message = None;
                     app.update_filter_selection();
                 }

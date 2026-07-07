@@ -6,6 +6,7 @@ pub struct GitlabClient {
     pub is_github: bool,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub page_size: usize,
+    pub page_limit: Option<u32>,
 }
 
 impl GitlabClient {
@@ -25,6 +26,7 @@ impl GitlabClient {
             is_github,
             tx: None,
             page_size: 100,
+            page_limit: Some(10),
         })
     }
 
@@ -65,11 +67,18 @@ impl GitlabClient {
             s if s.contains("environments") => "ENVIRONMENTS",
             s if s.contains("deployments") => "DEPLOYMENTS",
             s if s.contains("issues") => "ISSUES",
-            s if s.contains("pulls") || s.contains("merge_requests") => "MERGE REQUESTS",
+            s if s.contains("pulls") || s.contains("merge_requests") => {
+                if self.is_github {
+                    "PRS"
+                } else {
+                    "MRS"
+                }
+            }
             s if s.contains("releases") => "RELEASES",
             s if s.contains("milestones") => "MILESTONES",
             s if s.contains("todos") || s.contains("notifications") => "TODOS",
             s if s.contains("pipelines") || s.contains("actions/runs") => "PIPELINES",
+            s if s.contains("jobs") && s.contains("trace") => "JOB LOGS",
             s if s.contains("jobs") || s.contains("actions/jobs") => "JOBS",
             s if s.contains("runners") => "RUNNERS",
             s if s.contains("labels") => "LABELS",

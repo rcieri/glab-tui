@@ -46,27 +46,37 @@ fn generate_cli_desc(program: &str, args: &[String]) -> String {
         "UPDATING"
     } else if args.iter().any(|arg| arg == "delete") {
         "DELETING"
-    } else if args.iter().any(|arg| arg == "view") {
+    } else if args.iter().any(|arg| arg == "view" || arg == "list") {
         "FETCHING"
     } else {
         "RUNNING"
     };
 
     let target = if args.iter().any(|arg| arg == "issue") {
-        "ISSUE"
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "ISSUES" } else { "ISSUE" }
     } else if args
         .iter()
         .any(|arg| arg == "mr" || arg == "pr" || arg == "pulls")
     {
-        "MERGE REQUEST"
+        let is_list = args.iter().any(|arg| arg == "list");
+        if program == "gh" {
+            if is_list { "PRS" } else { "PR" }
+        } else {
+            if is_list { "MRS" } else { "MR" }
+        }
     } else if args.iter().any(|arg| arg == "release") {
-        "RELEASE"
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "RELEASES" } else { "RELEASE" }
     } else if args.iter().any(|arg| arg == "milestone") {
-        "MILESTONE"
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "MILESTONES" } else { "MILESTONE" }
     } else if args.iter().any(|arg| arg == "branch" || arg == "branches") {
-        "BRANCH"
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "BRANCHES" } else { "BRANCH" }
     } else if args.iter().any(|arg| arg == "runner" || arg == "runners") {
-        "RUNNER"
+        let is_list = args.iter().any(|arg| arg == "list");
+        if is_list { "RUNNERS" } else { "RUNNER" }
     } else {
         "COMMAND"
     };
@@ -429,6 +439,7 @@ async fn main() -> Result<()> {
 
     if let Ok(mut client) = gitlab::client::GitlabClient::new().await {
         client.page_size = app.config.page_size;
+        client.page_limit = app.config.page_limit;
         client.tx = Some(events.sender());
         app.gitlab_client = Some(client.clone());
         let tx = events.sender();
@@ -2295,6 +2306,7 @@ async fn main() -> Result<()> {
                                                         gitlab::client::GitlabClient::new().await
                                                     {
                                                         client.page_size = app.config.page_size;
+                                                        client.page_limit = app.config.page_limit;
                                                         client.tx = Some(events.sender());
                                                         app.gitlab_client = Some(client.clone());
                                                     } else {

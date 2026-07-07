@@ -180,7 +180,8 @@ pub async fn list_pipeline_jobs(
 
         if all_jobs.len() == client.page_size {
             let mut handles = Vec::new();
-            for page in 2..=10 {
+            let limit = client.page_limit.unwrap_or(10) as usize;
+            for page in 2..=limit {
                 let endpoint = format!(
                     "/repos/{}/actions/runs/{}/jobs?per_page={}&page={}",
                     project_path, pipeline_id, client.page_size, page
@@ -229,7 +230,8 @@ pub async fn list_pipeline_jobs(
 
         if all_jobs.len() == client.page_size {
             let mut handles = Vec::new();
-            for page in 2..=10 {
+            let limit = client.page_limit.unwrap_or(10) as usize;
+            for page in 2..=limit {
                 let endpoint = format!(
                     "/projects/{}/pipelines/{}/jobs?per_page={}&page={}",
                     encoded_path, pipeline_id, client.page_size, page

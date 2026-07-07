@@ -929,10 +929,20 @@ pub async fn handle_active_tab_key(
                                     job_name,
                                 ]
                             } else {
+                                let ref_name = app
+                                    .active_pipeline_id
+                                    .and_then(|pipe_id| {
+                                        app.pipelines
+                                            .items
+                                            .iter()
+                                            .find(|p| p.id == pipe_id)
+                                            .map(|p| p.r#ref.clone())
+                                    })
+                                    .unwrap_or_else(|| "master".to_string());
                                 vec![
                                     "job".to_string(),
                                     "artifact".to_string(),
-                                    "master".to_string(),
+                                    ref_name,
                                     job_name,
                                 ]
                             };

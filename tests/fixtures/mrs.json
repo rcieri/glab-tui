@@ -1,0 +1,20 @@
+[
+  {
+    "iid": 2,
+    "number": 2,
+    "title": "Feature: Add pagination support",
+    "state": "opened",
+    "labels": ["feature"],
+    "updated_at": "2026-07-06T12:00:00Z",
+    "author": { "username": "test-user" },
+    "user": { "login": "test-user" },
+    "milestone": { "title": "v1.0" },
+    "assignees": [ { "username": "test-user", "login": "test-user" } ],
+    "reviewers": [ { "username": "reviewer-user" } ],
+    "requested_reviewers": [ { "login": "reviewer-user" } ],
+    "target_branch": "main",
+    "source_branch": "feature/pagination",
+    "draft": false,
+    "description": "Implements page_size override."
+  }
+]

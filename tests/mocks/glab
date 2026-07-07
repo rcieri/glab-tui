@@ -1,0 +1,34 @@
+#!/bin/bash
+LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
+FIXTURES_DIR="${TEST_FIXTURES_DIR:-/home/rcieri/repos/glab-tui/tests/fixtures}"
+
+echo "glab $*" >> "$LOG_FILE"
+
+# Match arguments to determine response
+if [[ "$*" == *"api"* ]]; then
+    if [[ "$*" == *"/issues"* ]]; then
+        cat "$FIXTURES_DIR/issues.json"
+    elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
+        cat "$FIXTURES_DIR/mrs.json"
+    elif [[ "$*" == *"/commits"* ]]; then
+        cat "$FIXTURES_DIR/commits.json"
+    elif [[ "$*" == *"/branches"* ]]; then
+        cat "$FIXTURES_DIR/branches.json"
+    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
+        cat "$FIXTURES_DIR/deployments.json"
+    elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
+        cat "$FIXTURES_DIR/pipelines.json"
+    elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
+        cat "$FIXTURES_DIR/runners.json"
+    elif [[ "$*" == *"/todos"* ]]; then
+        cat "$FIXTURES_DIR/todos.json"
+    elif [[ "$*" == *"/milestones"* ]]; then
+        cat "$FIXTURES_DIR/milestones.json"
+    elif [[ "$*" == *"/jobs"* ]]; then
+        echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
+    else
+        echo "{}"
+    fi
+else
+    echo "[]"
+fi

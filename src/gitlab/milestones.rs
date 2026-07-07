@@ -80,13 +80,19 @@ impl From<GithubMilestone> for Milestone {
 
 pub async fn list_milestones(client: &GitlabClient, project_path: &str) -> Result<Vec<Milestone>> {
     if client.is_github {
-        let endpoint = format!("/repos/{}/milestones?state=all&per_page=100", project_path);
+        let endpoint = format!(
+            "/repos/{}/milestones?state=all&per_page={}",
+            project_path, client.page_size
+        );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let gh_milestones: Vec<GithubMilestone> = serde_json::from_str(&raw)?;
         Ok(gh_milestones.into_iter().map(Milestone::from).collect())
     } else {
         let encoded_path = project_path.replace("/", "%2F");
-        let endpoint = format!("/projects/{}/milestones?per_page=100", encoded_path);
+        let endpoint = format!(
+            "/projects/{}/milestones?per_page={}",
+            encoded_path, client.page_size
+        );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_milestones: Vec<GitlabMilestone> = serde_json::from_str(&raw)?;
         Ok(gl_milestones.into_iter().map(Milestone::from).collect())
@@ -100,8 +106,8 @@ pub async fn list_milestone_issues(
 ) -> Result<Vec<Issue>> {
     if client.is_github {
         let endpoint = format!(
-            "/repos/{}/issues?milestone={}&state=all&per_page=100",
-            project_path, milestone_iid
+            "/repos/{}/issues?milestone={}&state=all&per_page={}",
+            project_path, milestone_iid, client.page_size
         );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let gh_issues: Vec<GithubIssue> = serde_json::from_str(&raw)?;
@@ -113,8 +119,8 @@ pub async fn list_milestone_issues(
     } else {
         let encoded_path = project_path.replace("/", "%2F");
         let endpoint = format!(
-            "/projects/{}/milestones/{}/issues?per_page=100",
-            encoded_path, milestone_iid
+            "/projects/{}/milestones/{}/issues?per_page={}",
+            encoded_path, milestone_iid, client.page_size
         );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_issues: Vec<crate::gitlab::issues::GitlabIssue> = serde_json::from_str(&raw)?;

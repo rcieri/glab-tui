@@ -76,10 +76,15 @@ impl UpdateCmd {
     pub fn flag(mut self, name: &str, value: &str) -> Self {
         let (name, value) = match (self.is_github, name) {
             (true, "-d" | "--description") => ("--body", value),
-            (true, "--unlabel") if value == "all" => ("--label", ""),
-            (true, "--unassign") => ("--assignee", ""),
+            (true, "--label") => ("--add-label", value),
+            (true, "--unlabel") => ("--remove-label", value),
+            (true, "--assignee") => ("--add-assignee", value),
+            (true, "--unassign") => ("--remove-assignee", value),
+            (true, "--reviewer") => ("--add-reviewer", value),
+            (true, "--unreviewer") => ("--remove-reviewer", value),
             (true, "--target-branch") => ("--base", value),
             (true, "--milestone") if value == "0" => ("--milestone", ""),
+            (false, "--unreviewer") => ("--remove-reviewer", value),
             _ => (name, value),
         };
         self.args.push(name.to_string());

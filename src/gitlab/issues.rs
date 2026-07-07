@@ -150,8 +150,8 @@ pub async fn list_issues(
     if client.is_github {
         let state_param = if show_closed { "all" } else { "open" };
         let endpoint = format!(
-            "/repos/{}/issues?state={}&per_page=100",
-            project_path, state_param
+            "/repos/{}/issues?state={}&per_page={}",
+            project_path, state_param, client.page_size
         );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let gh_issues: Vec<GithubIssue> = serde_json::from_str(&raw)?;
@@ -164,8 +164,8 @@ pub async fn list_issues(
         let encoded_path = project_path.replace("/", "%2F");
         let state_param = if show_closed { "all" } else { "opened" };
         let endpoint = format!(
-            "/projects/{}/issues?state={}&per_page=100",
-            encoded_path, state_param
+            "/projects/{}/issues?state={}&per_page={}",
+            encoded_path, state_param, client.page_size
         );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_issues: Vec<GitlabIssue> = serde_json::from_str(&raw)?;

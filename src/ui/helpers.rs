@@ -405,12 +405,80 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
         if remainder.starts_with("glab") || remainder.starts_with("gh") {
             desc = prefix;
             cmd_to_run = remainder;
+        } else {
+            // Still treat prefix as desc, but keep full text as description
+            desc = prefix;
+            cmd_to_run = ""; // Don't split into CLI components
         }
     }
 
     let desc_str = if desc.is_empty() {
-        if cmd_clean.starts_with("glab") || cmd_clean.starts_with("gh") {
-            "RUNNING COMMAND".to_string()
+        let parts: Vec<&str> = cmd_clean.split_whitespace().collect();
+        if !parts.is_empty() {
+            let mut action = "RUNNING";
+            let mut target = "COMMAND";
+            let mut start_idx = 0;
+            if parts[0] == "gh" || parts[0] == "glab" || parts[0] == "git" {
+                start_idx = 1;
+            }
+            for part in &parts[start_idx..] {
+                let p = part.to_lowercase();
+                if p == "create" || p == "new" {
+                    action = "CREATING";
+                    break;
+                } else if p == "update" || p == "edit" || p == "ready" || p.starts_with("--") {
+                    action = "UPDATING";
+                    break;
+                } else if p == "delete" || p == "remove" {
+                    action = "DELETING";
+                    break;
+                } else if p == "view"
+                    || p == "list"
+                    || p == "get"
+                    || p == "show"
+                    || p == "fetch"
+                    || p == "clone"
+                {
+                    action = "FETCHING";
+                    break;
+                }
+            }
+            for part in &parts[start_idx..] {
+                let p = part.to_lowercase();
+                if p.contains("issue") {
+                    target = "ISSUE";
+                    break;
+                } else if p.contains("mr")
+                    || p.contains("pr")
+                    || p.contains("pull")
+                    || p.contains("merge")
+                {
+                    target = "MERGE REQUEST";
+                    break;
+                } else if p.contains("release") {
+                    target = "RELEASE";
+                    break;
+                } else if p.contains("milestone") {
+                    target = "MILESTONE";
+                    break;
+                } else if p.contains("branch") {
+                    target = "BRANCH";
+                    break;
+                } else if p.contains("runner") {
+                    target = "RUNNER";
+                    break;
+                } else if p.contains("job") {
+                    target = "JOB";
+                    break;
+                } else if p.contains("pipeline") {
+                    target = "PIPELINE";
+                    break;
+                } else if p.contains("commit") {
+                    target = "COMMIT";
+                    break;
+                }
+            }
+            format!("{} {}", action, target)
         } else {
             "RUNNING COMMAND".to_string()
         }

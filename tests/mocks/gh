@@ -5,6 +5,11 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR:-/home/rcieri/repos/glab-tui/tests/fixtures}"
 echo "gh $*" >> "$LOG_FILE"
 
 # Match arguments to determine response
+if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
+    echo "mock github job trace output"
+    exit 0
+fi
+
 if [[ "$*" == *"api"* ]]; then
     if [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"

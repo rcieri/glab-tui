@@ -24,6 +24,8 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/todos.json"
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
+    elif [[ "$*" == *"/trace"* ]]; then
+        echo "mock gitlab job trace output"
     elif [[ "$*" == *"/jobs"* ]]; then
         echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
     else

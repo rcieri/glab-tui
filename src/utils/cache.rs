@@ -13,6 +13,8 @@ pub struct ProjectCache {
     pub todos: Vec<crate::gitlab::notifications::Notification>,
     pub milestones: Vec<crate::gitlab::milestones::Milestone>,
     pub pipeline_jobs: HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
+    pub branches: Vec<crate::gitlab::branches::Branch>,
+    pub environments: Vec<crate::gitlab::deployments::Environment>,
 }
 
 fn get_cache_file_path(project_context: &str) -> PathBuf {

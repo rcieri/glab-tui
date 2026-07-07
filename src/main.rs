@@ -353,6 +353,8 @@ async fn main() -> Result<()> {
     app.todos.items = cache.todos;
     app.milestones.items = cache.milestones;
     app.pipeline_jobs = cache.pipeline_jobs;
+    app.branches.items = cache.branches;
+    app.environments.items = cache.environments;
 
     if !app.issues.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Issues);
@@ -374,6 +376,12 @@ async fn main() -> Result<()> {
     }
     if !app.milestones.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Milestones);
+    }
+    if !app.branches.items.is_empty() {
+        app.loaded_tabs.insert(app::Tab::Branches);
+    }
+    if !app.environments.items.is_empty() {
+        app.loaded_tabs.insert(app::Tab::Environments);
     }
     app.update_filter_selection();
 
@@ -711,6 +719,28 @@ async fn main() -> Result<()> {
                         );
                     }
                 }
+                Event::BranchesFetched(branches) => {
+                    app.complete_loading_tab(app::Tab::Branches, "Success");
+                    app.loaded_tabs.insert(app::Tab::Branches);
+                    app.refreshed_tabs.insert(app::Tab::Branches);
+                    app.status_message = None;
+                    app.branches.items = branches;
+                    app.update_filter_selection();
+                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
+                    cache.branches = app.branches.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                }
+                Event::EnvironmentsFetched(envs) => {
+                    app.complete_loading_tab(app::Tab::Environments, "Success");
+                    app.loaded_tabs.insert(app::Tab::Environments);
+                    app.refreshed_tabs.insert(app::Tab::Environments);
+                    app.status_message = None;
+                    app.environments.items = envs;
+                    app.update_filter_selection();
+                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
+                    cache.environments = app.environments.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                }
                 Event::SelectorItemsFetched(items) => {
                     if let Some(mut selector) = app.selector.take() {
                         selector.all_items = items;
@@ -728,6 +758,8 @@ async fn main() -> Result<()> {
                         app::Tab::Releases => !app.releases.items.is_empty(),
                         app::Tab::Todos => !app.todos.items.is_empty(),
                         app::Tab::Milestones => !app.milestones.items.is_empty(),
+                        app::Tab::Branches => !app.branches.items.is_empty(),
+                        app::Tab::Environments => !app.environments.items.is_empty(),
                         _ => false,
                     };
                     if has_cached_items {
@@ -1276,6 +1308,46 @@ async fn main() -> Result<()> {
                                                         active_tab,
                                                         Err("Failed to write temporary changelog file".to_string()),
                                                     ));
+                                                }
+                                            });
+                                        }
+                                    }
+                                    crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
+                                        if !value.trim().is_empty() {
+                                            let branch_name = value.trim().to_string();
+                                            let client = app.gitlab_client.clone();
+                                            let project_context = app.project_context.clone();
+                                            let ref_branch = ref_branch.clone();
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Creating branch: {} from {}",
+                                                branch_name, ref_branch
+                                            )));
+                                            tokio::spawn(async move {
+                                                if let Some(client) = client {
+                                                    match crate::gitlab::branches::create_branch(
+                                                        &client,
+                                                        &project_context,
+                                                        &branch_name,
+                                                        &ref_branch,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(_) => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Branches,
+                                                                    Ok(()),
+                                                                ));
+                                                        }
+                                                        Err(e) => {
+                                                            let _ =
+                                                                tx.send(Event::CommandCompleted(
+                                                                    app::Tab::Branches,
+                                                                    Err(format!("Failed: {}", e)),
+                                                                ));
+                                                        }
+                                                    }
                                                 }
                                             });
                                         }
@@ -5203,6 +5275,7 @@ async fn main() -> Result<()> {
                         match key_event.code {
                             KeyCode::Esc | KeyCode::Char(',') => {
                                 app.focus_column_checklist = false;
+                                app.save_layout();
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if app.column_checklist_idx < max_idx {

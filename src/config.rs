@@ -379,6 +379,20 @@ pub struct KeybindingTodos {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingBranches {
+    #[serde(default)]
+    pub create_branch: String,
+    #[serde(default)]
+    pub delete_branch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingEnvironments {
+    #[serde(default)]
+    pub view_deployments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingConfig {
     #[serde(default)]
     pub global: KeybindingGlobal,
@@ -398,6 +412,8 @@ pub struct KeybindingConfig {
     pub runners: KeybindingRunners,
     #[serde(default)]
     pub todos: KeybindingTodos,
+    pub branches: KeybindingBranches,
+    pub environments: KeybindingEnvironments,
 }
 
 macro_rules! keybind_defaults {
@@ -454,6 +470,9 @@ keybind_defaults! {
     def_edit_description = "e",
     def_mark_as_read = "Enter",
     def_open_in_browser_todo = "o",
+    def_create_branch = "n",
+    def_delete_branch = "d",
+    def_view_deployments = "Enter",
 }
 
 impl Default for KeybindingGlobal {
@@ -568,6 +587,23 @@ impl Default for KeybindingTodos {
     }
 }
 
+impl Default for KeybindingBranches {
+    fn default() -> Self {
+        Self {
+            create_branch: def_create_branch(),
+            delete_branch: def_delete_branch(),
+        }
+    }
+}
+
+impl Default for KeybindingEnvironments {
+    fn default() -> Self {
+        Self {
+            view_deployments: def_view_deployments(),
+        }
+    }
+}
+
 impl Default for KeybindingConfig {
     fn default() -> Self {
         Self {
@@ -580,6 +616,8 @@ impl Default for KeybindingConfig {
             jobs: KeybindingJobs::default(),
             runners: KeybindingRunners::default(),
             todos: KeybindingTodos::default(),
+            branches: KeybindingBranches::default(),
+            environments: KeybindingEnvironments::default(),
         }
     }
 }
@@ -625,6 +663,8 @@ pub struct Config {
     pub releases: PaneConfig,
     pub todos: PaneConfig,
     pub milestones: PaneConfig,
+    pub branches: PaneConfig,
+    pub environments: PaneConfig,
     pub terminal: PaneConfig,
 }
 
@@ -644,6 +684,8 @@ impl Default for Config {
             releases: PaneConfig::default(),
             todos: PaneConfig::default(),
             milestones: PaneConfig::default(),
+            branches: PaneConfig::default(),
+            environments: PaneConfig::default(),
             terminal: PaneConfig::default(),
         }
     }
@@ -758,6 +800,13 @@ edit_description = "e"
 [keybindings.todos]
 mark_as_read = "Enter"
 open_in_browser = "o"
+
+[keybindings.branches]
+create_branch = "n"
+delete_branch = "d"
+
+[keybindings.environments]
+view_deployments = "Enter"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:
@@ -902,6 +951,101 @@ pub const THEME_PRESETS: &[&str] = &[
     "catppuccin-mocha",
     "dracula",
 ];
+
+impl Config {
+    /// Save layout state (columns, grouping, filters) back to config.toml.
+    /// If inside a git repo, saves to repo-level config, otherwise global.
+    pub fn save_layout(&self) -> anyhow::Result<()> {
+        let mut merged_value = toml::Value::Table(toml::Table::new());
+
+        fn find_git_root() -> Option<std::path::PathBuf> {
+            let mut current = std::env::current_dir().ok()?;
+            loop {
+                let git_dir = current.join(".git");
+                if git_dir.exists() {
+                    return Some(current);
+                }
+                if !current.pop() {
+                    break;
+                }
+            }
+            None
+        }
+
+        fn pane_to_value(pane: &PaneConfig) -> toml::Value {
+            let mut table = toml::Table::new();
+            if let Some(cols) = &pane.columns {
+                table.insert(
+                    "columns".to_string(),
+                    toml::Value::Array(
+                        cols.iter()
+                            .map(|c| toml::Value::String(c.clone()))
+                            .collect(),
+                    ),
+                );
+            }
+            if !pane.column_filters.is_empty() {
+                let mut filters = toml::Table::new();
+                for (col, vals) in &pane.column_filters {
+                    filters.insert(
+                        col.clone(),
+                        toml::Value::Array(
+                            vals.iter()
+                                .map(|v| toml::Value::String(v.clone()))
+                                .collect(),
+                        ),
+                    );
+                }
+                table.insert("column_filters".to_string(), toml::Value::Table(filters));
+            }
+            if let Some(col) = &pane.group_by_column {
+                table.insert(
+                    "group_by_column".to_string(),
+                    toml::Value::String(col.clone()),
+                );
+            }
+            if !pane.group_ascending {
+                table.insert("group_ascending".to_string(), toml::Value::Boolean(false));
+            }
+            toml::Value::Table(table)
+        }
+
+        // Serialize panes
+        for (tab_name, pane) in &[
+            ("issues", &self.issues),
+            ("mrs", &self.mrs),
+            ("pipelines", &self.pipelines),
+            ("jobs", &self.jobs),
+            ("runners", &self.runners),
+            ("releases", &self.releases),
+            ("todos", &self.todos),
+            ("milestones", &self.milestones),
+            ("branches", &self.branches),
+            ("environments", &self.environments),
+        ] {
+            let val = pane_to_value(pane);
+            if val.as_table().map_or(false, |t| !t.is_empty()) {
+                merged_value
+                    .as_table_mut()
+                    .unwrap()
+                    .insert(tab_name.to_string(), val);
+            }
+        }
+
+        // Determine target path
+        let target_path = if let Some(root) = find_git_root() {
+            let repo_config_dir = root.join(".glab-tui");
+            let _ = std::fs::create_dir_all(&repo_config_dir);
+            repo_config_dir.join("config.toml")
+        } else {
+            Self::config_path()
+        };
+
+        let toml_str = toml::to_string_pretty(&merged_value)?;
+        std::fs::write(&target_path, &toml_str)?;
+        Ok(())
+    }
+}
 
 pub fn reload_theme() {
     if let Ok(mut theme) = THEME.write() {

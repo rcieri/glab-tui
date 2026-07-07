@@ -106,11 +106,13 @@ pub enum Tab {
     Releases,
     Todos,
     Milestones,
+    Branches,
+    Environments,
     Terminal,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 9] = [
+    pub const ALL: [Tab; 11] = [
         Tab::Issues,
         Tab::MergeRequests,
         Tab::Pipelines,
@@ -119,6 +121,8 @@ impl Tab {
         Tab::Releases,
         Tab::Todos,
         Tab::Milestones,
+        Tab::Branches,
+        Tab::Environments,
         Tab::Terminal,
     ];
 
@@ -138,6 +142,8 @@ impl Tab {
             Tab::Releases => "Releases",
             Tab::Todos => "Todos",
             Tab::Milestones => "Milestones",
+            Tab::Branches => "Branches",
+            Tab::Environments => "Environments",
             Tab::Terminal => "Terminal",
         }
     }
@@ -176,6 +182,8 @@ impl Tab {
             ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
+            Tab::Branches => vec!["Name", "Default", "Protected", "SHA"],
+            Tab::Environments => vec!["Name", "State", "Deployment Status", "URL"],
             Tab::Terminal => vec![],
         }
     }
@@ -196,6 +204,8 @@ impl Tab {
             Tab::Releases => vec!["Tag", "Release Name", "Date"],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
+            Tab::Branches => vec!["Name", "Default", "Protected"],
+            Tab::Environments => vec!["Name", "State", "Deployment Status"],
             Tab::Terminal => vec![],
         }
     }
@@ -1061,6 +1071,7 @@ pub enum TextInputAction {
         comment_id: u64,
         discussion_id: String,
     },
+    CreateBranch(String), // ref_branch name
 }
 
 #[derive(Clone, Debug)]
@@ -1239,6 +1250,9 @@ pub struct App {
     pub selected_milestone_iid: Option<u64>,
     pub milestone_issues_cache: std::collections::HashMap<u64, Vec<crate::gitlab::issues::Issue>>,
     pub terminal_scroll: usize,
+    pub branches: StatefulTable<crate::gitlab::branches::Branch>,
+    pub environments: StatefulTable<crate::gitlab::deployments::Environment>,
+    pub deployments: StatefulTable<crate::gitlab::deployments::Deployment>,
     pub group_by_column: Option<String>,
     pub group_ascending: bool,
     pub group_list_state: ratatui::widgets::ListState,
@@ -1320,6 +1334,9 @@ impl Default for App {
             selected_milestone_iid: None,
             milestone_issues_cache: std::collections::HashMap::new(),
             terminal_scroll: 0,
+            branches: StatefulTable::with_items(vec![]),
+            environments: StatefulTable::with_items(vec![]),
+            deployments: StatefulTable::with_items(vec![]),
             group_by_column: None,
             group_ascending: true,
             group_list_state: ratatui::widgets::ListState::default(),
@@ -1432,6 +1449,8 @@ impl App {
                 Tab::Releases => &self.config.releases,
                 Tab::Todos => &self.config.todos,
                 Tab::Milestones => &self.config.milestones,
+                Tab::Branches => &self.config.branches,
+                Tab::Environments => &self.config.environments,
                 Tab::Terminal => &self.config.terminal,
             };
             if let Some(cols) = &pane.columns {
@@ -2531,6 +2550,115 @@ impl App {
         list
     }
 
+    pub fn filter_branches_list<'a>(
+        items: &'a [crate::gitlab::branches::Branch],
+        query: &str,
+        enabled_cols: &std::collections::HashSet<String>,
+    ) -> Vec<&'a crate::gitlab::branches::Branch> {
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
+                    }
+                };
+                if enabled_cols.contains("Name") {
+                    check_match(&item.name);
+                }
+                if enabled_cols.contains("SHA") {
+                    check_match(&item.commit_sha);
+                }
+                matches
+            })
+            .collect()
+    }
+
+    pub fn filtered_branches(&self) -> Vec<&crate::gitlab::branches::Branch> {
+        let default_set = std::collections::HashSet::new();
+        let enabled_cols = self
+            .enabled_columns
+            .get(&Tab::Branches)
+            .unwrap_or(&default_set);
+        let mut list =
+            Self::filter_branches_list(&self.branches.items, &self.search_query, enabled_cols);
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Branches,
+            |item, col| match col {
+                "Name" => vec![item.name.clone()],
+                "Default" => vec![item.default.to_string()],
+                "Protected" => vec![item.protected.to_string()],
+                _ => vec![],
+            },
+        );
+        list
+    }
+
+    pub fn filter_environments_list<'a>(
+        items: &'a [crate::gitlab::deployments::Environment],
+        query: &str,
+        enabled_cols: &std::collections::HashSet<String>,
+    ) -> Vec<&'a crate::gitlab::deployments::Environment> {
+        if query.trim().is_empty() {
+            return items.iter().collect();
+        }
+        let q = query.trim().to_lowercase();
+        items
+            .iter()
+            .filter(|item| {
+                let mut matches = false;
+                let mut check_match = |text: &str| {
+                    if text.to_lowercase().contains(&q) {
+                        matches = true;
+                    }
+                };
+                if enabled_cols.contains("Name") {
+                    check_match(&item.name);
+                }
+                if enabled_cols.contains("State") {
+                    check_match(&item.state);
+                }
+                matches
+            })
+            .collect()
+    }
+
+    pub fn filtered_environments(&self) -> Vec<&crate::gitlab::deployments::Environment> {
+        let default_set = std::collections::HashSet::new();
+        let enabled_cols = self
+            .enabled_columns
+            .get(&Tab::Environments)
+            .unwrap_or(&default_set);
+        let mut list = Self::filter_environments_list(
+            &self.environments.items,
+            &self.search_query,
+            enabled_cols,
+        );
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Environments,
+            |item, col| match col {
+                "Name" => vec![item.name.clone()],
+                "State" => vec![item.state.clone()],
+                "Deployment Status" => item
+                    .last_deployment
+                    .as_ref()
+                    .map(|d| vec![d.status.clone()])
+                    .unwrap_or_default(),
+                _ => vec![],
+            },
+        );
+        list
+    }
+
     pub fn apply_column_filters<'a, T>(
         list: &mut Vec<&'a T>,
         column_filters: &std::collections::HashMap<
@@ -2757,6 +2885,40 @@ impl App {
                         }
                         "State" => {
                             values.insert(item.state.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Branches => {
+                for item in &self.branches.items {
+                    match col {
+                        "Name" => {
+                            values.insert(item.name.clone());
+                        }
+                        "Default" => {
+                            values.insert(item.default.to_string());
+                        }
+                        "Protected" => {
+                            values.insert(item.protected.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Tab::Environments => {
+                for item in &self.environments.items {
+                    match col {
+                        "Name" => {
+                            values.insert(item.name.clone());
+                        }
+                        "State" => {
+                            values.insert(item.state.clone());
+                        }
+                        "Deployment Status" => {
+                            if let Some(ref d) = item.last_deployment {
+                                values.insert(d.status.clone());
+                            }
                         }
                         _ => {}
                     }
@@ -3138,9 +3300,163 @@ impl App {
                     }
                 }
             }
+            Tab::Branches => {
+                let len = self.filtered_branches().len();
+                let sel = self.branches.state.selected();
+                if len == 0 {
+                    self.branches.state.select(None);
+                } else {
+                    match sel {
+                        Some(idx) => {
+                            if idx >= len {
+                                self.branches.state.select(Some(len - 1));
+                            }
+                        }
+                        None => {
+                            self.branches.state.select(Some(0));
+                        }
+                    }
+                }
+            }
+            Tab::Environments => {
+                let len = self.filtered_environments().len();
+                let sel = self.environments.state.selected();
+                if len == 0 {
+                    self.environments.state.select(None);
+                } else {
+                    match sel {
+                        Some(idx) => {
+                            if idx >= len {
+                                self.environments.state.select(Some(len - 1));
+                            }
+                        }
+                        None => {
+                            self.environments.state.select(Some(0));
+                        }
+                    }
+                }
+            }
             Tab::Terminal => {}
         }
         self.rebuild_group_map();
+    }
+
+    pub fn save_layout(&self) {
+        let mut cfg = self.config.clone();
+
+        fn sync_pane(
+            tab: Tab,
+            enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
+            column_filters: &std::collections::HashMap<
+                Tab,
+                std::collections::HashMap<String, std::collections::HashSet<String>>,
+            >,
+            group_by_column: &Option<String>,
+            group_ascending: bool,
+            pane: &mut crate::config::PaneConfig,
+        ) {
+            pane.columns = enabled_columns.get(&tab).map(|set| {
+                let mut v: Vec<String> = set.iter().cloned().collect();
+                v.sort();
+                v
+            });
+            pane.column_filters = column_filters
+                .get(&tab)
+                .map(|filters| {
+                    filters
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.iter().cloned().collect::<Vec<_>>()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            pane.group_by_column = group_by_column.clone();
+            pane.group_ascending = group_ascending;
+        }
+
+        sync_pane(
+            Tab::Issues,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.issues,
+        );
+        sync_pane(
+            Tab::MergeRequests,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.mrs,
+        );
+        sync_pane(
+            Tab::Pipelines,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.pipelines,
+        );
+        sync_pane(
+            Tab::Jobs,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.jobs,
+        );
+        sync_pane(
+            Tab::Runners,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.runners,
+        );
+        sync_pane(
+            Tab::Releases,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.releases,
+        );
+        sync_pane(
+            Tab::Todos,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.todos,
+        );
+        sync_pane(
+            Tab::Milestones,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.milestones,
+        );
+        sync_pane(
+            Tab::Branches,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.branches,
+        );
+        sync_pane(
+            Tab::Environments,
+            &self.enabled_columns,
+            &self.column_filters,
+            &self.group_by_column,
+            self.group_ascending,
+            &mut cfg.environments,
+        );
+
+        if let Err(e) = cfg.save_layout() {
+            eprintln!("Failed to save layout: {}", e);
+        }
     }
 }
 

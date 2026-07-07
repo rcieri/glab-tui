@@ -971,6 +971,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 Tab::Runners => &["Global & Nav", "Runners"],
                 Tab::Releases => &["Global & Nav", "Releases"],
                 Tab::Todos => &["Global & Nav", "TODOs"],
+                Tab::Branches => &["Global & Nav", "Branches"],
+                Tab::Environments => &["Global & Nav", "Environments"],
                 Tab::Terminal => &["Global & Nav", "Terminal"],
             }
         };

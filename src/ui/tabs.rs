@@ -2955,6 +2955,275 @@ pub(crate) fn render_tab_milestones(
     }
 }
 
+pub(crate) fn render_tab_branches(
+    f: &mut Frame,
+    app: &mut App,
+    content_area: Rect,
+    detail_rect: Rect,
+    main_block: Block<'_>,
+    highlight_style: Style,
+    header_style: Style,
+) {
+    if app.branches.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
+        f.render_widget(
+            Paragraph::new("\n\n Loading branches...")
+                .alignment(Alignment::Center)
+                .block(main_block.clone())
+                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            content_area,
+        );
+    } else {
+        let default_set = std::collections::HashSet::new();
+        let enabled_cols = app
+            .enabled_columns
+            .get(&Tab::Branches)
+            .unwrap_or(&default_set);
+        let filtered =
+            App::filter_branches_list(&app.branches.items, &app.search_query, enabled_cols);
+        let rows = filtered.iter().enumerate().map(|(idx, b)| {
+            let is_selected = app.branches.state.selected() == Some(idx);
+            let row_style = if is_selected {
+                highlight_style
+            } else {
+                Style::default()
+            };
+            let mut cells = Vec::new();
+            if app.is_column_visible(Tab::Branches, "Name") {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &b.name,
+                    &app.search_query,
+                    is_selected,
+                    false,
+                    row_style,
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Branches, "Default") {
+                let text = if b.default { "YES" } else { "NO" };
+                let style = if b.default {
+                    Style::default().fg(THEME.read().unwrap().green)
+                } else {
+                    Style::default().fg(THEME.read().unwrap().text_muted)
+                };
+                cells.push(Cell::from(Span::styled(text, style)));
+            }
+            if app.is_column_visible(Tab::Branches, "Protected") {
+                let text = if b.protected { "YES" } else { "NO" };
+                let style = if b.protected {
+                    Style::default().fg(THEME.read().unwrap().yellow)
+                } else {
+                    Style::default().fg(THEME.read().unwrap().text_muted)
+                };
+                cells.push(Cell::from(Span::styled(text, style)));
+            }
+            if app.is_column_visible(Tab::Branches, "SHA") {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &crate::utils::format::truncate(&b.commit_sha, 10),
+                    &app.search_query,
+                    is_selected,
+                    false,
+                    row_style,
+                    Alignment::Left,
+                ));
+            }
+            Row::new(cells).style(row_style)
+        });
+
+        let cols = Tab::Branches.columns(false);
+        let widths: Vec<Constraint> = cols
+            .iter()
+            .filter(|c| app.is_column_visible(Tab::Branches, c))
+            .map(|c| match *c {
+                "Name" => Constraint::Fill(1),
+                "Default" => Constraint::Length(10),
+                "Protected" => Constraint::Length(12),
+                "SHA" => Constraint::Length(14),
+                _ => Constraint::Fill(1),
+            })
+            .collect();
+
+        let table = Table::new(rows, widths)
+            .header(
+                Row::new(
+                    cols.iter()
+                        .filter(|c| app.is_column_visible(Tab::Branches, c))
+                        .map(|c| Cell::from(*c).style(header_style)),
+                )
+                .style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+            .block(main_block.clone())
+            .row_highlight_style(highlight_style);
+
+        f.render_stateful_widget(table, content_area, &mut app.branches.state);
+
+        // Detail pane
+        if let Some(idx) = app.branches.state.selected() {
+            if let Some(branch) = filtered.get(idx) {
+                let detail_text = format!(
+                    "Branch: {}\nDefault: {}\nProtected: {}\nCan Push: {}\nSHA: {}",
+                    branch.name,
+                    branch.default,
+                    branch.protected,
+                    branch.can_push,
+                    branch.commit_sha,
+                );
+                let detail = Paragraph::new(detail_text)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Branch Details ")
+                            .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                    )
+                    .style(Style::default().fg(THEME.read().unwrap().text_normal))
+                    .scroll((app.detail_scroll, 0));
+                f.render_widget(detail, detail_rect);
+            }
+        }
+    }
+}
+
+pub(crate) fn render_tab_environments(
+    f: &mut Frame,
+    app: &mut App,
+    content_area: Rect,
+    detail_rect: Rect,
+    main_block: Block<'_>,
+    highlight_style: Style,
+    header_style: Style,
+) {
+    if app.environments.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
+        f.render_widget(
+            Paragraph::new("\n\n Loading environments...")
+                .alignment(Alignment::Center)
+                .block(main_block.clone())
+                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            content_area,
+        );
+    } else {
+        let default_set = std::collections::HashSet::new();
+        let enabled_cols = app
+            .enabled_columns
+            .get(&Tab::Environments)
+            .unwrap_or(&default_set);
+        let filtered =
+            App::filter_environments_list(&app.environments.items, &app.search_query, enabled_cols);
+        let rows = filtered.iter().enumerate().map(|(idx, e)| {
+            let is_selected = app.environments.state.selected() == Some(idx);
+            let row_style = if is_selected {
+                highlight_style
+            } else {
+                Style::default()
+            };
+            let mut cells = Vec::new();
+            if app.is_column_visible(Tab::Environments, "Name") {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &e.name,
+                    &app.search_query,
+                    is_selected,
+                    false,
+                    row_style,
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Environments, "State") {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &e.state,
+                    &app.search_query,
+                    is_selected,
+                    false,
+                    row_style,
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Environments, "Deployment Status") {
+                let status = e
+                    .last_deployment
+                    .as_ref()
+                    .map(|d| d.status.as_str())
+                    .unwrap_or("N/A");
+                cells.push(super::helpers::render_fuzzy_cell(
+                    status,
+                    &app.search_query,
+                    is_selected,
+                    false,
+                    row_style,
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Environments, "URL") {
+                let url = e.external_url.as_deref().unwrap_or("-");
+                cells.push(Cell::from(Span::styled(
+                    url,
+                    Style::default().fg(THEME.read().unwrap().blue),
+                )));
+            }
+            Row::new(cells).style(row_style)
+        });
+
+        let cols = Tab::Environments.columns(false);
+        let widths: Vec<Constraint> = cols
+            .iter()
+            .filter(|c| app.is_column_visible(Tab::Environments, c))
+            .map(|c| match *c {
+                "Name" => Constraint::Fill(1),
+                "State" => Constraint::Length(12),
+                "Deployment Status" => Constraint::Length(20),
+                "URL" => Constraint::Fill(1),
+                _ => Constraint::Fill(1),
+            })
+            .collect();
+
+        let table = Table::new(rows, widths)
+            .header(
+                Row::new(
+                    cols.iter()
+                        .filter(|c| app.is_column_visible(Tab::Environments, c))
+                        .map(|c| Cell::from(*c).style(header_style)),
+                )
+                .style(Style::default().add_modifier(Modifier::BOLD)),
+            )
+            .block(main_block.clone())
+            .row_highlight_style(highlight_style);
+
+        f.render_stateful_widget(table, content_area, &mut app.environments.state);
+
+        // Detail pane - show deployments if available
+        if app.deployments.items.is_empty() {
+            if let Some(idx) = app.environments.state.selected() {
+                if let Some(env) = filtered.get(idx) {
+                    let last_deploy = env
+                        .last_deployment
+                        .as_ref()
+                        .map(|d| {
+                            format!(
+                                "Deployment #{}: {}\nRef: {}\nSHA: {}\nDate: {}",
+                                d.iid, d.status, d.ref_name, d.sha, d.created_at
+                            )
+                        })
+                        .unwrap_or_else(|| "No deployments".to_string());
+                    let detail_text = format!(
+                        "Environment: {}\nState: {}\nURL: {}\n\n{}",
+                        env.name,
+                        env.state,
+                        env.external_url.as_deref().unwrap_or("N/A"),
+                        last_deploy,
+                    );
+                    let detail = Paragraph::new(detail_text)
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(" Environment Details ")
+                                .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        )
+                        .style(Style::default().fg(THEME.read().unwrap().text_normal))
+                        .scroll((app.detail_scroll, 0));
+                    f.render_widget(detail, detail_rect);
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn render_tab_terminal(
     f: &mut Frame,
     app: &mut App,

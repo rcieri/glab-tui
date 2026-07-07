@@ -1430,6 +1430,94 @@ pub async fn handle_active_tab_key(
             }
             _ => handled = false,
         },
+        crate::app::Tab::Branches => {
+            if let Some(selected_idx) = app.branches.state.selected() {
+                let filtered = app.filtered_branches();
+                if let Some(branch) = filtered.get(selected_idx) {
+                    let branch_name = branch.name.clone();
+                    if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event)
+                    {
+                        app.text_input = Some(crate::app::TextInput {
+                            title: " New Branch Name ".to_string(),
+                            value: String::new(),
+                            cursor_idx: 0,
+                            action: crate::app::TextInputAction::CreateBranch(branch_name),
+                        });
+                    } else if keybinding_matches(
+                        &app.config.keybindings.branches.delete_branch,
+                        key_event,
+                    ) {
+                        let client = app.gitlab_client.clone();
+                        let project_context = app.project_context.clone();
+                        let tx = tx.clone();
+                        let branch_name = branch_name.clone();
+                        tokio::spawn(async move {
+                            if let Some(client) = client {
+                                match crate::gitlab::branches::delete_branch(
+                                    &client,
+                                    &project_context,
+                                    &branch_name,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        let _ = tx.send(Event::CommandCompleted(
+                                            crate::app::Tab::Branches,
+                                            Ok(()),
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(Event::CommandCompleted(
+                                            crate::app::Tab::Branches,
+                                            Err(format!("Failed to delete branch: {}", e)),
+                                        ));
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+            handled = false;
+        }
+        crate::app::Tab::Environments => {
+            if let Some(selected_idx) = app.environments.state.selected() {
+                if keybinding_matches(
+                    &app.config.keybindings.environments.view_deployments,
+                    key_event,
+                ) {
+                    let filtered = app.filtered_environments();
+                    if let Some(env) = filtered.get(selected_idx) {
+                        let env_name = env.name.clone();
+                        let client = app.gitlab_client.clone();
+                        let project_context = app.project_context.clone();
+                        let tx = tx.clone();
+                        tokio::spawn(async move {
+                            if let Some(client) = client {
+                                match crate::gitlab::deployments::list_deployments(
+                                    &client,
+                                    &project_context,
+                                    Some(&env_name),
+                                )
+                                .await
+                                {
+                                    Ok(deployments) => {
+                                        let _ = tx.send(Event::DeploymentsFetched(deployments));
+                                    }
+                                    Err(e) => {
+                                        let _ = tx.send(Event::FetchFailed(
+                                            crate::app::Tab::Environments,
+                                            format!("Failed to fetch deployments: {}", e),
+                                        ));
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+            handled = false;
+        }
         crate::app::Tab::Terminal => {
             handled = false;
         }
@@ -1701,6 +1789,12 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Milestones => {
                             app.milestones.next(app.filtered_milestones().len());
                         }
+                        crate::app::Tab::Branches => {
+                            app.branches.next(app.filtered_branches().len());
+                        }
+                        crate::app::Tab::Environments => {
+                            app.environments.next(app.filtered_environments().len());
+                        }
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_sub(1);
                         }
@@ -1736,6 +1830,12 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Todos => app.todos.next(app.filtered_todos().len()),
                         crate::app::Tab::Milestones => {
                             app.milestones.previous(app.filtered_milestones().len());
+                        }
+                        crate::app::Tab::Branches => {
+                            app.branches.previous(app.filtered_branches().len());
+                        }
+                        crate::app::Tab::Environments => {
+                            app.environments.previous(app.filtered_environments().len());
                         }
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_add(1);

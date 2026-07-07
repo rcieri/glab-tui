@@ -1843,7 +1843,9 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Releases => {
                             app.releases.previous(app.filtered_releases().len());
                         }
-                        crate::app::Tab::Todos => app.todos.next(app.filtered_todos().len()),
+                        crate::app::Tab::Todos => {
+                            app.todos.previous(app.filtered_todos().len());
+                        }
                         crate::app::Tab::Milestones => {
                             app.milestones.previous(app.filtered_milestones().len());
                         }

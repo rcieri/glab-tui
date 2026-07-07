@@ -33,6 +33,47 @@ type AppTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
 
 pub use cli::*;
 
+fn generate_cli_desc(program: &str, args: &[String]) -> String {
+    let action = if args.iter().any(|arg| arg == "create") {
+        "CREATING"
+    } else if args.iter().any(|arg| {
+        arg == "update"
+            || arg == "edit"
+            || arg.starts_with("--")
+            || arg == "ready"
+            || arg == "ready-pr"
+    }) {
+        "UPDATING"
+    } else if args.iter().any(|arg| arg == "delete") {
+        "DELETING"
+    } else if args.iter().any(|arg| arg == "view") {
+        "FETCHING"
+    } else {
+        "RUNNING"
+    };
+
+    let target = if args.iter().any(|arg| arg == "issue") {
+        "ISSUE"
+    } else if args
+        .iter()
+        .any(|arg| arg == "mr" || arg == "pr" || arg == "pulls")
+    {
+        "MERGE REQUEST"
+    } else if args.iter().any(|arg| arg == "release") {
+        "RELEASE"
+    } else if args.iter().any(|arg| arg == "milestone") {
+        "MILESTONE"
+    } else if args.iter().any(|arg| arg == "branch" || arg == "branches") {
+        "BRANCH"
+    } else if args.iter().any(|arg| arg == "runner" || arg == "runners") {
+        "RUNNER"
+    } else {
+        "COMMAND"
+    };
+
+    format!("{} {}", action, target)
+}
+
 async fn run_cli(
     cli: &Cli,
     args: &[String],
@@ -151,7 +192,8 @@ async fn run_cli(
             let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
         }
     } else {
-        let status_msg = format!("{} {}", program, args.join(" "));
+        let desc = generate_cli_desc(program, args);
+        let status_msg = format!("{}: {} {}", desc, program, args.join(" "));
         let _ = tx.send(Event::CommandStarted(status_msg));
 
         let tx_clone = tx.clone();

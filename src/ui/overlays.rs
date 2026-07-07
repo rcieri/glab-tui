@@ -918,6 +918,24 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 action: "Scroll terminal log",
             },
             Shortcut {
+                category: "Branches",
+                key: d(format!("{}", app.config.keybindings.branches.create_branch)),
+                action: "Create new branch",
+            },
+            Shortcut {
+                category: "Branches",
+                key: d(format!("{}", app.config.keybindings.branches.delete_branch)),
+                action: "Delete selected branch",
+            },
+            Shortcut {
+                category: "Environments",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.environments.view_deployments
+                )),
+                action: "View deployments list for environment",
+            },
+            Shortcut {
                 category: "Diff View",
                 key: s("q / Esc"),
                 action: "Exit Diff View",

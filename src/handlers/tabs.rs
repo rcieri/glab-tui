@@ -18,9 +18,7 @@ pub async fn handle_active_tab_key(
     let mut handled = true;
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
-            _ if (key_event.code == KeyCode::Char('n')
-                || keybinding_matches(&app.config.keybindings.issues.create_issue, &key_event)) =>
-            {
+            _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
                 let is_github = app
                     .gitlab_client
                     .as_ref()
@@ -51,9 +49,7 @@ pub async fn handle_active_tab_key(
                     },
                 });
             }
-            _ if (key_event.code == KeyCode::Char('e')
-                || keybinding_matches(&app.config.keybindings.issues.edit_entity, &key_event)) =>
-            {
+            _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
@@ -115,9 +111,7 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('c')
-                || keybinding_matches(&app.config.keybindings.issues.close_entity, &key_event)) =>
-            {
+            _ if keybinding_matches(&app.config.keybindings.issues.close_entity, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
@@ -151,12 +145,7 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('r')
-                || keybinding_matches(
-                    &app.config.keybindings.issues.reopen_entity,
-                    &key_event,
-                )) =>
-            {
+            _ if keybinding_matches(&app.config.keybindings.issues.reopen_entity, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
@@ -174,9 +163,7 @@ pub async fn handle_active_tab_key(
             _ => handled = false,
         },
         crate::app::Tab::MergeRequests => {
-            if key_event.code == KeyCode::Char('n')
-                || keybinding_matches(&app.config.keybindings.mrs.create_mr, &key_event)
-            {
+            if keybinding_matches(&app.config.keybindings.mrs.create_mr, key_event) {
                 let is_github = app
                     .gitlab_client
                     .as_ref()
@@ -234,11 +221,10 @@ pub async fn handle_active_tab_key(
                     .map(|item| (item.iid, item.title.clone()));
                 if let Some((mr_iid, mr_title)) = mr_info {
                     match key_event.code {
-                        _ if (key_event.code == KeyCode::Char('e')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.edit_entity,
-                                &key_event,
-                            )) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.edit_entity,
+                            key_event,
+                        ) =>
                         {
                             let mr = filtered.get(selected_idx).unwrap();
                             let labels = if mr.labels.is_empty() {
@@ -305,11 +291,10 @@ pub async fn handle_active_tab_key(
                                 },
                             });
                         }
-                        _ if (key_event.code == KeyCode::Char('a')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.approve_mr,
-                                &key_event,
-                            )) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.approve_mr,
+                            key_event,
+                        ) =>
                         {
                             let cli = app_cli(&app);
                             let args = if cli.is_github {
@@ -324,11 +309,10 @@ pub async fn handle_active_tab_key(
                             };
                             crate::run_cli(&cli, &args, terminal, tx.clone(), app.active_tab).await;
                         }
-                        _ if (key_event.code == KeyCode::Char('m')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.merge_mr,
-                                &key_event,
-                            )) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.merge_mr,
+                            key_event,
+                        ) =>
                         {
                             let cli = app_cli(&app);
                             let args = if cli.is_github {
@@ -354,11 +338,10 @@ pub async fn handle_active_tab_key(
                             }
                             app.update_filter_selection();
                         }
-                        _ if (key_event.code == KeyCode::Char('v')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.view_diff,
-                                &key_event,
-                            )) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.view_diff,
+                            key_event,
+                        ) =>
                         {
                             app.diff_loading = true;
                             let tx = tx.clone();
@@ -442,11 +425,10 @@ pub async fn handle_active_tab_key(
                             ];
                             crate::run_cli(&cli, &args, terminal, tx.clone(), app.active_tab).await;
                         }
-                        _ if (key_event.code == KeyCode::Char('s')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.toggle_draft,
-                                &key_event,
-                            )) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.toggle_draft,
+                            key_event,
+                        ) =>
                         {
                             let cli = app_cli(&app);
                             let is_draft = app
@@ -473,11 +455,10 @@ pub async fn handle_active_tab_key(
                                 item.draft = !is_draft;
                             }
                         }
-                        _ if (key_event.code == KeyCode::Char('c')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.close_entity,
-                                &key_event,
-                            )) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.close_entity,
+                            key_event,
+                        ) =>
                         {
                             let cli = app_cli(&app);
                             let args = vec![
@@ -491,11 +472,10 @@ pub async fn handle_active_tab_key(
                             }
                             app.update_filter_selection();
                         }
-                        _ if (key_event.code == KeyCode::Char('r')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.reopen_entity,
-                                &key_event,
-                            )) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.reopen_entity,
+                            key_event,
+                        ) =>
                         {
                             let cli = app_cli(&app);
                             let args = vec![
@@ -753,7 +733,7 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Jobs => {
-            if key_event.code == KeyCode::Char('p') {
+            if keybinding_matches(&app.config.keybindings.jobs.enter_pipeline, key_event) {
                 app.text_input = Some(crate::app::TextInput {
                     title: " Enter Pipeline ID ".to_string(),
                     value: String::new(),
@@ -764,14 +744,18 @@ pub async fn handle_active_tab_key(
                 let job_info = app.filtered_jobs().get(idx).map(|j| (j.id, j.name.clone()));
                 if let Some((job_id, job_name)) = job_info {
                     match key_event.code {
-                        KeyCode::Char(' ') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.select_job,
+                            key_event,
+                        ) =>
+                        {
                             if app.selected_jobs.contains(&job_id) {
                                 app.selected_jobs.remove(&job_id);
                             } else {
                                 app.selected_jobs.insert(job_id);
                             }
                         }
-                        KeyCode::Char('r') => {
+                        _ if keybinding_matches(&app.config.keybindings.jobs.retry, key_event) => {
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
                                 let project_context = app.project_context.clone();
@@ -834,7 +818,11 @@ pub async fn handle_active_tab_key(
                                 }
                             }
                         }
-                        KeyCode::Char('s') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.select_stage,
+                            key_event,
+                        ) =>
+                        {
                             let jobs = &app.jobs.items;
                             if let Some(highlighted_job) = jobs.get(idx) {
                                 let stage_name = &highlighted_job.stage;
@@ -847,7 +835,7 @@ pub async fn handle_active_tab_key(
                                     Some(format!("Selected all jobs in stage '{}'", stage_name));
                             }
                         }
-                        KeyCode::Char('c') => {
+                        _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
                                 let project_context = app.project_context.clone();
@@ -927,7 +915,11 @@ pub async fn handle_active_tab_key(
                                 }
                             }
                         }
-                        KeyCode::Char('d') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.download_artifact,
+                            key_event,
+                        ) =>
+                        {
                             let cli = app_cli(&app);
                             let args = if cli.is_github {
                                 vec![
@@ -946,7 +938,11 @@ pub async fn handle_active_tab_key(
                             };
                             crate::run_cli(&cli, &args, terminal, tx.clone(), app.active_tab).await;
                         }
-                        KeyCode::Char('o') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.open_in_browser,
+                            key_event,
+                        ) =>
+                        {
                             let cli = app_cli(&app);
                             let args = if cli.is_github {
                                 if let Some(pipe_id) = app.active_pipeline_id {
@@ -974,7 +970,11 @@ pub async fn handle_active_tab_key(
                             };
                             crate::run_cli(&cli, &args, terminal, tx.clone(), app.active_tab).await;
                         }
-                        KeyCode::Char('e') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.view_trace_editor,
+                            key_event,
+                        ) =>
+                        {
                             let temp_file =
                                 std::env::temp_dir().join(format!("job_{}_trace.txt", job_id));
                             if let Some(trace) = &app.job_trace {
@@ -1011,7 +1011,11 @@ pub async fn handle_active_tab_key(
                             terminal.clear().unwrap();
                             crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
                         }
-                        KeyCode::Enter => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.view_trace,
+                            key_event,
+                        ) =>
+                        {
                             if app.job_trace.is_some() {
                                 app.details_zoomed = !app.details_zoomed;
                             } else if let Some(client) = &app.gitlab_client {
@@ -1047,7 +1051,11 @@ pub async fn handle_active_tab_key(
                 if let Some(item) = app.filtered_runners().get(selected_idx) {
                     let runner_id = item.id;
                     match key_event.code {
-                        KeyCode::Char('p') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.runners.pause,
+                            key_event,
+                        ) =>
+                        {
                             let cli = app_cli(&app);
                             let args: Vec<String> = vec![
                                 "api".into(),
@@ -1065,7 +1073,11 @@ pub async fn handle_active_tab_key(
                                 runner.active = false;
                             }
                         }
-                        KeyCode::Char('r') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.runners.resume,
+                            key_event,
+                        ) =>
+                        {
                             let cli = app_cli(&app);
                             let args: Vec<String> = vec![
                                 "api".into(),
@@ -1083,7 +1095,11 @@ pub async fn handle_active_tab_key(
                                 runner.active = true;
                             }
                         }
-                        KeyCode::Char('e') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.runners.edit_description,
+                            key_event,
+                        ) =>
+                        {
                             let current_desc = item.description.clone().unwrap_or_default();
                             app.text_input = Some(crate::app::TextInput {
                                 title: " Edit Runner Description ".to_string(),
@@ -1106,12 +1122,7 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Releases => match key_event.code {
-            _ if (key_event.code == KeyCode::Char('n')
-                || keybinding_matches(
-                    &app.config.keybindings.releases.create_release,
-                    &key_event,
-                )) =>
-            {
+            _ if keybinding_matches(&app.config.keybindings.releases.create_release, key_event) => {
                 app.edit_menu = Some(crate::app::EditMenu {
                     title: "Create Release".to_string(),
                     fields: vec![
@@ -1129,12 +1140,7 @@ pub async fn handle_active_tab_key(
                     },
                 });
             }
-            _ if (key_event.code == KeyCode::Char('e')
-                || keybinding_matches(
-                    &app.config.keybindings.releases.edit_release,
-                    &key_event,
-                )) =>
-            {
+            _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let release_tag = {
                         let filtered = app.filtered_releases();
@@ -1152,12 +1158,7 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('d')
-                || keybinding_matches(
-                    &app.config.keybindings.releases.delete_release,
-                    &key_event,
-                )) =>
-            {
+            _ if keybinding_matches(&app.config.keybindings.releases.delete_release, key_event) => {
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
@@ -1167,11 +1168,10 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('o')
-                || keybinding_matches(
-                    &app.config.keybindings.releases.open_in_browser,
-                    &key_event,
-                )) =>
+            _ if keybinding_matches(
+                &app.config.keybindings.releases.open_in_browser,
+                key_event,
+            ) =>
             {
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let filtered = app.filtered_releases();
@@ -1193,7 +1193,11 @@ pub async fn handle_active_tab_key(
             if let Some(selected_idx) = app.todos.state.selected() {
                 if let Some(item) = app.filtered_todos().get(selected_idx) {
                     match key_event.code {
-                        KeyCode::Enter => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.todos.mark_as_read,
+                            key_event,
+                        ) =>
+                        {
                             let n_id = item.id.clone();
                             let target_iid = item.target_iid;
                             let target_type = item.target_type.clone();
@@ -1230,7 +1234,11 @@ pub async fn handle_active_tab_key(
                                 _ => {}
                             }
                         }
-                        KeyCode::Char('o') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.todos.open_in_browser,
+                            key_event,
+                        ) =>
+                        {
                             let cli = app_cli(&app);
                             let entity = if item.target_type.contains("MergeRequest") {
                                 cli.entity("mr")
@@ -1255,11 +1263,10 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Milestones => match key_event.code {
-            _ if (key_event.code == KeyCode::Char('n')
-                || keybinding_matches(
-                    &app.config.keybindings.milestones.create_milestone,
-                    &key_event,
-                )) =>
+            _ if keybinding_matches(
+                &app.config.keybindings.milestones.create_milestone,
+                key_event,
+            ) =>
             {
                 let is_github = app
                     .gitlab_client
@@ -1287,11 +1294,10 @@ pub async fn handle_active_tab_key(
                     },
                 });
             }
-            _ if (key_event.code == KeyCode::Char('e')
-                || keybinding_matches(
-                    &app.config.keybindings.milestones.edit_milestone,
-                    &key_event,
-                )) =>
+            _ if keybinding_matches(
+                &app.config.keybindings.milestones.edit_milestone,
+                key_event,
+            ) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let milestone_iid = {
@@ -1303,11 +1309,10 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('c')
-                || keybinding_matches(
-                    &app.config.keybindings.milestones.close_milestone,
-                    &key_event,
-                )) =>
+            _ if keybinding_matches(
+                &app.config.keybindings.milestones.close_milestone,
+                key_event,
+            ) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
@@ -1343,11 +1348,10 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('r')
-                || keybinding_matches(
-                    &app.config.keybindings.milestones.reopen_milestone,
-                    &key_event,
-                )) =>
+            _ if keybinding_matches(
+                &app.config.keybindings.milestones.reopen_milestone,
+                key_event,
+            ) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
@@ -1383,11 +1387,10 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('d')
-                || keybinding_matches(
-                    &app.config.keybindings.milestones.delete_milestone,
-                    &key_event,
-                )) =>
+            _ if keybinding_matches(
+                &app.config.keybindings.milestones.delete_milestone,
+                key_event,
+            ) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
@@ -1397,11 +1400,10 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if (key_event.code == KeyCode::Char('o')
-                || keybinding_matches(
-                    &app.config.keybindings.milestones.open_in_browser,
-                    &key_event,
-                )) =>
+            _ if keybinding_matches(
+                &app.config.keybindings.milestones.open_in_browser,
+                key_event,
+            ) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();

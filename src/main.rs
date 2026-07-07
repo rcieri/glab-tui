@@ -378,6 +378,7 @@ async fn main() -> Result<()> {
     app.update_filter_selection();
 
     if let Ok(mut client) = gitlab::client::GitlabClient::new().await {
+        client.page_size = app.config.page_size;
         client.tx = Some(events.sender());
         app.gitlab_client = Some(client.clone());
         let tx = events.sender();
@@ -2161,6 +2162,9 @@ async fn main() -> Result<()> {
                                                     crate::utils::cache::add_recent_repo(
                                                         &target_path_str,
                                                     );
+                                                    app.config = crate::config::Config::load();
+                                                    app.apply_config();
+                                                    crate::config::reload_theme();
 
                                                     if let Ok(context) =
                                                         gitlab::client::get_project_context().await
@@ -2170,6 +2174,7 @@ async fn main() -> Result<()> {
                                                     if let Ok(mut client) =
                                                         gitlab::client::GitlabClient::new().await
                                                     {
+                                                        client.page_size = app.config.page_size;
                                                         client.tx = Some(events.sender());
                                                         app.gitlab_client = Some(client.clone());
                                                     } else {

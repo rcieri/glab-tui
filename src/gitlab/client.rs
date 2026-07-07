@@ -5,6 +5,7 @@ use tokio::process::Command;
 pub struct GitlabClient {
     pub is_github: bool,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    pub page_size: usize,
 }
 
 fn get_api_description(endpoint: &str, is_github: bool) -> String {
@@ -60,6 +61,7 @@ impl GitlabClient {
         Ok(Self {
             is_github,
             tx: None,
+            page_size: 100,
         })
     }
 

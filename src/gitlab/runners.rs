@@ -54,13 +54,19 @@ impl From<GithubRunner> for Runner {
 
 pub async fn list_runners(client: &GitlabClient, project_path: &str) -> Result<Vec<Runner>> {
     if client.is_github {
-        let endpoint = format!("/repos/{}/actions/runners?per_page=100", project_path);
+        let endpoint = format!(
+            "/repos/{}/actions/runners?per_page={}",
+            project_path, client.page_size
+        );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let res: GithubRunners = serde_json::from_str(&raw)?;
         Ok(res.runners.into_iter().map(Runner::from).collect())
     } else {
         let encoded_path = project_path.replace("/", "%2F");
-        let endpoint = format!("/projects/{}/runners?per_page=100", encoded_path);
+        let endpoint = format!(
+            "/projects/{}/runners?per_page={}",
+            encoded_path, client.page_size
+        );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_runners: Vec<GitlabRunner> = serde_json::from_str(&raw)?;
         Ok(gl_runners.into_iter().map(Runner::from).collect())

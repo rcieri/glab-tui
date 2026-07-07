@@ -165,8 +165,8 @@ pub async fn list_mrs(
     if client.is_github {
         let state_param = if show_closed { "all" } else { "open" };
         let endpoint = format!(
-            "/repos/{}/pulls?state={}&per_page=100",
-            project_path, state_param
+            "/repos/{}/pulls?state={}&per_page={}",
+            project_path, state_param, client.page_size
         );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let gh_prs: Vec<GithubPullRequest> = serde_json::from_str(&raw)?;
@@ -175,8 +175,8 @@ pub async fn list_mrs(
         let encoded_path = project_path.replace("/", "%2F");
         let state_param = if show_closed { "all" } else { "opened" };
         let endpoint = format!(
-            "/projects/{}/merge_requests?state={}&per_page=100",
-            encoded_path, state_param
+            "/projects/{}/merge_requests?state={}&per_page={}",
+            encoded_path, state_param, client.page_size
         );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_mrs: Vec<GitlabMergeRequest> = serde_json::from_str(&raw)?;
@@ -372,8 +372,8 @@ pub async fn list_mr_notes(
 ) -> Result<Vec<DiscussionNote>> {
     if client.is_github {
         let endpoint = format!(
-            "/repos/{}/pulls/{}/comments?per_page=100",
-            project_path, mr_iid
+            "/repos/{}/pulls/{}/comments?per_page={}",
+            project_path, mr_iid, client.page_size
         );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let gh_comments: Vec<GithubPullComment> = serde_json::from_str(&raw)?;
@@ -381,8 +381,8 @@ pub async fn list_mr_notes(
     } else {
         let encoded_path = project_path.replace("/", "%2F");
         let endpoint = format!(
-            "/projects/{}/merge_requests/{}/notes?per_page=100",
-            encoded_path, mr_iid
+            "/projects/{}/merge_requests/{}/notes?per_page={}",
+            encoded_path, mr_iid, client.page_size
         );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_notes: Vec<GitlabDiscussionNote> = serde_json::from_str(&raw)?;

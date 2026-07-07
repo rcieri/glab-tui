@@ -71,13 +71,19 @@ impl From<GithubWorkflowRun> for Pipeline {
 
 pub async fn list_pipelines(client: &GitlabClient, project_path: &str) -> Result<Vec<Pipeline>> {
     if client.is_github {
-        let endpoint = format!("/repos/{}/actions/runs?per_page=100", project_path);
+        let endpoint = format!(
+            "/repos/{}/actions/runs?per_page={}",
+            project_path, client.page_size
+        );
         let raw = client.execute_github_api(&endpoint, "GET", None).await?;
         let runs: GithubWorkflowRuns = serde_json::from_str(&raw)?;
         Ok(runs.workflow_runs.into_iter().map(Pipeline::from).collect())
     } else {
         let encoded_path = project_path.replace("/", "%2F");
-        let endpoint = format!("/projects/{}/pipelines?per_page=100", encoded_path);
+        let endpoint = format!(
+            "/projects/{}/pipelines?per_page={}",
+            encoded_path, client.page_size
+        );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
         let gl_pipes: Vec<GitlabPipeline> = serde_json::from_str(&raw)?;
         Ok(gl_pipes.into_iter().map(Pipeline::from).collect())
@@ -163,8 +169,8 @@ pub async fn list_pipeline_jobs(
 ) -> Result<Vec<Job>> {
     if client.is_github {
         let endpoint_page1 = format!(
-            "/repos/{}/actions/runs/{}/jobs?per_page=100&page=1",
-            project_path, pipeline_id
+            "/repos/{}/actions/runs/{}/jobs?per_page={}&page=1",
+            project_path, pipeline_id, client.page_size
         );
         let raw = client
             .execute_github_api(&endpoint_page1, "GET", None)
@@ -172,12 +178,12 @@ pub async fn list_pipeline_jobs(
         let gh_jobs_res: GithubWorkflowJobs = serde_json::from_str(&raw)?;
         let mut all_jobs: Vec<Job> = gh_jobs_res.jobs.into_iter().map(Job::from).collect();
 
-        if all_jobs.len() == 100 {
+        if all_jobs.len() == client.page_size {
             let mut handles = Vec::new();
             for page in 2..=10 {
                 let endpoint = format!(
-                    "/repos/{}/actions/runs/{}/jobs?per_page=100&page={}",
-                    project_path, pipeline_id, page
+                    "/repos/{}/actions/runs/{}/jobs?per_page={}&page={}",
+                    project_path, pipeline_id, client.page_size, page
                 );
                 let client_clone = client.clone();
                 handles.push(tokio::spawn(async move {
@@ -200,7 +206,7 @@ pub async fn list_pipeline_jobs(
                     }
                     let jobs_len = jobs.len();
                     all_jobs.extend(jobs);
-                    if jobs_len < 100 {
+                    if jobs_len < client.page_size {
                         break;
                     }
                 } else {
@@ -212,8 +218,8 @@ pub async fn list_pipeline_jobs(
     } else {
         let encoded_path = project_path.replace("/", "%2F");
         let endpoint_page1 = format!(
-            "/projects/{}/pipelines/{}/jobs?per_page=100&page=1",
-            encoded_path, pipeline_id
+            "/projects/{}/pipelines/{}/jobs?per_page={}&page=1",
+            encoded_path, pipeline_id, client.page_size
         );
         let raw = client
             .execute_gitlab_api(&endpoint_page1, "GET", None)
@@ -221,12 +227,12 @@ pub async fn list_pipeline_jobs(
         let gl_jobs: Vec<GitlabJob> = serde_json::from_str(&raw)?;
         let mut all_jobs: Vec<Job> = gl_jobs.into_iter().map(Job::from).collect();
 
-        if all_jobs.len() == 100 {
+        if all_jobs.len() == client.page_size {
             let mut handles = Vec::new();
             for page in 2..=10 {
                 let endpoint = format!(
-                    "/projects/{}/pipelines/{}/jobs?per_page=100&page={}",
-                    encoded_path, pipeline_id, page
+                    "/projects/{}/pipelines/{}/jobs?per_page={}&page={}",
+                    encoded_path, pipeline_id, client.page_size, page
                 );
                 let client_clone = client.clone();
                 handles.push(tokio::spawn(async move {
@@ -249,7 +255,7 @@ pub async fn list_pipeline_jobs(
                     }
                     let jobs_len = jobs.len();
                     all_jobs.extend(jobs);
-                    if jobs_len < 100 {
+                    if jobs_len < client.page_size {
                         break;
                     }
                 } else {

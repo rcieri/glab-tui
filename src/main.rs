@@ -748,6 +748,11 @@ async fn main() -> Result<()> {
                         app.selector = Some(selector);
                     }
                 }
+                Event::DeploymentsFetched(deployments) => {
+                    app.deployments.items = deployments;
+                    app.status_message = None;
+                    app.update_filter_selection();
+                }
                 Event::FetchFailed(tab, err_msg) => {
                     app.complete_loading_tab(tab, &format!("Failed: {}", err_msg));
                     let has_cached_items = match tab {

@@ -1447,6 +1447,10 @@ pub async fn handle_active_tab_key(
                         &app.config.keybindings.branches.delete_branch,
                         key_event,
                     ) {
+                        let _ = tx.send(Event::CommandStarted(format!(
+                            "Deleting branch: {}",
+                            branch_name
+                        )));
                         let client = app.gitlab_client.clone();
                         let project_context = app.project_context.clone();
                         let tx = tx.clone();
@@ -1489,6 +1493,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_environments();
                     if let Some(env) = filtered.get(selected_idx) {
                         let env_name = env.name.clone();
+                        let _ = tx.send(Event::CommandStarted(format!(
+                            "Fetching deployments for {}",
+                            env_name
+                        )));
                         let client = app.gitlab_client.clone();
                         let project_context = app.project_context.clone();
                         let tx = tx.clone();
@@ -1505,6 +1513,10 @@ pub async fn handle_active_tab_key(
                                         let _ = tx.send(Event::DeploymentsFetched(deployments));
                                     }
                                     Err(e) => {
+                                        let _ = tx.send(Event::CommandCompleted(
+                                            crate::app::Tab::Environments,
+                                            Err(format!("Failed to fetch deployments: {}", e)),
+                                        ));
                                         let _ = tx.send(Event::FetchFailed(
                                             crate::app::Tab::Environments,
                                             format!("Failed to fetch deployments: {}", e),

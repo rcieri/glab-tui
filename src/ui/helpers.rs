@@ -405,6 +405,10 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
         if remainder.starts_with("glab") || remainder.starts_with("gh") {
             desc = prefix;
             cmd_to_run = remainder;
+        } else {
+            // Still treat prefix as desc, but keep full text as description
+            desc = prefix;
+            cmd_to_run = ""; // Don't split into CLI components
         }
     }
 

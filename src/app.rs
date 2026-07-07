@@ -95,6 +95,8 @@ fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
         .add_modifier(modifier)
 }
 
+pub use crate::config::SaveMenu;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
     #[default]
@@ -125,6 +127,39 @@ impl Tab {
         Tab::Environments,
         Tab::Terminal,
     ];
+
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Tab::Issues => "issues",
+            Tab::MergeRequests => "mrs",
+            Tab::Pipelines => "pipelines",
+            Tab::Jobs => "jobs",
+            Tab::Runners => "runners",
+            Tab::Releases => "releases",
+            Tab::Todos => "todos",
+            Tab::Milestones => "milestones",
+            Tab::Branches => "branches",
+            Tab::Environments => "environments",
+            Tab::Terminal => "terminal",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "issues" => Some(Tab::Issues),
+            "mrs" | "mergerequests" => Some(Tab::MergeRequests),
+            "pipelines" => Some(Tab::Pipelines),
+            "jobs" => Some(Tab::Jobs),
+            "runners" => Some(Tab::Runners),
+            "releases" => Some(Tab::Releases),
+            "todos" => Some(Tab::Todos),
+            "milestones" => Some(Tab::Milestones),
+            "branches" => Some(Tab::Branches),
+            "environments" => Some(Tab::Environments),
+            "terminal" => Some(Tab::Terminal),
+            _ => None,
+        }
+    }
 
     pub fn title(&self, is_github: bool) -> &'static str {
         match self {
@@ -1072,6 +1107,7 @@ pub enum TextInputAction {
         discussion_id: String,
     },
     CreateBranch(String), // ref_branch name
+    EditPageSize,
 }
 
 #[derive(Clone, Debug)]
@@ -1218,6 +1254,8 @@ pub struct App {
     pub edit_menu: Option<EditMenu>,
     pub selector: Option<Selector>,
     pub text_input: Option<TextInput>,
+    pub editing_page_size: bool,
+    pub page_size_input: String,
     pub date_picker: Option<DatePicker>,
     pub jobs: StatefulTable<crate::gitlab::pipelines::Job>,
     pub detail_scroll: u16,
@@ -1245,6 +1283,9 @@ pub struct App {
     pub column_checklist_idx: usize,
     pub in_review_mode: bool,
     pub draft_comments: Vec<DraftComment>,
+    pub save_menu_open: bool,
+    pub save_menu_selection: Option<SaveMenu>,
+    pub page_size: usize,
     pub milestones: StatefulTable<crate::gitlab::milestones::Milestone>,
     pub selected_milestone_issues: Option<Vec<crate::gitlab::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
@@ -1253,8 +1294,8 @@ pub struct App {
     pub branches: StatefulTable<crate::gitlab::branches::Branch>,
     pub environments: StatefulTable<crate::gitlab::deployments::Environment>,
     pub deployments: StatefulTable<crate::gitlab::deployments::Deployment>,
-    pub group_by_column: Option<String>,
-    pub group_ascending: bool,
+    pub group_by_column: std::collections::HashMap<Tab, Option<String>>,
+    pub group_ascending: std::collections::HashMap<Tab, bool>,
     pub group_list_state: ratatui::widgets::ListState,
     pub group_items: Vec<GroupItem>,
     pub column_filters: std::collections::HashMap<
@@ -1268,7 +1309,7 @@ impl Default for App {
     fn default() -> Self {
         let config = Config::load();
         Self {
-            config,
+            config: config.clone(),
             active_tab: Tab::default(),
             running: true,
             project_context: "group/repository".to_string(),
@@ -1291,6 +1332,8 @@ impl Default for App {
             edit_menu: None,
             selector: None,
             text_input: None,
+            editing_page_size: false,
+            page_size_input: String::new(),
             date_picker: None,
             jobs: StatefulTable::with_items(vec![]),
             detail_scroll: 0,
@@ -1329,6 +1372,9 @@ impl Default for App {
             column_checklist_idx: 0,
             in_review_mode: false,
             draft_comments: Vec::new(),
+            save_menu_open: false,
+            save_menu_selection: None,
+            page_size: config.page_size,
             milestones: StatefulTable::with_items(vec![]),
             selected_milestone_issues: None,
             selected_milestone_iid: None,
@@ -1337,8 +1383,8 @@ impl Default for App {
             branches: StatefulTable::with_items(vec![]),
             environments: StatefulTable::with_items(vec![]),
             deployments: StatefulTable::with_items(vec![]),
-            group_by_column: None,
-            group_ascending: true,
+            group_by_column: std::collections::HashMap::new(),
+            group_ascending: std::collections::HashMap::new(),
             group_list_state: ratatui::widgets::ListState::default(),
             group_items: Vec::new(),
             column_filters: std::collections::HashMap::new(),
@@ -1434,6 +1480,11 @@ impl App {
 
     pub fn new() -> Self {
         let mut app = Self::default();
+        if let Some(ref active_tab_str) = app.config.active_tab {
+            if let Some(tab) = Tab::from_str(active_tab_str) {
+                app.active_tab = tab;
+            }
+        }
         app.apply_config();
         app
     }
@@ -1458,9 +1509,11 @@ impl App {
                 self.enabled_columns.insert(tab, col_set);
             }
             if let Some(col) = &pane.group_by_column {
-                self.group_by_column = Some(col.clone());
+                self.group_by_column.insert(tab, Some(col.clone()));
+            } else {
+                self.group_by_column.insert(tab, None);
             }
-            self.group_ascending = pane.group_ascending;
+            self.group_ascending.insert(tab, pane.group_ascending);
             for (col, vals) in &pane.column_filters {
                 let entry = self.column_filters.entry(tab).or_default();
                 entry.insert(col.clone(), vals.iter().cloned().collect());
@@ -1690,8 +1743,11 @@ impl App {
             &self.issues.items,
             &self.search_query,
             &self.enabled_columns,
-            self.group_ascending,
-            &self.group_by_column,
+            self.group_ascending
+                .get(&Tab::Issues)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Issues).unwrap_or(&None),
         );
         Self::apply_column_filters(&mut list, &self.column_filters, Tab::Issues, |item, col| {
             match col {
@@ -1885,8 +1941,13 @@ impl App {
             &self.mrs.items,
             &self.search_query,
             &self.enabled_columns,
-            self.group_ascending,
-            &self.group_by_column,
+            self.group_ascending
+                .get(&Tab::MergeRequests)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column
+                .get(&Tab::MergeRequests)
+                .unwrap_or(&None),
         );
         Self::apply_column_filters(
             &mut list,
@@ -2010,8 +2071,11 @@ impl App {
             &self.search_query,
             &self.pipeline_jobs,
             &self.enabled_columns,
-            self.group_ascending,
-            &self.group_by_column,
+            self.group_ascending
+                .get(&Tab::Pipelines)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Pipelines).unwrap_or(&None),
         );
         Self::apply_column_filters(
             &mut list,
@@ -2117,8 +2181,11 @@ impl App {
             &self.jobs.items,
             &self.search_query,
             &self.enabled_columns,
-            self.group_ascending,
-            &self.group_by_column,
+            self.group_ascending
+                .get(&Tab::Jobs)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Jobs).unwrap_or(&None),
         );
         Self::apply_column_filters(
             &mut list,
@@ -2291,8 +2358,11 @@ impl App {
             &self.releases.items,
             &self.search_query,
             &self.enabled_columns,
-            self.group_ascending,
-            &self.group_by_column,
+            self.group_ascending
+                .get(&Tab::Releases)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Releases).unwrap_or(&None),
         );
         Self::apply_column_filters(
             &mut list,
@@ -2399,8 +2469,11 @@ impl App {
             &self.todos.items,
             &self.search_query,
             &self.enabled_columns,
-            self.group_ascending,
-            &self.group_by_column,
+            self.group_ascending
+                .get(&Tab::Todos)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Todos).unwrap_or(&None),
         );
         Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
             match col {
@@ -2532,8 +2605,11 @@ impl App {
             &self.milestones.items,
             &self.search_query,
             &self.enabled_columns,
-            self.group_ascending,
-            &self.group_by_column,
+            self.group_ascending
+                .get(&Tab::Milestones)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Milestones).unwrap_or(&None),
             &self.milestone_issues_cache,
         );
         Self::apply_column_filters(
@@ -2931,7 +3007,12 @@ impl App {
 
     pub fn rebuild_group_map(&mut self) {
         self.group_items.clear();
-        let Some(col) = self.group_by_column.clone() else {
+        let Some(col) = self
+            .group_by_column
+            .get(&self.active_tab)
+            .cloned()
+            .flatten()
+        else {
             return;
         };
         let column_label = col.clone();
@@ -3341,7 +3422,7 @@ impl App {
         self.rebuild_group_map();
     }
 
-    pub fn save_layout(&self) {
+    pub fn save_layout(&self, target: SaveMenu) {
         let mut cfg = self.config.clone();
 
         fn sync_pane(
@@ -3351,8 +3432,8 @@ impl App {
                 Tab,
                 std::collections::HashMap<String, std::collections::HashSet<String>>,
             >,
-            group_by_column: &Option<String>,
-            group_ascending: bool,
+            group_by_column_map: &std::collections::HashMap<Tab, Option<String>>,
+            group_ascending_map: &std::collections::HashMap<Tab, bool>,
             pane: &mut crate::config::PaneConfig,
         ) {
             pane.columns = enabled_columns.get(&tab).map(|set| {
@@ -3369,8 +3450,8 @@ impl App {
                         .collect()
                 })
                 .unwrap_or_default();
-            pane.group_by_column = group_by_column.clone();
-            pane.group_ascending = group_ascending;
+            pane.group_by_column = group_by_column_map.get(&tab).cloned().flatten();
+            pane.group_ascending = group_ascending_map.get(&tab).copied().unwrap_or(true);
         }
 
         sync_pane(
@@ -3378,7 +3459,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.issues,
         );
         sync_pane(
@@ -3386,7 +3467,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.mrs,
         );
         sync_pane(
@@ -3394,7 +3475,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.pipelines,
         );
         sync_pane(
@@ -3402,7 +3483,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.jobs,
         );
         sync_pane(
@@ -3410,7 +3491,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.runners,
         );
         sync_pane(
@@ -3418,7 +3499,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.releases,
         );
         sync_pane(
@@ -3426,7 +3507,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.todos,
         );
         sync_pane(
@@ -3434,7 +3515,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.milestones,
         );
         sync_pane(
@@ -3442,7 +3523,7 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.branches,
         );
         sync_pane(
@@ -3450,11 +3531,11 @@ impl App {
             &self.enabled_columns,
             &self.column_filters,
             &self.group_by_column,
-            self.group_ascending,
+            &self.group_ascending,
             &mut cfg.environments,
         );
 
-        if let Err(e) = cfg.save_layout() {
+        if let Err(e) = cfg.save_layout(target) {
             eprintln!("Failed to save layout: {}", e);
         }
     }
@@ -3991,5 +4072,145 @@ diff --git a/foo.txt b/foo.txt
 
         // unrelated path
         assert_eq!(app.unresolved_threads_count_for_path("other.txt"), 0);
+    }
+
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_save_layout_and_active_tab_and_group_sorting() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
+        unsafe {
+            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
+        }
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let mut app = App::new();
+        app.active_tab = Tab::MergeRequests;
+        app.group_by_column
+            .insert(Tab::Issues, Some("Author".to_string()));
+        app.group_ascending.insert(Tab::Issues, false);
+        app.group_by_column
+            .insert(Tab::MergeRequests, Some("State".to_string()));
+        app.group_ascending.insert(Tab::MergeRequests, true);
+        app.config.theme_preset = Some("tokyo-night".to_string());
+        app.config.page_size = 250;
+
+        // Save layout
+        app.save_layout(SaveMenu::Global);
+        let contents = std::fs::read_to_string(&config_path).unwrap();
+        println!("Saved config contents:\n{}", contents);
+
+        // Load new App and verify
+        let app2 = App::new();
+        assert_eq!(app2.active_tab, Tab::Issues); // active_tab should not be saved/restored
+        assert_eq!(app2.config.theme_preset, Some("tokyo-night".to_string()));
+        assert_eq!(app2.config.page_size, 250);
+        assert_eq!(
+            app2.group_by_column.get(&Tab::Issues).cloned().flatten(),
+            Some("Author".to_string())
+        );
+        assert_eq!(app2.group_ascending.get(&Tab::Issues).copied(), Some(false));
+        assert_eq!(
+            app2.group_by_column
+                .get(&Tab::MergeRequests)
+                .cloned()
+                .flatten(),
+            Some("State".to_string())
+        );
+        assert_eq!(
+            app2.group_ascending.get(&Tab::MergeRequests).copied(),
+            Some(true)
+        );
+
+        std::env::set_current_dir(original_dir).unwrap();
+        unsafe {
+            if let Some(old) = old_config {
+                std::env::set_var("GLAB_TUI_CONFIG", old);
+            } else {
+                std::env::remove_var("GLAB_TUI_CONFIG");
+            }
+        }
+    }
+
+    #[test]
+    fn test_active_tab_to_str_from_str() {
+        assert_eq!(Tab::Issues.to_str(), "issues");
+        assert_eq!(Tab::from_str("issues"), Some(Tab::Issues));
+        assert_eq!(Tab::from_str("mrs"), Some(Tab::MergeRequests));
+        assert_eq!(Tab::from_str("mergerequests"), Some(Tab::MergeRequests));
+        assert_eq!(Tab::from_str("invalid_tab"), None);
+    }
+
+    #[test]
+    fn test_app_inline_page_size_defaults() {
+        let app = App::new();
+        assert!(!app.editing_page_size);
+        assert_eq!(app.page_size_input, "");
+    }
+
+    #[test]
+    fn test_save_layout_preserves_custom_settings() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
+        unsafe {
+            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
+        }
+
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        // Write an initial config with custom keybindings
+        let initial_toml = r#"
+[keybindings.global]
+quit = "ctrl+c"
+help = "h"
+"#;
+        std::fs::write(&config_path, initial_toml).unwrap();
+
+        // Load App (which loads this config)
+        let mut app = App::new();
+        assert_eq!(app.config.keybindings.global.quit, "ctrl+c");
+        assert_eq!(app.config.keybindings.global.help, "h");
+
+        // Change layout/page size and save
+        app.config.page_size = 456;
+        app.save_layout(SaveMenu::Global);
+
+        // Verify the saved file has both the new page_size and the old keybindings!
+        let contents = std::fs::read_to_string(&config_path).unwrap();
+        println!("Saved config contents:\n{}", contents);
+
+        let val: toml::Value = toml::from_str(&contents).unwrap();
+        let table = val.as_table().unwrap();
+
+        // Assert layout changes are saved
+        assert_eq!(
+            table.get("page_size").and_then(|v| v.as_integer()),
+            Some(456)
+        );
+
+        // Assert custom keybindings are preserved!
+        let kb = table
+            .get("keybindings")
+            .and_then(|v| v.get("global"))
+            .unwrap();
+        assert_eq!(kb.get("quit").and_then(|v| v.as_str()), Some("ctrl+c"));
+        assert_eq!(kb.get("help").and_then(|v| v.as_str()), Some("h"));
+
+        std::env::set_current_dir(original_dir).unwrap();
+        unsafe {
+            if let Some(old) = old_config {
+                std::env::set_var("GLAB_TUI_CONFIG", old);
+            } else {
+                std::env::remove_var("GLAB_TUI_CONFIG");
+            }
+        }
     }
 }

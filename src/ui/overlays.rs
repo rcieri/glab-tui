@@ -1,5 +1,6 @@
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::{get_label_color, highlight_fuzzy_match};
+use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::THEME;
 use ratatui::{
@@ -7,7 +8,9 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table},
+    widgets::{
+        Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
+    },
 };
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
@@ -1217,6 +1220,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let themes = crate::config::THEME_PRESETS;
         let order_end = group_end + 2;
+        let page_size_idx = order_end;
+        let theme_start = page_size_idx + 1;
+        let theme_end = theme_start + themes.len();
+        let save_end = theme_end;
 
         let mut constraints: Vec<Constraint> = Vec::new();
         constraints.push(Constraint::Length(1)); // COLUMNS header
@@ -1228,8 +1235,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         constraints.push(Constraint::Length(1)); // ORDER header
         constraints.push(Constraint::Length(2));
         constraints.push(Constraint::Length(1)); // spacer
+        constraints.push(Constraint::Length(1)); // PAGE SIZE header
+        constraints.push(Constraint::Length(1)); // PAGE SIZE value
+        constraints.push(Constraint::Length(1)); // spacer
         constraints.push(Constraint::Length(1)); // THEME header
         constraints.push(Constraint::Length(themes.len() as u16));
+        constraints.push(Constraint::Length(1)); // spacer
+        constraints.push(Constraint::Length(1)); // SAVE header
+        constraints.push(Constraint::Length(1)); // SAVE button
         constraints.push(Constraint::Min(0)); // footer
 
         let popup_layout = Layout::default()
@@ -1297,7 +1310,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .enumerate()
             .map(|(i, col)| {
                 let flat_idx = cols_end + i;
-                let is_selected = app.group_by_column.as_deref() == Some(col);
+                let is_selected =
+                    app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
                 let text = format!("  {} {}", if is_selected { "◉" } else { "○" }, col);
                 let is_active = flat_idx == active_idx;
                 let style = if is_active {
@@ -1318,7 +1332,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
-        let order_header = Paragraph::new("  ORDER").style(
+        let order_header = Paragraph::new(" ORDER").style(
             Style::default()
                 .fg(THEME.read().unwrap().yellow)
                 .add_modifier(Modifier::BOLD),
@@ -1331,8 +1345,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .enumerate()
             .map(|(i, label)| {
                 let flat_idx = group_end + i;
-                let is_selected = app.group_ascending == (i == 0);
-                let text = format!("  {} {}", if is_selected { "◉" } else { "○" }, label);
+                let is_selected =
+                    app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
+                let text = format!(" {} {}", if is_selected { "◉" } else { "○" }, label);
                 let is_active = flat_idx == active_idx;
                 let style = if is_active {
                     Style::default()
@@ -1352,6 +1367,44 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
+        // Page Size
+        let page_size_header = Paragraph::new(" PAGE SIZE").style(
+            Style::default()
+                .fg(THEME.read().unwrap().header_fg)
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_widget(page_size_header, popup_layout[chunk_idx]);
+        chunk_idx += 1;
+
+        let is_page_size_active = active_idx == page_size_idx;
+        let page_size_text = if app.editing_page_size {
+            format!("   [ {}| ]", app.page_size_input)
+        } else if is_page_size_active {
+            format!("   [ {} ]", app.page_size)
+        } else {
+            format!("   {}", app.page_size)
+        };
+        let page_size_style = if app.editing_page_size {
+            Style::default()
+                .fg(THEME.read().unwrap().bg)
+                .bg(THEME.read().unwrap().green)
+                .add_modifier(Modifier::BOLD)
+        } else if is_page_size_active {
+            Style::default()
+                .fg(THEME.read().unwrap().bg)
+                .bg(THEME.read().unwrap().border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(THEME.read().unwrap().text_normal)
+        };
+        let page_size_paragraph = Paragraph::new(page_size_text)
+            .style(page_size_style)
+            .alignment(Alignment::Center);
+        f.render_widget(page_size_paragraph, popup_layout[chunk_idx]);
+        chunk_idx += 1;
+
+        chunk_idx += 1; // spacer
+
         let theme_header = Paragraph::new("  THEME").style(
             Style::default()
                 .fg(THEME.read().unwrap().purple)
@@ -1364,9 +1417,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .iter()
             .enumerate()
             .map(|(i, name)| {
-                let flat_idx = order_end + i;
+                let flat_idx = theme_start + i;
                 let is_selected = app.config.theme_preset.as_deref().unwrap_or("default") == *name;
-                let text = format!("  {} {}", if is_selected { "◉" } else { "○" }, name);
+                let text = format!(" {} {}", if is_selected { "◉" } else { "○" }, name);
                 let is_active = flat_idx == active_idx;
                 let style = if is_active {
                     Style::default()
@@ -1384,6 +1437,37 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_widget(List::new(theme_items), popup_layout[chunk_idx]);
         chunk_idx += 1;
 
+        chunk_idx += 1; // spacer
+
+        // Save button
+        let save_header = Paragraph::new(" SAVE").style(
+            Style::default()
+                .fg(THEME.read().unwrap().header_fg)
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_widget(save_header, popup_layout[chunk_idx]);
+        chunk_idx += 1;
+
+        let is_save_selected = active_idx == save_end;
+        let save_button_text = if is_save_selected {
+            " > Save View <"
+        } else {
+            "   Save View"
+        };
+        let save_button_style = if is_save_selected {
+            Style::default()
+                .fg(THEME.read().unwrap().bg)
+                .bg(THEME.read().unwrap().border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(THEME.read().unwrap().text_normal)
+        };
+        let save_button = Paragraph::new(save_button_text)
+            .style(save_button_style)
+            .alignment(Alignment::Center);
+        f.render_widget(save_button, popup_layout[chunk_idx]);
+        chunk_idx += 1;
+
         let footer_p = Paragraph::new(" [Spc/Enter] Toggle • [,/Esc] Close ")
             .alignment(Alignment::Center)
             .style(
@@ -1393,6 +1477,63 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .wrap(ratatui::widgets::Wrap { trim: true });
         f.render_widget(footer_p, popup_layout[chunk_idx]);
+
+        // Save submenu
+        if app.save_menu_open {
+            let submenu_height = 7;
+            let submenu_width = 30;
+            let submenu_area = centered_rect_fixed(submenu_width, submenu_height, size);
+            let submenu_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+                .title(" Save to Config ")
+                .title_style(
+                    Style::default()
+                        .fg(THEME.read().unwrap().border_focused)
+                        .add_modifier(Modifier::BOLD),
+                );
+            f.render_widget(Clear, submenu_area);
+            f.render_widget(submenu_block.clone(), submenu_area);
+            let submenu_inner = submenu_block.inner(submenu_area);
+
+            let options = ["Local Repo", "Global", "Cancel"];
+            let submenu_items: Vec<ListItem> = options
+                .iter()
+                .enumerate()
+                .map(|(i, &label)| {
+                    let is_active = match app.save_menu_selection {
+                        Some(SaveMenu::Local) => i == 0,
+                        Some(SaveMenu::Global) => i == 1,
+                        Some(SaveMenu::Cancel) => i == 2,
+                        None => false,
+                    };
+                    let style = if is_active {
+                        Style::default()
+                            .fg(THEME.read().unwrap().bg)
+                            .bg(THEME.read().unwrap().border_focused)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(THEME.read().unwrap().text_normal)
+                    };
+                    ListItem::new(label).style(style)
+                })
+                .collect();
+
+            let mut submenu_state = ListState::default();
+            submenu_state.select(Some(match app.save_menu_selection {
+                Some(SaveMenu::Local) => 0,
+                Some(SaveMenu::Global) => 1,
+                Some(SaveMenu::Cancel) => 2,
+                None => 0,
+            }));
+
+            f.render_stateful_widget(
+                List::new(submenu_items)
+                    .highlight_style(Style::default().add_modifier(Modifier::BOLD)),
+                submenu_inner,
+                &mut submenu_state,
+            );
+        }
     }
 
     // Render value-based column filter selector as overlay on configure view

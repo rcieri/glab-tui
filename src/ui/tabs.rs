@@ -42,8 +42,11 @@ pub(crate) fn render_tab_issues(
             &app.issues.items,
             &app.search_query,
             &app.enabled_columns,
-            app.group_ascending,
-            &app.group_by_column,
+            app.group_ascending
+                .get(&Tab::Issues)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Issues).unwrap_or(&None),
         );
         App::apply_column_filters(
             &mut filtered_issues,
@@ -467,8 +470,13 @@ pub(crate) fn render_tab_merge_requests(
             &app.mrs.items,
             &app.search_query,
             &app.enabled_columns,
-            app.group_ascending,
-            &app.group_by_column,
+            app.group_ascending
+                .get(&Tab::MergeRequests)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column
+                .get(&Tab::MergeRequests)
+                .unwrap_or(&None),
         );
         App::apply_column_filters(
             &mut filtered_mrs,
@@ -1035,8 +1043,11 @@ pub(crate) fn render_tab_pipelines(
             &app.search_query,
             &app.pipeline_jobs,
             &app.enabled_columns,
-            app.group_ascending,
-            &app.group_by_column,
+            app.group_ascending
+                .get(&Tab::Pipelines)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Pipelines).unwrap_or(&None),
         );
         App::apply_column_filters(
             &mut filtered_pipelines,
@@ -1329,8 +1340,8 @@ pub(crate) fn render_tab_jobs(
             &app.jobs.items,
             &app.search_query,
             &app.enabled_columns,
-            app.group_ascending,
-            &app.group_by_column,
+            app.group_ascending.get(&Tab::Jobs).copied().unwrap_or(true),
+            app.group_by_column.get(&Tab::Jobs).unwrap_or(&None),
         );
         App::apply_column_filters(
             &mut filtered_jobs,
@@ -2073,8 +2084,11 @@ pub(crate) fn render_tab_releases(
             &app.releases.items,
             &app.search_query,
             &app.enabled_columns,
-            app.group_ascending,
-            &app.group_by_column,
+            app.group_ascending
+                .get(&Tab::Releases)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Releases).unwrap_or(&None),
         );
         App::apply_column_filters(
             &mut filtered_releases,
@@ -2361,8 +2375,11 @@ pub(crate) fn render_tab_todos(
             &app.todos.items,
             &app.search_query,
             &app.enabled_columns,
-            app.group_ascending,
-            &app.group_by_column,
+            app.group_ascending
+                .get(&Tab::Todos)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Todos).unwrap_or(&None),
         );
         App::apply_column_filters(
             &mut filtered_todos,
@@ -2628,8 +2645,11 @@ pub(crate) fn render_tab_milestones(
             &app.milestones.items,
             &app.search_query,
             &app.enabled_columns,
-            app.group_ascending,
-            &app.group_by_column,
+            app.group_ascending
+                .get(&Tab::Milestones)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Milestones).unwrap_or(&None),
             &app.milestone_issues_cache,
         );
         App::apply_column_filters(

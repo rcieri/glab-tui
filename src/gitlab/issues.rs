@@ -147,29 +147,66 @@ pub async fn list_issues(
     project_path: &str,
     show_closed: bool,
 ) -> Result<Vec<Issue>> {
+    let page_size = client.page_size.min(100);
+    let pages_to_fetch = ((client.page_size + 99) / 100).max(1);
+    let mut all_issues = Vec::new();
+
     if client.is_github {
         let state_param = if show_closed { "all" } else { "open" };
-        let endpoint = format!(
-            "/repos/{}/issues?state={}&per_page={}",
-            project_path, state_param, client.page_size
-        );
-        let raw = client.execute_github_api(&endpoint, "GET", None).await?;
-        let gh_issues: Vec<GithubIssue> = serde_json::from_str(&raw)?;
-        Ok(gh_issues
-            .into_iter()
-            .filter(|i| i.pull_request.is_none())
-            .map(Issue::from)
-            .collect())
+        for page in 1..=pages_to_fetch {
+            let endpoint = format!(
+                "/repos/{}/issues?state={}&per_page={}&page={}",
+                project_path, state_param, page_size, page
+            );
+            let raw = match client.execute_github_api(&endpoint, "GET", None).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if page == 1 {
+                        return Err(e);
+                    } else {
+                        break;
+                    }
+                }
+            };
+            let gh_issues: Vec<GithubIssue> = serde_json::from_str(&raw)?;
+            let len = gh_issues.len();
+            all_issues.extend(
+                gh_issues
+                    .into_iter()
+                    .filter(|i| i.pull_request.is_none())
+                    .map(Issue::from),
+            );
+            if len < page_size {
+                break;
+            }
+        }
+        Ok(all_issues)
     } else {
         let encoded_path = project_path.replace("/", "%2F");
         let state_param = if show_closed { "all" } else { "opened" };
-        let endpoint = format!(
-            "/projects/{}/issues?state={}&per_page={}",
-            encoded_path, state_param, client.page_size
-        );
-        let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
-        let gl_issues: Vec<GitlabIssue> = serde_json::from_str(&raw)?;
-        Ok(gl_issues.into_iter().map(Issue::from).collect())
+        for page in 1..=pages_to_fetch {
+            let endpoint = format!(
+                "/projects/{}/issues?state={}&per_page={}&page={}",
+                encoded_path, state_param, page_size, page
+            );
+            let raw = match client.execute_gitlab_api(&endpoint, "GET", None).await {
+                Ok(r) => r,
+                Err(e) => {
+                    if page == 1 {
+                        return Err(e);
+                    } else {
+                        break;
+                    }
+                }
+            };
+            let gl_issues: Vec<GitlabIssue> = serde_json::from_str(&raw)?;
+            let len = gl_issues.len();
+            all_issues.extend(gl_issues.into_iter().map(Issue::from));
+            if len < page_size {
+                break;
+            }
+        }
+        Ok(all_issues)
     }
 }
 

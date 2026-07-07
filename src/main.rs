@@ -19,7 +19,7 @@ mod ui;
 pub mod utils;
 
 use anyhow::Result;
-use app::App;
+use app::{App, SaveMenu};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
     execute,
@@ -1069,6 +1069,26 @@ async fn main() -> Result<()> {
                             KeyCode::Enter => {
                                 let value = text_input.value.clone();
                                 match text_input.action {
+                                    crate::app::TextInputAction::EditPageSize => {
+                                        if let Ok(new_size) = value.trim().parse::<usize>() {
+                                            if new_size > 0 {
+                                                app.config.page_size = new_size;
+                                                app.page_size = new_size;
+                                                if let Some(ref mut client) = app.gitlab_client {
+                                                    client.page_size = new_size;
+                                                }
+                                                if let Some(client) = app.gitlab_client.clone() {
+                                                    app.start_loading_tab(app.active_tab);
+                                                    spawn_refresh_active_tab(
+                                                        &client,
+                                                        &app.project_context,
+                                                        app.active_tab,
+                                                        events.sender(),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
                                     crate::app::TextInputAction::EditField {
                                         entity_iid,
                                         entity_type,
@@ -5319,6 +5339,85 @@ async fn main() -> Result<()> {
                     }
 
                     if app.focus_column_checklist {
+                        if app.save_menu_open {
+                            match key_event.code {
+                                KeyCode::Esc | KeyCode::Char(',') => {
+                                    app.save_menu_open = false;
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    app.save_menu_selection = match app.save_menu_selection {
+                                        Some(SaveMenu::Local) => Some(SaveMenu::Global),
+                                        Some(SaveMenu::Global) => Some(SaveMenu::Cancel),
+                                        Some(SaveMenu::Cancel) => Some(SaveMenu::Local),
+                                        None => Some(SaveMenu::Local),
+                                    };
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    app.save_menu_selection = match app.save_menu_selection {
+                                        Some(SaveMenu::Local) => Some(SaveMenu::Cancel),
+                                        Some(SaveMenu::Global) => Some(SaveMenu::Local),
+                                        Some(SaveMenu::Cancel) => Some(SaveMenu::Global),
+                                        None => Some(SaveMenu::Local),
+                                    };
+                                }
+                                KeyCode::Enter => {
+                                    if let Some(sel) = app.save_menu_selection {
+                                        match sel {
+                                            SaveMenu::Local | SaveMenu::Global => {
+                                                app.save_layout(sel);
+                                                app.save_menu_open = false;
+                                                app.focus_column_checklist = false;
+                                            }
+                                            SaveMenu::Cancel => {
+                                                app.save_menu_open = false;
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+
+                        if app.editing_page_size {
+                            match key_event.code {
+                                KeyCode::Char(c) if c.is_ascii_digit() => {
+                                    app.page_size_input.push(c);
+                                }
+                                KeyCode::Backspace => {
+                                    app.page_size_input.pop();
+                                }
+                                KeyCode::Enter => {
+                                    if let Ok(new_size) =
+                                        app.page_size_input.trim().parse::<usize>()
+                                    {
+                                        if new_size > 0 {
+                                            app.page_size = new_size;
+                                            app.config.page_size = new_size;
+                                            if let Some(ref mut client) = app.gitlab_client {
+                                                client.page_size = new_size;
+                                            }
+                                            if let Some(client) = app.gitlab_client.clone() {
+                                                app.start_loading_tab(app.active_tab);
+                                                spawn_refresh_active_tab(
+                                                    &client,
+                                                    &app.project_context,
+                                                    app.active_tab,
+                                                    events.sender(),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    app.editing_page_size = false;
+                                }
+                                KeyCode::Esc => {
+                                    app.editing_page_size = false;
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+
                         let is_github = app
                             .gitlab_client
                             .as_ref()
@@ -5329,13 +5428,21 @@ async fn main() -> Result<()> {
                         let cols_end = cols.len();
                         let group_end = cols_end + group_cols.len();
                         let order_end = group_end + 2;
-                        let theme_end = order_end + crate::config::THEME_PRESETS.len();
-                        let max_idx = theme_end.saturating_sub(1);
+                        let page_size_idx = order_end;
+                        let theme_start = page_size_idx + 1;
+                        let theme_end = theme_start + crate::config::THEME_PRESETS.len();
+                        let max_idx = theme_end; // Save button is at index theme_end
 
                         match key_event.code {
+                            KeyCode::Char(c)
+                                if c.is_ascii_digit()
+                                    && app.column_checklist_idx == page_size_idx =>
+                            {
+                                app.editing_page_size = true;
+                                app.page_size_input = c.to_string();
+                            }
                             KeyCode::Esc | KeyCode::Char(',') => {
                                 app.focus_column_checklist = false;
-                                app.save_layout();
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if app.column_checklist_idx < max_idx {
@@ -5355,13 +5462,15 @@ async fn main() -> Result<()> {
                                 app.column_checklist_idx = match app.column_checklist_idx {
                                     idx if idx < cols_end => cols_end,
                                     idx if idx < group_end => group_end,
-                                    idx if idx < order_end => order_end,
+                                    idx if idx < order_end => page_size_idx,
+                                    idx if idx == page_size_idx => theme_start,
                                     _ => 0,
                                 };
                             }
                             KeyCode::Char('K') => {
                                 app.column_checklist_idx = match app.column_checklist_idx {
-                                    idx if idx >= order_end => cols_end,
+                                    idx if idx >= theme_start => page_size_idx,
+                                    idx if idx == page_size_idx => order_end,
                                     idx if idx >= group_end => 0,
                                     _ => order_end,
                                 };
@@ -5385,19 +5494,28 @@ async fn main() -> Result<()> {
                                 } else if idx < group_end {
                                     let group_idx = idx - cols_end;
                                     if let Some(col) = group_cols.get(group_idx) {
-                                        if app.group_by_column.as_deref() == Some(col) {
-                                            app.group_by_column = None;
+                                        let current_group = app
+                                            .group_by_column
+                                            .get(&app.active_tab)
+                                            .cloned()
+                                            .flatten();
+                                        if current_group.as_deref() == Some(col) {
+                                            app.group_by_column.insert(app.active_tab, None);
                                         } else {
-                                            app.group_by_column = Some(col.to_string());
+                                            app.group_by_column
+                                                .insert(app.active_tab, Some(col.to_string()));
                                         }
                                         app.group_list_state.select(Some(0));
                                         app.update_filter_selection();
                                     }
                                 } else if idx < order_end {
-                                    app.group_ascending = idx == group_end;
+                                    app.group_ascending.insert(app.active_tab, idx == group_end);
                                     app.update_filter_selection();
+                                } else if idx == page_size_idx {
+                                    app.editing_page_size = true;
+                                    app.page_size_input = app.page_size.to_string();
                                 } else if idx < theme_end {
-                                    let theme_idx = idx - order_end;
+                                    let theme_idx = idx - theme_start;
                                     if let Some(name) = crate::config::THEME_PRESETS.get(theme_idx)
                                     {
                                         crate::config::set_theme_preset(name);
@@ -5451,10 +5569,16 @@ async fn main() -> Result<()> {
                                 } else if idx < group_end {
                                     let group_idx = idx - cols_end;
                                     if let Some(col) = group_cols.get(group_idx) {
-                                        if app.group_by_column.as_deref() == Some(col) {
-                                            app.group_by_column = None;
+                                        let current_group = app
+                                            .group_by_column
+                                            .get(&app.active_tab)
+                                            .cloned()
+                                            .flatten();
+                                        if current_group.as_deref() == Some(col) {
+                                            app.group_by_column.insert(app.active_tab, None);
                                         } else {
-                                            app.group_by_column = Some(col.to_string());
+                                            app.group_by_column
+                                                .insert(app.active_tab, Some(col.to_string()));
                                         }
                                         app.group_list_state.select(Some(0));
                                         app.update_filter_selection();
@@ -5469,7 +5593,7 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                 } else if idx < order_end {
-                                    app.group_ascending = idx == group_end;
+                                    app.group_ascending.insert(app.active_tab, idx == group_end);
                                     app.update_filter_selection();
                                     if let Some(client) = app.gitlab_client.clone() {
                                         app.start_loading_tab(app.active_tab);
@@ -5480,13 +5604,19 @@ async fn main() -> Result<()> {
                                             events.sender(),
                                         );
                                     }
+                                } else if idx == page_size_idx {
+                                    app.editing_page_size = true;
+                                    app.page_size_input = app.page_size.to_string();
                                 } else if idx < theme_end {
-                                    let theme_idx = idx - order_end;
+                                    let theme_idx = idx - theme_start;
                                     if let Some(name) = crate::config::THEME_PRESETS.get(theme_idx)
                                     {
                                         crate::config::set_theme_preset(name);
                                         app.config.theme_preset = Some(name.to_string());
                                     }
+                                } else if idx == theme_end {
+                                    app.save_menu_open = true;
+                                    app.save_menu_selection = Some(SaveMenu::Local);
                                 }
                             }
                             _ => {}

@@ -1242,6 +1242,10 @@ pub enum GroupItem {
 pub enum ConfirmAction {
     DeleteMilestone(u64),  // milestone iid
     DeleteRelease(String), // release tag_name
+    DeleteBranch(String),  // branch name
+    CloseIssue(u64),       // issue iid
+    CloseMr(u64),          // mr iid
+    MergeMr(u64),          // mr iid
 }
 
 pub struct App {

@@ -1007,7 +1007,13 @@ async fn main() -> Result<()> {
                     }
 
                     if handle_submit_review_prompt(&mut app, &key_event)
-                        || handle_confirm_popup(&mut app, &key_event, events.sender())
+                        || handle_confirm_popup(
+                            &mut app,
+                            &key_event,
+                            &mut terminal,
+                            events.sender(),
+                        )
+                        .await
                         || handle_help_keybinding(&mut app, &key_event)
                         || handle_help_overlay(&mut app, &key_event)
                         || handle_switch_repo(&mut app, &key_event)

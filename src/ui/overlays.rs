@@ -1736,6 +1736,22 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 " Delete Release? ",
                 format!("Are you sure you want to delete release {}?", tag_name),
             ),
+            crate::app::ConfirmAction::DeleteBranch(branch_name) => (
+                " Delete Branch? ",
+                format!("Are you sure you want to delete branch '{}'?", branch_name),
+            ),
+            crate::app::ConfirmAction::CloseIssue(iid) => (
+                " Close Issue? ",
+                format!("Are you sure you want to close issue #{}?", iid),
+            ),
+            crate::app::ConfirmAction::CloseMr(iid) => (
+                " Close Merge Request? ",
+                format!("Are you sure you want to close MR/PR #{}?", iid),
+            ),
+            crate::app::ConfirmAction::MergeMr(iid) => (
+                " Merge Request? ",
+                format!("Are you sure you want to merge MR/PR #{}?", iid),
+            ),
         };
 
         let block = Block::default()

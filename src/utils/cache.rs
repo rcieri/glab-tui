@@ -15,6 +15,10 @@ pub struct ProjectCache {
     pub pipeline_jobs: HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
     pub branches: Vec<crate::gitlab::branches::Branch>,
     pub environments: Vec<crate::gitlab::deployments::Environment>,
+    #[serde(default)]
+    pub milestone_issues: HashMap<u64, Vec<crate::gitlab::issues::Issue>>,
+    #[serde(default)]
+    pub selector_items: Option<Vec<String>>,
 }
 
 fn get_cache_file_path(project_context: &str) -> PathBuf {
@@ -243,5 +247,16 @@ mod tests {
         unsafe {
             std::env::remove_var("GLAB_TUI_REPOS_DIR");
         }
+    }
+
+    #[test]
+    fn test_project_cache_roundtrip() {
+        let mut cache = ProjectCache::default();
+        cache.selector_items = Some(vec!["assignee1".to_string(), "label1".to_string()]);
+
+        let serialized = serde_json::to_string(&cache).unwrap();
+        let deserialized: ProjectCache = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.selector_items.unwrap()[0], "assignee1");
     }
 }

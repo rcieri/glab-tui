@@ -397,6 +397,7 @@ async fn main() -> Result<()> {
 
     // Load offline cache
     let cache = crate::utils::cache::load_cache(&app.project_context);
+    app.project_cache = cache.clone();
     app.issues.items = cache.issues;
     app.mrs.items = cache.mrs;
     app.pipelines.items = cache.pipelines;
@@ -407,6 +408,18 @@ async fn main() -> Result<()> {
     app.pipeline_jobs = cache.pipeline_jobs;
     app.branches.items = cache.branches;
     app.environments.items = cache.environments;
+    app.milestone_issues_cache = cache.milestone_issues;
+
+    let has_any_cached = !app.issues.items.is_empty()
+        || !app.mrs.items.is_empty()
+        || !app.pipelines.items.is_empty()
+        || !app.runners.items.is_empty()
+        || !app.releases.items.is_empty()
+        || !app.todos.items.is_empty()
+        || !app.milestones.items.is_empty();
+    if has_any_cached {
+        app.status_message = Some("Loaded from offline cache".to_string());
+    }
 
     if !app.issues.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Issues);
@@ -621,9 +634,8 @@ async fn main() -> Result<()> {
                         app.jobs.state.select(app.jobs.state.selected().or(Some(0)));
                     }
 
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.pipeline_jobs = app.pipeline_jobs.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::JobsTabFetched(pipeline_id, jobs) => {
                     app.complete_loading_tab(app::Tab::Jobs, "Success");
@@ -673,9 +685,8 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.issues.items = issues;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.issues = app.issues.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.issues = app.issues.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MrsFetched(mrs) => {
                     app.complete_loading_tab(app::Tab::MergeRequests, "Success");
@@ -684,9 +695,8 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.mrs.items = mrs;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.mrs = app.mrs.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.mrs = app.mrs.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::PipelinesFetched(pipelines) => {
                     app.complete_loading_tab(app::Tab::Pipelines, "Success");
@@ -699,10 +709,9 @@ async fn main() -> Result<()> {
                         app.pipelines.items.iter().map(|p| p.id).collect();
                     app.pipeline_jobs.retain(|id, _| new_ids.contains(id));
                     app.fetching_pipelines.clear();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.pipelines = app.pipelines.items.clone();
-                    cache.pipeline_jobs = app.pipeline_jobs.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.pipelines = app.pipelines.items.clone();
+                    app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::TodosFetched(notifs) => {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
@@ -711,9 +720,8 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.todos.items = notifs;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.todos = app.todos.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.todos = app.todos.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::RunnersFetched(runners) => {
                     app.complete_loading_tab(app::Tab::Runners, "Success");
@@ -722,9 +730,8 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.runners.items = runners;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.runners = app.runners.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.runners = app.runners.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::ReleasesFetched(releases) => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
@@ -733,9 +740,8 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.releases.items = releases;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.releases = app.releases.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.releases = app.releases.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MilestonesFetched(milestones) => {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
@@ -744,15 +750,30 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.milestones.items = milestones;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.milestones = app.milestones.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.milestones = app.milestones.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MilestoneIssuesFetched(iid, issues) => {
-                    app.milestone_issues_cache.insert(iid, issues.clone());
-                    // Only update the displayed issues if we're still viewing this milestone
-                    if app.selected_milestone_iid == Some(iid) {
-                        app.selected_milestone_issues = Some(issues);
+                    let mut fallback_success = false;
+                    if issues.is_empty() {
+                        if let Some(cached) = app.project_cache.milestone_issues.get(&iid) {
+                            app.milestone_issues_cache.insert(iid, cached.clone());
+                            if app.selected_milestone_iid == Some(iid) {
+                                app.selected_milestone_issues = Some(cached.clone());
+                                app.status_message = Some(
+                                    "Offline fallback: loaded cached milestone issues.".to_string(),
+                                );
+                            }
+                            fallback_success = true;
+                        }
+                    }
+                    if !fallback_success {
+                        app.milestone_issues_cache.insert(iid, issues.clone());
+                        if app.selected_milestone_iid == Some(iid) {
+                            app.selected_milestone_issues = Some(issues.clone());
+                        }
+                        app.project_cache.milestone_issues.insert(iid, issues);
+                        crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                     }
                 }
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
@@ -824,9 +845,8 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.branches.items = branches;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.branches = app.branches.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.branches = app.branches.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::EnvironmentsFetched(envs) => {
                     app.complete_loading_tab(app::Tab::Environments, "Success");
@@ -835,15 +855,31 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.environments.items = envs;
                     app.update_filter_selection();
-                    let mut cache = crate::utils::cache::load_cache(&app.project_context);
-                    cache.environments = app.environments.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &cache);
+                    app.project_cache.environments = app.environments.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::SelectorItemsFetched(items) => {
-                    if let Some(mut selector) = app.selector.take() {
-                        selector.all_items = items;
-                        selector.is_loading = false;
-                        app.selector = Some(selector);
+                    let mut fallback_success = false;
+                    if items.is_empty() {
+                        if let Some(cached) = &app.project_cache.selector_items {
+                            app.status_message =
+                                Some("Offline fallback: loaded cached selector items.".to_string());
+                            if let Some(mut selector) = app.selector.take() {
+                                selector.all_items = cached.clone();
+                                selector.is_loading = false;
+                                app.selector = Some(selector);
+                            }
+                            fallback_success = true;
+                        }
+                    }
+                    if !fallback_success {
+                        app.project_cache.selector_items = Some(items.clone());
+                        crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                        if let Some(mut selector) = app.selector.take() {
+                            selector.all_items = items;
+                            selector.is_loading = false;
+                            app.selector = Some(selector);
+                        }
                     }
                 }
                 Event::DeploymentsFetched(deployments) => {
@@ -2450,6 +2486,7 @@ async fn main() -> Result<()> {
                                                     let cache = crate::utils::cache::load_cache(
                                                         &app.project_context,
                                                     );
+                                                    app.project_cache = cache.clone();
                                                     app.issues.items = cache.issues;
                                                     app.mrs.items = cache.mrs;
                                                     app.pipelines.items = cache.pipelines;
@@ -2457,6 +2494,25 @@ async fn main() -> Result<()> {
                                                     app.releases.items = cache.releases;
                                                     app.todos.items = cache.todos;
                                                     app.milestones.items = cache.milestones;
+                                                    app.pipeline_jobs = cache.pipeline_jobs;
+                                                    app.branches.items = cache.branches;
+                                                    app.environments.items = cache.environments;
+                                                    app.milestone_issues_cache =
+                                                        cache.milestone_issues;
+
+                                                    let has_any_cached =
+                                                        !app.issues.items.is_empty()
+                                                            || !app.mrs.items.is_empty()
+                                                            || !app.pipelines.items.is_empty()
+                                                            || !app.runners.items.is_empty()
+                                                            || !app.releases.items.is_empty()
+                                                            || !app.todos.items.is_empty()
+                                                            || !app.milestones.items.is_empty();
+                                                    if has_any_cached {
+                                                        app.status_message = Some(
+                                                            "Loaded from offline cache".to_string(),
+                                                        );
+                                                    }
 
                                                     if !app.issues.items.is_empty() {
                                                         app.loaded_tabs.insert(app::Tab::Issues);

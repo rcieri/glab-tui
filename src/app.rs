@@ -3649,6 +3649,7 @@ mod tests {
             reviewers: vec![],
             milestone: None,
             description: None,
+            head_pipeline: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -3665,6 +3666,7 @@ mod tests {
             reviewers: vec![],
             milestone: None,
             description: None,
+            head_pipeline: None,
         };
 
         let mr_ready = MergeRequest {
@@ -3681,6 +3683,7 @@ mod tests {
             reviewers: vec![],
             milestone: None,
             description: None,
+            head_pipeline: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];

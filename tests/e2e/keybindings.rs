@@ -34,42 +34,42 @@ quit = "x"
 
 #[test]
 fn test_custom_jobs_action_keybinding() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_custom_todos_action_keybinding() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_custom_milestone_action_keybinding() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 // --- Tier 2: Boundary & Corner Cases (5 cases) ---
 
 #[test]
 fn test_keybind_conflict() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_keybind_empty_value() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_keybind_special_chars() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_keybind_case_insensitive() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_keybind_during_popup() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }

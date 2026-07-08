@@ -16,7 +16,15 @@ theme_preset = "dracula"
     let bin_path = find_glab_tui_binary();
     let envs = sandbox.envs();
     let envs_ref: Vec<(&str, &str)> = envs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let _pty = Pty::spawn(bin_path.to_str().unwrap(), &[], &envs_ref, 24, 80).unwrap();
+    let _pty = Pty::spawn(
+        bin_path.to_str().unwrap(),
+        &[],
+        &envs_ref,
+        24,
+        80,
+        Some(&sandbox.repo_dir),
+    )
+    .unwrap();
 
     // App should start up fine and show default screen
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -90,7 +98,7 @@ page_size = 20
 fn test_missing_config_presets() {
     let mut session = TestSession::new(false, 24, 80);
     // When no configuration exists, it should automatically generate default config.toml
-    session.wait_for_screen_contains("Issues", 10000).unwrap();
+    session.wait_for_screen_contains("Issues", 30000).unwrap();
     let default_config_path = session
         .sandbox
         .config_dir

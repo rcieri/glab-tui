@@ -25,7 +25,15 @@ quit = "x"
     let bin_path = crate::find_glab_tui_binary();
     let envs = sandbox.envs();
     let envs_ref: Vec<(&str, &str)> = envs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let pty = crate::Pty::spawn(bin_path.to_str().unwrap(), &[], &envs_ref, 24, 80).unwrap();
+    let pty = crate::Pty::spawn(
+        bin_path.to_str().unwrap(),
+        &[],
+        &envs_ref,
+        24,
+        80,
+        Some(&sandbox.repo_dir),
+    )
+    .unwrap();
 
     pty.write_input(b"q");
     std::thread::sleep(std::time::Duration::from_millis(100));

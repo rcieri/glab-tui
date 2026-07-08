@@ -493,11 +493,6 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Pipelines => {
             if key_event.code == KeyCode::Char('n') {
-                let is_github = app
-                    .gitlab_client
-                    .as_ref()
-                    .map(|c| c.is_github)
-                    .unwrap_or(false);
                 let current_branch =
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
@@ -519,62 +514,6 @@ pub async fn handle_active_tab_key(
                         s
                     },
                 });
-
-                // Immediately open the appropriate selector as a dropdown:
-                // GitHub → workflow file picker; GitLab → branch picker.
-                if is_github {
-                    let workflow_files = crate::git_helpers::get_workflow_files(true);
-                    let mut pre_selected = std::collections::HashSet::new();
-                    // Pre-select the first workflow file if only one exists
-                    if workflow_files.len() == 1 {
-                        pre_selected.insert(workflow_files[0].clone());
-                    }
-                    app.selector = Some(crate::app::Selector {
-                        title: "Select Workflow / CI File".to_string(),
-                        all_items: workflow_files,
-                        selected_items: pre_selected,
-                        cursor_idx: 0,
-                        search_query: String::new(),
-                        is_filtering: false,
-                        is_loading: false,
-                        entity_iid: 0,
-                        entity_type: "new_pipeline".to_string(),
-                        field_type: "workflow_file".to_string(),
-                        multi_select: false,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(0));
-                            s
-                        },
-                    });
-                } else {
-                    let branches = crate::git_helpers::get_branches();
-                    let mut pre_selected = std::collections::HashSet::new();
-                    pre_selected.insert(current_branch);
-                    let start_idx = pre_selected
-                        .iter()
-                        .next()
-                        .and_then(|sel| branches.iter().position(|b| b == sel))
-                        .unwrap_or(0);
-                    app.selector = Some(crate::app::Selector {
-                        title: "Select Branch / Ref".to_string(),
-                        all_items: branches,
-                        selected_items: pre_selected,
-                        cursor_idx: start_idx,
-                        search_query: String::new(),
-                        is_filtering: false,
-                        is_loading: false,
-                        entity_iid: 0,
-                        entity_type: "new_pipeline".to_string(),
-                        field_type: "pipeline_branch".to_string(),
-                        multi_select: false,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(start_idx));
-                            s
-                        },
-                    });
-                }
             } else if key_event.code == KeyCode::Char('p')
                 || keybinding_matches(
                     &app.config.keybindings.pipelines.trigger_pipeline,

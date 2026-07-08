@@ -1782,14 +1782,40 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(Style::default().fg(THEME.read().unwrap().text_normal))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
-        let footer_p = Paragraph::new(" y: Yes (Confirm) • n/Esc: Cancel ")
-            .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .add_modifier(Modifier::ITALIC),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
+        let footer_p = Paragraph::new(Line::from(vec![
+            Span::styled(
+                if app.confirm_popup_selected_yes {
+                    " [ YES ] "
+                } else {
+                    "   YES   "
+                },
+                if app.confirm_popup_selected_yes {
+                    Style::default()
+                        .fg(THEME.read().unwrap().text_normal)
+                        .bg(THEME.read().unwrap().green_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(THEME.read().unwrap().text_muted)
+                },
+            ),
+            Span::raw("    "),
+            Span::styled(
+                if !app.confirm_popup_selected_yes {
+                    " [ NO ] "
+                } else {
+                    "   NO   "
+                },
+                if !app.confirm_popup_selected_yes {
+                    Style::default()
+                        .fg(THEME.read().unwrap().text_normal)
+                        .bg(THEME.read().unwrap().red_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(THEME.read().unwrap().text_muted)
+                },
+            ),
+        ]))
+        .alignment(Alignment::Center);
 
         f.render_widget(Clear, area);
         f.render_widget(block, area);

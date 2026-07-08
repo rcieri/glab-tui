@@ -698,63 +698,18 @@ pub(crate) fn render_tab_merge_requests(
                     }
                 });
                 if let Some(pipe) = resolved_pipe {
-                    let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
-                        "success" => (
-                            "SUCCESS",
-                            THEME.read().unwrap().green,
-                            THEME.read().unwrap().green_bg,
-                        ),
-                        "failed" => (
-                            "FAILED",
-                            THEME.read().unwrap().red,
-                            THEME.read().unwrap().red_bg,
-                        ),
-                        "running" => (
-                            "RUNNING",
-                            THEME.read().unwrap().blue,
-                            THEME.read().unwrap().blue_bg,
-                        ),
-                        "canceled" => (
-                            "CANCEL",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "pending" => (
-                            "PENDING",
-                            THEME.read().unwrap().yellow,
-                            THEME.read().unwrap().yellow_bg,
-                        ),
-                        "skipped" => (
-                            "SKIP",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "manual" => (
-                            "MANUAL",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        _ => (
-                            "UNKNOWN",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                    };
-                    let bg = if is_selected {
-                        THEME.read().unwrap().highlight_bg
+                    let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id) {
+                        super::helpers::get_stages_dots(jobs)
                     } else {
-                        pipe_bg
+                        "⏳".to_string()
                     };
                     cells.push(super::helpers::render_fuzzy_cell(
-                        pipe_text,
+                        &stages_dots,
                         &app.search_query,
                         is_selected,
                         false,
-                        Style::default()
-                            .fg(pipe_color)
-                            .bg(bg)
-                            .add_modifier(Modifier::BOLD),
-                        Alignment::Center,
+                        Style::default().fg(THEME.read().unwrap().text_normal),
+                        Alignment::Left,
                     ));
                 } else {
                     cells.push(super::helpers::render_fuzzy_cell(

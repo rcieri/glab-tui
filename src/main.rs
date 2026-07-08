@@ -493,6 +493,51 @@ async fn main() -> Result<()> {
             }
         }
 
+        if app.active_tab == app::Tab::MergeRequests {
+            if let Some(client) = &app.gitlab_client {
+                if let Some(idx) = app.mrs.state.selected() {
+                    let m = app.filtered_mrs().get(idx).cloned();
+                    if let Some(m) = m {
+                        let is_github = client.is_github;
+                        let resolved_pipe = m.head_pipeline.as_ref().map(|p| p.id).or_else(|| {
+                            if is_github {
+                                app.pipelines
+                                    .items
+                                    .iter()
+                                    .find(|p| p.r#ref == m.source_branch)
+                                    .map(|p| p.id)
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(pipe_id) = resolved_pipe {
+                            if !app.pipeline_jobs.contains_key(&pipe_id)
+                                && !app.fetching_pipelines.contains(&pipe_id)
+                            {
+                                app.fetching_pipelines.insert(pipe_id);
+                                let client_clone = client.clone();
+                                let project_context = app.project_context.clone();
+                                let tx = events.sender();
+                                tokio::spawn(async move {
+                                    if let Ok(jobs) = gitlab::pipelines::list_pipeline_jobs(
+                                        &client_clone,
+                                        &project_context,
+                                        pipe_id,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
+                                    } else {
+                                        let _ = tx.send(Event::PipelineJobs(pipe_id, vec![]));
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if app.active_tab == app::Tab::Milestones {
             if let Some(client) = &app.gitlab_client {
                 if let Some(idx) = app.milestones.state.selected() {

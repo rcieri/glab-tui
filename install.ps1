@@ -16,6 +16,11 @@ function Get-AssetName {
 
 function Get-LatestRelease {
     $url = "https://api.github.com/repos/$Repo/releases/latest"
+    $headers = @{}
+    if ($env:GITHUB_TOKEN) {
+        $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+        return Invoke-RestMethod -Uri $url -Headers $headers -UseBasicParsing
+    }
     return Invoke-RestMethod -Uri $url -UseBasicParsing
 }
 

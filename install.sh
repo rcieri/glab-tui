@@ -32,13 +32,25 @@ detect_os_arch() {
 
 fetch_latest_release() {
     url="https://api.github.com/repos/${REPO}/releases/latest"
-    if command -v curl >/dev/null 2>&1; then
-        curl -sSfL "$url"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO- "$url"
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        auth_header="Authorization: Bearer $GITHUB_TOKEN"
+        if command -v curl >/dev/null 2>&1; then
+            curl -sSfL -H "$auth_header" "$url"
+        elif command -v wget >/dev/null 2>&1; then
+            wget --header="$auth_header" -qO- "$url"
+        else
+            echo "Neither curl nor wget found" >&2
+            exit 1
+        fi
     else
-        echo "Neither curl nor wget found" >&2
-        exit 1
+        if command -v curl >/dev/null 2>&1; then
+            curl -sSfL "$url"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO- "$url"
+        else
+            echo "Neither curl nor wget found" >&2
+            exit 1
+        fi
     fi
 }
 

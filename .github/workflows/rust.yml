@@ -69,6 +69,8 @@ jobs:
 
       - name: Test install.sh (Linux & macOS)
         if: matrix.os != 'windows-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p temp-bin
           PREFIX=$PWD/temp-bin ./install.sh
@@ -77,6 +79,8 @@ jobs:
       - name: Test install.ps1 (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           New-Item -ItemType Directory -Force -Path temp-bin
           ./install.ps1 -Prefix "$PWD/temp-bin"

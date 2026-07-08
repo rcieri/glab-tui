@@ -493,11 +493,6 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Pipelines => {
             if key_event.code == KeyCode::Char('n') {
-                let is_github = app
-                    .gitlab_client
-                    .as_ref()
-                    .map(|c| c.is_github)
-                    .unwrap_or(false);
                 let current_branch =
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
@@ -519,62 +514,6 @@ pub async fn handle_active_tab_key(
                         s
                     },
                 });
-
-                // Immediately open the appropriate selector as a dropdown:
-                // GitHub → workflow file picker; GitLab → branch picker.
-                if is_github {
-                    let workflow_files = crate::git_helpers::get_workflow_files(true);
-                    let mut pre_selected = std::collections::HashSet::new();
-                    // Pre-select the first workflow file if only one exists
-                    if workflow_files.len() == 1 {
-                        pre_selected.insert(workflow_files[0].clone());
-                    }
-                    app.selector = Some(crate::app::Selector {
-                        title: "Select Workflow / CI File".to_string(),
-                        all_items: workflow_files,
-                        selected_items: pre_selected,
-                        cursor_idx: 0,
-                        search_query: String::new(),
-                        is_filtering: false,
-                        is_loading: false,
-                        entity_iid: 0,
-                        entity_type: "new_pipeline".to_string(),
-                        field_type: "workflow_file".to_string(),
-                        multi_select: false,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(0));
-                            s
-                        },
-                    });
-                } else {
-                    let branches = crate::git_helpers::get_branches();
-                    let mut pre_selected = std::collections::HashSet::new();
-                    pre_selected.insert(current_branch);
-                    let start_idx = pre_selected
-                        .iter()
-                        .next()
-                        .and_then(|sel| branches.iter().position(|b| b == sel))
-                        .unwrap_or(0);
-                    app.selector = Some(crate::app::Selector {
-                        title: "Select Branch / Ref".to_string(),
-                        all_items: branches,
-                        selected_items: pre_selected,
-                        cursor_idx: start_idx,
-                        search_query: String::new(),
-                        is_filtering: false,
-                        is_loading: false,
-                        entity_iid: 0,
-                        entity_type: "new_pipeline".to_string(),
-                        field_type: "pipeline_branch".to_string(),
-                        multi_select: false,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(start_idx));
-                            s
-                        },
-                    });
-                }
             } else if key_event.code == KeyCode::Char('p')
                 || keybinding_matches(
                     &app.config.keybindings.pipelines.trigger_pipeline,
@@ -731,11 +670,42 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Jobs => {
             if keybinding_matches(&app.config.keybindings.jobs.enter_pipeline, key_event) {
-                app.text_input = Some(crate::app::TextInput {
-                    title: " Enter Pipeline ID ".to_string(),
-                    value: String::new(),
-                    cursor_idx: 0,
-                    action: crate::app::TextInputAction::EnterPipelineId,
+                let pipelines: Vec<String> = app
+                    .pipelines
+                    .items
+                    .iter()
+                    .map(|p| format!("#{} — {} ({})", p.id, p.r#ref, p.status))
+                    .collect();
+                let mut pre_selected = std::collections::HashSet::new();
+                if let Some(active_id) = app.active_pipeline_id {
+                    if let Some(i) = app.pipelines.items.iter().position(|p| p.id == active_id) {
+                        if let Some(p) = pipelines.get(i) {
+                            pre_selected.insert(p.clone());
+                        }
+                    }
+                }
+                let start_idx = pre_selected
+                    .iter()
+                    .next()
+                    .and_then(|sel| pipelines.iter().position(|p| p == sel))
+                    .unwrap_or(0);
+                app.selector = Some(crate::app::Selector {
+                    title: " Select Pipeline ".to_string(),
+                    all_items: pipelines,
+                    selected_items: pre_selected,
+                    cursor_idx: start_idx,
+                    search_query: String::new(),
+                    is_filtering: false,
+                    is_loading: false,
+                    entity_iid: 0,
+                    entity_type: String::new(),
+                    field_type: "pipeline_select".to_string(),
+                    multi_select: false,
+                    state: {
+                        let mut s = ratatui::widgets::ListState::default();
+                        s.select(Some(start_idx));
+                        s
+                    },
                 });
             } else if let Some(idx) = app.jobs.state.selected() {
                 let job_info = app.filtered_jobs().get(idx).map(|j| (j.id, j.name.clone()));

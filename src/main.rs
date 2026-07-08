@@ -2759,6 +2759,64 @@ async fn main() -> Result<()> {
                                         continue;
                                     }
 
+                                    if field_type == "pipeline_select" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        if let Some(val) = selected_val {
+                                            if let Some(id_str) = val
+                                                .strip_prefix('#')
+                                                .and_then(|s| s.split(" — ").next())
+                                            {
+                                                if let Ok(pipeline_id) = id_str.parse::<u64>() {
+                                                    if let Some(client) = &app.gitlab_client {
+                                                        app.active_pipeline_id = Some(pipeline_id);
+                                                        app.jobs.state.select(Some(0));
+                                                        app.jobs.items.clear();
+                                                        app.loading_tabs.insert(app::Tab::Jobs);
+                                                        let client_clone = client.clone();
+                                                        let project_context =
+                                                            app.project_context.clone();
+                                                        let tx = events.sender();
+                                                        tokio::spawn(async move {
+                                                            match gitlab::pipelines::list_pipeline_jobs(
+                                                                &client_clone,
+                                                                &project_context,
+                                                                pipeline_id,
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(jobs) => {
+                                                                    let _ =
+                                                                        tx.send(Event::JobsTabFetched(
+                                                                            pipeline_id,
+                                                                            jobs,
+                                                                        ));
+                                                                }
+                                                                Err(e) => {
+                                                                    let _ = tx.send(
+                                                                        Event::FetchFailed(
+                                                                            app::Tab::Jobs,
+                                                                            format!(
+                                                                                "Failed to fetch jobs for pipeline {}: {}",
+                                                                                pipeline_id, e
+                                                                            ),
+                                                                        ),
+                                                                    );
+                                                                }
+                                                            }
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+
                                     if field_type == "comment_select" {
                                         let filtered_items = selector.get_filtered_items();
                                         let mut selected_val =
@@ -3503,6 +3561,7 @@ async fn main() -> Result<()> {
                                                 "target_branch" => "Target Branch",
                                                 "pipeline_branch" => "Branch / Ref",
                                                 "workflow_file" => "Workflow / CI File (GitHub)",
+                                                "tag" => "Tag",
                                                 _ => "",
                                             };
                                             if !target_field_name.is_empty() {
@@ -4246,6 +4305,7 @@ async fn main() -> Result<()> {
                                     || field_name == "Target Branch"
                                     || field_name == "Branch / Ref"
                                     || field_name == "Workflow / CI File (GitHub)"
+                                    || field_name == "Tag"
                                 {
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
@@ -4260,6 +4320,7 @@ async fn main() -> Result<()> {
                                         "Target Branch" => "target_branch",
                                         "Branch / Ref" => "pipeline_branch",
                                         "Workflow / CI File (GitHub)" => "workflow_file",
+                                        "Tag" => "tag",
                                         _ => "",
                                     };
                                     let multi_select = match field_type {
@@ -4330,6 +4391,35 @@ async fn main() -> Result<()> {
                                         all_items = get_workflow_files(is_github);
                                         is_loading = false;
                                         // Pre-select any already-typed value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
+                                    } else if field_type == "tag" {
+                                        // Collect existing tags from releases cache + git tag
+                                        let mut tags: Vec<String> = app
+                                            .releases
+                                            .items
+                                            .iter()
+                                            .map(|r| r.tag_name.clone())
+                                            .collect();
+                                        if let Ok(output) =
+                                            std::process::Command::new("git").args(["tag"]).output()
+                                        {
+                                            if output.status.success() {
+                                                for line in
+                                                    String::from_utf8_lossy(&output.stdout).lines()
+                                                {
+                                                    let t = line.trim().to_string();
+                                                    if !t.is_empty() && !tags.contains(&t) {
+                                                        tags.push(t);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        tags.sort();
+                                        all_items = tags;
+                                        is_loading = false;
                                         let current_val = menu.fields[menu.selected_idx].1.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
@@ -4658,7 +4748,6 @@ async fn main() -> Result<()> {
                                     || field_name == "Variables"
                                     || field_name == "Inputs"
                                     || field_name == "Release Name"
-                                    || field_name == "Tag"
                                 {
                                     let current_val =
                                         if entity_iid == 0 || entity_type.starts_with("new_") {

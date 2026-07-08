@@ -1552,8 +1552,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let area = centered_rect_fixed(44, 44, size);
 
-            let has_filter = true;
-
             let constraints = vec![
                 Constraint::Length(3), // Search/Filter
                 Constraint::Min(0),    // List of items

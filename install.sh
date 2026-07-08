@@ -70,7 +70,7 @@ main() {
 
     json=$(fetch_latest_release)
     tag=$(echo "$json" | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)",.*/\1/')
-    download_url=$(echo "$json" | grep '"browser_download_url"' | grep "$asset" | sed 's/.*"browser_download_url": "\(.*\)".*/\1/')
+    download_url=$(echo "$json" | grep '"browser_download_url"' | grep "/${asset}\"" | sed 's/.*"browser_download_url": "\(.*\)".*/\1/')
 
     if [ -z "$download_url" ]; then
         echo "No asset found for ${platform}" >&2

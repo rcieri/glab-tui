@@ -201,6 +201,7 @@ impl Tab {
                 "Assignees",
                 "Reviewers",
                 "Labels",
+                "Pipeline",
                 "Milestone",
                 "Author",
             ],

@@ -42,6 +42,8 @@ pub struct MergeRequest {
     pub source_branch: String,
     pub draft: bool,
     pub description: Option<String>,
+    #[serde(default)]
+    pub head_pipeline: Option<super::pipelines::Pipeline>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -63,6 +65,8 @@ pub struct GitlabMergeRequest {
     pub source_branch: String,
     pub draft: bool,
     pub description: Option<String>,
+    #[serde(default)]
+    pub head_pipeline: Option<super::pipelines::GitlabPipeline>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -106,6 +110,7 @@ impl From<GitlabMergeRequest> for MergeRequest {
             source_branch: gl.source_branch,
             draft: gl.draft,
             description: gl.description,
+            head_pipeline: gl.head_pipeline.map(|p| p.into()),
         }
     }
 }
@@ -153,6 +158,7 @@ impl From<GithubPullRequest> for MergeRequest {
             source_branch,
             draft,
             description: gh.body,
+            head_pipeline: None,
         }
     }
 }

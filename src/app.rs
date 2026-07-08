@@ -171,7 +171,13 @@ impl Tab {
                     "MRs"
                 }
             }
-            Tab::Pipelines => "Pipelines",
+            Tab::Pipelines => {
+                if is_github {
+                    "Actions"
+                } else {
+                    "Pipelines"
+                }
+            }
             Tab::Jobs => "Jobs",
             Tab::Runners => "Runners",
             Tab::Releases => "Releases",
@@ -193,17 +199,25 @@ impl Tab {
                 cols.push("Author");
                 cols
             }
-            Tab::MergeRequests => vec![
-                "ID",
-                "State",
-                "Status",
-                "Title",
-                "Assignees",
-                "Reviewers",
-                "Labels",
-                "Milestone",
-                "Author",
-            ],
+            Tab::MergeRequests => {
+                let mut cols = vec![
+                    "ID",
+                    "State",
+                    "Status",
+                    "Title",
+                    "Assignees",
+                    "Reviewers",
+                    "Labels",
+                ];
+                if is_github {
+                    cols.push("Action");
+                } else {
+                    cols.push("Pipeline");
+                }
+                cols.push("Milestone");
+                cols.push("Author");
+                cols
+            }
             Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
             Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],

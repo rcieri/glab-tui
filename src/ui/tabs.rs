@@ -678,6 +678,95 @@ pub(crate) fn render_tab_merge_requests(
                     24,
                 ));
             }
+            let is_github = app
+                .gitlab_client
+                .as_ref()
+                .map(|c| c.is_github)
+                .unwrap_or(false);
+            if app.is_column_visible(
+                Tab::MergeRequests,
+                if is_github { "Action" } else { "Pipeline" },
+            ) {
+                let resolved_pipe = m.head_pipeline.as_ref().or_else(|| {
+                    if is_github {
+                        app.pipelines
+                            .items
+                            .iter()
+                            .find(|p| p.r#ref == m.source_branch)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(pipe) = resolved_pipe {
+                    let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
+                        "success" => (
+                            "SUCCESS",
+                            THEME.read().unwrap().green,
+                            THEME.read().unwrap().green_bg,
+                        ),
+                        "failed" => (
+                            "FAILED",
+                            THEME.read().unwrap().red,
+                            THEME.read().unwrap().red_bg,
+                        ),
+                        "running" => (
+                            "RUNNING",
+                            THEME.read().unwrap().blue,
+                            THEME.read().unwrap().blue_bg,
+                        ),
+                        "canceled" => (
+                            "CANCEL",
+                            THEME.read().unwrap().text_muted,
+                            THEME.read().unwrap().inactive_bg,
+                        ),
+                        "pending" => (
+                            "PENDING",
+                            THEME.read().unwrap().yellow,
+                            THEME.read().unwrap().yellow_bg,
+                        ),
+                        "skipped" => (
+                            "SKIP",
+                            THEME.read().unwrap().text_muted,
+                            THEME.read().unwrap().inactive_bg,
+                        ),
+                        "manual" => (
+                            "MANUAL",
+                            THEME.read().unwrap().text_muted,
+                            THEME.read().unwrap().inactive_bg,
+                        ),
+                        _ => (
+                            "UNKNOWN",
+                            THEME.read().unwrap().text_muted,
+                            THEME.read().unwrap().inactive_bg,
+                        ),
+                    };
+                    let bg = if is_selected {
+                        THEME.read().unwrap().highlight_bg
+                    } else {
+                        pipe_bg
+                    };
+                    cells.push(super::helpers::render_fuzzy_cell(
+                        pipe_text,
+                        &app.search_query,
+                        is_selected,
+                        false,
+                        Style::default()
+                            .fg(pipe_color)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                        Alignment::Center,
+                    ));
+                } else {
+                    cells.push(super::helpers::render_fuzzy_cell(
+                        "—",
+                        &app.search_query,
+                        is_selected,
+                        false,
+                        Style::default().fg(THEME.read().unwrap().text_muted),
+                        Alignment::Center,
+                    ));
+                }
+            }
             if app.is_column_visible(Tab::MergeRequests, "Milestone") {
                 let mr_milestone_str = m
                     .milestone
@@ -744,6 +833,21 @@ pub(crate) fn render_tab_merge_requests(
         if app.is_column_visible(Tab::MergeRequests, "Labels") {
             header_cells.push(Cell::from("Labels"));
             widths.push(Constraint::Fill(1));
+        }
+        let is_github = app
+            .gitlab_client
+            .as_ref()
+            .map(|c| c.is_github)
+            .unwrap_or(false);
+        if app.is_column_visible(
+            Tab::MergeRequests,
+            if is_github { "Action" } else { "Pipeline" },
+        ) {
+            header_cells.push(Cell::from(
+                Line::from(if is_github { "Action" } else { "Pipeline" })
+                    .alignment(Alignment::Center),
+            ));
+            widths.push(Constraint::Length(12));
         }
         if app.is_column_visible(Tab::MergeRequests, "Milestone") {
             header_cells.push(Cell::from("Milestone"));
@@ -906,6 +1010,72 @@ pub(crate) fn render_tab_merge_requests(
                         Style::default().fg(THEME.read().unwrap().yellow),
                     ),
                 ]));
+                let resolved_pipe = mr.head_pipeline.as_ref().or_else(|| {
+                    if is_github {
+                        app.pipelines
+                            .items
+                            .iter()
+                            .find(|p| p.r#ref == mr.source_branch)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(pipe) = resolved_pipe {
+                    let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
+                        "success" => (
+                            "SUCCESS",
+                            THEME.read().unwrap().green,
+                            THEME.read().unwrap().green_bg,
+                        ),
+                        "failed" => (
+                            "FAILED",
+                            THEME.read().unwrap().red,
+                            THEME.read().unwrap().red_bg,
+                        ),
+                        "running" => (
+                            "RUNNING",
+                            THEME.read().unwrap().blue,
+                            THEME.read().unwrap().blue_bg,
+                        ),
+                        "canceled" => (
+                            "CANCEL",
+                            THEME.read().unwrap().text_muted,
+                            THEME.read().unwrap().inactive_bg,
+                        ),
+                        "pending" => (
+                            "PENDING",
+                            THEME.read().unwrap().yellow,
+                            THEME.read().unwrap().yellow_bg,
+                        ),
+                        "skipped" => (
+                            "SKIP",
+                            THEME.read().unwrap().text_muted,
+                            THEME.read().unwrap().inactive_bg,
+                        ),
+                        _ => (
+                            "UNKNOWN",
+                            THEME.read().unwrap().text_muted,
+                            THEME.read().unwrap().inactive_bg,
+                        ),
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            if is_github {
+                                "Action:    "
+                            } else {
+                                "Pipeline:  "
+                            },
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            format!(" {} ", pipe_text),
+                            Style::default()
+                                .fg(pipe_color)
+                                .bg(pipe_bg)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                }
                 if Some(mr.iid) == app.last_fetched_mr_iid {
                     let unresolved_count = app.unresolved_threads_count();
                     text.push(Line::from(vec![
@@ -1018,23 +1188,36 @@ pub(crate) fn render_tab_pipelines(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let is_github = app
+        .gitlab_client
+        .as_ref()
+        .map(|c| c.is_github)
+        .unwrap_or(false);
     if app.pipelines.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading pipelines...")
-                .alignment(Alignment::Center)
-                .block(main_block.clone())
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            Paragraph::new(if is_github {
+                "\n\n Loading actions..."
+            } else {
+                "\n\n Loading pipelines..."
+            })
+            .alignment(Alignment::Center)
+            .block(main_block.clone())
+            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
             content_area,
         );
         f.render_widget(
-            Paragraph::new("Select a pipeline to view details...")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Details ")
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
-                )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            Paragraph::new(if is_github {
+                "Select an action to view details..."
+            } else {
+                "Select a pipeline to view details..."
+            })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Details ")
+                    .border_style(Style::default().fg(THEME.read().unwrap().border)),
+            )
+            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
             detail_rect,
         );
     } else {
@@ -3332,11 +3515,18 @@ pub(crate) fn render_tab_terminal(
         }
     }
 
+    let is_github = app
+        .gitlab_client
+        .as_ref()
+        .map(|c| c.is_github)
+        .unwrap_or(false);
+
     for i in start_idx..end_idx {
         if let Some(cmd) = app.terminal_commands.get(i) {
             log_lines.push(super::helpers::build_log_line(
                 cmd,
                 inner_rect.width as usize,
+                is_github,
             ));
         }
     }

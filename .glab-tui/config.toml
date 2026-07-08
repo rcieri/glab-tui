@@ -1,5 +1,5 @@
 active_tab = "issues"
-page_size = 1000
+page_size = 100
 theme_preset = "default"
 
 [branches]
@@ -48,9 +48,14 @@ columns = [
     "State",
     "Title",
 ]
+group_by_column = "Due Date"
+
+[milestones.column_filters]
+State = ["active"]
 
 [mrs]
 columns = [
+    "Action",
     "ID",
     "Labels",
     "State",

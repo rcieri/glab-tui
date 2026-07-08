@@ -482,6 +482,32 @@ impl GitlabClient {
         }
     }
 
+    pub async fn fetch_branches(&self, project_path: &str) -> Result<Vec<String>> {
+        if self.is_github {
+            #[derive(serde::Deserialize)]
+            struct GithubBranch {
+                name: String,
+            }
+            let endpoint = format!("/repos/{}/branches?per_page=100", project_path);
+            let raw = self.execute_github_api(&endpoint, "GET", None).await?;
+            let branches: Vec<GithubBranch> = serde_json::from_str(&raw)?;
+            Ok(branches.into_iter().map(|b| b.name).collect())
+        } else {
+            #[derive(serde::Deserialize)]
+            struct GitlabBranch {
+                name: String,
+            }
+            let encoded_path = project_path.replace("/", "%2F");
+            let endpoint = format!(
+                "/projects/{}/repository/branches?per_page=100",
+                encoded_path
+            );
+            let raw = self.execute_gitlab_api(&endpoint, "GET", None).await?;
+            let branches: Vec<GitlabBranch> = serde_json::from_str(&raw)?;
+            Ok(branches.into_iter().map(|b| b.name).collect())
+        }
+    }
+
     pub async fn fetch_milestones(&self, project_path: &str) -> Result<Vec<String>> {
         if self.is_github {
             #[derive(serde::Deserialize)]

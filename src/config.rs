@@ -260,6 +260,8 @@ pub struct KeybindingGlobal {
     #[serde(default)]
     pub search: String,
     #[serde(default)]
+    pub global_search: String,
+    #[serde(default)]
     pub refresh: String,
     #[serde(default)]
     pub configure: String,
@@ -439,6 +441,7 @@ keybind_defaults! {
     def_quit = "q",
     def_help = "?",
     def_search = "/",
+    def_global_search = "Ctrl+p",
     def_refresh = "Ctrl+r",
     def_configure = "Tab",
     def_next_tab = "l",
@@ -493,6 +496,7 @@ impl Default for KeybindingGlobal {
             quit: def_quit(),
             help: def_help(),
             search: def_search(),
+            global_search: def_global_search(),
             refresh: def_refresh(),
             configure: def_configure(),
             next_tab: def_next_tab(),
@@ -757,6 +761,7 @@ page_size = 100
 quit = "q"
 help = "?"
 search = "/"
+global_search = "Ctrl+p"
 refresh = "Ctrl+r"
 configure = "Tab"
 next_tab = "l"

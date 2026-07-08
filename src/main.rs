@@ -2273,6 +2273,55 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Enter => {
                                     let field_type = selector.field_type.clone();
+                                    if field_type == "global_search" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let selected_val = if !selector.selected_items.is_empty() {
+                                            selector.selected_items.iter().next().cloned()
+                                        } else if !filtered_items.is_empty() {
+                                            Some(filtered_items[selector.cursor_idx].clone())
+                                        } else {
+                                            None
+                                        };
+                                        if let Some(val) = selected_val {
+                                            if val.starts_with("Issue #") {
+                                                if let Some(iid_str) = val
+                                                    .strip_prefix("Issue #")
+                                                    .and_then(|s| s.split(':').next())
+                                                {
+                                                    if let Ok(iid) = iid_str.parse::<u64>() {
+                                                        app.active_tab = crate::app::Tab::Issues;
+                                                        if let Some(idx) = app
+                                                            .issues
+                                                            .items
+                                                            .iter()
+                                                            .position(|i| i.iid == iid)
+                                                        {
+                                                            app.issues.state.select(Some(idx));
+                                                        }
+                                                    }
+                                                }
+                                            } else if val.starts_with("MR !") {
+                                                if let Some(iid_str) = val
+                                                    .strip_prefix("MR !")
+                                                    .and_then(|s| s.split(':').next())
+                                                {
+                                                    if let Ok(iid) = iid_str.parse::<u64>() {
+                                                        app.active_tab =
+                                                            crate::app::Tab::MergeRequests;
+                                                        if let Some(idx) = app
+                                                            .mrs
+                                                            .items
+                                                            .iter()
+                                                            .position(|m| m.iid == iid)
+                                                        {
+                                                            app.mrs.state.select(Some(idx));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
                                     if field_type == "column_filter" {
                                         if let Some((tab, col)) = app.column_filter_context.take() {
                                             app.set_column_filter(
@@ -4264,11 +4313,9 @@ async fn main() -> Result<()> {
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"
                                     {
-                                        all_items = get_branches();
-                                        is_loading = false;
+                                        is_loading = true;
                                     } else if field_type == "pipeline_branch" {
-                                        all_items = get_branches();
-                                        is_loading = false;
+                                        is_loading = true;
                                         // Pre-select the current branch value
                                         let current_val = menu.fields[menu.selected_idx].1.clone();
                                         if !current_val.is_empty() {
@@ -4413,6 +4460,12 @@ async fn main() -> Result<()> {
                                                     "milestone" => {
                                                         client
                                                             .fetch_milestones(&project_context)
+                                                            .await
+                                                    }
+                                                    "source_branch" | "target_branch"
+                                                    | "pipeline_branch" => {
+                                                        client
+                                                            .fetch_branches(&project_context)
                                                             .await
                                                     }
                                                     _ => Ok(Vec::new()),
@@ -4602,10 +4655,8 @@ async fn main() -> Result<()> {
 
                                 if field_name == "Title"
                                     || field_name == "Weight"
-                                    || field_name == "Branch / Ref"
                                     || field_name == "Variables"
                                     || field_name == "Inputs"
-                                    || field_name == "Workflow / CI File (GitHub)"
                                     || field_name == "Release Name"
                                     || field_name == "Tag"
                                 {
@@ -5648,6 +5699,42 @@ async fn main() -> Result<()> {
                         && !app.focus_column_checklist
                     {
                         app.is_typing_search = true;
+                        continue;
+                    }
+
+                    if keybinding_matches(&app.config.keybindings.global.global_search, &key_event)
+                        && !app.is_typing_search
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && !app.focus_column_checklist
+                    {
+                        let mut items = Vec::new();
+                        for issue in &app.issues.items {
+                            items.push(format!("Issue #{}: {}", issue.iid, issue.title));
+                        }
+                        for mr in &app.mrs.items {
+                            items.push(format!("MR !{}: {}", mr.iid, mr.title));
+                        }
+
+                        app.selector = Some(crate::app::Selector {
+                            title: " Global Search ".to_string(),
+                            all_items: items,
+                            selected_items: std::collections::HashSet::new(),
+                            cursor_idx: 0,
+                            search_query: String::new(),
+                            is_filtering: true,
+                            is_loading: false,
+                            entity_iid: 0,
+                            entity_type: "global_search".to_string(),
+                            field_type: "global_search".to_string(),
+                            multi_select: false,
+                            state: {
+                                let mut s = ratatui::widgets::ListState::default();
+                                s.select(Some(0));
+                                s
+                            },
+                        });
                         continue;
                     }
 

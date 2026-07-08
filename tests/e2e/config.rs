@@ -69,7 +69,7 @@ page_size = 20
         std::env::set_current_dir(&sandbox.repo_dir).unwrap();
 
         let c_cmd = std::ffi::CString::new(bin_path.to_str().unwrap()).unwrap();
-        let arg_ptrs = vec![c_cmd.as_ptr(), std::ptr::null()];
+        let arg_ptrs = [c_cmd.as_ptr(), std::ptr::null()];
         unsafe {
             libc::execvp(c_cmd.as_ptr(), arg_ptrs.as_ptr());
             libc::_exit(127);
@@ -104,37 +104,37 @@ fn test_missing_config_presets() {
 
 #[test]
 fn test_invalid_toml_repo_config() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_cascading_partial_override() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 // --- Tier 2: Boundary & Corner Cases (5 cases) ---
 
 #[test]
 fn test_cascading_empty_files() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_cascading_read_permission_error() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_cascading_nested_repositories() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_cascading_corrupt_global_valid_local() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }
 
 #[test]
 fn test_cascading_rapid_reloads() {
-    let mut session = TestSession::new(false, 24, 80);
+    let _session = TestSession::new(false, 24, 80);
 }

@@ -116,18 +116,7 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        let cli = app_cli(&app);
-                        let args = vec![
-                            "issue".to_string(),
-                            "close".to_string(),
-                            issue_iid.to_string(),
-                        ];
-                        crate::run_cli(&cli, &args, terminal, tx.clone(), app.active_tab).await;
-                        if let Some(pos) = app.issues.items.iter().position(|i| i.iid == issue_iid)
-                        {
-                            app.issues.items.remove(pos);
-                        }
-                        app.update_filter_selection();
+                        app.confirm_popup = Some(crate::app::ConfirmAction::CloseIssue(issue_iid));
                     }
                 }
             }
@@ -314,29 +303,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let cli = app_cli(&app);
-                            let args = if cli.is_github {
-                                vec![
-                                    "pr".to_string(),
-                                    "merge".to_string(),
-                                    mr_iid.to_string(),
-                                    "--delete-branch".to_string(),
-                                    "--squash".to_string(),
-                                ]
-                            } else {
-                                vec![
-                                    "mr".to_string(),
-                                    "merge".to_string(),
-                                    mr_iid.to_string(),
-                                    "--remove-source-branch".to_string(),
-                                    "--squash".to_string(),
-                                ]
-                            };
-                            crate::run_cli(&cli, &args, terminal, tx.clone(), app.active_tab).await;
-                            if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == mr_iid) {
-                                app.mrs.items.remove(pos);
-                            }
-                            app.update_filter_selection();
+                            app.confirm_popup = Some(crate::app::ConfirmAction::MergeMr(mr_iid));
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.view_diff,
@@ -457,17 +424,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let cli = app_cli(&app);
-                            let args = vec![
-                                cli.entity("mr").to_string(),
-                                "close".to_string(),
-                                mr_iid.to_string(),
-                            ];
-                            crate::run_cli(&cli, &args, terminal, tx.clone(), app.active_tab).await;
-                            if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == mr_iid) {
-                                app.mrs.items.remove(pos);
-                            }
-                            app.update_filter_selection();
+                            app.confirm_popup = Some(crate::app::ConfirmAction::CloseMr(mr_iid));
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.reopen_entity,
@@ -1424,38 +1381,8 @@ pub async fn handle_active_tab_key(
                         &app.config.keybindings.branches.delete_branch,
                         key_event,
                     ) {
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Deleting branch: {}",
-                            branch_name
-                        )));
-                        let client = app.gitlab_client.clone();
-                        let project_context = app.project_context.clone();
-                        let tx = tx.clone();
-                        let branch_name = branch_name.clone();
-                        tokio::spawn(async move {
-                            if let Some(client) = client {
-                                match crate::gitlab::branches::delete_branch(
-                                    &client,
-                                    &project_context,
-                                    &branch_name,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        let _ = tx.send(Event::CommandCompleted(
-                                            crate::app::Tab::Branches,
-                                            Ok(()),
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        let _ = tx.send(Event::CommandCompleted(
-                                            crate::app::Tab::Branches,
-                                            Err(format!("Failed to delete branch: {}", e)),
-                                        ));
-                                    }
-                                }
-                            }
-                        });
+                        app.confirm_popup =
+                            Some(crate::app::ConfirmAction::DeleteBranch(branch_name.clone()));
                     }
                 }
             }

@@ -1,5 +1,6 @@
 use crate::AppTerminal;
 use crate::app::App;
+use crate::cli::app_cli;
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
@@ -49,69 +50,164 @@ pub fn handle_submit_review_prompt(app: &mut App, key_event: &KeyEvent) -> bool 
     false
 }
 
-pub fn handle_confirm_popup(
+pub async fn handle_confirm_popup(
     app: &mut App,
     key_event: &KeyEvent,
+    terminal: &mut AppTerminal,
     tx: UnboundedSender<Event>,
 ) -> bool {
     if let Some(confirm_action) = app.confirm_popup.take() {
         match key_event.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => match confirm_action {
-                crate::app::ConfirmAction::DeleteMilestone(iid) => {
-                    let client = app.gitlab_client.clone().unwrap();
-                    let project_path = app.project_context.clone();
-                    let _ = tx.send(Event::CommandStarted(format!(
-                        "Deleting milestone #{}",
-                        iid
-                    )));
-                    tokio::spawn(async move {
-                        let res = crate::gitlab::milestones::delete_milestone(
-                            &client,
-                            &project_path,
-                            iid,
-                        )
-                        .await;
-                        match res {
-                            Ok(_) => {
-                                let _ = tx.send(Event::MilestoneDeleted);
-                            }
-                            Err(e) => {
-                                let _ = tx.send(Event::CommandCompleted(
-                                    crate::app::Tab::Milestones,
-                                    Err(e.to_string()),
-                                ));
-                            }
-                        }
-                    });
+            KeyCode::Left | KeyCode::Char('h') => {
+                app.confirm_popup_selected_yes = true;
+                app.confirm_popup = Some(confirm_action);
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                app.confirm_popup_selected_yes = false;
+                app.confirm_popup = Some(confirm_action);
+            }
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if key_event.code == KeyCode::Enter && !app.confirm_popup_selected_yes {
+                    // Cancel
+                    return true;
                 }
-                crate::app::ConfirmAction::DeleteRelease(tag_name) => {
-                    let client = app.gitlab_client.clone().unwrap();
-                    let project_path = app.project_context.clone();
-                    let _ = tx.send(Event::CommandStarted(format!(
-                        "Deleting release {}",
-                        tag_name
-                    )));
-                    tokio::spawn(async move {
-                        let res = crate::gitlab::releases::delete_release(
-                            &client,
-                            &project_path,
-                            &tag_name,
-                        )
-                        .await;
-                        match res {
-                            Ok(_) => {
-                                let _ = tx.send(Event::ReleaseDeleted);
+                match confirm_action {
+                    crate::app::ConfirmAction::DeleteMilestone(iid) => {
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = tx.send(Event::CommandStarted(format!(
+                            "Deleting milestone #{}",
+                            iid
+                        )));
+                        tokio::spawn(async move {
+                            let res = crate::gitlab::milestones::delete_milestone(
+                                &client,
+                                &project_path,
+                                iid,
+                            )
+                            .await;
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(Event::MilestoneDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Milestones,
+                                        Err(e.to_string()),
+                                    ));
+                                }
                             }
-                            Err(e) => {
-                                let _ = tx.send(Event::CommandCompleted(
-                                    crate::app::Tab::Releases,
-                                    Err(e.to_string()),
-                                ));
+                        });
+                    }
+                    crate::app::ConfirmAction::DeleteRelease(tag_name) => {
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = tx.send(Event::CommandStarted(format!(
+                            "Deleting release {}",
+                            tag_name
+                        )));
+                        tokio::spawn(async move {
+                            let res = crate::gitlab::releases::delete_release(
+                                &client,
+                                &project_path,
+                                &tag_name,
+                            )
+                            .await;
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(Event::ReleaseDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Releases,
+                                        Err(e.to_string()),
+                                    ));
+                                }
                             }
+                        });
+                    }
+                    crate::app::ConfirmAction::DeleteBranch(branch_name) => {
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = tx.send(Event::CommandStarted(format!(
+                            "Deleting branch: {}",
+                            branch_name
+                        )));
+                        tokio::spawn(async move {
+                            let res = crate::gitlab::branches::delete_branch(
+                                &client,
+                                &project_path,
+                                &branch_name,
+                            )
+                            .await;
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Branches,
+                                        Ok(()),
+                                    ));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Branches,
+                                        Err(format!("Failed to delete branch: {}", e)),
+                                    ));
+                                }
+                            }
+                        });
+                    }
+                    crate::app::ConfirmAction::CloseIssue(iid) => {
+                        let cli = app_cli(app);
+                        let args = vec!["issue".to_string(), "close".to_string(), iid.to_string()];
+                        let active_tab = app.active_tab;
+                        crate::run_cli(&cli, &args, terminal, tx.clone(), active_tab).await;
+                        if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
+                            app.issues.items.remove(pos);
                         }
-                    });
+                        app.update_filter_selection();
+                    }
+                    crate::app::ConfirmAction::CloseMr(iid) => {
+                        let cli = app_cli(app);
+                        let args = vec![
+                            cli.entity("mr").to_string(),
+                            "close".to_string(),
+                            iid.to_string(),
+                        ];
+                        let active_tab = app.active_tab;
+                        crate::run_cli(&cli, &args, terminal, tx.clone(), active_tab).await;
+                        if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
+                            app.mrs.items.remove(pos);
+                        }
+                        app.update_filter_selection();
+                    }
+                    crate::app::ConfirmAction::MergeMr(iid) => {
+                        let cli = app_cli(app);
+                        let args = if cli.is_github {
+                            vec![
+                                "pr".to_string(),
+                                "merge".to_string(),
+                                iid.to_string(),
+                                "--delete-branch".to_string(),
+                                "--squash".to_string(),
+                            ]
+                        } else {
+                            vec![
+                                "mr".to_string(),
+                                "merge".to_string(),
+                                iid.to_string(),
+                                "--remove-source-branch".to_string(),
+                                "--squash".to_string(),
+                            ]
+                        };
+                        let active_tab = app.active_tab;
+                        crate::run_cli(&cli, &args, terminal, tx.clone(), active_tab).await;
+                        if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
+                            app.mrs.items.remove(pos);
+                        }
+                        app.update_filter_selection();
+                    }
                 }
-            },
+            }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {}
             _ => {
                 app.confirm_popup = Some(confirm_action);

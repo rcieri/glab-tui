@@ -1242,6 +1242,10 @@ pub enum GroupItem {
 pub enum ConfirmAction {
     DeleteMilestone(u64),  // milestone iid
     DeleteRelease(String), // release tag_name
+    DeleteBranch(String),  // branch name
+    CloseIssue(u64),       // issue iid
+    CloseMr(u64),          // mr iid
+    MergeMr(u64),          // mr iid
 }
 
 pub struct App {
@@ -1287,6 +1291,7 @@ pub struct App {
     pub last_fetched_mr_iid: Option<u64>,
     pub show_submit_review_prompt: Option<u64>,
     pub confirm_popup: Option<ConfirmAction>,
+    pub confirm_popup_selected_yes: bool,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::gitlab::notifications::Notification>,
     pub status_message: Option<String>,
@@ -1365,6 +1370,7 @@ impl Default for App {
             last_fetched_mr_iid: None,
             show_submit_review_prompt: None,
             confirm_popup: None,
+            confirm_popup_selected_yes: false,
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
             status_message: None,
@@ -3643,6 +3649,7 @@ mod tests {
             reviewers: vec![],
             milestone: None,
             description: None,
+            head_pipeline: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -3659,6 +3666,7 @@ mod tests {
             reviewers: vec![],
             milestone: None,
             description: None,
+            head_pipeline: None,
         };
 
         let mr_ready = MergeRequest {
@@ -3675,6 +3683,7 @@ mod tests {
             reviewers: vec![],
             milestone: None,
             description: None,
+            head_pipeline: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];

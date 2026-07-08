@@ -1782,35 +1782,35 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let footer_p = Paragraph::new(Line::from(vec![
             Span::styled(
-                if app.confirm_popup_selected_yes {
-                    " [ YES ] "
-                } else {
-                    "   YES   "
-                },
-                if app.confirm_popup_selected_yes {
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_normal)
-                        .bg(THEME.read().unwrap().green_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_muted)
-                },
+                "     [ YES ]     ",
+                Style::default()
+                    .fg(if app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().bg
+                    } else {
+                        THEME.read().unwrap().border_focused
+                    })
+                    .bg(if app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().border_focused
+                    } else {
+                        Color::Reset
+                    })
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("    "),
             Span::styled(
-                if !app.confirm_popup_selected_yes {
-                    " [ NO ] "
-                } else {
-                    "   NO   "
-                },
-                if !app.confirm_popup_selected_yes {
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_normal)
-                        .bg(THEME.read().unwrap().red_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_muted)
-                },
+                "     [ NO ]     ",
+                Style::default()
+                    .fg(if !app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().bg
+                    } else {
+                        THEME.read().unwrap().border_focused
+                    })
+                    .bg(if !app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().border_focused
+                    } else {
+                        Color::Reset
+                    })
+                    .add_modifier(Modifier::BOLD),
             ),
         ]))
         .alignment(Alignment::Center);

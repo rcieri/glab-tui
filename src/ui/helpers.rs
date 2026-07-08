@@ -368,7 +368,11 @@ fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
     ]));
 }
 
-pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) -> Line<'static> {
+pub(crate) fn build_log_line(
+    cmd: &crate::app::TerminalCommand,
+    width: usize,
+    is_github: bool,
+) -> Line<'static> {
     let time_str = if cmd.timestamp.len() >= 8 {
         let parts: Vec<&str> = cmd.timestamp.split('T').collect();
         if parts.len() > 1 {
@@ -470,8 +474,8 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
                 } else if p.contains("job") {
                     target = "JOB";
                     break;
-                } else if p.contains("pipeline") {
-                    target = "PIPELINE";
+                } else if p.contains("pipeline") || p.contains("actions/runs") {
+                    target = if is_github { "ACTIONS" } else { "PIPELINES" };
                     break;
                 } else if p.contains("commit") {
                     target = "COMMIT";

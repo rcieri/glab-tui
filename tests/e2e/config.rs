@@ -57,41 +57,18 @@ page_size = 20
     let envs_ref: Vec<(&str, &str)> = envs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
 
     // We launch it inside repo_dir so find_git_root() resolves to repo_dir
-    let mut master: std::os::raw::c_int = 0;
-    let win = libc::winsize {
-        ws_row: 24,
-        ws_col: 80,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-
-    let pid = unsafe { crate::forkpty(&mut master, std::ptr::null_mut(), std::ptr::null(), &win) };
-
-    assert!(pid >= 0);
-    if pid == 0 {
-        for &(k, v) in &envs_ref {
-            unsafe {
-                std::env::set_var(k, v);
-            }
-        }
-        std::env::set_current_dir(&sandbox.repo_dir).unwrap();
-
-        let c_cmd = std::ffi::CString::new(bin_path.to_str().unwrap()).unwrap();
-        let arg_ptrs = [c_cmd.as_ptr(), std::ptr::null()];
-        unsafe {
-            libc::execvp(c_cmd.as_ptr(), arg_ptrs.as_ptr());
-            libc::_exit(127);
-        }
-    }
+    let _pty = Pty::spawn(
+        bin_path.to_str().unwrap(),
+        &[],
+        &envs_ref,
+        24,
+        80,
+        Some(&sandbox.repo_dir),
+    )
+    .unwrap();
 
     // App should load successfully
     std::thread::sleep(std::time::Duration::from_millis(500));
-    unsafe {
-        libc::kill(pid, libc::SIGKILL);
-        let mut status = 0;
-        libc::waitpid(pid, &mut status, 0);
-        libc::close(master);
-    }
 }
 
 #[test]

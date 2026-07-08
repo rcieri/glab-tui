@@ -731,11 +731,42 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Jobs => {
             if keybinding_matches(&app.config.keybindings.jobs.enter_pipeline, key_event) {
-                app.text_input = Some(crate::app::TextInput {
-                    title: " Enter Pipeline ID ".to_string(),
-                    value: String::new(),
-                    cursor_idx: 0,
-                    action: crate::app::TextInputAction::EnterPipelineId,
+                let pipelines: Vec<String> = app
+                    .pipelines
+                    .items
+                    .iter()
+                    .map(|p| format!("#{} — {} ({})", p.id, p.r#ref, p.status))
+                    .collect();
+                let mut pre_selected = std::collections::HashSet::new();
+                if let Some(active_id) = app.active_pipeline_id {
+                    if let Some(i) = app.pipelines.items.iter().position(|p| p.id == active_id) {
+                        if let Some(p) = pipelines.get(i) {
+                            pre_selected.insert(p.clone());
+                        }
+                    }
+                }
+                let start_idx = pre_selected
+                    .iter()
+                    .next()
+                    .and_then(|sel| pipelines.iter().position(|p| p == sel))
+                    .unwrap_or(0);
+                app.selector = Some(crate::app::Selector {
+                    title: " Select Pipeline ".to_string(),
+                    all_items: pipelines,
+                    selected_items: pre_selected,
+                    cursor_idx: start_idx,
+                    search_query: String::new(),
+                    is_filtering: false,
+                    is_loading: false,
+                    entity_iid: 0,
+                    entity_type: String::new(),
+                    field_type: "pipeline_select".to_string(),
+                    multi_select: false,
+                    state: {
+                        let mut s = ratatui::widgets::ListState::default();
+                        s.select(Some(start_idx));
+                        s
+                    },
                 });
             } else if let Some(idx) = app.jobs.state.selected() {
                 let job_info = app.filtered_jobs().get(idx).map(|j| (j.id, j.name.clone()));

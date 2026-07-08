@@ -86,3 +86,4 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           docker build --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 -t glab-tui-test .
+          docker run --rm glab-tui-test --help

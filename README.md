@@ -34,7 +34,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 | Requirement | Notes |
 |---|---|
 | **Rust** (stable, edition 2024) | Install via [rustup](https://rustup.rs/) |
-| **[`glab`](https://gitlab.com/gitlab-org/cli)** | Must be on `$PATH` and authenticated (`glab auth login`) |
+| **[`glab`](https://gitlab.com/gitlab-org/cli)** / **[`gh`](https://cli.github.com/)** | Either `glab` (for GitLab repos, authenticated via `glab auth login`) or `gh` (for GitHub repos, authenticated via `gh auth login`) must be on `$PATH`. You only need the CLI for the service you use. |
 | **`git`** | Used to auto-detect the current project from `git remote get-url origin` |
 | **A terminal emulator** | Any terminal that supports 256 colours and Unicode |
 
@@ -55,9 +55,14 @@ cargo build --release
 
 Copy the binary somewhere on your `$PATH`, e.g.:
 
-```sh
-cp target/release/glab-tui ~/.local/bin/
-```
+* **Linux / macOS**:
+  ```sh
+  cp target/release/glab-tui ~/.local/bin/
+  ```
+* **Windows (PowerShell)**:
+  ```powershell
+  Copy-Item target\release\glab-tui.exe $env:USERPROFILE\.local\bin\
+  ```
 
 ### With `cargo install` (from the repo root)
 
@@ -93,23 +98,25 @@ The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Pr
 docker run --rm -it -v "$PWD:/workspace" ghcr.io/rcieri/glab-tui:latest
 ```
 
-The image includes `gh` and expects a Git repository mounted at `/workspace`.
+The image includes both `glab` and `gh` CLIs and expects a Git repository mounted at `/workspace`.
 
 ### Homebrew
 
 ```sh
-brew install https://raw.githubusercontent.com/rcieri/glab-tui/main/Formula/glab-tui.rb
+brew tap rcieri/glab-tui
+brew install glab-tui
 ```
 
-Installs the `glab-tui` binary on macOS (Intel and Apple Silicon) and Linux (x86_64 and ARM64). Requires `gh`; `glab` is optional.
+Installs the `glab-tui` binary on macOS (Intel and Apple Silicon) and Linux (x86_64 and ARM64) from the [homebrew-glab-tui](https://github.com/rcieri/homebrew-glab-tui) tap. Requires either `gh` or `glab` (only the CLI matching the repository hosting service you use is needed).
 
 ### Scoop (Windows)
 
 ```powershell
-scoop install https://raw.githubusercontent.com/rcieri/glab-tui/main/scoop/glab-tui.json
+scoop bucket add glab-tui https://github.com/rcieri/scoop-glab-tui.git
+scoop install glab-tui
 ```
 
-The manifest uses Scoop's `autoupdate` — version bumps are pulled automatically from GitHub releases.
+Installs `glab-tui` from the [scoop-glab-tui](https://github.com/rcieri/scoop-glab-tui) bucket. The manifest uses Scoop's `autoupdate` — version bumps are pulled automatically from GitHub releases.
 
 ---
 
@@ -117,7 +124,7 @@ The manifest uses Scoop's `autoupdate` — version bumps are pulled automaticall
 
 ### Authentication
 
-`glab-tui` delegates all API calls to the `glab` and `gh` CLIs — authenticate once and you're done:
+`glab-tui` delegates all API calls to the `glab` or `gh` CLI depending on the hosting service (you only need to authenticate the one you use):
 
 ```sh
 glab auth login   # for GitLab repos
@@ -369,7 +376,7 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
 | [`syntect`](https://crates.io/crates/syntect) | 5 | Syntax highlighting in diff and preview panes |
 
-All API calls are made by shelling out to `gh api` or `glab api` — no personal access token or direct HTTP client is required inside the binary.
+All API calls are made by shelling out to `gh api` or `glab api` (depending on the repository host; you only need the CLI matching the service you use) — no personal access token or direct HTTP client is required inside the binary.
 
 ---
 

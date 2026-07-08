@@ -27,9 +27,25 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::MergeRequests => {
+                let client_for_pipelines = client.clone();
+                let project_context_for_pipelines = project_context.clone();
+                let tx_for_pipelines = tx.clone();
                 match gitlab::mr::list_mrs(&client, &project_context, true).await {
                     Ok(mrs) => {
                         let _ = tx.send(Event::MrsFetched(mrs));
+                        if client_for_pipelines.is_github {
+                            tokio::spawn(async move {
+                                if let Ok(pipelines) = gitlab::pipelines::list_pipelines(
+                                    &client_for_pipelines,
+                                    &project_context_for_pipelines,
+                                )
+                                .await
+                                {
+                                    let _ =
+                                        tx_for_pipelines.send(Event::PipelinesFetched(pipelines));
+                                }
+                            });
+                        }
                     }
                     Err(e) => {
                         let _ = tx.send(Event::FetchFailed(

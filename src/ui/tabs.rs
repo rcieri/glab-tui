@@ -703,14 +703,71 @@ pub(crate) fn render_tab_merge_requests(
                     } else {
                         "⏳".to_string()
                     };
-                    cells.push(super::helpers::render_fuzzy_cell(
-                        &stages_dots,
-                        &app.search_query,
-                        is_selected,
-                        false,
-                        Style::default().fg(THEME.read().unwrap().text_normal),
-                        Alignment::Left,
-                    ));
+
+                    if stages_dots.is_empty() {
+                        let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
+                            "success" => (
+                                "SUCCESS",
+                                THEME.read().unwrap().green,
+                                THEME.read().unwrap().green_bg,
+                            ),
+                            "failed" => (
+                                "FAILED",
+                                THEME.read().unwrap().red,
+                                THEME.read().unwrap().red_bg,
+                            ),
+                            "running" => (
+                                "RUNNING",
+                                THEME.read().unwrap().blue,
+                                THEME.read().unwrap().blue_bg,
+                            ),
+                            "canceled" => (
+                                "CANCEL",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            "pending" => (
+                                "PENDING",
+                                THEME.read().unwrap().yellow,
+                                THEME.read().unwrap().yellow_bg,
+                            ),
+                            "skipped" => (
+                                "SKIP",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            _ => (
+                                "UNKNOWN",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                        };
+                        let bg = if is_selected {
+                            THEME.read().unwrap().highlight_bg
+                        } else {
+                            pipe_bg
+                        };
+                        cells.push(super::helpers::render_fuzzy_cell(
+                            pipe_text,
+                            &app.search_query,
+                            is_selected,
+                            false,
+                            Style::default()
+                                .fg(pipe_color)
+                                .bg(bg)
+                                .add_modifier(Modifier::BOLD),
+                            Alignment::Center,
+                        ));
+                    } else {
+                        cells.push(super::helpers::render_fuzzy_cell(
+                            &stages_dots,
+                            &app.search_query,
+                            is_selected,
+                            false,
+                            Style::default().fg(THEME.read().unwrap().text_normal),
+                            Alignment::Left,
+                        ));
+                    }
                 } else {
                     cells.push(super::helpers::render_fuzzy_cell(
                         "—",
@@ -976,60 +1033,82 @@ pub(crate) fn render_tab_merge_requests(
                     }
                 });
                 if let Some(pipe) = resolved_pipe {
-                    let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
-                        "success" => (
-                            "SUCCESS",
-                            THEME.read().unwrap().green,
-                            THEME.read().unwrap().green_bg,
-                        ),
-                        "failed" => (
-                            "FAILED",
-                            THEME.read().unwrap().red,
-                            THEME.read().unwrap().red_bg,
-                        ),
-                        "running" => (
-                            "RUNNING",
-                            THEME.read().unwrap().blue,
-                            THEME.read().unwrap().blue_bg,
-                        ),
-                        "canceled" => (
-                            "CANCEL",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "pending" => (
-                            "PENDING",
-                            THEME.read().unwrap().yellow,
-                            THEME.read().unwrap().yellow_bg,
-                        ),
-                        "skipped" => (
-                            "SKIP",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        _ => (
-                            "UNKNOWN",
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
+                    let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id) {
+                        super::helpers::get_stages_dots(jobs)
+                    } else {
+                        "⏳".to_string()
                     };
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            if is_github {
-                                "Action:    "
-                            } else {
-                                "Pipeline:  "
-                            },
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            format!(" {} ", pipe_text),
-                            Style::default()
-                                .fg(pipe_color)
-                                .bg(pipe_bg)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
+                    if stages_dots.is_empty() {
+                        let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
+                            "success" => (
+                                "SUCCESS",
+                                THEME.read().unwrap().green,
+                                THEME.read().unwrap().green_bg,
+                            ),
+                            "failed" => (
+                                "FAILED",
+                                THEME.read().unwrap().red,
+                                THEME.read().unwrap().red_bg,
+                            ),
+                            "running" => (
+                                "RUNNING",
+                                THEME.read().unwrap().blue,
+                                THEME.read().unwrap().blue_bg,
+                            ),
+                            "canceled" => (
+                                "CANCEL",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            "pending" => (
+                                "PENDING",
+                                THEME.read().unwrap().yellow,
+                                THEME.read().unwrap().yellow_bg,
+                            ),
+                            "skipped" => (
+                                "SKIP",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                            _ => (
+                                "UNKNOWN",
+                                THEME.read().unwrap().text_muted,
+                                THEME.read().unwrap().inactive_bg,
+                            ),
+                        };
+                        text.push(Line::from(vec![
+                            Span::styled(
+                                if is_github {
+                                    "Action:    "
+                                } else {
+                                    "Pipeline:  "
+                                },
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            ),
+                            Span::styled(
+                                format!(" {} ", pipe_text),
+                                Style::default()
+                                    .fg(pipe_color)
+                                    .bg(pipe_bg)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        ]));
+                    } else {
+                        text.push(Line::from(vec![
+                            Span::styled(
+                                if is_github {
+                                    "Action:    "
+                                } else {
+                                    "Pipeline:  "
+                                },
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            ),
+                            Span::styled(
+                                stages_dots,
+                                Style::default().fg(THEME.read().unwrap().text_normal),
+                            ),
+                        ]));
+                    }
                 }
                 if Some(mr.iid) == app.last_fetched_mr_iid {
                     let unresolved_count = app.unresolved_threads_count();

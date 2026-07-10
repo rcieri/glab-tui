@@ -74,7 +74,8 @@ page_size = 20
 #[test]
 fn test_missing_config_presets() {
     let mut session = TestSession::new(false, 24, 80);
-    // When no configuration exists, it should automatically generate default config.toml
+    // When no configuration exists, the app should start with defaults and
+    // NOT auto-create a config.toml (only explicit save writes the file).
     session.wait_for_screen_contains("Issues", 30000).unwrap();
     let default_config_path = session
         .sandbox
@@ -82,8 +83,8 @@ fn test_missing_config_presets() {
         .join("glab-tui")
         .join("config.toml");
     assert!(
-        default_config_path.exists(),
-        "Default config.toml should be auto-generated"
+        !default_config_path.exists(),
+        "config.toml should NOT be auto-generated on load; only on explicit save"
     );
 }
 

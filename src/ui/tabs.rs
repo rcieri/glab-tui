@@ -217,11 +217,11 @@ pub(crate) fn render_tab_issues(
         }
         if app.is_column_visible(Tab::Issues, "Assignees") {
             header_cells.push(Cell::from("Assignees"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(22));
         }
         if app.is_column_visible(Tab::Issues, "Labels") {
             header_cells.push(Cell::from("Labels"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(26));
         }
         if app.is_column_visible(Tab::Issues, "Milestone") {
             header_cells.push(Cell::from("Milestone"));
@@ -233,7 +233,7 @@ pub(crate) fn render_tab_issues(
         }
         if app.is_column_visible(Tab::Issues, "Author") {
             header_cells.push(Cell::from("Author"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(18));
         }
 
         if widths.is_empty() {
@@ -836,15 +836,15 @@ pub(crate) fn render_tab_merge_requests(
         }
         if app.is_column_visible(Tab::MergeRequests, "Assignees") {
             header_cells.push(Cell::from("Assignees"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(22));
         }
         if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
             header_cells.push(Cell::from("Reviewers"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(22));
         }
         if app.is_column_visible(Tab::MergeRequests, "Labels") {
             header_cells.push(Cell::from("Labels"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(26));
         }
         let is_github = app
             .gitlab_client
@@ -867,7 +867,7 @@ pub(crate) fn render_tab_merge_requests(
         }
         if app.is_column_visible(Tab::MergeRequests, "Author") {
             header_cells.push(Cell::from("Author"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(18));
         }
 
         if widths.is_empty() {
@@ -1404,7 +1404,7 @@ pub(crate) fn render_tab_pipelines(
         }
         if app.is_column_visible(Tab::Pipelines, "Stages") {
             header_cells.push(Cell::from("Stages"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Pipelines, "Ref") {
             header_cells.push(Cell::from("Ref"));
@@ -1791,7 +1791,7 @@ pub(crate) fn render_tab_jobs(
         }
         if app.is_column_visible(Tab::Jobs, "Matrix") {
             header_cells.push(Cell::from("Matrix"));
-            widths.push(Constraint::Length(10));
+            widths.push(Constraint::Length(20));
         }
 
         if widths.is_empty() {
@@ -2072,8 +2072,10 @@ pub(crate) fn render_tab_runners(
             widths.push(Constraint::Length(12));
         }
         if app.is_column_visible(Tab::Runners, "Active") {
-            header_cells.push(Cell::from("Active"));
-            widths.push(Constraint::Length(8));
+            header_cells.push(Cell::from(
+                Line::from("Active").alignment(Alignment::Center),
+            ));
+            widths.push(Constraint::Length(10));
         }
 
         if widths.is_empty() {
@@ -2421,11 +2423,11 @@ pub(crate) fn render_tab_releases(
         }
         if app.is_column_visible(Tab::Releases, "Author") {
             header_cells.push(Cell::from("Author"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(18));
         }
         if app.is_column_visible(Tab::Releases, "Assets") {
             header_cells.push(Cell::from("Assets"));
-            widths.push(Constraint::Length(10));
+            widths.push(Constraint::Length(12));
         }
         if app.is_column_visible(Tab::Releases, "Description") {
             header_cells.push(Cell::from("Description"));
@@ -2702,7 +2704,7 @@ pub(crate) fn render_tab_todos(
         }
         if app.is_column_visible(Tab::Todos, "Project") {
             header_cells.push(Cell::from("Project"));
-            widths.push(Constraint::Fill(1));
+            widths.push(Constraint::Length(24));
         }
         if app.is_column_visible(Tab::Todos, "Type") {
             header_cells.push(Cell::from("Type"));
@@ -2889,7 +2891,7 @@ pub(crate) fn render_tab_milestones(
                 header_cells.push(Cell::from(*col));
                 match *col {
                     "ID" => widths.push(Constraint::Length(8)),
-                    "Title" => widths.push(Constraint::Length(30)),
+                    "Title" => widths.push(Constraint::Fill(1)),
                     "State" => widths.push(Constraint::Length(10)),
                     "Start Date" => widths.push(Constraint::Length(20)),
                     "Due Date" => widths.push(Constraint::Length(20)),
@@ -3263,7 +3265,7 @@ pub(crate) fn render_tab_branches(
                     Alignment::Left,
                 ));
             }
-            Row::new(cells).style(row_style)
+            Row::new(cells).style(row_style).height(1)
         });
 
         let cols = Tab::Branches.columns(false);
@@ -3286,10 +3288,12 @@ pub(crate) fn render_tab_branches(
                         .filter(|c| app.is_column_visible(Tab::Branches, c))
                         .map(|c| Cell::from(*c).style(header_style)),
                 )
-                .style(Style::default().add_modifier(Modifier::BOLD)),
+                .style(Style::default().add_modifier(Modifier::BOLD))
+                .height(1),
             )
             .block(main_block.clone())
-            .row_highlight_style(highlight_style);
+            .row_highlight_style(highlight_style)
+            .highlight_symbol(" ❯ ");
 
         f.render_stateful_widget(table, content_area, &mut app.branches.state);
 
@@ -3394,7 +3398,7 @@ pub(crate) fn render_tab_environments(
                     Style::default().fg(THEME.read().unwrap().blue),
                 )));
             }
-            Row::new(cells).style(row_style)
+            Row::new(cells).style(row_style).height(1)
         });
 
         let cols = Tab::Environments.columns(false);
@@ -3402,7 +3406,7 @@ pub(crate) fn render_tab_environments(
             .iter()
             .filter(|c| app.is_column_visible(Tab::Environments, c))
             .map(|c| match *c {
-                "Name" => Constraint::Fill(1),
+                "Name" => Constraint::Length(24),
                 "State" => Constraint::Length(12),
                 "Deployment Status" => Constraint::Length(20),
                 "URL" => Constraint::Fill(1),
@@ -3417,10 +3421,12 @@ pub(crate) fn render_tab_environments(
                         .filter(|c| app.is_column_visible(Tab::Environments, c))
                         .map(|c| Cell::from(*c).style(header_style)),
                 )
-                .style(Style::default().add_modifier(Modifier::BOLD)),
+                .style(Style::default().add_modifier(Modifier::BOLD))
+                .height(1),
             )
             .block(main_block.clone())
-            .row_highlight_style(highlight_style);
+            .row_highlight_style(highlight_style)
+            .highlight_symbol(" ❯ ");
 
         f.render_stateful_widget(table, content_area, &mut app.environments.state);
 

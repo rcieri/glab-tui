@@ -2267,6 +2267,74 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                     }
+                                    crate::app::TextInputAction::AddIssueComment { iid } => {
+                                        if !value.trim().is_empty() {
+                                            let body = value.trim().to_string();
+                                            let client = app.gitlab_client.clone();
+                                            let project_context = app.project_context.clone();
+                                            let tx = events.sender();
+                                            tokio::spawn(async move {
+                                                if let Some(client) = client {
+                                                    let _ =
+                                                        crate::gitlab::discussions::add_issue_note(
+                                                            &client,
+                                                            &project_context,
+                                                            iid,
+                                                            &body,
+                                                        )
+                                                        .await;
+                                                    if let Ok(discussions) =
+                                                        crate::gitlab::discussions::list_issue_discussions(
+                                                            &client,
+                                                            &project_context,
+                                                            iid,
+                                                        )
+                                                        .await
+                                                    {
+                                                        let _ =
+                                                            tx.send(Event::IssueCommentsFetched {
+                                                                iid,
+                                                                discussions,
+                                                            });
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                    crate::app::TextInputAction::AddMrComment { iid } => {
+                                        if !value.trim().is_empty() {
+                                            let body = value.trim().to_string();
+                                            let client = app.gitlab_client.clone();
+                                            let project_context = app.project_context.clone();
+                                            let tx = events.sender();
+                                            tokio::spawn(async move {
+                                                if let Some(client) = client {
+                                                    let _ =
+                                                        crate::gitlab::discussions::add_mr_note(
+                                                            &client,
+                                                            &project_context,
+                                                            iid,
+                                                            &body,
+                                                        )
+                                                        .await;
+                                                    if let Ok(discussions) =
+                                                        crate::gitlab::discussions::list_mr_discussions(
+                                                            &client,
+                                                            &project_context,
+                                                            iid,
+                                                        )
+                                                        .await
+                                                    {
+                                                        let _ =
+                                                            tx.send(Event::MrCommentsFetched {
+                                                                iid,
+                                                                discussions,
+                                                            });
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
                                     crate::app::TextInputAction::EditNewField { field_idx } => {
                                         // Write the value directly into the edit_menu fields
                                         // (no CLI call — iid==0 means this entity is not yet created)

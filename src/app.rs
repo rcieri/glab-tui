@@ -1147,6 +1147,12 @@ pub enum TextInputAction {
         comment_id: u64,
         discussion_id: String,
     },
+    AddIssueComment {
+        iid: u64,
+    },
+    AddMrComment {
+        iid: u64,
+    },
     CreateBranch(String), // ref_branch name
     EditPageSize,
 }

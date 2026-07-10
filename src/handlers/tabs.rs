@@ -151,44 +151,16 @@ pub async fn handle_active_tab_key(
             }
             _ if keybinding_matches(&app.config.keybindings.issues.reply_comment, key_event) => {
                 if app.detail_visible {
-                    if let Some(client) = &app.gitlab_client {
-                        if let Some(idx) = app.issues.state.selected() {
-                            if let Some(issue) = app.filtered_issues().get(idx) {
-                                let iid = issue.iid;
-                                let project_context = app.project_context.clone();
-                                let body = crate::editor::edit_in_editor("", terminal);
-                                if let Some(body) = body {
-                                    if !body.trim().is_empty() {
-                                        app.status_message = Some("Posting comment...".to_string());
-                                        let client_clone = client.clone();
-                                        let tx = tx.clone();
-                                        let body = body.trim().to_string();
-                                        tokio::spawn(async move {
-                                            let _ = crate::gitlab::discussions::add_issue_note(
-                                                &client_clone,
-                                                &project_context,
-                                                iid,
-                                                &body,
-                                            )
-                                            .await;
-                                            // Re-fetch comments after posting
-                                            if let Ok(discussions) =
-                                                crate::gitlab::discussions::list_issue_discussions(
-                                                    &client_clone,
-                                                    &project_context,
-                                                    iid,
-                                                )
-                                                .await
-                                            {
-                                                let _ = tx.send(Event::IssueCommentsFetched {
-                                                    iid,
-                                                    discussions,
-                                                });
-                                            }
-                                        });
-                                    }
-                                }
-                            }
+                    if let Some(idx) = app.issues.state.selected() {
+                        if let Some(issue) = app.filtered_issues().get(idx) {
+                            app.text_input = Some(crate::app::TextInput {
+                                title: format!("Reply to Issue #{}", issue.iid),
+                                value: String::new(),
+                                cursor_idx: 0,
+                                action: crate::app::TextInputAction::AddIssueComment {
+                                    iid: issue.iid,
+                                },
+                            });
                         }
                     }
                 }
@@ -489,42 +461,14 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             if app.detail_visible {
-                                if let Some(client) = &app.gitlab_client {
-                                    let project_context = app.project_context.clone();
-                                    let body = crate::editor::edit_in_editor("", terminal);
-                                    if let Some(body) = body {
-                                        if !body.trim().is_empty() {
-                                            app.status_message =
-                                                Some("Posting comment...".to_string());
-                                            let client_clone = client.clone();
-                                            let tx = tx.clone();
-                                            let body = body.trim().to_string();
-                                            tokio::spawn(async move {
-                                                let _ = crate::gitlab::discussions::add_mr_note(
-                                                    &client_clone,
-                                                    &project_context,
-                                                    mr_iid,
-                                                    &body,
-                                                )
-                                                .await;
-                                                // Re-fetch comments after posting
-                                                if let Ok(discussions) =
-                                                    crate::gitlab::discussions::list_mr_discussions(
-                                                        &client_clone,
-                                                        &project_context,
-                                                        mr_iid,
-                                                    )
-                                                    .await
-                                                {
-                                                    let _ = tx.send(Event::MrCommentsFetched {
-                                                        iid: mr_iid,
-                                                        discussions,
-                                                    });
-                                                }
-                                            });
-                                        }
-                                    }
-                                }
+                                app.text_input = Some(crate::app::TextInput {
+                                    title: format!("Reply to MR #{}", mr_iid),
+                                    value: String::new(),
+                                    cursor_idx: 0,
+                                    action: crate::app::TextInputAction::AddMrComment {
+                                        iid: mr_iid,
+                                    },
+                                });
                             }
                         }
                         _ => handled = false,

@@ -28,6 +28,61 @@ pub struct Theme {
     pub purple_bg: Color,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Icons {
+    pub tab_issue: String,
+    pub tab_pr: String,
+    pub tab_pipeline: String,
+    pub tab_job: String,
+    pub tab_runner: String,
+    pub tab_release: String,
+    pub tab_todo: String,
+    pub tab_milestone: String,
+    pub tab_branch: String,
+    pub tab_environment: String,
+    pub tab_terminal: String,
+    pub status_success: String,
+    pub status_failed: String,
+    pub status_running: String,
+    pub status_pending: String,
+    pub header_github: String,
+    pub header_gitlab: String,
+    pub label_navigation: String,
+    pub label_terminal: String,
+    pub label_fetching: String,
+    pub label_searching: String,
+    pub label_filtered: String,
+}
+
+impl Icons {
+    pub fn default() -> Self {
+        Self {
+            tab_issue: "󰏪".to_string(),
+            tab_pr: "󰊢".to_string(),
+            tab_pipeline: "󰎨".to_string(),
+            tab_job: "󱙃".to_string(),
+            tab_runner: "󰐂".to_string(),
+            tab_release: "󰷖".to_string(),
+            tab_todo: "󰅝".to_string(),
+            tab_milestone: "󰴀".to_string(),
+            tab_branch: "󰲆".to_string(),
+            tab_environment: "󰆍".to_string(),
+            tab_terminal: "󰁨".to_string(),
+            status_success: "✓".to_string(),
+            status_failed: "✘".to_string(),
+            status_running: "⟳".to_string(),
+            status_pending: "◉".to_string(),
+            header_github: "󱘧".to_string(),
+            header_gitlab: "󱘤".to_string(),
+            label_navigation: "☰".to_string(),
+            label_terminal: "󰁨".to_string(),
+            label_fetching: "⏳".to_string(),
+            label_searching: "🔍".to_string(),
+            label_filtered: "🔍".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SaveMenu {
     Local,
@@ -225,6 +280,33 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.yellow_bg, &overrides.yellow_bg);
     apply_color(&mut base.purple, &overrides.purple);
     apply_color(&mut base.purple_bg, &overrides.purple_bg);
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IconOverrides {
+    pub tab_issue: Option<String>,
+    pub tab_pr: Option<String>,
+    pub tab_pipeline: Option<String>,
+    pub tab_job: Option<String>,
+    pub tab_runner: Option<String>,
+    pub tab_release: Option<String>,
+    pub tab_todo: Option<String>,
+    pub tab_milestone: Option<String>,
+    pub tab_branch: Option<String>,
+    pub tab_environment: Option<String>,
+    pub tab_terminal: Option<String>,
+    pub status_success: Option<String>,
+    pub status_failed: Option<String>,
+    pub status_running: Option<String>,
+    pub status_pending: Option<String>,
+    pub header_github: Option<String>,
+    pub header_gitlab: Option<String>,
+    pub label_navigation: Option<String>,
+    pub label_terminal: Option<String>,
+    pub label_fetching: Option<String>,
+    pub label_searching: Option<String>,
+    pub label_filtered: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -678,6 +760,7 @@ pub struct Config {
     pub theme_preset: Option<String>,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
+    pub icons: Option<IconOverrides>,
     pub keybindings: KeybindingConfig,
     #[serde(default = "def_page_size")]
     pub page_size: usize,
@@ -702,6 +785,7 @@ impl Default for Config {
             theme_preset: Some("default".to_string()),
             active_tab: None,
             theme: ThemeOverrides::default(),
+            icons: None,
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             disabled_tabs: None,
@@ -974,9 +1058,83 @@ view_deployments = "Enter"
         apply_overrides(&mut theme, &self.theme);
         theme
     }
+
+    pub fn resolve_icons(&self) -> Icons {
+        let mut icons = Icons::default();
+        if let Some(ref icon_overrides) = self.icons {
+            if let Some(ref s) = icon_overrides.tab_issue {
+                icons.tab_issue = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_pr {
+                icons.tab_pr = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_pipeline {
+                icons.tab_pipeline = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_job {
+                icons.tab_job = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_runner {
+                icons.tab_runner = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_release {
+                icons.tab_release = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_todo {
+                icons.tab_todo = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_milestone {
+                icons.tab_milestone = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_branch {
+                icons.tab_branch = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_environment {
+                icons.tab_environment = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.tab_terminal {
+                icons.tab_terminal = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.status_success {
+                icons.status_success = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.status_failed {
+                icons.status_failed = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.status_running {
+                icons.status_running = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.status_pending {
+                icons.status_pending = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.header_github {
+                icons.header_github = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.header_gitlab {
+                icons.header_gitlab = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.label_navigation {
+                icons.label_navigation = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.label_terminal {
+                icons.label_terminal = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.label_fetching {
+                icons.label_fetching = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.label_searching {
+                icons.label_searching = s.clone();
+            }
+            if let Some(ref s) = icon_overrides.label_filtered {
+                icons.label_filtered = s.clone();
+            }
+        }
+        icons
+    }
 }
 
 pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
+pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().resolve_icons()));
 
 pub const THEME_PRESETS: &[&str] = &[
     "default",

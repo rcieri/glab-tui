@@ -384,11 +384,12 @@ pub(crate) fn build_log_line(
         cmd.timestamp.clone()
     };
 
+    let icons = crate::config::ICONS.read().unwrap();
     let (status_text, status_color) = match cmd.status.as_str() {
-        "Success" => ("SUCCESS", THEME.read().unwrap().green),
-        "Running" => ("RUNNING", THEME.read().unwrap().yellow),
-        s if s.starts_with("Failed") => ("FAILED ", THEME.read().unwrap().red),
-        _ => ("PENDING", THEME.read().unwrap().yellow),
+        "Success" => (format!("{} SUCCESS", icons.status_success), THEME.read().unwrap().green),
+        "Running" => (format!("{} RUNNING", icons.status_running), THEME.read().unwrap().yellow),
+        s if s.starts_with("Failed") => (format!("{} FAILED ", icons.status_failed), THEME.read().unwrap().red),
+        _ => (format!("{} PENDING", icons.status_pending), THEME.read().unwrap().yellow),
     };
 
     let err_detail = if cmd.status.starts_with("Failed: ") {

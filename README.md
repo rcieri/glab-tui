@@ -135,7 +135,7 @@ The active project is detected automatically from the `origin` remote in the cur
 
 ### Config file
 
-On first launch, `glab-tui` writes a default config to:
+The config file is optional; the app boots from in-memory defaults when none exists. To create one, press the **save view** keybinding (default `s`), which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). Locations:
 
 ```
 ~/.config/glab-tui/config.toml          # Linux / macOS (XDG)

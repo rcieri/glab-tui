@@ -886,10 +886,6 @@ view_deployments = "Enter"
             .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
 
         let path = Self::config_path();
-        if !path.exists() {
-            let _ = std::fs::write(&path, &default_toml);
-        }
-
         if let Ok(global_contents) = std::fs::read_to_string(&path) {
             if let Ok(global_val) = toml::from_str::<toml::Value>(&global_contents) {
                 merge_toml_values(&mut merged_value, global_val);
@@ -911,16 +907,8 @@ view_deployments = "Enter"
         }
 
         if let Some(root) = find_git_root() {
-            let repo_config_dir = root.join(".glab-tui");
-            let repo_config_path = repo_config_dir.join("config.toml");
-            if !repo_config_path.exists() {
-                let toml_str = Self::generate_default_toml();
-                let _ = std::fs::create_dir_all(&repo_config_dir);
-                let _ = std::fs::write(&repo_config_path, &toml_str);
-            }
-
             let paths = [
-                repo_config_dir.join("config.toml"),
+                root.join(".glab-tui").join("config.toml"),
                 root.join(".config").join("glab-tui").join("config.toml"),
             ];
             for p in &paths {
@@ -952,24 +940,6 @@ view_deployments = "Enter"
                 }
                 (base, overrides) => {
                     *base = overrides;
-                }
-            }
-        }
-
-        if let Some(root) = find_git_root() {
-            let paths = [
-                root.join(".glab-tui").join("config.toml"),
-                root.join(".config").join("glab-tui").join("config.toml"),
-            ];
-            for p in &paths {
-                if p.exists() {
-                    if let Ok(workspace_contents) = std::fs::read_to_string(p) {
-                        if let Ok(workspace_val) =
-                            toml::from_str::<toml::Value>(&workspace_contents)
-                        {
-                            merge_toml_values(&mut merged_value, workspace_val);
-                        }
-                    }
                 }
             }
         }

@@ -287,9 +287,9 @@ pub struct KeybindingIssues {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
-    #[serde(default)]
+    #[serde(default = "def_reply_comment")]
     pub reply_comment: String,
-    #[serde(default)]
+    #[serde(default = "def_resolve_comment")]
     pub resolve_comment: String,
 }
 
@@ -311,9 +311,9 @@ pub struct KeybindingMrs {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
-    #[serde(default)]
+    #[serde(default = "def_reply_comment")]
     pub reply_comment: String,
-    #[serde(default)]
+    #[serde(default = "def_resolve_comment")]
     pub resolve_comment: String,
 }
 
@@ -789,6 +789,8 @@ create_issue = "n"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
+reply_comment = "R"
+resolve_comment = "x"
 
 [keybindings.mrs]
 create_mr = "n"
@@ -799,6 +801,8 @@ view_diff = "v"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
+reply_comment = "R"
+resolve_comment = "x"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"

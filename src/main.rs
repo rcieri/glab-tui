@@ -2589,6 +2589,8 @@ async fn main() -> Result<()> {
                                                     app.environments.items = cache.environments;
                                                     app.milestone_issues_cache =
                                                         cache.milestone_issues;
+                                                    app.issue_comments = cache.issue_comments;
+                                                    app.mr_comments = cache.mr_comments;
 
                                                     let has_any_cached =
                                                         !app.issues.items.is_empty()

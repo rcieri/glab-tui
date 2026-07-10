@@ -748,7 +748,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Issues",
                 key: d(format!("{}", app.config.keybindings.issues.reply_comment)),
-                action: "Reply to issue (open $EDITOR)",
+                action: "Reply to issue (inline)",
             },
             Shortcut {
                 category: "Issues",
@@ -803,7 +803,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.reply_comment)),
-                action: "Reply to MR (open $EDITOR)",
+                action: "Reply to MR (inline)",
             },
             Shortcut {
                 category: "Merge Requests",

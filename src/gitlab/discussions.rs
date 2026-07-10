@@ -205,22 +205,17 @@ pub async fn add_issue_note(
 
     let payload = serde_json::json!({ "body": body });
     let json_str = serde_json::to_string(&payload)?;
-    let temp_path = std::env::temp_dir().join("glab-tui-issue-note.json");
-    let _ = std::fs::write(&temp_path, &json_str);
-    let path_str = temp_path.to_string_lossy().to_string();
 
-    let result = if client.is_github {
+    if client.is_github {
         client
-            .execute_github_api(&endpoint, method, Some(&path_str))
-            .await
+            .execute_github_api(&endpoint, method, Some(&json_str))
+            .await?;
     } else {
         client
-            .execute_gitlab_api(&endpoint, method, Some(&path_str))
-            .await
-    };
-
-    let _ = std::fs::remove_file(&temp_path);
-    result.map(|_| ())
+            .execute_gitlab_api(&endpoint, method, Some(&json_str))
+            .await?;
+    }
+    Ok(())
 }
 
 /// Create a new top-level note (comment) on a merge request.
@@ -247,22 +242,17 @@ pub async fn add_mr_note(
 
     let payload = serde_json::json!({ "body": body });
     let json_str = serde_json::to_string(&payload)?;
-    let temp_path = std::env::temp_dir().join("glab-tui-mr-note.json");
-    let _ = std::fs::write(&temp_path, &json_str);
-    let path_str = temp_path.to_string_lossy().to_string();
 
-    let result = if client.is_github {
+    if client.is_github {
         client
-            .execute_github_api(&endpoint, method, Some(&path_str))
-            .await
+            .execute_github_api(&endpoint, method, Some(&json_str))
+            .await?;
     } else {
         client
-            .execute_gitlab_api(&endpoint, method, Some(&path_str))
-            .await
-    };
-
-    let _ = std::fs::remove_file(&temp_path);
-    result.map(|_| ())
+            .execute_gitlab_api(&endpoint, method, Some(&json_str))
+            .await?;
+    }
+    Ok(())
 }
 
 pub async fn add_discussion_reply(
@@ -309,25 +299,19 @@ pub async fn add_discussion_reply(
         anyhow::bail!("No issue or MR iid provided");
     };
 
-    // Write body to temp file for posting
     let payload = serde_json::json!({ "body": body });
     let json_str = serde_json::to_string(&payload)?;
-    let temp_path = std::env::temp_dir().join("glab-tui-discussion-reply.json");
-    let _ = std::fs::write(&temp_path, &json_str);
-    let path_str = temp_path.to_string_lossy().to_string();
 
-    let result = if client.is_github {
+    if client.is_github {
         client
-            .execute_github_api(&endpoint, method, Some(&path_str))
-            .await
+            .execute_github_api(&endpoint, method, Some(&json_str))
+            .await?;
     } else {
         client
-            .execute_gitlab_api(&endpoint, method, Some(&path_str))
-            .await
-    };
-
-    let _ = std::fs::remove_file(&temp_path);
-    result.map(|_| ())
+            .execute_gitlab_api(&endpoint, method, Some(&json_str))
+            .await?;
+    }
+    Ok(())
 }
 
 pub async fn toggle_discussion_resolution(
@@ -360,13 +344,9 @@ pub async fn toggle_discussion_resolution(
     let resolve_endpoint = format!("{}?resolved={}", endpoint, resolved);
     let payload = serde_json::json!({ "resolved": resolved });
     let json_str = serde_json::to_string(&payload)?;
-    let temp_path = std::env::temp_dir().join("glab-tui-discussion-resolve.json");
-    let _ = std::fs::write(&temp_path, &json_str);
-    let path_str = temp_path.to_string_lossy().to_string();
 
-    let result = client
-        .execute_gitlab_api(&resolve_endpoint, "PUT", Some(&path_str))
-        .await;
-    let _ = std::fs::remove_file(&temp_path);
-    result.map(|_| ())
+    client
+        .execute_gitlab_api(&resolve_endpoint, "PUT", Some(&json_str))
+        .await?;
+    Ok(())
 }

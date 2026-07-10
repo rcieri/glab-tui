@@ -46,6 +46,8 @@ pub enum Event {
     MilestoneDeleted,
     ReleaseUpdated,
     ReleaseDeleted,
+    IssueDeleted,
+    MrDeleted,
     BranchesFetched(Vec<crate::gitlab::branches::Branch>),
     EnvironmentsFetched(Vec<crate::gitlab::deployments::Environment>),
     DeploymentsFetched(Vec<crate::gitlab::deployments::Deployment>),

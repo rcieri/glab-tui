@@ -204,7 +204,14 @@ async fn run_cli(
     } else {
         let desc = generate_cli_desc(program, args);
         let status_msg = format!("{}: {} {}", desc, program, args.join(" "));
-        let _ = tx.send(Event::CommandStarted(status_msg));
+        let _ = tx.send(Event::CommandStarted(status_msg.clone()));
+
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        let _ = tx.send(Event::TerminalCommandLogged {
+            timestamp: timestamp.clone(),
+            command: status_msg.clone(),
+            status: "Running".to_string(),
+        });
 
         let tx_clone = tx.clone();
         let program = program.to_string();
@@ -214,12 +221,23 @@ async fn run_cli(
             let mut cmd = tokio::process::Command::new(&program);
             cmd.args(&actual_args);
 
+            let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
             match cmd.output().await {
                 Ok(output) => {
                     if output.status.success() {
+                        let _ = tx_clone.send(Event::TerminalCommandLogged {
+                            timestamp,
+                            command: status_msg.clone(),
+                            status: "Success".to_string(),
+                        });
                         let _ = tx_clone.send(Event::CommandCompleted(tab, Ok(())));
                     } else {
                         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        let _ = tx_clone.send(Event::TerminalCommandLogged {
+                            timestamp,
+                            command: status_msg.clone(),
+                            status: format!("Failed: {}", err_msg),
+                        });
                         let _ = tx_clone.send(Event::CommandCompleted(
                             tab,
                             Err(format!("Command failed: {}", err_msg)),
@@ -227,6 +245,11 @@ async fn run_cli(
                     }
                 }
                 Err(e) => {
+                    let _ = tx_clone.send(Event::TerminalCommandLogged {
+                        timestamp,
+                        command: status_msg.clone(),
+                        status: format!("Failed: {}", e),
+                    });
                     let _ = tx_clone.send(Event::CommandCompleted(
                         tab,
                         Err(format!("Failed to execute command: {}", e)),
@@ -838,6 +861,38 @@ async fn main() -> Result<()> {
                         );
                     }
                 }
+                Event::IssueDeleted => {
+                    app.complete_loading_tab(app::Tab::Issues, "Success");
+                    app.status_message = None;
+                    app.issues.items.clear();
+                    if let Some(client) = app.gitlab_client.clone() {
+                        if !app.loading_tabs.contains(&app::Tab::Issues) {
+                            app.start_loading_tab(app::Tab::Issues);
+                        }
+                        spawn_refresh_active_tab(
+                            &client,
+                            &app.project_context,
+                            app::Tab::Issues,
+                            events.sender(),
+                        );
+                    }
+                }
+                Event::MrDeleted => {
+                    app.complete_loading_tab(app::Tab::MergeRequests, "Success");
+                    app.status_message = None;
+                    app.mrs.items.clear();
+                    if let Some(client) = app.gitlab_client.clone() {
+                        if !app.loading_tabs.contains(&app::Tab::MergeRequests) {
+                            app.start_loading_tab(app::Tab::MergeRequests);
+                        }
+                        spawn_refresh_active_tab(
+                            &client,
+                            &app.project_context,
+                            app::Tab::MergeRequests,
+                            events.sender(),
+                        );
+                    }
+                }
                 Event::BranchesFetched(branches) => {
                     app.complete_loading_tab(app::Tab::Branches, "Success");
                     app.loaded_tabs.insert(app::Tab::Branches);
@@ -963,12 +1018,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::CommandStarted(msg) => {
-                    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-                    app.terminal_commands.push(crate::app::TerminalCommand {
-                        timestamp,
-                        command: msg,
-                        status: "Running".to_string(),
-                    });
+                    app.status_message = Some(msg);
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     terminal.draw(|f| ui::render(f, &mut app))?;

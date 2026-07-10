@@ -287,6 +287,8 @@ pub struct KeybindingIssues {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
+    #[serde(default = "def_delete_entity")]
+    pub delete_entity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,6 +309,8 @@ pub struct KeybindingMrs {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
+    #[serde(default = "def_delete_entity")]
+    pub delete_entity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -453,6 +457,7 @@ keybind_defaults! {
     def_edit_entity = "e",
     def_close_entity = "c",
     def_reopen_entity = "r",
+    def_delete_entity = "d",
     def_create_mr = "n",
     def_approve_mr = "a",
     def_merge_mr = "m",
@@ -515,6 +520,7 @@ impl Default for KeybindingIssues {
             edit_entity: def_edit_entity(),
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
+            delete_entity: def_delete_entity(),
         }
     }
 }
@@ -530,6 +536,7 @@ impl Default for KeybindingMrs {
             edit_entity: def_edit_entity(),
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
+            delete_entity: def_delete_entity(),
         }
     }
 }
@@ -775,6 +782,7 @@ create_issue = "n"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
+delete_entity = "d"
 
 [keybindings.mrs]
 create_mr = "n"
@@ -785,6 +793,7 @@ view_diff = "v"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
+delete_entity = "d"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"
@@ -872,15 +881,20 @@ view_deployments = "Enter"
 
     pub fn load() -> Self {
         ensure_themes();
+        let default_toml = Self::generate_default_toml();
+        let mut merged_value: toml::Value = toml::from_str(&default_toml)
+            .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
+
         let path = Self::config_path();
         if !path.exists() {
-            let toml_str = Self::generate_default_toml();
-            let _ = std::fs::write(&path, &toml_str);
+            let _ = std::fs::write(&path, &default_toml);
         }
 
-        let global_contents = std::fs::read_to_string(&path).unwrap_or_default();
-        let mut merged_value: toml::Value = toml::from_str(&global_contents)
-            .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
+        if let Ok(global_contents) = std::fs::read_to_string(&path) {
+            if let Ok(global_val) = toml::from_str::<toml::Value>(&global_contents) {
+                merge_toml_values(&mut merged_value, global_val);
+            }
+        }
 
         fn find_git_root() -> Option<PathBuf> {
             let mut current = std::env::current_dir().ok()?;

@@ -166,6 +166,46 @@ pub async fn handle_confirm_popup(
                         }
                         app.update_filter_selection();
                     }
+                    crate::app::ConfirmAction::DeleteIssue(iid) => {
+                        let cli = app_cli(app);
+                        let is_github = cli.is_github;
+                        let project_path = app.project_context.clone();
+                        let client = app.gitlab_client.clone().unwrap();
+                        let _ = tx.send(Event::CommandStarted(format!("Deleting issue #{}", iid)));
+                        tokio::spawn(async move {
+                            let res = if is_github {
+                                client
+                                    .execute_raw_command(
+                                        "gh",
+                                        &[
+                                            "issue",
+                                            "delete",
+                                            &iid.to_string(),
+                                            "-R",
+                                            &project_path,
+                                            "--yes",
+                                        ],
+                                        "Deleting Issue",
+                                    )
+                                    .await
+                            } else {
+                                let encoded_path = project_path.replace("/", "%2F");
+                                let endpoint = format!("/projects/{}/issues/{}", encoded_path, iid);
+                                client.execute_gitlab_api(&endpoint, "DELETE", None).await
+                            };
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(Event::IssueDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Issues,
+                                        Err(format!("Failed to delete issue: {}", e)),
+                                    ));
+                                }
+                            }
+                        });
+                    }
                     crate::app::ConfirmAction::CloseMr(iid) => {
                         let cli = app_cli(app);
                         let args = vec![
@@ -179,6 +219,28 @@ pub async fn handle_confirm_popup(
                             app.mrs.items.remove(pos);
                         }
                         app.update_filter_selection();
+                    }
+                    crate::app::ConfirmAction::DeleteMr(iid) => {
+                        let project_path = app.project_context.clone();
+                        let client = app.gitlab_client.clone().unwrap();
+                        let _ = tx.send(Event::CommandStarted(format!("Deleting MR #{}", iid)));
+                        tokio::spawn(async move {
+                            let encoded_path = project_path.replace("/", "%2F");
+                            let endpoint =
+                                format!("/projects/{}/merge_requests/{}", encoded_path, iid);
+                            let res = client.execute_gitlab_api(&endpoint, "DELETE", None).await;
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(Event::MrDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::MergeRequests,
+                                        Err(format!("Failed to delete merge request: {}", e)),
+                                    ));
+                                }
+                            }
+                        });
                     }
                     crate::app::ConfirmAction::MergeMr(iid) => {
                         let cli = app_cli(app);

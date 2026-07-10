@@ -280,6 +280,27 @@ impl EditMenu {
     }
 }
 
+impl App {
+    /// Enter inline detail-edit mode. Opens the [menu] in the right-hand detail
+    /// pane (instead of a centered overlay), flagging `detail_edit_mode = true`
+    /// so the renderer swaps to the editor layout and existing EditMenu key
+    /// handlers keep operating on `app.edit_menu`.
+    pub fn enter_detail_edit_mode(&mut self, menu: EditMenu) {
+        self.edit_menu = Some(menu);
+        self.detail_edit_mode = true;
+        self.detail_visible = true;
+        self.details_zoomed = false;
+        self.detail_scroll = 0;
+    }
+
+    /// Exit inline detail-edit mode. Called after Esc / submit / cancel from
+    /// the EditMenu flow.
+    pub fn exit_detail_edit_mode(&mut self) {
+        self.edit_menu = None;
+        self.detail_edit_mode = false;
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Selector {
     pub title: String,
@@ -1284,6 +1305,7 @@ pub struct App {
     pub selected_jobs: std::collections::HashSet<u64>,
     pub details_zoomed: bool,
     pub detail_visible: bool,
+    pub detail_edit_mode: bool,
     pub job_trace_needs_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
     pub collapse_matrix_jobs: bool,
@@ -1364,6 +1386,7 @@ impl Default for App {
             selected_jobs: std::collections::HashSet::new(),
             details_zoomed: false,
             detail_visible: false,
+            detail_edit_mode: false,
             job_trace_needs_scroll_to_bottom: false,
             job_trace_loading: false,
             collapse_matrix_jobs: false,
@@ -1625,6 +1648,7 @@ impl App {
         self.selected_jobs.clear();
         self.details_zoomed = false;
         self.detail_visible = false;
+        self.detail_edit_mode = false;
         self.update_filter_selection();
     }
 
@@ -1644,6 +1668,7 @@ impl App {
         self.selected_jobs.clear();
         self.details_zoomed = false;
         self.detail_visible = false;
+        self.detail_edit_mode = false;
         self.update_filter_selection();
     }
 

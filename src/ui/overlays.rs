@@ -14,7 +14,12 @@ use ratatui::{
 };
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
-    if let Some(menu) = &mut app.edit_menu {
+    // When detail_edit_mode is active, the edit menu renders inline in the detail
+    // pane (see ui/tabs.rs) instead of as a centered modal overlay. Skip the
+    // centered overlay rendering in that case.
+    if app.detail_edit_mode {
+        // Fall through to render other overlays (selector, text_input, etc.)
+    } else if let Some(menu) = &mut app.edit_menu {
         let block = Block::default()
             .title(format!(" {} ", menu.title))
             .title_style(

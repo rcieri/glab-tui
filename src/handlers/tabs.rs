@@ -36,7 +36,7 @@ pub async fn handle_active_tab_key(
                     fields.push(("Weight".to_string(), "0".to_string()));
                 }
                 fields.push(("Description".to_string(), String::new()));
-                app.edit_menu = Some(crate::app::EditMenu {
+                app.enter_detail_edit_mode(crate::app::EditMenu {
                     title: "Create Issue".to_string(),
                     fields,
                     selected_idx: 0,
@@ -96,7 +96,7 @@ pub async fn handle_active_tab_key(
                             "Description".to_string(),
                             issue.description.clone().unwrap_or_default(),
                         ));
-                        app.edit_menu = Some(crate::app::EditMenu {
+                        app.enter_detail_edit_mode(crate::app::EditMenu {
                             title: format!("Edit Issue #{}", issue.iid),
                             fields,
                             selected_idx: 0,
@@ -264,7 +264,7 @@ pub async fn handle_active_tab_key(
                             } else {
                                 "MR"
                             };
-                            app.edit_menu = Some(crate::app::EditMenu {
+                            app.enter_detail_edit_mode(crate::app::EditMenu {
                                 title: format!("Edit {} #{}", pr_suffix, mr.iid),
                                 fields: vec![
                                     ("Title".to_string(), mr.title.clone()),
@@ -514,7 +514,7 @@ pub async fn handle_active_tab_key(
                 let current_branch =
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
-                app.edit_menu = Some(crate::app::EditMenu {
+                app.enter_detail_edit_mode(crate::app::EditMenu {
                     title: "Run Pipeline".to_string(),
                     fields: vec![
                         ("Branch / Ref".to_string(), current_branch.clone()),
@@ -1118,7 +1118,7 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Releases => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.releases.create_release, key_event) => {
-                app.edit_menu = Some(crate::app::EditMenu {
+                app.enter_detail_edit_mode(crate::app::EditMenu {
                     title: "Create Release".to_string(),
                     fields: vec![
                         ("Tag".to_string(), String::new()),
@@ -1149,6 +1149,12 @@ pub async fn handle_active_tab_key(
                             .position(|r| r.tag_name == tag_name)
                         {
                             rebuild_edit_menu(app, "release", idx as u64);
+                            if app.edit_menu.is_some() {
+                                app.detail_edit_mode = true;
+                                app.detail_visible = true;
+                                app.details_zoomed = false;
+                                app.detail_scroll = 0;
+                            }
                         }
                     }
                 }
@@ -1276,7 +1282,7 @@ pub async fn handle_active_tab_key(
                     fields.push(("Start Date".to_string(), String::new()));
                 }
                 fields.push(("Due Date".to_string(), String::new()));
-                app.edit_menu = Some(crate::app::EditMenu {
+                app.enter_detail_edit_mode(crate::app::EditMenu {
                     title: "Create Milestone".to_string(),
                     fields,
                     selected_idx: 0,
@@ -1301,6 +1307,12 @@ pub async fn handle_active_tab_key(
                     };
                     if let Some(iid) = milestone_iid {
                         rebuild_edit_menu(app, "milestone", iid);
+                        if app.edit_menu.is_some() {
+                            app.detail_edit_mode = true;
+                            app.detail_visible = true;
+                            app.details_zoomed = false;
+                            app.detail_scroll = 0;
+                        }
                     }
                 }
             }

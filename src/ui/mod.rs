@@ -16,7 +16,7 @@ use ratatui::{
 use self::diff::{centered_rect_min, format_comment_with_suggestions};
 use self::helpers::build_log_line;
 use self::overlays::render_overlays;
-use crate::app::{App, Tab};
+use crate::app::{App, EditMenu, Tab};
 use crate::config::THEME;
 
 pub fn render(f: &mut Frame, app: &mut App) {
@@ -318,6 +318,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
             highlight_style,
             header_style,
         ),
+    }
+
+    // Inline EditMode: render the edit menu directly into the detail pane
+    // when detail_edit_mode is active, overlaying the normal read-only view.
+    if app.detail_edit_mode {
+        if let Some(mut menu) = app.edit_menu.take() {
+            render_edit_menu_inline(f, app, detail_rect, &mut menu);
+            app.edit_menu = Some(menu);
+        }
     }
 
     // Compact terminal pane at bottom of the middle column
@@ -1516,4 +1525,276 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 
     render_overlays(f, app, size);
+}
+
+/// Renders the edit menu directly into the detail pane when detail_edit_mode is
+/// active, overlaying the normal read-only detail view.
+///
+/// Uses the same UI patterns as the centered overlay to maintain visual
+/// consistency but renders in-place in the right-hand pane, avoiding modal
+/// context switches.
+fn render_edit_menu_inline(f: &mut Frame, app: &mut App, detail_rect: Rect, menu: &mut EditMenu) {
+    use crate::ui::helpers::get_label_color;
+
+    let block = Block::default()
+        .title(format!(" {} ", menu.title))
+        .title_style(
+            Style::default()
+                .fg(THEME.read().unwrap().header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+        .style(Style::default().bg(THEME.read().unwrap().bg));
+
+    let label_width = menu
+        .fields
+        .iter()
+        .map(|(l, _)| l.len())
+        .max()
+        .unwrap_or(18)
+        .max(18);
+
+    let items: Vec<ListItem> = menu
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(i, (label, val))| {
+            let is_selected = i == menu.selected_idx;
+            let theme_bg = THEME.read().unwrap().bg;
+            let item_bg = if is_selected {
+                THEME.read().unwrap().highlight_bg
+            } else {
+                theme_bg
+            };
+
+            let label_style = if is_selected {
+                Style::default()
+                    .fg(THEME.read().unwrap().text_normal)
+                    .bg(item_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .bg(item_bg)
+            };
+
+            let sep_style = if is_selected {
+                Style::default()
+                    .fg(THEME.read().unwrap().text_normal)
+                    .bg(item_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .bg(item_bg)
+            };
+
+            let mut val_spans = Vec::new();
+            if val.is_empty() {
+                let action_hint = if is_selected {
+                    match label.as_str() {
+                        "Labels"
+                        | "Assignees"
+                        | "Reviewers"
+                        | "Milestone"
+                        | "Confidential"
+                        | "Status (Draft/Ready)"
+                        | "Target Branch" => " <Enter to select>",
+                        "Description" | "Due Date" | "Weight" => " <Enter to edit>",
+                        _ => " <Enter to edit>",
+                    }
+                } else {
+                    " <empty>"
+                };
+                let hint_style = if is_selected {
+                    Style::default()
+                        .fg(THEME.read().unwrap().text_muted)
+                        .bg(item_bg)
+                        .add_modifier(Modifier::ITALIC)
+                } else {
+                    Style::default()
+                        .fg(THEME.read().unwrap().border)
+                        .bg(item_bg)
+                        .add_modifier(Modifier::ITALIC)
+                };
+                val_spans.push(Span::styled(
+                    if is_selected {
+                        format!("{} ▋", action_hint)
+                    } else {
+                        action_hint.to_string()
+                    },
+                    hint_style,
+                ));
+            } else {
+                let truncated = if val.len() > 50 {
+                    let mut s = val[..47].to_string();
+                    s.push_str("...");
+                    s
+                } else {
+                    val.clone()
+                };
+                match label.as_str() {
+                    "Labels" => {
+                        let parts: Vec<&str> = truncated.split(',').collect();
+                        for (idx, part) in parts.iter().enumerate() {
+                            if idx > 0 {
+                                val_spans.push(Span::styled(
+                                    ", ",
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().text_normal)
+                                        .bg(item_bg),
+                                ));
+                            }
+                            let trimmed = part.trim();
+                            let label_color = get_label_color(trimmed);
+                            let mut style = Style::default()
+                                .fg(label_color)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::BOLD);
+                            if is_selected {
+                                style = style.add_modifier(Modifier::UNDERLINED);
+                            }
+                            val_spans.push(Span::styled(trimmed.to_string(), style));
+                        }
+                    }
+                    "Assignees" | "Reviewers" => {
+                        let parts: Vec<&str> = truncated.split(',').collect();
+                        for (idx, part) in parts.iter().enumerate() {
+                            if idx > 0 {
+                                val_spans.push(Span::styled(
+                                    ", ",
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().text_normal)
+                                        .bg(item_bg),
+                                ));
+                            }
+                            let trimmed = part.trim();
+                            let mut style =
+                                Style::default().fg(THEME.read().unwrap().blue).bg(item_bg);
+                            if is_selected {
+                                style = style.add_modifier(Modifier::BOLD);
+                            }
+                            val_spans.push(Span::styled(trimmed.to_string(), style));
+                        }
+                    }
+                    _ => {
+                        let val_fg = match label.as_str() {
+                            "Milestone" => THEME.read().unwrap().purple,
+                            "Due Date" => THEME.read().unwrap().yellow,
+                            "Confidential" if val.to_lowercase() == "yes" => {
+                                THEME.read().unwrap().red
+                            }
+                            "Confidential" => THEME.read().unwrap().green,
+                            "Status (Draft/Ready)" | "Target Branch" => {
+                                THEME.read().unwrap().purple
+                            }
+                            _ => THEME.read().unwrap().text_normal,
+                        };
+                        let mut style = Style::default().fg(val_fg).bg(item_bg);
+                        if is_selected {
+                            style = style.add_modifier(Modifier::BOLD);
+                        }
+                        val_spans.push(Span::styled(truncated, style));
+                    }
+                }
+            }
+
+            let mut line_spans = vec![
+                Span::styled(
+                    format!(" {:label_width$} ", label, label_width = label_width),
+                    label_style,
+                ),
+                Span::styled(" ❯ ", sep_style),
+            ];
+            line_spans.extend(val_spans);
+            Line::from(line_spans)
+        })
+        .map(|line| {
+            ListItem::new(line).style(
+                Style::default().bg(
+                    if menu
+                        .fields
+                        .get(menu.selected_idx)
+                        .map_or(false, |(_, _)| menu.selected_idx < menu.fields.len())
+                    {
+                        THEME.read().unwrap().highlight_bg
+                    } else {
+                        THEME.read().unwrap().bg
+                    },
+                ),
+            )
+        })
+        .collect();
+
+    let is_new_entity = menu.is_new();
+    let submit_idx = menu.fields.len() + 1;
+    let all_items = if is_new_entity {
+        let is_submit_selected = menu.selected_idx == submit_idx;
+        let submit_bg = if is_submit_selected {
+            THEME.read().unwrap().border_focused
+        } else {
+            THEME.read().unwrap().bg
+        };
+        let submit_fg = if is_submit_selected {
+            THEME.read().unwrap().bg
+        } else {
+            THEME.read().unwrap().border_focused
+        };
+        let submit_line = Line::from(vec![Span::styled(
+            " [ Save ] ",
+            Style::default()
+                .fg(submit_fg)
+                .bg(submit_bg)
+                .add_modifier(Modifier::BOLD),
+        )]);
+        let mut v = items;
+        v.push(ListItem::new(
+            Line::from("").style(Style::default().bg(THEME.read().unwrap().bg)),
+        ));
+        v.push(ListItem::new(submit_line));
+        v
+    } else {
+        items
+    };
+
+    // Split detail area: editor fills available space, footer at bottom
+    let available_height = detail_rect.height.saturating_sub(2); // title + borders
+    let list_height = all_items.len().min(available_height as usize) as u16;
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(list_height), // editor content
+            Constraint::Length(1),           // separator between editor/footer
+            Constraint::Min(2),              // footer (min height, doesn't scroll editor)
+        ])
+        .split(detail_rect);
+
+    // Ensure scroll position shows cursor on entry
+    app.detail_scroll = 0;
+
+    // Render editor fields
+    let list = List::new(all_items).style(Style::default().bg(THEME.read().unwrap().bg));
+
+    // Keyboard hints in footer
+    let footer_text = if is_new_entity {
+        " Ctrl+S: Save  Esc: Cancel "
+    } else {
+        " Enter: Edit  Esc: Done "
+    };
+    let footer = Paragraph::new(footer_text)
+        .style(
+            Style::default()
+                .fg(THEME.read().unwrap().text_muted)
+                .add_modifier(Modifier::ITALIC),
+        )
+        .alignment(Alignment::Center)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    // Render to screen
+    f.render_widget(block, detail_rect);
+    let mut state = menu.state.clone();
+    f.render_stateful_widget(list, layout[0], &mut state);
+    menu.state = state;
+    f.render_widget(footer, layout[2]);
 }

@@ -120,6 +120,15 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
+            _ if keybinding_matches(&app.config.keybindings.issues.delete_entity, key_event) => {
+                if let Some(selected_idx) = app.issues.state.selected() {
+                    let filtered = app.filtered_issues();
+                    if let Some(issue) = filtered.get(selected_idx) {
+                        let issue_iid = issue.iid;
+                        app.confirm_popup = Some(crate::app::ConfirmAction::DeleteIssue(issue_iid));
+                    }
+                }
+            }
             KeyCode::Char('o') => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
@@ -425,6 +434,25 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             app.confirm_popup = Some(crate::app::ConfirmAction::CloseMr(mr_iid));
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.delete_entity,
+                            key_event,
+                        ) =>
+                        {
+                            if !app
+                                .gitlab_client
+                                .as_ref()
+                                .map(|c| c.is_github)
+                                .unwrap_or(false)
+                            {
+                                app.confirm_popup =
+                                    Some(crate::app::ConfirmAction::DeleteMr(mr_iid));
+                            } else {
+                                app.error_message = Some(
+                                    "GitHub does not support deleting pull requests".to_string(),
+                                );
+                            }
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.reopen_entity,

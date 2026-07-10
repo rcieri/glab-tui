@@ -727,23 +727,28 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Issues",
-                key: s("n"),
+                key: d(format!("{}", app.config.keybindings.issues.create_issue)),
                 action: "Create new Issue",
             },
             Shortcut {
                 category: "Issues",
-                key: s("e"),
+                key: d(format!("{}", app.config.keybindings.issues.edit_entity)),
                 action: "Open parameter edit menu",
             },
             Shortcut {
                 category: "Issues",
-                key: s("c"),
+                key: d(format!("{}", app.config.keybindings.issues.close_entity)),
                 action: "Close selected Issue",
             },
             Shortcut {
                 category: "Issues",
-                key: s("r"),
+                key: d(format!("{}", app.config.keybindings.issues.reopen_entity)),
                 action: "Reopen selected Issue",
+            },
+            Shortcut {
+                category: "Issues",
+                key: d(format!("{}", app.config.keybindings.issues.delete_entity)),
+                action: "Delete selected Issue",
             },
             Shortcut {
                 category: "Issues",
@@ -752,43 +757,48 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("n"),
+                key: d(format!("{}", app.config.keybindings.mrs.create_mr)),
                 action: "Create new Merge Request",
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("e"),
+                key: d(format!("{}", app.config.keybindings.mrs.edit_entity)),
                 action: "Open parameter edit menu",
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("a"),
+                key: d(format!("{}", app.config.keybindings.mrs.approve_mr)),
                 action: "Approve selected MR",
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("m"),
+                key: d(format!("{}", app.config.keybindings.mrs.merge_mr)),
                 action: "Merge selected MR (squash + delete)",
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("s"),
+                key: d(format!("{}", app.config.keybindings.mrs.toggle_draft)),
                 action: "Toggle Draft / Ready status",
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("v"),
+                key: d(format!("{}", app.config.keybindings.mrs.view_diff)),
                 action: "View Merge Request diff changes",
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("c"),
+                key: d(format!("{}", app.config.keybindings.mrs.close_entity)),
                 action: "Close selected MR",
             },
             Shortcut {
                 category: "Merge Requests",
-                key: s("r"),
+                key: d(format!("{}", app.config.keybindings.mrs.reopen_entity)),
                 action: "Reopen selected MR",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.delete_entity)),
+                action: "Delete selected MR",
             },
             Shortcut {
                 category: "Merge Requests",
@@ -1742,9 +1752,23 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 " Close Issue? ",
                 format!("Are you sure you want to close issue #{}?", iid),
             ),
+            crate::app::ConfirmAction::DeleteIssue(iid) => (
+                " Delete Issue? ",
+                format!(
+                    "Are you sure you want to delete issue #{}? This action is permanent.",
+                    iid
+                ),
+            ),
             crate::app::ConfirmAction::CloseMr(iid) => (
                 " Close Merge Request? ",
                 format!("Are you sure you want to close MR/PR #{}?", iid),
+            ),
+            crate::app::ConfirmAction::DeleteMr(iid) => (
+                " Delete Merge Request? ",
+                format!(
+                    "Are you sure you want to delete MR #{}? This action is permanent.",
+                    iid
+                ),
             ),
             crate::app::ConfirmAction::MergeMr(iid) => (
                 " Merge Request? ",

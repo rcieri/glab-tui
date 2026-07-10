@@ -287,6 +287,8 @@ pub struct KeybindingIssues {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
+    #[serde(default = "def_delete_entity")]
+    pub delete_entity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,6 +309,8 @@ pub struct KeybindingMrs {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
+    #[serde(default = "def_delete_entity")]
+    pub delete_entity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -453,6 +457,7 @@ keybind_defaults! {
     def_edit_entity = "e",
     def_close_entity = "c",
     def_reopen_entity = "r",
+    def_delete_entity = "d",
     def_create_mr = "n",
     def_approve_mr = "a",
     def_merge_mr = "m",
@@ -515,6 +520,7 @@ impl Default for KeybindingIssues {
             edit_entity: def_edit_entity(),
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
+            delete_entity: def_delete_entity(),
         }
     }
 }
@@ -530,6 +536,7 @@ impl Default for KeybindingMrs {
             edit_entity: def_edit_entity(),
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
+            delete_entity: def_delete_entity(),
         }
     }
 }
@@ -639,7 +646,7 @@ impl Default for KeybindingConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct PaneConfig {
     pub columns: Option<Vec<String>>,
@@ -775,6 +782,7 @@ create_issue = "n"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
+delete_entity = "d"
 
 [keybindings.mrs]
 create_mr = "n"
@@ -785,6 +793,7 @@ view_diff = "v"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
+delete_entity = "d"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"
@@ -872,15 +881,20 @@ view_deployments = "Enter"
 
     pub fn load() -> Self {
         ensure_themes();
+        let default_toml = Self::generate_default_toml();
+        let mut merged_value: toml::Value = toml::from_str(&default_toml)
+            .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
+
         let path = Self::config_path();
         if !path.exists() {
-            let toml_str = Self::generate_default_toml();
-            let _ = std::fs::write(&path, &toml_str);
+            let _ = std::fs::write(&path, &default_toml);
         }
 
-        let global_contents = std::fs::read_to_string(&path).unwrap_or_default();
-        let mut merged_value: toml::Value = toml::from_str(&global_contents)
-            .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
+        if let Ok(global_contents) = std::fs::read_to_string(&path) {
+            if let Ok(global_val) = toml::from_str::<toml::Value>(&global_contents) {
+                merge_toml_values(&mut merged_value, global_val);
+            }
+        }
 
         fn find_git_root() -> Option<PathBuf> {
             let mut current = std::env::current_dir().ok()?;
@@ -1004,6 +1018,40 @@ pub const THEME_PRESETS: &[&str] = &[
 ];
 
 impl Config {
+    pub fn load_global_only() -> Self {
+        let default_toml = Self::generate_default_toml();
+        let mut merged_value: toml::Value = toml::from_str(&default_toml)
+            .unwrap_or_else(|_| toml::Value::Table(toml::Table::new()));
+
+        let path = Self::config_path();
+        if let Ok(global_contents) = std::fs::read_to_string(&path) {
+            if let Ok(global_val) = toml::from_str::<toml::Value>(&global_contents) {
+                fn merge_toml_values(base: &mut toml::Value, overrides: toml::Value) {
+                    match (base, overrides) {
+                        (toml::Value::Table(base_table), toml::Value::Table(overrides_table)) => {
+                            for (key, val) in overrides_table {
+                                match base_table.entry(key) {
+                                    toml::map::Entry::Occupied(mut entry) => {
+                                        merge_toml_values(entry.get_mut(), val);
+                                    }
+                                    toml::map::Entry::Vacant(entry) => {
+                                        entry.insert(val);
+                                    }
+                                }
+                            }
+                        }
+                        (base, overrides) => {
+                            *base = overrides;
+                        }
+                    }
+                }
+                merge_toml_values(&mut merged_value, global_val);
+            }
+        }
+
+        Config::deserialize(merged_value).unwrap_or_default()
+    }
+
     /// Save layout state (columns, grouping, filters) back to config.toml.
     /// If inside a git repo, saves to repo-level config, otherwise global.
     pub fn save_layout(&self, target: SaveMenu) -> anyhow::Result<()> {
@@ -1026,6 +1074,7 @@ impl Config {
         }
 
         // Determine target path
+        let mut actual_target = target;
         let target_path = match target {
             SaveMenu::Local => {
                 if let Some(root) = find_git_root() {
@@ -1033,10 +1082,17 @@ impl Config {
                     let _ = std::fs::create_dir_all(&repo_config_dir);
                     repo_config_dir.join("config.toml")
                 } else {
+                    actual_target = SaveMenu::Global;
                     Self::config_path()
                 }
             }
             SaveMenu::Global => Self::config_path(),
+            SaveMenu::Cancel => unreachable!(),
+        };
+
+        let base_config = match actual_target {
+            SaveMenu::Local => Self::load_global_only(),
+            SaveMenu::Global => Self::default(),
             SaveMenu::Cancel => unreachable!(),
         };
 
@@ -1056,17 +1112,27 @@ impl Config {
 
         let table = merged_value.as_table_mut().unwrap();
 
-        if let Some(preset) = &self.theme_preset {
-            table.insert(
-                "theme_preset".to_string(),
-                toml::Value::String(preset.clone()),
-            );
+        if self.theme_preset != base_config.theme_preset {
+            if let Some(preset) = &self.theme_preset {
+                table.insert(
+                    "theme_preset".to_string(),
+                    toml::Value::String(preset.clone()),
+                );
+            } else {
+                table.remove("theme_preset");
+            }
+        } else {
+            table.remove("theme_preset");
         }
 
-        table.insert(
-            "page_size".to_string(),
-            toml::Value::Integer(self.page_size as i64),
-        );
+        if self.page_size != base_config.page_size {
+            table.insert(
+                "page_size".to_string(),
+                toml::Value::Integer(self.page_size as i64),
+            );
+        } else {
+            table.remove("page_size");
+        }
 
         fn pane_to_value(pane: &PaneConfig) -> toml::Value {
             let mut table = toml::Table::new();
@@ -1107,21 +1173,31 @@ impl Config {
         }
 
         // Serialize panes
-        for (tab_name, pane) in &[
-            ("issues", &self.issues),
-            ("mrs", &self.mrs),
-            ("pipelines", &self.pipelines),
-            ("jobs", &self.jobs),
-            ("runners", &self.runners),
-            ("releases", &self.releases),
-            ("todos", &self.todos),
-            ("milestones", &self.milestones),
-            ("branches", &self.branches),
-            ("environments", &self.environments),
+        for (tab_name, pane, base_pane) in &[
+            ("issues", &self.issues, &base_config.issues),
+            ("mrs", &self.mrs, &base_config.mrs),
+            ("pipelines", &self.pipelines, &base_config.pipelines),
+            ("jobs", &self.jobs, &base_config.jobs),
+            ("runners", &self.runners, &base_config.runners),
+            ("releases", &self.releases, &base_config.releases),
+            ("todos", &self.todos, &base_config.todos),
+            ("milestones", &self.milestones, &base_config.milestones),
+            ("branches", &self.branches, &base_config.branches),
+            (
+                "environments",
+                &self.environments,
+                &base_config.environments,
+            ),
         ] {
-            let val = pane_to_value(pane);
-            if val.as_table().map_or(false, |t| !t.is_empty()) {
-                table.insert(tab_name.to_string(), val);
+            if pane != base_pane {
+                let val = pane_to_value(pane);
+                if val.as_table().map_or(false, |t| !t.is_empty()) {
+                    table.insert(tab_name.to_string(), val);
+                } else {
+                    table.remove(*tab_name);
+                }
+            } else {
+                table.remove(*tab_name);
             }
         }
 

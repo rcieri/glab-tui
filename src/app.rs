@@ -1243,6 +1243,8 @@ pub enum ConfirmAction {
     DeleteMilestone(u64),  // milestone iid
     DeleteRelease(String), // release tag_name
     DeleteBranch(String),  // branch name
+    DeleteIssue(u64),      // issue iid
+    DeleteMr(u64),         // mr iid
     CloseIssue(u64),       // issue iid
     CloseMr(u64),          // mr iid
     MergeMr(u64),          // mr iid

@@ -410,6 +410,8 @@ async fn main() -> Result<()> {
     app.branches.items = cache.branches;
     app.environments.items = cache.environments;
     app.milestone_issues_cache = cache.milestone_issues;
+    app.issue_comments = cache.issue_comments;
+    app.mr_comments = cache.mr_comments;
 
     let has_any_cached = !app.issues.items.is_empty()
         || !app.mrs.items.is_empty()
@@ -898,11 +900,15 @@ async fn main() -> Result<()> {
                     app.issue_comments.insert(iid, discussions);
                     app.fetching_issue_comments = None;
                     app.discussion_context = Some(crate::app::DiscussionContext::Issue(iid));
+                    app.project_cache.issue_comments = app.issue_comments.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MrCommentsFetched { iid, discussions } => {
                     app.mr_comments.insert(iid, discussions);
                     app.fetching_mr_comments = None;
                     app.discussion_context = Some(crate::app::DiscussionContext::MergeRequest(iid));
+                    app.project_cache.mr_comments = app.mr_comments.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::FetchFailed(tab, err_msg) => {
                     app.complete_loading_tab(tab, &format!("Failed: {}", err_msg));

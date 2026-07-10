@@ -26,7 +26,10 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
         }
         other if other.len() == 1 => {
             let c = other.chars().next().unwrap();
-            event.code == KeyCode::Char(c) && event.modifiers.is_empty()
+            event.code == KeyCode::Char(c)
+                && (event.modifiers.is_empty()
+                    || (c.is_uppercase()
+                        && event.modifiers == crossterm::event::KeyModifiers::SHIFT))
         }
         _ => false,
     }

@@ -19,6 +19,10 @@ pub struct ProjectCache {
     pub milestone_issues: HashMap<u64, Vec<crate::gitlab::issues::Issue>>,
     #[serde(default)]
     pub selector_items: Option<Vec<String>>,
+    #[serde(default)]
+    pub issue_comments: std::collections::HashMap<u64, Vec<crate::gitlab::discussions::Discussion>>,
+    #[serde(default)]
+    pub mr_comments: std::collections::HashMap<u64, Vec<crate::gitlab::discussions::Discussion>>,
 }
 
 fn get_cache_file_path(project_context: &str) -> PathBuf {

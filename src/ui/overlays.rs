@@ -1217,7 +1217,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let checklist_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .title(format!(" Configure View: {} ", tab.title(is_github)))
+            .title(format!(" ⚙ Configure View: {} ", tab.title(is_github)))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().border_focused)
@@ -1263,7 +1263,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let mut chunk_idx = 0;
 
-        let columns_header = Paragraph::new("  COLUMNS").style(
+        let columns_header = Paragraph::new("  📊 COLUMNS").style(
             Style::default()
                 .fg(THEME.read().unwrap().header_fg)
                 .add_modifier(Modifier::BOLD),
@@ -1308,7 +1308,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
-        let group_header = Paragraph::new("  GROUP BY").style(
+        let group_header = Paragraph::new("  📂 GROUP BY").style(
             Style::default()
                 .fg(THEME.read().unwrap().green)
                 .add_modifier(Modifier::BOLD),
@@ -1343,7 +1343,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
-        let order_header = Paragraph::new(" ORDER").style(
+        let order_header = Paragraph::new("  ↕ ORDER").style(
             Style::default()
                 .fg(THEME.read().unwrap().yellow)
                 .add_modifier(Modifier::BOLD),
@@ -1416,7 +1416,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
-        let theme_header = Paragraph::new("  THEME").style(
+        let theme_header = Paragraph::new("  🎨 THEME").style(
             Style::default()
                 .fg(THEME.read().unwrap().purple)
                 .add_modifier(Modifier::BOLD),
@@ -1461,9 +1461,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let is_save_selected = active_idx == save_end;
         let save_button_text = if is_save_selected {
-            " > Save View <"
+            " › 💾 Save View ‹"
         } else {
-            "   Save View"
+            "   💾 Save View"
         };
         let save_button_style = if is_save_selected {
             Style::default()
@@ -1497,7 +1497,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let submenu_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-                .title(" Save to Config ")
+                .title(" 💾 Save to Config ")
                 .title_style(
                     Style::default()
                         .fg(THEME.read().unwrap().border_focused)

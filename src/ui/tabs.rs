@@ -20,7 +20,7 @@ pub(crate) fn render_tab_issues(
 ) {
     if app.issues.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading issues...")
+            Paragraph::new("\n\n ⏳ Loading issues...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -31,7 +31,7 @@ pub(crate) fn render_tab_issues(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -73,7 +73,7 @@ pub(crate) fn render_tab_issues(
             let is_selected = app.issues.state.selected() == Some(idx);
             let (state_text, state_style) = if i.state == "opened" {
                 (
-                    "OPEN",
+                    "● OPEN",
                     Style::default()
                         .fg(THEME.read().unwrap().green)
                         .bg(if is_selected {
@@ -85,7 +85,7 @@ pub(crate) fn render_tab_issues(
                 )
             } else {
                 (
-                    "CLOSED",
+                    "● CLOSED",
                     Style::default()
                         .fg(THEME.read().unwrap().red)
                         .bg(if is_selected {
@@ -250,7 +250,7 @@ pub(crate) fn render_tab_issues(
         let preview_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
-            .title(" Details ")
+            .title(" 📄 Details ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -448,7 +448,7 @@ pub(crate) fn render_tab_merge_requests(
 ) {
     if app.mrs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading merge requests...")
+            Paragraph::new("\n\n ⏳ Loading merge requests...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -459,7 +459,7 @@ pub(crate) fn render_tab_merge_requests(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -513,7 +513,7 @@ pub(crate) fn render_tab_merge_requests(
 
             let (state_text, state_style) = if m.state == "opened" {
                 (
-                    "OPEN",
+                    "● OPEN",
                     Style::default()
                         .fg(THEME.read().unwrap().green)
                         .bg(if is_selected {
@@ -525,7 +525,7 @@ pub(crate) fn render_tab_merge_requests(
                 )
             } else if m.state == "merged" {
                 (
-                    "MERGED",
+                    "🔀 MERGED",
                     Style::default()
                         .fg(THEME.read().unwrap().purple)
                         .bg(if is_selected {
@@ -537,7 +537,7 @@ pub(crate) fn render_tab_merge_requests(
                 )
             } else {
                 (
-                    "CLOSED",
+                    "● CLOSED",
                     Style::default()
                         .fg(THEME.read().unwrap().red)
                         .bg(if is_selected {
@@ -551,7 +551,7 @@ pub(crate) fn render_tab_merge_requests(
 
             let (status_styled, status_style) = if m.draft {
                 (
-                    "DRAFT".to_string(),
+                    "✏ DRAFT".to_string(),
                     Style::default()
                         .fg(THEME.read().unwrap().yellow)
                         .bg(if is_selected {
@@ -565,7 +565,7 @@ pub(crate) fn render_tab_merge_requests(
                 let upper = prefix.to_uppercase();
                 if upper == "WIP" || upper == "DRAFT" {
                     (
-                        "DRAFT".to_string(),
+                        "✏ DRAFT".to_string(),
                         Style::default()
                             .fg(THEME.read().unwrap().yellow)
                             .bg(if is_selected {
@@ -577,7 +577,7 @@ pub(crate) fn render_tab_merge_requests(
                     )
                 } else {
                     (
-                        "READY".to_string(),
+                        "✔ READY".to_string(),
                         Style::default()
                             .fg(THEME.read().unwrap().green)
                             .bg(if is_selected {
@@ -707,37 +707,37 @@ pub(crate) fn render_tab_merge_requests(
                     if stages_dots.is_empty() {
                         let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
                             "success" => (
-                                "SUCCESS",
+                                "✔ SUCCESS",
                                 THEME.read().unwrap().green,
                                 THEME.read().unwrap().green_bg,
                             ),
                             "failed" => (
-                                "FAILED",
+                                "✘ FAILED",
                                 THEME.read().unwrap().red,
                                 THEME.read().unwrap().red_bg,
                             ),
                             "running" => (
-                                "RUNNING",
+                                "▶ RUNNING",
                                 THEME.read().unwrap().blue,
                                 THEME.read().unwrap().blue_bg,
                             ),
                             "canceled" => (
-                                "CANCEL",
+                                "⊘ CANCEL",
                                 THEME.read().unwrap().text_muted,
                                 THEME.read().unwrap().inactive_bg,
                             ),
                             "pending" => (
-                                "PENDING",
+                                "◉ PENDING",
                                 THEME.read().unwrap().yellow,
                                 THEME.read().unwrap().yellow_bg,
                             ),
                             "skipped" => (
-                                "SKIP",
+                                "⏭ SKIP",
                                 THEME.read().unwrap().text_muted,
                                 THEME.read().unwrap().inactive_bg,
                             ),
                             _ => (
-                                "UNKNOWN",
+                                "? UNKNOWN",
                                 THEME.read().unwrap().text_muted,
                                 THEME.read().unwrap().inactive_bg,
                             ),
@@ -885,7 +885,7 @@ pub(crate) fn render_tab_merge_requests(
         let preview_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
-            .title(" Details ")
+            .title(" 📄 Details ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -987,11 +987,11 @@ pub(crate) fn render_tab_merge_requests(
                     ),
                     Span::styled(
                         if mr.state == "opened" {
-                            "OPEN"
+                            "● OPEN"
                         } else if mr.state == "merged" {
-                            "MERGED"
+                            "🔀 MERGED"
                         } else {
-                            "CLOSED"
+                            "● CLOSED"
                         },
                         Style::default()
                             .fg(if mr.state == "opened" {
@@ -1041,37 +1041,37 @@ pub(crate) fn render_tab_merge_requests(
                     if stages_dots.is_empty() {
                         let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
                             "success" => (
-                                "SUCCESS",
+                                "✔ SUCCESS",
                                 THEME.read().unwrap().green,
                                 THEME.read().unwrap().green_bg,
                             ),
                             "failed" => (
-                                "FAILED",
+                                "✘ FAILED",
                                 THEME.read().unwrap().red,
                                 THEME.read().unwrap().red_bg,
                             ),
                             "running" => (
-                                "RUNNING",
+                                "▶ RUNNING",
                                 THEME.read().unwrap().blue,
                                 THEME.read().unwrap().blue_bg,
                             ),
                             "canceled" => (
-                                "CANCEL",
+                                "⊘ CANCEL",
                                 THEME.read().unwrap().text_muted,
                                 THEME.read().unwrap().inactive_bg,
                             ),
                             "pending" => (
-                                "PENDING",
+                                "◉ PENDING",
                                 THEME.read().unwrap().yellow,
                                 THEME.read().unwrap().yellow_bg,
                             ),
                             "skipped" => (
-                                "SKIP",
+                                "⏭ SKIP",
                                 THEME.read().unwrap().text_muted,
                                 THEME.read().unwrap().inactive_bg,
                             ),
                             _ => (
-                                "UNKNOWN",
+                                "? UNKNOWN",
                                 THEME.read().unwrap().text_muted,
                                 THEME.read().unwrap().inactive_bg,
                             ),
@@ -1230,9 +1230,9 @@ pub(crate) fn render_tab_pipelines(
     if app.pipelines.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(if is_github {
-                "\n\n Loading actions..."
+                "\n\n ⏳ Loading actions..."
             } else {
-                "\n\n Loading pipelines..."
+                "\n\n ⏳ Loading pipelines..."
             })
             .alignment(Alignment::Center)
             .block(main_block.clone())
@@ -1248,7 +1248,7 @@ pub(crate) fn render_tab_pipelines(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Details ")
+                    .title(" 📄 Details ")
                     .border_style(Style::default().fg(THEME.read().unwrap().border)),
             )
             .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1282,42 +1282,42 @@ pub(crate) fn render_tab_pipelines(
             let is_row_highlighted = app.pipelines.state.selected() == Some(idx);
             let (status_text, status_color, bg_color) = match p.status.as_str() {
                 "success" => (
-                    "SUCCESS",
+                    "✔ SUCCESS",
                     THEME.read().unwrap().green,
                     THEME.read().unwrap().green_bg,
                 ),
                 "failed" => (
-                    "FAILED",
+                    "✘ FAILED",
                     THEME.read().unwrap().red,
                     THEME.read().unwrap().red_bg,
                 ),
                 "running" => (
-                    "RUNNING",
+                    "▶ RUNNING",
                     THEME.read().unwrap().blue,
                     THEME.read().unwrap().blue_bg,
                 ),
                 "canceled" => (
-                    "CANCEL",
+                    "⊘ CANCEL",
                     THEME.read().unwrap().text_muted,
                     THEME.read().unwrap().inactive_bg,
                 ),
                 "pending" => (
-                    "PENDING",
+                    "◉ PENDING",
                     THEME.read().unwrap().yellow,
                     THEME.read().unwrap().yellow_bg,
                 ),
                 "skipped" => (
-                    "SKIP",
+                    "⏭ SKIP",
                     THEME.read().unwrap().text_muted,
                     THEME.read().unwrap().inactive_bg,
                 ),
                 "manual" => (
-                    "MANUAL",
+                    "✋ MANUAL",
                     THEME.read().unwrap().text_muted,
                     THEME.read().unwrap().inactive_bg,
                 ),
                 _ => (
-                    "UNKNOWN",
+                    "? UNKNOWN",
                     THEME.read().unwrap().text_muted,
                     THEME.read().unwrap().inactive_bg,
                 ),
@@ -1425,7 +1425,7 @@ pub(crate) fn render_tab_pipelines(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(" Details ")
+            .title(" 📄 Details ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -1535,7 +1535,7 @@ pub(crate) fn render_tab_jobs(
 ) {
     if app.jobs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading jobs...")
+            Paragraph::new("\n\n ⏳ Loading jobs...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1546,7 +1546,7 @@ pub(crate) fn render_tab_jobs(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1605,27 +1605,27 @@ pub(crate) fn render_tab_jobs(
 
                     let (st, sc, sbg) = match overall_status {
                         "success" => (
-                            "SUCCESS",
+                            "✔ SUCCESS",
                             THEME.read().unwrap().green,
                             THEME.read().unwrap().green_bg,
                         ),
                         "failed" => (
-                            "FAILED",
+                            "✘ FAILED",
                             THEME.read().unwrap().red,
                             THEME.read().unwrap().red_bg,
                         ),
                         "running" => (
-                            "RUNNING",
+                            "▶ RUNNING",
                             THEME.read().unwrap().blue,
                             THEME.read().unwrap().blue_bg,
                         ),
                         "pending" => (
-                            "PENDING",
+                            "◉ PENDING",
                             THEME.read().unwrap().yellow,
                             THEME.read().unwrap().yellow_bg,
                         ),
                         _ => (
-                            "SKIP",
+                            "⏭ SKIP",
                             THEME.read().unwrap().text_muted,
                             THEME.read().unwrap().inactive_bg,
                         ),
@@ -1643,42 +1643,42 @@ pub(crate) fn render_tab_jobs(
                 } else {
                     let (status_text, status_color, bg_color) = match j.status.as_str() {
                         "success" => (
-                            "SUCCESS",
+                            "✔ SUCCESS",
                             THEME.read().unwrap().green,
                             THEME.read().unwrap().green_bg,
                         ),
                         "failed" => (
-                            "FAILED",
+                            "✘ FAILED",
                             THEME.read().unwrap().red,
                             THEME.read().unwrap().red_bg,
                         ),
                         "running" => (
-                            "RUNNING",
+                            "▶ RUNNING",
                             THEME.read().unwrap().blue,
                             THEME.read().unwrap().blue_bg,
                         ),
                         "canceled" => (
-                            "CANCEL",
+                            "⊘ CANCEL",
                             THEME.read().unwrap().text_muted,
                             THEME.read().unwrap().inactive_bg,
                         ),
                         "pending" => (
-                            "PENDING",
+                            "◉ PENDING",
                             THEME.read().unwrap().yellow,
                             THEME.read().unwrap().yellow_bg,
                         ),
                         "skipped" => (
-                            "SKIP",
+                            "⏭ SKIP",
                             THEME.read().unwrap().text_muted,
                             THEME.read().unwrap().inactive_bg,
                         ),
                         "manual" => (
-                            "MANUAL",
+                            "✋ MANUAL",
                             THEME.read().unwrap().text_muted,
                             THEME.read().unwrap().inactive_bg,
                         ),
                         _ => (
-                            "UNKNOWN",
+                            "? UNKNOWN",
                             THEME.read().unwrap().text_muted,
                             THEME.read().unwrap().inactive_bg,
                         ),
@@ -1821,7 +1821,7 @@ pub(crate) fn render_tab_jobs(
         if app.job_trace_loading {
             let preview_block = Block::default()
                 .borders(Borders::ALL)
-                .title(" Details / Trace ")
+                .title(" 📄 Details / Trace ")
                 .title_style(
                     Style::default()
                         .fg(THEME.read().unwrap().text_muted)
@@ -1887,7 +1887,7 @@ pub(crate) fn render_tab_jobs(
         } else {
             let preview_block = Block::default()
                 .borders(Borders::ALL)
-                .title(" Details / Trace ")
+                .title(" 📄 Details / Trace ")
                 .title_style(
                     Style::default()
                         .fg(THEME.read().unwrap().text_muted)
@@ -1912,7 +1912,7 @@ pub(crate) fn render_tab_jobs(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1932,7 +1932,7 @@ pub(crate) fn render_tab_runners(
 ) {
     if app.runners.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading runners...")
+            Paragraph::new("\n\n ⏳ Loading runners...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1943,7 +1943,7 @@ pub(crate) fn render_tab_runners(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1973,22 +1973,22 @@ pub(crate) fn render_tab_runners(
             let is_row_highlighted = app.runners.state.selected() == Some(idx);
             let (status_text, status_color, bg_color) = match r.status.as_str() {
                 "online" => (
-                    "ONLINE",
+                    "● ONLINE",
                     THEME.read().unwrap().green,
                     THEME.read().unwrap().green_bg,
                 ),
                 "paused" => (
-                    "PAUSED",
+                    "⏸ PAUSED",
                     THEME.read().unwrap().yellow,
                     THEME.read().unwrap().yellow_bg,
                 ),
                 "offline" => (
-                    "OFFLINE",
+                    "● OFFLINE",
                     THEME.read().unwrap().red,
                     THEME.read().unwrap().red_bg,
                 ),
                 _ => (
-                    "UNKNOWN",
+                    "? UNKNOWN",
                     THEME.read().unwrap().text_muted,
                     THEME.read().unwrap().inactive_bg,
                 ),
@@ -2092,7 +2092,7 @@ pub(crate) fn render_tab_runners(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(" Performance Dashboard ")
+            .title(" 📊 Performance Dashboard ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2281,7 +2281,7 @@ pub(crate) fn render_tab_releases(
 ) {
     if app.releases.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading releases...")
+            Paragraph::new("\n\n ⏳ Loading releases...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2292,7 +2292,7 @@ pub(crate) fn render_tab_releases(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2448,7 +2448,7 @@ pub(crate) fn render_tab_releases(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(" Details ")
+            .title(" 📄 Details ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2572,7 +2572,7 @@ pub(crate) fn render_tab_todos(
 ) {
     if app.todos.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading todos...")
+            Paragraph::new("\n\n ⏳ Loading todos...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2583,7 +2583,7 @@ pub(crate) fn render_tab_todos(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2733,7 +2733,7 @@ pub(crate) fn render_tab_todos(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(" Details ")
+            .title(" 📄 Details ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2837,7 +2837,7 @@ pub(crate) fn render_tab_milestones(
 ) {
     if app.milestones.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading milestones...")
+            Paragraph::new("\n\n ⏳ Loading milestones...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2848,7 +2848,7 @@ pub(crate) fn render_tab_milestones(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Details ")
+                        .title(" 📄 Details ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -3046,7 +3046,7 @@ pub(crate) fn render_tab_milestones(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(" Milestone Details ")
+            .title(" 🎯 Milestone Details ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -3205,7 +3205,7 @@ pub(crate) fn render_tab_branches(
 ) {
     if app.branches.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading branches...")
+            Paragraph::new("\n\n ⏳ Loading branches...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -3312,7 +3312,7 @@ pub(crate) fn render_tab_branches(
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(" Branch Details ")
+                            .title(" 🌿 Branch Details ")
                             .border_style(Style::default().fg(THEME.read().unwrap().border)),
                     )
                     .style(Style::default().fg(THEME.read().unwrap().text_normal))
@@ -3334,7 +3334,7 @@ pub(crate) fn render_tab_environments(
 ) {
     if app.environments.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
-            Paragraph::new("\n\n Loading environments...")
+            Paragraph::new("\n\n ⏳ Loading environments...")
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -3455,7 +3455,7 @@ pub(crate) fn render_tab_environments(
                         .block(
                             Block::default()
                                 .borders(Borders::ALL)
-                                .title(" Environment Details ")
+                                .title(" 🌐 Environment Details ")
                                 .border_style(Style::default().fg(THEME.read().unwrap().border)),
                         )
                         .style(Style::default().fg(THEME.read().unwrap().text_normal))
@@ -3497,7 +3497,7 @@ pub(crate) fn render_tab_environments(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" Deployments ")
+                        .title(" 🚀 Deployments ")
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .row_highlight_style(highlight_style);

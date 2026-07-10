@@ -312,7 +312,40 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.confirm_popup = Some(crate::app::ConfirmAction::MergeMr(mr_iid));
+                            let is_github = app
+                                .gitlab_client
+                                .as_ref()
+                                .map(|c| c.is_github)
+                                .unwrap_or(false);
+                            let all_items = if is_github {
+                                vec![
+                                    "Squash".to_string(),
+                                    "Delete source branch".to_string(),
+                                    "Create merge commit".to_string(),
+                                    "Rebase and merge".to_string(),
+                                ]
+                            } else {
+                                vec!["Squash".to_string(), "Delete source branch".to_string()]
+                            };
+                            app.selector = Some(crate::app::Selector {
+                                title: format!(" Merge MR/PR #{} - Options ", mr_iid),
+                                all_items,
+                                selected_items: {
+                                    let mut s = std::collections::HashSet::new();
+                                    s.insert("Squash".to_string());
+                                    s.insert("Delete source branch".to_string());
+                                    s
+                                },
+                                cursor_idx: 0,
+                                search_query: String::new(),
+                                is_filtering: false,
+                                is_loading: false,
+                                entity_iid: mr_iid,
+                                entity_type: "mr".to_string(),
+                                field_type: "merge_options".to_string(),
+                                multi_select: true,
+                                state: ListState::default(),
+                            });
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.view_diff,

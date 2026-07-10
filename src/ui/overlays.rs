@@ -278,7 +278,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let has_filter = selector.field_type != "comment_action_select"
                 && selector.field_type != "review_submit_status"
-                && selector.field_type != "description_edit_choice";
+                && selector.field_type != "description_edit_choice"
+                && selector.field_type != "merge_options";
 
             let constraints = if has_filter {
                 vec![
@@ -773,7 +774,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.merge_mr)),
-                action: "Merge selected MR (squash + delete)",
+                action: "Merge selected MR (configure squash/delete)",
             },
             Shortcut {
                 category: "Merge Requests",

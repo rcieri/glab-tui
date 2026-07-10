@@ -264,6 +264,33 @@ impl Tab {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscussionContext {
+    Issue(u64),
+    MergeRequest(u64),
+}
+
+impl DiscussionContext {
+    pub fn label(&self, is_github: bool) -> String {
+        match self {
+            DiscussionContext::Issue(iid) => format!("Issue #{}", iid),
+            DiscussionContext::MergeRequest(iid) => {
+                if is_github {
+                    format!("PR #{}", iid)
+                } else {
+                    format!("MR !{}", iid)
+                }
+            }
+        }
+    }
+
+    pub fn iid(&self) -> u64 {
+        match self {
+            DiscussionContext::Issue(iid) | DiscussionContext::MergeRequest(iid) => *iid,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
@@ -1314,6 +1341,11 @@ pub struct App {
     pub branches: StatefulTable<crate::gitlab::branches::Branch>,
     pub environments: StatefulTable<crate::gitlab::deployments::Environment>,
     pub deployments: StatefulTable<crate::gitlab::deployments::Deployment>,
+    pub discussion_context: Option<DiscussionContext>,
+    pub issue_comments: std::collections::HashMap<u64, Vec<crate::gitlab::discussions::Discussion>>,
+    pub mr_comments: std::collections::HashMap<u64, Vec<crate::gitlab::discussions::Discussion>>,
+    pub fetching_issue_comments: Option<u64>,
+    pub fetching_mr_comments: Option<u64>,
     pub group_by_column: std::collections::HashMap<Tab, Option<String>>,
     pub group_ascending: std::collections::HashMap<Tab, bool>,
     pub group_list_state: ratatui::widgets::ListState,
@@ -1405,6 +1437,11 @@ impl Default for App {
             branches: StatefulTable::with_items(vec![]),
             environments: StatefulTable::with_items(vec![]),
             deployments: StatefulTable::with_items(vec![]),
+            discussion_context: None,
+            issue_comments: std::collections::HashMap::new(),
+            mr_comments: std::collections::HashMap::new(),
+            fetching_issue_comments: None,
+            fetching_mr_comments: None,
             group_by_column: std::collections::HashMap::new(),
             group_ascending: std::collections::HashMap::new(),
             group_list_state: ratatui::widgets::ListState::default(),

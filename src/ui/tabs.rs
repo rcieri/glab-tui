@@ -394,6 +394,40 @@ pub(crate) fn render_tab_issues(
                     }
                 }
 
+                // Render issue comments inline
+                if let Some(comments) = app.issue_comments.get(&issue.iid) {
+                    if !comments.is_empty() {
+                        text.push(Line::from(""));
+                        text.push(Line::from(vec![Span::styled(
+                            format!("Comments ({} threads):", comments.len()),
+                            Style::default()
+                                .fg(THEME.read().unwrap().header_fg)
+                                .add_modifier(Modifier::BOLD),
+                        )]));
+                        for discussion in comments {
+                            for note in &discussion.notes {
+                                if note.system {
+                                    continue;
+                                }
+                                text.push(Line::from(vec![
+                                    Span::styled(
+                                        format!("@{}", note.author.username),
+                                        Style::default()
+                                            .fg(THEME.read().unwrap().blue)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(
+                                        format!("  {}", time_ago(&note.created_at)),
+                                        Style::default().fg(THEME.read().unwrap().text_muted),
+                                    ),
+                                ]));
+                                text.extend(render_markdown(&note.body));
+                                text.push(Line::from(""));
+                            }
+                        }
+                    }
+                }
+
                 let viewport_height = detail_rect.height.saturating_sub(2) as usize;
                 let content_length = text.len();
                 let max_scroll = content_length.saturating_sub(viewport_height) as u16;
@@ -1167,6 +1201,40 @@ pub(crate) fn render_tab_merge_requests(
                                 .add_modifier(Modifier::BOLD),
                         )]));
                         text.extend(render_markdown(desc));
+                    }
+                }
+
+                // Render MR comments inline
+                if let Some(comments) = app.mr_comments.get(&mr.iid) {
+                    if !comments.is_empty() {
+                        text.push(Line::from(""));
+                        text.push(Line::from(vec![Span::styled(
+                            format!("Comments ({} threads):", comments.len()),
+                            Style::default()
+                                .fg(THEME.read().unwrap().header_fg)
+                                .add_modifier(Modifier::BOLD),
+                        )]));
+                        for discussion in comments {
+                            for note in &discussion.notes {
+                                if note.system {
+                                    continue;
+                                }
+                                text.push(Line::from(vec![
+                                    Span::styled(
+                                        format!("@{}", note.author.username),
+                                        Style::default()
+                                            .fg(THEME.read().unwrap().blue)
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(
+                                        format!("  {}", time_ago(&note.created_at)),
+                                        Style::default().fg(THEME.read().unwrap().text_muted),
+                                    ),
+                                ]));
+                                text.extend(render_markdown(&note.body));
+                                text.push(Line::from(""));
+                            }
+                        }
                     }
                 }
 

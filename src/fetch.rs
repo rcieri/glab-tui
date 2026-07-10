@@ -203,3 +203,62 @@ pub fn spawn_refresh_active_tab(
         }
     });
 }
+
+/// Fetch comments for the currently selected item if the detail pane is open.
+/// Called on tab refresh (every ~60s) and when the detail pane is first opened.
+pub fn spawn_comment_refresh(
+    app: &mut crate::app::App,
+    client: &gitlab::client::GitlabClient,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    match app.active_tab {
+        app::Tab::Issues => {
+            if let Some(idx) = app.issues.state.selected() {
+                if let Some(issue) = app.filtered_issues().get(idx) {
+                    let iid = issue.iid;
+                    if !app.issue_comments.contains_key(&iid)
+                        && app.fetching_issue_comments != Some(iid)
+                    {
+                        app.fetching_issue_comments = Some(iid);
+                        let client = client.clone();
+                        let project_context = app.project_context.clone();
+                        tokio::spawn(async move {
+                            let discussions = gitlab::discussions::list_issue_discussions(
+                                &client,
+                                &project_context,
+                                iid,
+                            )
+                            .await
+                            .unwrap_or_default();
+                            let _ = tx.send(Event::IssueCommentsFetched { iid, discussions });
+                        });
+                    }
+                }
+            }
+        }
+        app::Tab::MergeRequests => {
+            if let Some(idx) = app.mrs.state.selected() {
+                if let Some(mr) = app.filtered_mrs().get(idx) {
+                    let iid = mr.iid;
+                    if !app.mr_comments.contains_key(&iid) && app.fetching_mr_comments != Some(iid)
+                    {
+                        app.fetching_mr_comments = Some(iid);
+                        let client = client.clone();
+                        let project_context = app.project_context.clone();
+                        tokio::spawn(async move {
+                            let discussions = gitlab::discussions::list_mr_discussions(
+                                &client,
+                                &project_context,
+                                iid,
+                            )
+                            .await
+                            .unwrap_or_default();
+                            let _ = tx.send(Event::MrCommentsFetched { iid, discussions });
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}

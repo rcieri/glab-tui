@@ -747,6 +747,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Issues",
+                key: d(format!("{}", app.config.keybindings.issues.reply_comment)),
+                action: "Reply to issue (open $EDITOR)",
+            },
+            Shortcut {
+                category: "Issues",
+                key: d(format!("{}", app.config.keybindings.issues.resolve_comment)),
+                action: "Toggle resolve discussion",
+            },
+            Shortcut {
+                category: "Issues",
                 key: s("o"),
                 action: "Open selected Issue in browser",
             },
@@ -789,6 +799,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 category: "Merge Requests",
                 key: s("r"),
                 action: "Reopen selected MR",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.reply_comment)),
+                action: "Reply to MR (open $EDITOR)",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.resolve_comment)),
+                action: "Toggle resolve discussion",
             },
             Shortcut {
                 category: "Merge Requests",

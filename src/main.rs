@@ -18,6 +18,7 @@ mod templates;
 mod ui;
 pub mod utils;
 
+use crate::fetch::spawn_comment_refresh;
 use anyhow::Result;
 use app::{App, SaveMenu};
 use crossterm::{
@@ -609,6 +610,11 @@ async fn main() -> Result<()> {
                                     app.active_tab,
                                     events.sender(),
                                 );
+
+                                // Also refresh comments if the detail pane is open
+                                if app.detail_visible {
+                                    spawn_comment_refresh(&mut app, &client, events.sender());
+                                }
                             }
                         }
                         last_refresh = std::time::Instant::now();
@@ -887,6 +893,16 @@ async fn main() -> Result<()> {
                     app.deployments.state.select(Some(0));
                     app.status_message = None;
                     app.update_filter_selection();
+                }
+                Event::IssueCommentsFetched { iid, discussions } => {
+                    app.issue_comments.insert(iid, discussions);
+                    app.fetching_issue_comments = None;
+                    app.discussion_context = Some(crate::app::DiscussionContext::Issue(iid));
+                }
+                Event::MrCommentsFetched { iid, discussions } => {
+                    app.mr_comments.insert(iid, discussions);
+                    app.fetching_mr_comments = None;
+                    app.discussion_context = Some(crate::app::DiscussionContext::MergeRequest(iid));
                 }
                 Event::FetchFailed(tab, err_msg) => {
                     app.complete_loading_tab(tab, &format!("Failed: {}", err_msg));

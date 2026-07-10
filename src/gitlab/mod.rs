@@ -1,6 +1,7 @@
 pub mod branches;
 pub mod client;
 pub mod deployments;
+pub mod discussions;
 pub mod issues;
 pub mod milestones;
 pub mod mr;

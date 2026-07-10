@@ -287,6 +287,10 @@ pub struct KeybindingIssues {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
+    #[serde(default)]
+    pub reply_comment: String,
+    #[serde(default)]
+    pub resolve_comment: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,6 +311,10 @@ pub struct KeybindingMrs {
     pub close_entity: String,
     #[serde(default)]
     pub reopen_entity: String,
+    #[serde(default)]
+    pub reply_comment: String,
+    #[serde(default)]
+    pub resolve_comment: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -488,6 +496,8 @@ keybind_defaults! {
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
+    def_reply_comment = "R",
+    def_resolve_comment = "x",
 }
 
 impl Default for KeybindingGlobal {
@@ -515,6 +525,8 @@ impl Default for KeybindingIssues {
             edit_entity: def_edit_entity(),
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
+            reply_comment: def_reply_comment(),
+            resolve_comment: def_resolve_comment(),
         }
     }
 }
@@ -530,6 +542,8 @@ impl Default for KeybindingMrs {
             edit_entity: def_edit_entity(),
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
+            reply_comment: def_reply_comment(),
+            resolve_comment: def_resolve_comment(),
         }
     }
 }

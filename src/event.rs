@@ -49,6 +49,14 @@ pub enum Event {
     BranchesFetched(Vec<crate::gitlab::branches::Branch>),
     EnvironmentsFetched(Vec<crate::gitlab::deployments::Environment>),
     DeploymentsFetched(Vec<crate::gitlab::deployments::Deployment>),
+    IssueCommentsFetched {
+        iid: u64,
+        discussions: Vec<crate::gitlab::discussions::Discussion>,
+    },
+    MrCommentsFetched {
+        iid: u64,
+        discussions: Vec<crate::gitlab::discussions::Discussion>,
+    },
 }
 
 #[derive(Debug)]

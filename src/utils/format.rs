@@ -1,5 +1,6 @@
+use crate::config::THEME;
 use chrono::{DateTime, Utc};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 pub fn truncate(s: &str, max_chars: usize) -> String {
@@ -147,7 +148,7 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
             lines.push(Line::from(vec![Span::styled(
                 format!("# {}", content),
                 Style::default()
-                    .fg(Color::Rgb(187, 153, 238))
+                    .fg(THEME.read().unwrap().markdown_h1)
                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             )]));
         } else if trimmed.starts_with("## ") {
@@ -155,7 +156,7 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
             lines.push(Line::from(vec![Span::styled(
                 format!("## {}", content),
                 Style::default()
-                    .fg(Color::Rgb(97, 175, 239))
+                    .fg(THEME.read().unwrap().markdown_h2)
                     .add_modifier(Modifier::BOLD),
             )]));
         } else if trimmed.starts_with("### ") {
@@ -163,7 +164,7 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
             lines.push(Line::from(vec![Span::styled(
                 format!("### {}", content),
                 Style::default()
-                    .fg(Color::Rgb(152, 195, 121))
+                    .fg(THEME.read().unwrap().markdown_h3)
                     .add_modifier(Modifier::BOLD),
             )]));
         } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
@@ -175,7 +176,7 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
             let mut spans = vec![Span::styled(
                 "  • ",
                 Style::default()
-                    .fg(Color::Rgb(187, 153, 238))
+                    .fg(THEME.read().unwrap().markdown_bullet)
                     .add_modifier(Modifier::BOLD),
             )];
             spans.extend(parse_inline_styles(content));
@@ -184,7 +185,7 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
             let content = trimmed.strip_prefix("> ").unwrap_or(trimmed);
             let mut spans = vec![Span::styled(
                 "  ▌ ",
-                Style::default().fg(Color::Rgb(127, 132, 142)),
+                Style::default().fg(THEME.read().unwrap().markdown_quote),
             )];
             spans.extend(parse_inline_styles(content));
             lines.push(Line::from(spans));
@@ -206,7 +207,7 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
             if !current_segment.is_empty() {
                 spans.push(Span::styled(
                     current_segment.clone(),
-                    Style::default().fg(Color::Rgb(171, 178, 191)),
+                    Style::default().fg(THEME.read().unwrap().text_normal),
                 ));
                 current_segment.clear();
             }
@@ -216,11 +217,12 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
                 code.push(chars[i]);
                 i += 1;
             }
+            let theme = THEME.read().unwrap();
             spans.push(Span::styled(
                 code,
                 Style::default()
-                    .fg(Color::Rgb(224, 108, 117))
-                    .bg(Color::Rgb(40, 44, 52)),
+                    .fg(theme.markdown_code_fg)
+                    .bg(theme.markdown_code_bg),
             ));
             if i < chars.len() {
                 i += 1;
@@ -229,7 +231,7 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
             if !current_segment.is_empty() {
                 spans.push(Span::styled(
                     current_segment.clone(),
-                    Style::default().fg(Color::Rgb(171, 178, 191)),
+                    Style::default().fg(THEME.read().unwrap().text_normal),
                 ));
                 current_segment.clear();
             }
@@ -245,10 +247,11 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
                 bold_text.push(chars[i]);
                 i += 1;
             }
+            let theme = THEME.read().unwrap();
             spans.push(Span::styled(
                 bold_text,
                 Style::default()
-                    .fg(Color::Rgb(220, 223, 228))
+                    .fg(theme.markdown_bold)
                     .add_modifier(Modifier::BOLD),
             ));
             if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
@@ -263,7 +266,7 @@ fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
     if !current_segment.is_empty() {
         spans.push(Span::styled(
             current_segment,
-            Style::default().fg(Color::Rgb(171, 178, 191)),
+            Style::default().fg(THEME.read().unwrap().text_normal),
         ));
     }
 

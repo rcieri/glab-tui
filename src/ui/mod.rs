@@ -553,7 +553,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .zip(updated_diff_view.selection_end)
                     .map_or(false, |(s, e)| idx >= s && idx <= e);
 
-                let gutter_bg = Color::Rgb(22, 22, 26);
+                let gutter_bg = THEME.read().unwrap().gutter_bg;
                 let marker_style = Style::default()
                     .fg(THEME.read().unwrap().yellow)
                     .add_modifier(Modifier::BOLD)
@@ -561,10 +561,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 let num_style = Style::default()
                     .fg(THEME.read().unwrap().text_muted)
                     .bg(gutter_bg);
-                let sep_style = Style::default().fg(Color::Rgb(60, 60, 68)).bg(gutter_bg);
+                let sep_style = Style::default()
+                    .fg(THEME.read().unwrap().separator_fg)
+                    .bg(gutter_bg);
 
                 let sel_bg = if in_selection {
-                    Some(Color::Rgb(30, 50, 80))
+                    Some(THEME.read().unwrap().selection_bg)
                 } else {
                     None
                 };
@@ -594,9 +596,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                     match line.line_type {
                         crate::app::DiffLineType::Deletion => {
-                            let code_fg = Color::Rgb(220, 140, 140);
-                            let code_bg = Color::Rgb(55, 22, 28);
-                            let prefix_fg = Color::Rgb(255, 100, 100);
+                            let theme = THEME.read().unwrap();
+                            let code_fg = theme.diff_del_fg;
+                            let code_bg = theme.diff_del_bg;
+                            let prefix_fg = theme.diff_del_prefix;
                             let actual_bg = sel_bg.unwrap_or(code_bg);
 
                             let prefix = line
@@ -777,9 +780,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                     match line.line_type {
                         crate::app::DiffLineType::Addition => {
-                            let code_fg = Color::Rgb(140, 220, 140);
-                            let code_bg = Color::Rgb(22, 48, 28);
-                            let prefix_fg = Color::Rgb(80, 220, 80);
+                            let theme = THEME.read().unwrap();
+                            let code_fg = theme.diff_add_fg;
+                            let code_bg = theme.diff_add_bg;
+                            let prefix_fg = theme.diff_add_prefix;
                             let actual_bg = sel_bg.unwrap_or(code_bg);
 
                             let prefix = line
@@ -961,7 +965,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 for comment in matching_comments {
                     let comment_style = Style::default()
                         .fg(THEME.read().unwrap().yellow)
-                        .bg(Color::Rgb(45, 45, 20));
+                        .bg(THEME.read().unwrap().draft_comment_bg);
 
                     let range_info = match (comment.end_line_num, comment.end_old_line_num) {
                         (Some(end_l), _) if end_l != comment.line_num.unwrap_or(0) => {
@@ -1048,7 +1052,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 for comment in matching_current {
                     let comment_style = Style::default()
                         .fg(THEME.read().unwrap().blue)
-                        .bg(Color::Rgb(20, 30, 45));
+                        .bg(THEME.read().unwrap().comment_bg);
 
                     let prefix_style = Style::default()
                         .fg(THEME.read().unwrap().blue)
@@ -1131,7 +1135,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| " ".to_string());
 
-                let gutter_bg = Color::Rgb(22, 22, 26);
+                let gutter_bg = THEME.read().unwrap().gutter_bg;
 
                 let marker_style = Style::default()
                     .fg(THEME.read().unwrap().yellow)
@@ -1142,7 +1146,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .fg(THEME.read().unwrap().text_muted)
                     .bg(gutter_bg);
 
-                let sep_style = Style::default().fg(Color::Rgb(60, 60, 68)).bg(gutter_bg);
+                let sep_style = Style::default()
+                    .fg(THEME.read().unwrap().separator_fg)
+                    .bg(gutter_bg);
 
                 let mut line_spans = vec![
                     Span::styled(
@@ -1161,28 +1167,29 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 ];
 
                 let sel_bg = if in_selection {
-                    Some(Color::Rgb(30, 50, 80))
+                    Some(THEME.read().unwrap().selection_bg)
                 } else {
                     None
                 };
 
                 match line.line_type {
                     crate::app::DiffLineType::Addition | crate::app::DiffLineType::Deletion => {
+                        let theme = THEME.read().unwrap();
                         let is_add = line.line_type == crate::app::DiffLineType::Addition;
                         let code_fg = if is_add {
-                            Color::Rgb(140, 220, 140)
+                            theme.diff_add_fg
                         } else {
-                            Color::Rgb(220, 140, 140)
+                            theme.diff_del_fg
                         };
                         let code_bg = if is_add {
-                            Color::Rgb(22, 48, 28)
+                            theme.diff_add_bg
                         } else {
-                            Color::Rgb(55, 22, 28)
+                            theme.diff_del_bg
                         };
                         let prefix_fg = if is_add {
-                            Color::Rgb(80, 220, 80)
+                            theme.diff_add_prefix
                         } else {
-                            Color::Rgb(255, 100, 100)
+                            theme.diff_del_prefix
                         };
 
                         let actual_bg = sel_bg.unwrap_or(code_bg);
@@ -1341,7 +1348,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 for comment in matching_comments {
                     let comment_style = Style::default()
                         .fg(THEME.read().unwrap().yellow)
-                        .bg(Color::Rgb(45, 45, 20));
+                        .bg(THEME.read().unwrap().draft_comment_bg);
 
                     let range_info = match (comment.end_line_num, comment.end_old_line_num) {
                         (Some(end_l), _) if end_l != comment.line_num.unwrap_or(0) => {
@@ -1408,7 +1415,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 for comment in matching_current {
                     let comment_style = Style::default()
                         .fg(THEME.read().unwrap().blue)
-                        .bg(Color::Rgb(20, 30, 45));
+                        .bg(THEME.read().unwrap().comment_bg);
 
                     let prefix_style = Style::default()
                         .fg(THEME.read().unwrap().blue)
@@ -1490,7 +1497,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .map(|_| {
                     Line::from(Span::styled(
                         "│",
-                        Style::default().fg(Color::Rgb(60, 60, 68)),
+                        Style::default().fg(THEME.read().unwrap().separator_fg),
                     ))
                 })
                 .collect();

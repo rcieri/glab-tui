@@ -1,8 +1,11 @@
 use crate::config::THEME;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
 };
+
+#[cfg(test)]
+use ratatui::style::Color;
 
 pub(crate) fn format_comment_with_suggestions(
     body: &str,
@@ -83,9 +86,10 @@ pub(crate) fn format_comment_with_suggestions(
 
             // Print original code as DELETIONS (red)
             for orig in &original_lines {
-                let code_fg = Color::Rgb(220, 140, 140);
-                let code_bg = Color::Rgb(55, 22, 28);
-                let prefix_fg = Color::Rgb(255, 100, 100);
+                let theme = THEME.read().unwrap();
+                let code_fg = theme.diff_del_fg;
+                let code_bg = theme.diff_del_bg;
+                let prefix_fg = theme.diff_del_prefix;
 
                 let mut spans = vec![(
                     Style::default()
@@ -134,9 +138,10 @@ pub(crate) fn format_comment_with_suggestions(
             ));
         } else if in_suggestion {
             // Print suggested code as ADDITIONS (green)
-            let code_fg = Color::Rgb(140, 220, 140);
-            let code_bg = Color::Rgb(22, 48, 28);
-            let prefix_fg = Color::Rgb(80, 220, 80);
+            let theme = THEME.read().unwrap();
+            let code_fg = theme.diff_add_fg;
+            let code_bg = theme.diff_add_bg;
+            let prefix_fg = theme.diff_add_prefix;
 
             let mut spans = vec![(
                 Style::default()

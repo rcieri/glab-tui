@@ -62,17 +62,18 @@ pub(crate) fn get_label_color(label: &str) -> Color {
     for c in label.bytes() {
         hash = ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32);
     }
+    let t = THEME.read().unwrap();
     let colors = [
-        Color::Rgb(168, 122, 243), // purple
-        Color::Rgb(61, 139, 255),  // blue
-        Color::Rgb(49, 191, 103),  // green
-        Color::Rgb(235, 180, 50),  // yellow
-        Color::Rgb(224, 73, 83),   // red
-        Color::Rgb(240, 140, 180), // pink
-        Color::Rgb(250, 120, 80),  // orange
-        Color::Rgb(40, 200, 200),  // cyan
-        Color::Rgb(180, 230, 40),  // lime
-        Color::Rgb(220, 160, 255), // light violet
+        t.purple,
+        t.blue,
+        t.green,
+        t.yellow,
+        t.red,
+        t.label_pink,
+        t.label_orange,
+        t.label_cyan,
+        t.label_lime,
+        t.label_light_violet,
     ];
     let idx = (hash % (colors.len() as u32)) as usize;
     colors[idx]

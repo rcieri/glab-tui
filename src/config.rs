@@ -26,6 +26,30 @@ pub struct Theme {
     pub yellow_bg: Color,
     pub purple: Color,
     pub purple_bg: Color,
+    pub gutter_bg: Color,
+    pub separator_fg: Color,
+    pub selection_bg: Color,
+    pub diff_del_fg: Color,
+    pub diff_del_bg: Color,
+    pub diff_del_prefix: Color,
+    pub diff_add_fg: Color,
+    pub diff_add_bg: Color,
+    pub diff_add_prefix: Color,
+    pub draft_comment_bg: Color,
+    pub comment_bg: Color,
+    pub label_pink: Color,
+    pub label_orange: Color,
+    pub label_cyan: Color,
+    pub label_lime: Color,
+    pub label_light_violet: Color,
+    pub markdown_h1: Color,
+    pub markdown_h2: Color,
+    pub markdown_h3: Color,
+    pub markdown_bullet: Color,
+    pub markdown_quote: Color,
+    pub markdown_code_fg: Color,
+    pub markdown_code_bg: Color,
+    pub markdown_bold: Color,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +99,127 @@ struct ThemeToml {
     yellow_bg: String,
     purple: String,
     purple_bg: String,
+    #[serde(default = "def_gutter_bg")]
+    gutter_bg: String,
+    #[serde(default = "def_separator_fg")]
+    separator_fg: String,
+    #[serde(default = "def_selection_bg")]
+    selection_bg: String,
+    #[serde(default = "def_diff_del_fg")]
+    diff_del_fg: String,
+    #[serde(default = "def_diff_del_bg")]
+    diff_del_bg: String,
+    #[serde(default = "def_diff_del_prefix")]
+    diff_del_prefix: String,
+    #[serde(default = "def_diff_add_fg")]
+    diff_add_fg: String,
+    #[serde(default = "def_diff_add_bg")]
+    diff_add_bg: String,
+    #[serde(default = "def_diff_add_prefix")]
+    diff_add_prefix: String,
+    #[serde(default = "def_draft_comment_bg")]
+    draft_comment_bg: String,
+    #[serde(default = "def_comment_bg")]
+    comment_bg: String,
+    #[serde(default = "def_label_pink")]
+    label_pink: String,
+    #[serde(default = "def_label_orange")]
+    label_orange: String,
+    #[serde(default = "def_label_cyan")]
+    label_cyan: String,
+    #[serde(default = "def_label_lime")]
+    label_lime: String,
+    #[serde(default = "def_label_light_violet")]
+    label_light_violet: String,
+    #[serde(default = "def_markdown_h1")]
+    markdown_h1: String,
+    #[serde(default = "def_markdown_h2")]
+    markdown_h2: String,
+    #[serde(default = "def_markdown_h3")]
+    markdown_h3: String,
+    #[serde(default = "def_markdown_bullet")]
+    markdown_bullet: String,
+    #[serde(default = "def_markdown_quote")]
+    markdown_quote: String,
+    #[serde(default = "def_markdown_code_fg")]
+    markdown_code_fg: String,
+    #[serde(default = "def_markdown_code_bg")]
+    markdown_code_bg: String,
+    #[serde(default = "def_markdown_bold")]
+    markdown_bold: String,
+}
+
+fn def_gutter_bg() -> String {
+    "#16161a".to_string()
+}
+fn def_separator_fg() -> String {
+    "#3c3c44".to_string()
+}
+fn def_selection_bg() -> String {
+    "#1e3250".to_string()
+}
+fn def_diff_del_fg() -> String {
+    "#dc8c8c".to_string()
+}
+fn def_diff_del_bg() -> String {
+    "#37161c".to_string()
+}
+fn def_diff_del_prefix() -> String {
+    "#ff6464".to_string()
+}
+fn def_diff_add_fg() -> String {
+    "#8cdc8c".to_string()
+}
+fn def_diff_add_bg() -> String {
+    "#16301c".to_string()
+}
+fn def_diff_add_prefix() -> String {
+    "#50dc50".to_string()
+}
+fn def_draft_comment_bg() -> String {
+    "#2d2d14".to_string()
+}
+fn def_comment_bg() -> String {
+    "#141e2d".to_string()
+}
+fn def_label_pink() -> String {
+    "#f08cb4".to_string()
+}
+fn def_label_orange() -> String {
+    "#fa7850".to_string()
+}
+fn def_label_cyan() -> String {
+    "#28c8c8".to_string()
+}
+fn def_label_lime() -> String {
+    "#b4e628".to_string()
+}
+fn def_label_light_violet() -> String {
+    "#dca0ff".to_string()
+}
+fn def_markdown_h1() -> String {
+    "#bb99ee".to_string()
+}
+fn def_markdown_h2() -> String {
+    "#61afef".to_string()
+}
+fn def_markdown_h3() -> String {
+    "#98c379".to_string()
+}
+fn def_markdown_bullet() -> String {
+    "#bb99ee".to_string()
+}
+fn def_markdown_quote() -> String {
+    "#7f848e".to_string()
+}
+fn def_markdown_code_fg() -> String {
+    "#e06c75".to_string()
+}
+fn def_markdown_code_bg() -> String {
+    "#282c34".to_string()
+}
+fn def_markdown_bold() -> String {
+    "#dcdfe4".to_string()
 }
 
 impl ThemeToml {
@@ -99,6 +244,36 @@ impl ThemeToml {
             yellow_bg: hex_to_color(&self.yellow_bg)?,
             purple: hex_to_color(&self.purple)?,
             purple_bg: hex_to_color(&self.purple_bg)?,
+            gutter_bg: hex_to_color(&self.gutter_bg).unwrap_or(Color::Rgb(22, 22, 26)),
+            separator_fg: hex_to_color(&self.separator_fg).unwrap_or(Color::Rgb(60, 60, 68)),
+            selection_bg: hex_to_color(&self.selection_bg).unwrap_or(Color::Rgb(30, 50, 80)),
+            diff_del_fg: hex_to_color(&self.diff_del_fg).unwrap_or(Color::Rgb(220, 140, 140)),
+            diff_del_bg: hex_to_color(&self.diff_del_bg).unwrap_or(Color::Rgb(55, 22, 28)),
+            diff_del_prefix: hex_to_color(&self.diff_del_prefix)
+                .unwrap_or(Color::Rgb(255, 100, 100)),
+            diff_add_fg: hex_to_color(&self.diff_add_fg).unwrap_or(Color::Rgb(140, 220, 140)),
+            diff_add_bg: hex_to_color(&self.diff_add_bg).unwrap_or(Color::Rgb(22, 48, 28)),
+            diff_add_prefix: hex_to_color(&self.diff_add_prefix).unwrap_or(Color::Rgb(80, 220, 80)),
+            draft_comment_bg: hex_to_color(&self.draft_comment_bg)
+                .unwrap_or(Color::Rgb(45, 45, 20)),
+            comment_bg: hex_to_color(&self.comment_bg).unwrap_or(Color::Rgb(20, 30, 45)),
+            label_pink: hex_to_color(&self.label_pink).unwrap_or(Color::Rgb(240, 140, 180)),
+            label_orange: hex_to_color(&self.label_orange).unwrap_or(Color::Rgb(250, 120, 80)),
+            label_cyan: hex_to_color(&self.label_cyan).unwrap_or(Color::Rgb(40, 200, 200)),
+            label_lime: hex_to_color(&self.label_lime).unwrap_or(Color::Rgb(180, 230, 40)),
+            label_light_violet: hex_to_color(&self.label_light_violet)
+                .unwrap_or(Color::Rgb(220, 160, 255)),
+            markdown_h1: hex_to_color(&self.markdown_h1).unwrap_or(Color::Rgb(187, 153, 238)),
+            markdown_h2: hex_to_color(&self.markdown_h2).unwrap_or(Color::Rgb(97, 175, 239)),
+            markdown_h3: hex_to_color(&self.markdown_h3).unwrap_or(Color::Rgb(152, 195, 121)),
+            markdown_bullet: hex_to_color(&self.markdown_bullet)
+                .unwrap_or(Color::Rgb(187, 153, 238)),
+            markdown_quote: hex_to_color(&self.markdown_quote).unwrap_or(Color::Rgb(127, 132, 142)),
+            markdown_code_fg: hex_to_color(&self.markdown_code_fg)
+                .unwrap_or(Color::Rgb(224, 108, 117)),
+            markdown_code_bg: hex_to_color(&self.markdown_code_bg)
+                .unwrap_or(Color::Rgb(40, 44, 52)),
+            markdown_bold: hex_to_color(&self.markdown_bold).unwrap_or(Color::Rgb(220, 223, 228)),
         })
     }
 }
@@ -174,6 +349,30 @@ impl Theme {
             yellow_bg:        Color::Rgb(45, 35, 15),
             purple:           Color::Rgb(168, 122, 243),
             purple_bg:        Color::Rgb(38, 25, 55),
+            gutter_bg:        Color::Rgb(22, 22, 26),
+            separator_fg:     Color::Rgb(60, 60, 68),
+            selection_bg:     Color::Rgb(30, 50, 80),
+            diff_del_fg:      Color::Rgb(220, 140, 140),
+            diff_del_bg:      Color::Rgb(55, 22, 28),
+            diff_del_prefix:  Color::Rgb(255, 100, 100),
+            diff_add_fg:      Color::Rgb(140, 220, 140),
+            diff_add_bg:      Color::Rgb(22, 48, 28),
+            diff_add_prefix:  Color::Rgb(80, 220, 80),
+            draft_comment_bg: Color::Rgb(45, 45, 20),
+            comment_bg:       Color::Rgb(20, 30, 45),
+            label_pink:       Color::Rgb(240, 140, 180),
+            label_orange:     Color::Rgb(250, 120, 80),
+            label_cyan:       Color::Rgb(40, 200, 200),
+            label_lime:       Color::Rgb(180, 230, 40),
+            label_light_violet: Color::Rgb(220, 160, 255),
+            markdown_h1:      Color::Rgb(187, 153, 238),
+            markdown_h2:      Color::Rgb(97, 175, 239),
+            markdown_h3:      Color::Rgb(152, 195, 121),
+            markdown_bullet:  Color::Rgb(187, 153, 238),
+            markdown_quote:   Color::Rgb(127, 132, 142),
+            markdown_code_fg: Color::Rgb(224, 108, 117),
+            markdown_code_bg: Color::Rgb(40, 44, 52),
+            markdown_bold:    Color::Rgb(220, 223, 228),
         }
     }
 
@@ -225,6 +424,30 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.yellow_bg, &overrides.yellow_bg);
     apply_color(&mut base.purple, &overrides.purple);
     apply_color(&mut base.purple_bg, &overrides.purple_bg);
+    apply_color(&mut base.gutter_bg, &overrides.gutter_bg);
+    apply_color(&mut base.separator_fg, &overrides.separator_fg);
+    apply_color(&mut base.selection_bg, &overrides.selection_bg);
+    apply_color(&mut base.diff_del_fg, &overrides.diff_del_fg);
+    apply_color(&mut base.diff_del_bg, &overrides.diff_del_bg);
+    apply_color(&mut base.diff_del_prefix, &overrides.diff_del_prefix);
+    apply_color(&mut base.diff_add_fg, &overrides.diff_add_fg);
+    apply_color(&mut base.diff_add_bg, &overrides.diff_add_bg);
+    apply_color(&mut base.diff_add_prefix, &overrides.diff_add_prefix);
+    apply_color(&mut base.draft_comment_bg, &overrides.draft_comment_bg);
+    apply_color(&mut base.comment_bg, &overrides.comment_bg);
+    apply_color(&mut base.label_pink, &overrides.label_pink);
+    apply_color(&mut base.label_orange, &overrides.label_orange);
+    apply_color(&mut base.label_cyan, &overrides.label_cyan);
+    apply_color(&mut base.label_lime, &overrides.label_lime);
+    apply_color(&mut base.label_light_violet, &overrides.label_light_violet);
+    apply_color(&mut base.markdown_h1, &overrides.markdown_h1);
+    apply_color(&mut base.markdown_h2, &overrides.markdown_h2);
+    apply_color(&mut base.markdown_h3, &overrides.markdown_h3);
+    apply_color(&mut base.markdown_bullet, &overrides.markdown_bullet);
+    apply_color(&mut base.markdown_quote, &overrides.markdown_quote);
+    apply_color(&mut base.markdown_code_fg, &overrides.markdown_code_fg);
+    apply_color(&mut base.markdown_code_bg, &overrides.markdown_code_bg);
+    apply_color(&mut base.markdown_bold, &overrides.markdown_bold);
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -249,6 +472,30 @@ pub struct ThemeOverrides {
     yellow_bg: Option<String>,
     purple: Option<String>,
     purple_bg: Option<String>,
+    gutter_bg: Option<String>,
+    separator_fg: Option<String>,
+    selection_bg: Option<String>,
+    diff_del_fg: Option<String>,
+    diff_del_bg: Option<String>,
+    diff_del_prefix: Option<String>,
+    diff_add_fg: Option<String>,
+    diff_add_bg: Option<String>,
+    diff_add_prefix: Option<String>,
+    draft_comment_bg: Option<String>,
+    comment_bg: Option<String>,
+    label_pink: Option<String>,
+    label_orange: Option<String>,
+    label_cyan: Option<String>,
+    label_lime: Option<String>,
+    label_light_violet: Option<String>,
+    markdown_h1: Option<String>,
+    markdown_h2: Option<String>,
+    markdown_h3: Option<String>,
+    markdown_bullet: Option<String>,
+    markdown_quote: Option<String>,
+    markdown_code_fg: Option<String>,
+    markdown_code_bg: Option<String>,
+    markdown_bold: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -763,6 +1010,30 @@ page_size = 100
 # yellow_bg = "{yellow_bg}"
 # purple = "{purple}"
 # purple_bg = "{purple_bg}"
+# gutter_bg = "{gutter_bg}"
+# separator_fg = "{separator_fg}"
+# selection_bg = "{selection_bg}"
+# diff_del_fg = "{diff_del_fg}"
+# diff_del_bg = "{diff_del_bg}"
+# diff_del_prefix = "{diff_del_prefix}"
+# diff_add_fg = "{diff_add_fg}"
+# diff_add_bg = "{diff_add_bg}"
+# diff_add_prefix = "{diff_add_prefix}"
+# draft_comment_bg = "{draft_comment_bg}"
+# comment_bg = "{comment_bg}"
+# label_pink = "{label_pink}"
+# label_orange = "{label_orange}"
+# label_cyan = "{label_cyan}"
+# label_lime = "{label_lime}"
+# label_light_violet = "{label_light_violet}"
+# markdown_h1 = "{markdown_h1}"
+# markdown_h2 = "{markdown_h2}"
+# markdown_h3 = "{markdown_h3}"
+# markdown_bullet = "{markdown_bullet}"
+# markdown_quote = "{markdown_quote}"
+# markdown_code_fg = "{markdown_code_fg}"
+# markdown_code_bg = "{markdown_code_bg}"
+# markdown_bold = "{markdown_bold}"
 
 [keybindings.global]
 quit = "q"
@@ -876,6 +1147,30 @@ view_deployments = "Enter"
             yellow_bg = color_to_hex(theme.yellow_bg),
             purple = color_to_hex(theme.purple),
             purple_bg = color_to_hex(theme.purple_bg),
+            gutter_bg = color_to_hex(theme.gutter_bg),
+            separator_fg = color_to_hex(theme.separator_fg),
+            selection_bg = color_to_hex(theme.selection_bg),
+            diff_del_fg = color_to_hex(theme.diff_del_fg),
+            diff_del_bg = color_to_hex(theme.diff_del_bg),
+            diff_del_prefix = color_to_hex(theme.diff_del_prefix),
+            diff_add_fg = color_to_hex(theme.diff_add_fg),
+            diff_add_bg = color_to_hex(theme.diff_add_bg),
+            diff_add_prefix = color_to_hex(theme.diff_add_prefix),
+            draft_comment_bg = color_to_hex(theme.draft_comment_bg),
+            comment_bg = color_to_hex(theme.comment_bg),
+            label_pink = color_to_hex(theme.label_pink),
+            label_orange = color_to_hex(theme.label_orange),
+            label_cyan = color_to_hex(theme.label_cyan),
+            label_lime = color_to_hex(theme.label_lime),
+            label_light_violet = color_to_hex(theme.label_light_violet),
+            markdown_h1 = color_to_hex(theme.markdown_h1),
+            markdown_h2 = color_to_hex(theme.markdown_h2),
+            markdown_h3 = color_to_hex(theme.markdown_h3),
+            markdown_bullet = color_to_hex(theme.markdown_bullet),
+            markdown_quote = color_to_hex(theme.markdown_quote),
+            markdown_code_fg = color_to_hex(theme.markdown_code_fg),
+            markdown_code_bg = color_to_hex(theme.markdown_code_bg),
+            markdown_bold = color_to_hex(theme.markdown_bold),
         )
     }
 

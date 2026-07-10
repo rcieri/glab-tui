@@ -2345,7 +2345,8 @@ async fn main() -> Result<()> {
                                 KeyCode::Char('f') | KeyCode::Char('/') | KeyCode::Char('i') => {
                                     let has_filter = selector.field_type != "comment_action_select"
                                         && selector.field_type != "review_submit_status"
-                                        && selector.field_type != "description_edit_choice";
+                                        && selector.field_type != "description_edit_choice"
+                                        && selector.field_type != "merge_options";
                                     if has_filter {
                                         selector.is_filtering = true;
                                     }
@@ -2913,6 +2914,83 @@ async fn main() -> Result<()> {
                                                     status,
                                                 },
                                         });
+                                        continue;
+                                    }
+
+                                    if field_type == "merge_options" {
+                                        let mr_iid = selector.entity_iid;
+                                        let mut squash = false;
+                                        let mut delete_branch = false;
+                                        let mut merge_strategy: Option<&str> = None;
+                                        let selected: Vec<String> =
+                                            selector.selected_items.iter().cloned().collect();
+                                        for opt in &selected {
+                                            match opt.as_str() {
+                                                "Squash" => squash = true,
+                                                "Delete source branch" => delete_branch = true,
+                                                "Create merge commit" => {
+                                                    merge_strategy = Some("merge");
+                                                }
+                                                "Rebase and merge" => {
+                                                    merge_strategy = Some("rebase");
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        app.selector = None;
+                                        let cli = app_cli(&app);
+                                        let mut args = if cli.is_github {
+                                            vec![
+                                                "pr".to_string(),
+                                                "merge".to_string(),
+                                                mr_iid.to_string(),
+                                            ]
+                                        } else {
+                                            vec![
+                                                "mr".to_string(),
+                                                "merge".to_string(),
+                                                mr_iid.to_string(),
+                                            ]
+                                        };
+                                        if cli.is_github {
+                                            // GitHub scope only one strategy
+                                            match merge_strategy {
+                                                Some("rebase") => args.push("--rebase".to_string()),
+                                                Some("merge") => args.push("--merge".to_string()),
+                                                _ => {
+                                                    // default to squash; toggle off if user unselected
+                                                    if squash {
+                                                        args.push("--squash".to_string());
+                                                    }
+                                                }
+                                            }
+                                            if delete_branch {
+                                                args.push("--delete-branch".to_string());
+                                            }
+                                        } else {
+                                            // GitLab scope: --squash is independent of --merge/rebase strategy
+                                            if squash {
+                                                args.push("--squash".to_string());
+                                            }
+                                            if delete_branch {
+                                                args.push("--remove-source-branch".to_string());
+                                            }
+                                        }
+                                        let active_tab = app.active_tab;
+                                        crate::run_cli(
+                                            &cli,
+                                            &args,
+                                            &mut terminal,
+                                            events.sender(),
+                                            active_tab,
+                                        )
+                                        .await;
+                                        if let Some(pos) =
+                                            app.mrs.items.iter().position(|m| m.iid == mr_iid)
+                                        {
+                                            app.mrs.items.remove(pos);
+                                        }
+                                        app.update_filter_selection();
                                         continue;
                                     }
 

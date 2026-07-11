@@ -91,7 +91,7 @@ jobs:
             ${{ matrix.asset_name }}
             ${{ matrix.asset_name }}.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
+          generate_release_notes: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

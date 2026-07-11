@@ -1222,7 +1222,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let checklist_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .title(format!(" ⚙ Configure View: {} ", tab.title(is_github)))
+            .title(format!(
+                " {} Configure View: {} ",
+                icons.label_configure,
+                tab.title(is_github)
+            ))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().border_focused)

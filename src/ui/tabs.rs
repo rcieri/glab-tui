@@ -2106,7 +2106,7 @@ pub(crate) fn render_tab_runners(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(" 📊 Performance Dashboard ")
+            .title(format!(" {} Performance Dashboard ", icons.label_metrics))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -3066,7 +3066,7 @@ pub(crate) fn render_tab_milestones(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(" 🎯 Milestone Details ")
+            .title(format!(" {} Milestone Details ", icons.label_milestone))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -3333,7 +3333,7 @@ pub(crate) fn render_tab_branches(
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(" 🌿 Branch Details ")
+                            .title(format!(" {} Branch Details ", icons.label_branch))
                             .border_style(Style::default().fg(THEME.read().unwrap().border)),
                     )
                     .style(Style::default().fg(THEME.read().unwrap().text_normal))
@@ -3480,7 +3480,7 @@ pub(crate) fn render_tab_environments(
                         .block(
                             Block::default()
                                 .borders(Borders::ALL)
-                                .title(" 🌐 Environment Details ")
+                                .title(format!(" {} Environment Details ", icons.label_environment))
                                 .border_style(Style::default().fg(THEME.read().unwrap().border)),
                         )
                         .style(Style::default().fg(THEME.read().unwrap().text_normal))
@@ -3522,7 +3522,7 @@ pub(crate) fn render_tab_environments(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(" 🚀 Deployments ")
+                        .title(format!(" {} Deployments ", icons.label_deployment))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .row_highlight_style(highlight_style);

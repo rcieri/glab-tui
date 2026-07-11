@@ -1499,7 +1499,7 @@ pub(crate) fn render_tab_pipelines(
 
                 if let Some(jobs) = app.pipeline_jobs.get(&p.id) {
                     text.push(Line::from(vec![Span::styled(
-                        "Stages Success Rate:",
+                        format!("{} Stages Success Rate:", icons.label_stages),
                         Style::default()
                             .fg(THEME.read().unwrap().header_fg)
                             .add_modifier(Modifier::BOLD),
@@ -2169,7 +2169,7 @@ pub(crate) fn render_tab_runners(
 
                 text.push(Line::from(""));
                 text.push(Line::from(vec![Span::styled(
-                    "── Performance & Queue Metrics ──",
+                    format!("── {} Performance & Queue Metrics ──", icons.label_metrics),
                     Style::default()
                         .fg(THEME.read().unwrap().header_fg)
                         .add_modifier(Modifier::BOLD),

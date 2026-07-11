@@ -473,7 +473,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         // 1. Render Files list on the left
         let files_block = Block::default()
-            .title(" Files ")
+            .title(format!(" {} ", icons.label_files))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if diff_view.focus_on_files {
                 THEME.read().unwrap().border_focused
@@ -530,7 +530,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         // 2. Render Diff content on the right
         let diff_block = Block::default()
-            .title(" Diff ")
+            .title(format!(" {} ", icons.label_diff))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if !diff_view.focus_on_files {
                 THEME.read().unwrap().border_focused

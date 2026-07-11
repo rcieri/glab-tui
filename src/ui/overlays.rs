@@ -1020,7 +1020,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .collect();
 
         let block = Block::default()
-            .title(" Keyboard Shortcuts ")
+            .title(format!(" {} Keyboard Shortcuts ", icons.label_keyboard))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().header_fg)
@@ -1400,11 +1400,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         chunk_idx += 1; // spacer
 
         // Page Size
-        let page_size_header = Paragraph::new(" PAGE SIZE").style(
-            Style::default()
-                .fg(THEME.read().unwrap().header_fg)
-                .add_modifier(Modifier::BOLD),
-        );
+        let page_size_header = Paragraph::new(format!(" {} PAGE SIZE", icons.label_page_size))
+            .style(
+                Style::default()
+                    .fg(THEME.read().unwrap().header_fg)
+                    .add_modifier(Modifier::BOLD),
+            );
         f.render_widget(page_size_header, popup_layout[chunk_idx]);
         chunk_idx += 1;
 
@@ -1721,7 +1722,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
     if app.show_submit_review_prompt.is_some() {
         let block = Block::default()
-            .title(" Submit Review? ")
+            .title(format!(" {} Submit Review? ", icons.action_review))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().header_fg)
@@ -1771,41 +1772,41 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     if let Some(confirm) = &app.confirm_popup {
         let (title, message) = match confirm {
             crate::app::ConfirmAction::DeleteMilestone(iid) => (
-                " Delete Milestone? ",
+                format!(" {} Delete Milestone? ", icons.action_delete),
                 format!("Are you sure you want to delete milestone #{}?", iid),
             ),
             crate::app::ConfirmAction::DeleteRelease(tag_name) => (
-                " Delete Release? ",
+                format!(" {} Delete Release? ", icons.action_delete),
                 format!("Are you sure you want to delete release {}?", tag_name),
             ),
             crate::app::ConfirmAction::DeleteBranch(branch_name) => (
-                " Delete Branch? ",
+                format!(" {} Delete Branch? ", icons.action_delete),
                 format!("Are you sure you want to delete branch '{}'?", branch_name),
             ),
             crate::app::ConfirmAction::CloseIssue(iid) => (
-                " Close Issue? ",
+                format!(" {} Close Issue? ", icons.action_close),
                 format!("Are you sure you want to close issue #{}?", iid),
             ),
             crate::app::ConfirmAction::DeleteIssue(iid) => (
-                " Delete Issue? ",
+                format!(" {} Delete Issue? ", icons.action_delete),
                 format!(
                     "Are you sure you want to delete issue #{}? This action is permanent.",
                     iid
                 ),
             ),
             crate::app::ConfirmAction::CloseMr(iid) => (
-                " Close Merge Request? ",
+                format!(" {} Close Merge Request? ", icons.action_close),
                 format!("Are you sure you want to close MR/PR #{}?", iid),
             ),
             crate::app::ConfirmAction::DeleteMr(iid) => (
-                " Delete Merge Request? ",
+                format!(" {} Delete Merge Request? ", icons.action_delete),
                 format!(
                     "Are you sure you want to delete MR #{}? This action is permanent.",
                     iid
                 ),
             ),
             crate::app::ConfirmAction::MergeMr(iid) => (
-                " Merge Request? ",
+                format!(" {} Merge Request? ", icons.action_merge),
                 format!("Are you sure you want to merge MR/PR #{}?", iid),
             ),
         };

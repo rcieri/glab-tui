@@ -88,6 +88,17 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES`. User themes in `~/.config/glab-tui/themes/` take precedence.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens to `Theme` if needed.
 
+### Icon System
+* The `Icons` struct in [src/config.rs](src/config.rs) centralizes all UI icons (80 fields covering tab titles, status badges, action labels, section headers, etc.).
+* An `ICONS` global `RwLock<Icons>` is initialized at startup from `Config::resolve_icons()`, which merges `IconOverrides` from `config.toml` over defaults.
+* **Rule:** Never hard-code emoji or unicode glyphs in UI code. Always reference `ICONS.read().unwrap().<field_name>` for any visible icon or label.
+* Default icons use Nerd Font Octicon glyphs. ASCII fallbacks can be configured in `config.toml` under `[icons]` for terminals without Nerd Font support.
+
+### Entity Deletion & Confirmation Prompts
+* Destructive actions (closing issues, merging MRs, deleting branches/releases/milestones, and deleting issues/MRs) are gated behind a confirmation popup.
+* The confirmation overlay uses a box-selection UI rendered by the overlay handlers in [src/handlers/overlays.rs](src/handlers/overlays.rs).
+* Delete commands for issues and MRs dispatch `Event::IssueDeleted` / `Event::MrDeleted` via the event system.
+
 ### Keybinding System
 * All keybinding defaults are defined via the `keybind_defaults!` macro in [src/config.rs](src/config.rs).
 * At runtime, every keypress is matched against the config using `keybinding_matches(binding: &str, event: &KeyEvent) -> bool` in [src/main.rs](src/main.rs).
@@ -112,6 +123,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 ## 4. UI & Rendering Guidelines (`ratatui`)
 
 * **Colors & Theming:** Always use the `THEME` global (a `RwLock<Theme>` initialized from `app.config` at startup). Access it as `crate::config::THEME.read().unwrap()` or via the re-export in `ui.rs`. Do not hard-code raw RGB values; add new semantic color tokens to `src/config.rs` and all theme TOML files if needed.
+* **Icons:** Always use the `ICONS` global (`RwLock<Icons>` initialized from `Config::resolve_icons()`). Access as `crate::config::ICONS.read().unwrap().<field>`. Never hard-code emoji or unicode characters directly in UI rendering code.
 * **Fuzzy Matching:** Use `SkimMatcherV2` from the `fuzzy-matcher` crate for filtering tables and selector overlays. The `render_fuzzy_cell` helper in [src/ui.rs](src/ui.rs) handles highlighting matched characters in yellow.
 * **Columns:** Table columns are dynamically configurable. Always check `app.is_column_visible(tab, "Column Name")` before rendering a cell or header. GitHub-only or GitLab-only columns must also gate on `app.gitlab_client.is_some()` / `is_github`.
 * **Layout:** Use `ratatui::layout::Layout` to split screens. Avoid hardcoded fixed sizes where possible, use `Constraint::Percentage` or `Constraint::Fill(1)`. Use `centered_rect_min()` for overlays to ensure minimum readable dimensions on small terminals.

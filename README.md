@@ -24,6 +24,12 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — six built-in color themes; fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
+- **Configurable Nerd Font icons** — 80 icon fields customizable via `[icons]` in `config.toml`, with ASCII fallbacks for terminals without Nerd Font
+- **Entity deletion** — delete issues and MRs directly from the TUI, gated behind confirmation prompts
+- **Confirmation prompts** — destructive actions (closing issues/MRs, merging, deleting branches/releases/milestones) require explicit confirmation
+- **Pipeline status in MR list** — graphical pipeline stage dots rendered inline in the merge request table
+- **Fetchable selectors** — branch and target-branch inputs are searchable selector lists instead of free-form text
+- **Global search** — `Ctrl+P` to fuzzy-search across all tabs
 
 ---
 

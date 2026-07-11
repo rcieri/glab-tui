@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-07-11
+
+### Added
+- **Configurable Nerd Font icon system** — A centralized `Icons` struct with 80 icon fields replaces all hardcoded emoji/unicode in the UI. Icons are fully customizable via `[icons]` in `config.toml`; ASCII fallbacks can be configured for non-Nerd-Font terminals. Tab titles, status badges, navigation labels, action buttons, and section headers all use themed Octicon glyphs (#156).
+- **Entity deletion for Issues and MRs** — Delete issues and merge requests directly from the TUI. Confirmation prompts protect destructive actions such as closing issues, merging MRs, deleting branches, releases, and milestones (#146, #150).
+- **Pipeline status in MR/PR pane** — Pipeline status is rendered graphically with stage dots in the merge request list. A background pipeline fetch runs when loading the MR tab in GitHub mode so workflow actions are available immediately (#144).
+- **Fetchable selector fields** — Free-form branch and target-branch inputs are now searchable `Selector` lists populated from remote/local branches, improving accuracy and discoverability (#145).
+- **Global search** — `Ctrl+P` opens a global fuzzy search across all tabs (#144).
+
+### Fixed
+- **Config auto-creation removed** — `Config::load()` no longer writes a default `config.toml` on startup. The file is created only by an explicit save (the `save_view` keybinding), preventing unintended side effects on first launch.
+- **Column widths constrained** — Table columns are now sized to stay within the terminal pane, preventing horizontal overflow (#125).
+- **Homebrew install fixed** — Removed stale, hallucinated Homebrew formula and Scoop manifest that shipped incorrect versions; replaced with proper tap and bucket instructions (#148).
+- **Install script reliability** — `install.sh` now matches exact asset names to avoid downloading multiple release URLs; passes `GITHUB_TOKEN` to avoid API rate limiting during installs.
+- **E2E test stability** — Refactored PTY-based tests to use `Pty::spawn` with pre-fork allocations, eliminating deadlocks in parallel test execution.
+
+### Changed
+- Improved cache updates to persist selector items and milestone issues, reducing redundant network fetches on subsequent launches (#147).
+- Removed `opencode` agent configuration files (`.opencode/`, `opencode.json`) from the repository.
+- Bumped `docker/build-push-action` from v6 to v7 and `docker/login-action` from v3 to v4 (CI).
+
+---
+
 ## [0.5.0] - 2026-07-07
 
 ### Added

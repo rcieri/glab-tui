@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.1] - 2026-07-11
+## [0.6.0] - 2026-07-11
 
 ### Added
 - **Nerd Font icon system** — All tab titles, status badges, labels, and UI indicators can now render configurable icons via a new `[icons]` section in `config.toml`. Includes 70+ customizable icon fields with professional nerd font defaults. Fully themable per-pane and per-status (#156).

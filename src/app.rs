@@ -161,31 +161,32 @@ impl Tab {
         }
     }
 
-    pub fn title(&self, is_github: bool) -> &'static str {
+    pub fn title(&self, is_github: bool) -> String {
+        let icons = crate::config::ICONS.read().unwrap();
         match self {
-            Tab::Issues => "Issues",
+            Tab::Issues => format!("{} Issues", icons.tab_issue),
             Tab::MergeRequests => {
                 if is_github {
-                    "PRs"
+                    format!("{} PRs", icons.tab_pr)
                 } else {
-                    "MRs"
+                    format!("{} MRs", icons.tab_pr)
                 }
             }
             Tab::Pipelines => {
                 if is_github {
-                    "Actions"
+                    format!("{} Actions", icons.tab_pipeline)
                 } else {
-                    "Pipelines"
+                    format!("{} Pipelines", icons.tab_pipeline)
                 }
             }
-            Tab::Jobs => "Jobs",
-            Tab::Runners => "Runners",
-            Tab::Releases => "Releases",
-            Tab::Todos => "Todos",
-            Tab::Milestones => "Milestones",
-            Tab::Branches => "Branches",
-            Tab::Environments => "Environments",
-            Tab::Terminal => "Terminal",
+            Tab::Jobs => format!("{} Jobs", icons.tab_job),
+            Tab::Runners => format!("{} Runners", icons.tab_runner),
+            Tab::Releases => format!("{} Releases", icons.tab_release),
+            Tab::Todos => format!("{} Todos", icons.tab_todo),
+            Tab::Milestones => format!("{} Milestones", icons.tab_milestone),
+            Tab::Branches => format!("{} Branches", icons.tab_branch),
+            Tab::Environments => format!("{} Environments", icons.tab_environment),
+            Tab::Terminal => format!("{} Terminal", icons.tab_terminal),
         }
     }
 
@@ -1463,7 +1464,7 @@ impl App {
             .copied()
             .collect();
         if let Some(disabled) = &self.config.disabled_tabs {
-            tabs.retain(|t| !disabled.iter().any(|d| d == t.title(is_github)));
+            tabs.retain(|t| !disabled.iter().any(|d| d == &t.title(is_github)));
         }
         tabs
     }

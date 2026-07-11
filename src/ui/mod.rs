@@ -17,7 +17,7 @@ use self::diff::{centered_rect_min, format_comment_with_suggestions};
 use self::helpers::build_log_line;
 use self::overlays::render_overlays;
 use crate::app::{App, Tab};
-use crate::config::THEME;
+use crate::config::{ICONS, THEME};
 
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
@@ -46,16 +46,26 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let title_area = chunks[0];
 
     // Top: Title & Context
+    let icons = crate::config::ICONS.read().unwrap();
+    let header_icon = if app.gitlab_client.as_ref().map_or(false, |c| c.is_github) {
+        &icons.header_github
+    } else {
+        &icons.header_gitlab
+    };
     let mut title_spans = vec![
         Span::styled(
-            " GLAB-TUI ",
+            format!(" {} GLAB-TUI ", header_icon),
             Style::default()
                 .bg(THEME.read().unwrap().border_focused)
                 .fg(THEME.read().unwrap().bg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" ❯ {} ", app.project_context),
+            format!(
+                " {} {} ",
+                &crate::config::ICONS.read().unwrap().separator,
+                app.project_context
+            ),
             Style::default()
                 .fg(THEME.read().unwrap().text_normal)
                 .add_modifier(Modifier::BOLD),
@@ -63,7 +73,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     ];
     if app.is_typing_search {
         title_spans.push(Span::styled(
-            " SEARCHING ",
+            format!(" {} SEARCHING ", icons.label_searching),
             Style::default()
                 .bg(THEME.read().unwrap().yellow)
                 .fg(THEME.read().unwrap().bg)
@@ -75,7 +85,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ));
     } else if !app.search_query.is_empty() {
         title_spans.push(Span::styled(
-            " FILTERED ",
+            format!(" {} FILTERED ", icons.label_filtered),
             Style::default()
                 .bg(THEME.read().unwrap().yellow)
                 .fg(THEME.read().unwrap().bg)
@@ -170,7 +180,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .available_tabs()
         .iter()
         .map(|t| {
-            let title = format!("  {}  ", t.title(is_github).to_uppercase());
+            let title = format!(" {} ", t.title(is_github).to_uppercase());
             if *t == app.active_tab {
                 ListItem::new(title).style(
                     Style::default()
@@ -188,7 +198,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
-            .title(" Navigation ")
+            .title(format!(" {} Navigation ", icons.label_navigation))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -325,7 +335,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let bottom_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
-            .title(" Terminal ")
+            .title(format!(" {} Terminal ", icons.label_terminal))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().purple)
@@ -361,7 +371,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.diff_loading {
         let area = centered_rect_min(50, 20, 20, 4, size);
         let block = Block::default()
-            .title(" Fetching Diff ")
+            .title(format!(" {} Fetching Diff ", icons.label_fetching))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().header_fg)
@@ -403,7 +413,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         let unresolved_count = app.unresolved_threads_count();
         let unresolved_suffix = if unresolved_count > 0 {
-            format!(" [🔴 Unresolved Threads: {}] ", unresolved_count)
+            format!(
+                " [{} Unresolved Threads: {}] ",
+                &ICONS.read().unwrap().thread_unresolved,
+                unresolved_count
+            )
         } else {
             String::new()
         };
@@ -459,7 +473,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         // 1. Render Files list on the left
         let files_block = Block::default()
-            .title(" Files ")
+            .title(format!(" {} ", icons.label_files))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if diff_view.focus_on_files {
                 THEME.read().unwrap().border_focused
@@ -480,7 +494,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
             let count_suffix = if unresolved_count > 0 {
-                format!(" (🔴 {})", unresolved_count)
+                format!(
+                    " ({} {})",
+                    &ICONS.read().unwrap().thread_unresolved,
+                    unresolved_count
+                )
             } else {
                 String::new()
             };
@@ -512,7 +530,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         // 2. Render Diff content on the right
         let diff_block = Block::default()
-            .title(" Diff ")
+            .title(format!(" {} ", icons.label_diff))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if !diff_view.focus_on_files {
                 THEME.read().unwrap().border_focused

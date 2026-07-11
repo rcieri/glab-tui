@@ -28,6 +28,177 @@ pub struct Theme {
     pub purple_bg: Color,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Icons {
+    pub tab_issue: String,
+    pub tab_pr: String,
+    pub tab_pipeline: String,
+    pub tab_job: String,
+    pub tab_runner: String,
+    pub tab_release: String,
+    pub tab_todo: String,
+    pub tab_milestone: String,
+    pub tab_branch: String,
+    pub tab_environment: String,
+    pub tab_terminal: String,
+    pub status_success: String,
+    pub status_failed: String,
+    pub status_running: String,
+    pub status_pending: String,
+    pub status_canceled: String,
+    pub status_skipped: String,
+    pub status_manual: String,
+    pub status_unknown: String,
+    pub header_github: String,
+    pub header_gitlab: String,
+    pub label_navigation: String,
+    pub label_terminal: String,
+    pub label_fetching: String,
+    pub label_searching: String,
+    pub label_filtered: String,
+    pub state_open: String,
+    pub state_closed: String,
+    pub state_merged: String,
+    pub status_draft: String,
+    pub status_ready: String,
+    pub runner_online: String,
+    pub runner_paused: String,
+    pub runner_offline: String,
+    pub highlight_arrow: String,
+    pub separator: String,
+    pub check_on: String,
+    pub check_off: String,
+    pub radio_on: String,
+    pub radio_off: String,
+    pub label_details: String,
+    pub label_columns: String,
+    pub label_group: String,
+    pub label_order: String,
+    pub label_theme: String,
+    pub label_save: String,
+    pub label_branch: String,
+    pub label_environment: String,
+    pub label_deployment: String,
+    pub label_milestone: String,
+    pub label_loading: String,
+    pub comment: String,
+    pub comment_draft: String,
+    pub thread_unresolved: String,
+    pub matrix_variant: String,
+    pub dot_success: String,
+    pub dot_failed: String,
+    pub dot_running: String,
+    pub dot_canceled: String,
+    pub dot_pending: String,
+    pub dot_skipped: String,
+    pub suggestion_start: String,
+    pub suggestion_end: String,
+    pub label_files: String,
+    pub label_configure: String,
+    pub label_diff: String,
+    pub label_page_size: String,
+    pub label_metrics: String,
+    pub label_stages: String,
+    pub label_calendar: String,
+    pub label_keyboard: String,
+    pub label_search_global: String,
+    pub label_select: String,
+    pub action_delete: String,
+    pub action_close: String,
+    pub action_merge: String,
+    pub action_edit: String,
+    pub action_create: String,
+    pub action_reply: String,
+    pub action_review: String,
+}
+
+impl Icons {
+    pub fn default() -> Self {
+        Self {
+            tab_issue: "\u{f41b}".to_string(),
+            tab_pr: "\u{f407}".to_string(),
+            tab_pipeline: "\u{f500}".to_string(),
+            tab_job: "\u{f491}".to_string(),
+            tab_runner: "\u{f427}".to_string(),
+            tab_release: "\u{f412}".to_string(),
+            tab_todo: "\u{f45e}".to_string(),
+            tab_milestone: "\u{f45d}".to_string(),
+            tab_branch: "\u{f418}".to_string(),
+            tab_environment: "\u{f450}".to_string(),
+            tab_terminal: "\u{f489}".to_string(),
+            status_success: "\u{f49e}".to_string(),
+            status_failed: "\u{f52f}".to_string(),
+            status_running: "\u{f500}".to_string(),
+            status_pending: "\u{f4c3}".to_string(),
+            status_canceled: "\u{f468}".to_string(),
+            status_skipped: "\u{f517}".to_string(),
+            status_manual: "\u{f425}".to_string(),
+            status_unknown: "\u{f420}".to_string(),
+            header_github: "\u{e709}".to_string(),
+            header_gitlab: "\u{e7eb}".to_string(),
+            label_navigation: "\u{f44e}".to_string(),
+            label_terminal: "\u{f489}".to_string(),
+            label_fetching: "\u{f46a}".to_string(),
+            label_searching: "\u{f422}".to_string(),
+            label_filtered: "\u{f4d7}".to_string(),
+            state_open: "\u{f41b}".to_string(),
+            state_closed: "\u{f41d}".to_string(),
+            state_merged: "\u{f419}".to_string(),
+            status_draft: "\u{f4dd}".to_string(),
+            status_ready: "\u{f42e}".to_string(),
+            runner_online: "\u{f444}".to_string(),
+            runner_paused: "\u{f46e}".to_string(),
+            runner_offline: "\u{f4c3}".to_string(),
+            highlight_arrow: "\u{f44a}".to_string(),
+            separator: "\u{f460}".to_string(),
+            check_on: "\u{f4a7}".to_string(),
+            check_off: "\u{f51d}".to_string(),
+            radio_on: "\u{f444}".to_string(),
+            radio_off: "\u{f4aa}".to_string(),
+            label_details: "\u{f4a5}".to_string(),
+            label_columns: "\u{f4b4}".to_string(),
+            label_group: "\u{f413}".to_string(),
+            label_order: "\u{f519}".to_string(),
+            label_theme: "\u{f48f}".to_string(),
+            label_save: "\u{f403}".to_string(),
+            label_branch: "\u{f418}".to_string(),
+            label_environment: "\u{f450}".to_string(),
+            label_deployment: "\u{f4fa}".to_string(),
+            label_milestone: "\u{f45d}".to_string(),
+            label_loading: "\u{f4e3}".to_string(),
+            comment: "\u{f41f}".to_string(),
+            comment_draft: "\u{f442}".to_string(),
+            thread_unresolved: "\u{f4aa}".to_string(),
+            matrix_variant: "\u{f4bf}".to_string(),
+            dot_success: "🟢".to_string(),
+            dot_failed: "🔴".to_string(),
+            dot_running: "🔵".to_string(),
+            dot_canceled: "⚫".to_string(),
+            dot_pending: "🟡".to_string(),
+            dot_skipped: "⚪".to_string(),
+            suggestion_start: "┌─── Code Suggestion ───".to_string(),
+            suggestion_end: "└─── End of Suggestion ───".to_string(),
+            label_files: "\u{f40d}".to_string(),
+            label_configure: "\u{f423}".to_string(),
+            label_diff: "\u{f440}".to_string(),
+            label_page_size: "\u{f452}".to_string(),
+            label_metrics: "\u{f463}".to_string(),
+            label_stages: "\u{f437}".to_string(),
+            label_calendar: "\u{f455}".to_string(),
+            label_keyboard: "\u{f4b5}".to_string(),
+            label_search_global: "\u{f422}".to_string(),
+            label_select: "\u{f44b}".to_string(),
+            action_delete: "\u{f48e}".to_string(),
+            action_close: "\u{f468}".to_string(),
+            action_merge: "\u{f419}".to_string(),
+            action_edit: "\u{f448}".to_string(),
+            action_create: "\u{f501}".to_string(),
+            action_reply: "\u{f4a8}".to_string(),
+            action_review: "\u{f4a1}".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SaveMenu {
     Local,
@@ -225,6 +396,37 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.yellow_bg, &overrides.yellow_bg);
     apply_color(&mut base.purple, &overrides.purple);
     apply_color(&mut base.purple_bg, &overrides.purple_bg);
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IconOverrides {
+    pub tab_issue: Option<String>,
+    pub tab_pr: Option<String>,
+    pub tab_pipeline: Option<String>,
+    pub tab_job: Option<String>,
+    pub tab_runner: Option<String>,
+    pub tab_release: Option<String>,
+    pub tab_todo: Option<String>,
+    pub tab_milestone: Option<String>,
+    pub tab_branch: Option<String>,
+    pub tab_environment: Option<String>,
+    pub tab_terminal: Option<String>,
+    pub status_success: Option<String>,
+    pub status_failed: Option<String>,
+    pub status_running: Option<String>,
+    pub status_pending: Option<String>,
+    pub status_canceled: Option<String>,
+    pub status_skipped: Option<String>,
+    pub status_manual: Option<String>,
+    pub status_unknown: Option<String>,
+    pub header_github: Option<String>,
+    pub header_gitlab: Option<String>,
+    pub label_navigation: Option<String>,
+    pub label_terminal: Option<String>,
+    pub label_fetching: Option<String>,
+    pub label_searching: Option<String>,
+    pub label_filtered: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -678,6 +880,7 @@ pub struct Config {
     pub theme_preset: Option<String>,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
+    pub icons: Option<IconOverrides>,
     pub keybindings: KeybindingConfig,
     #[serde(default = "def_page_size")]
     pub page_size: usize,
@@ -702,6 +905,7 @@ impl Default for Config {
             theme_preset: Some("default".to_string()),
             active_tab: None,
             theme: ThemeOverrides::default(),
+            icons: None,
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             disabled_tabs: None,
@@ -974,9 +1178,50 @@ view_deployments = "Enter"
         apply_overrides(&mut theme, &self.theme);
         theme
     }
+
+    pub fn resolve_icons(&self) -> Icons {
+        let mut icons = Icons::default();
+        if let Some(ref o) = self.icons {
+            macro_rules! apply {
+                ($field:ident) => {
+                    if let Some(ref s) = o.$field {
+                        icons.$field = s.clone();
+                    }
+                };
+            }
+            apply!(tab_issue);
+            apply!(tab_pr);
+            apply!(tab_pipeline);
+            apply!(tab_job);
+            apply!(tab_runner);
+            apply!(tab_release);
+            apply!(tab_todo);
+            apply!(tab_milestone);
+            apply!(tab_branch);
+            apply!(tab_environment);
+            apply!(tab_terminal);
+            apply!(status_success);
+            apply!(status_failed);
+            apply!(status_running);
+            apply!(status_pending);
+            apply!(status_canceled);
+            apply!(status_skipped);
+            apply!(status_manual);
+            apply!(status_unknown);
+            apply!(header_github);
+            apply!(header_gitlab);
+            apply!(label_navigation);
+            apply!(label_terminal);
+            apply!(label_fetching);
+            apply!(label_searching);
+            apply!(label_filtered);
+        }
+        icons
+    }
 }
 
 pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
+pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().resolve_icons()));
 
 pub const THEME_PRESETS: &[&str] = &[
     "default",

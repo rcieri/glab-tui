@@ -73,6 +73,20 @@ jobs:
 
                       Save and write these file modifications directly back into the working directory.
 
+            - name: Install VHS & Nerd Fonts
+              run: |
+                sudo apt-get update -y
+                sudo apt-get install -y golang-go ffmpeg unzip
+                go install github.com/charmbracelet/vhs@latest
+                echo "$HOME/go/bin" >> "$GITHUB_PATH"
+                wget -q https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip
+                sudo unzip -q JetBrainsMono.zip -d /usr/share/fonts/truetype/jetbrains-mono
+                rm -f JetBrainsMono.zip
+                fc-cache -f
+
+            - name: Generate demo GIFs
+              run: ./assets/generate-demos.sh
+
             - name: Update package manifests
               run: bash scripts/update-manifests.sh ${{ env.NEW_TAG }}
 
@@ -88,9 +102,9 @@ jobs:
                       exit 0
                   fi
                   BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
-                  git add Formula/ scoop/
+                  git add Formula/ scoop/ assets/demo-*.gif
                   git diff --cached --quiet && echo "No manifest changes" && exit 0
-                  git commit -m "chore: bump package manifests to ${{ env.NEW_TAG }}"
+                  git commit -m "chore: bump package manifests and demo GIFs to ${{ env.NEW_TAG }}"
                   git push origin "$BRANCH"
 
             - name: Standardize Pull Request Title

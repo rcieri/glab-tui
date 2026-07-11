@@ -27,7 +27,9 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 
 ---
 
-![glab-tui screenshot](assets/screenshot.png)
+![Overview](assets/demo-overview.gif)
+![Search & Configure](assets/demo-search.gif)
+![Navigation & Selection](assets/demo-selection.gif)
 
 ## Prerequisites
 

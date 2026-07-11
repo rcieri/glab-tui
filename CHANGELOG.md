@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.6.0] - 2026-07-11
 
 ### Added
-- **Nerd Font icon system** — All tab titles, status badges, labels, and UI indicators can now render configurable icons via a new `[icons]` section in `config.toml`. Includes 70+ customizable icon fields with professional nerd font defaults. Fully themable per-pane and per-status (#156).
+- **Nerd Font icon system** — All tab titles, status badges, labels, and UI indicators can now render nerd font icons. Uses hardcoded nerd font defaults that are not user-configurable. (original #156)
 - **Pipeline / Action status in MR/PR pane** — The MR/PR details panel now displays the pipeline (GitLab) or workflow action (GitHub) status graphically with stage dots, adapting terminology to the remote host (#144, #126).
 - **Confirmation prompts for destructive actions** — Closing issues, closing MRs, merging MRs, and deleting branches/releases/milestones now show a confirmation dialog before executing. Reduces accidental destructive operations (#141, #146).
 - **Entity deletion** — Issues and merge requests can now be deleted directly from the TUI. New `delete_entity` keybinding added to the issues and MRs keybinding tables (#150).

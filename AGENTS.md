@@ -23,7 +23,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 
 * [src/main.rs](src/main.rs): Entry point. Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
 * [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic. `App` now holds a `config: Config` field loaded at startup.
-* [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, `IconOverrides`, and all `KeybindingXxx` structs. Loads `~/.config/glab-tui/config.toml`, generates a default template on first run, and exposes `Theme::preset(name)` for built-in theme lookup. Icons are a separate global `RwLock` (`ICONS`) initialized at startup alongside `THEME`.
+* [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs. Loads `~/.config/glab-tui/config.toml`, generates a default template on first run, and exposes `Theme::preset(name)` for built-in theme lookup. Icons are a separate global `RwLock` (`ICONS`) initialized at startup alongside `THEME`.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/ui.rs](src/ui.rs): The purely functional rendering layer. Translates `App` state into `ratatui` widgets. Reads theme colors from `app.config` (via the global `THEME` which is now initialized from config at startup).
 * [src/themes/](src/themes/): Bundled theme TOML files (`default`, `tokyo-night`, `gruvbox`, `nord`, `catppuccin-mocha`, `dracula`). Compiled into the binary via `include_str!`. Also written to `~/.config/glab-tui/themes/` on first run so users can copy/edit them.
@@ -85,7 +85,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Config is loaded via `Config::load()` in [src/config.rs](src/config.rs) at startup and stored on `App` as `app.config`.
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` / the `save_view` keybinding), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
 * Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`.
-* Icons: `Config` also holds an optional `icons: Option<IconOverrides>`. The global `ICONS` `RwLock` is initialized at startup from the config (with nerd font defaults). All 70+ icon fields are customizable via `[icons]` in `config.toml`.
+* Icons: The global `ICONS` `RwLock` is initialized at startup with hardcoded nerd font defaults and is not user-configurable.
 * Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES`. User themes in `~/.config/glab-tui/themes/` take precedence.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens to `Theme` if needed.
 

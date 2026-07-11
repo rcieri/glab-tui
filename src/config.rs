@@ -400,37 +400,6 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct IconOverrides {
-    pub tab_issue: Option<String>,
-    pub tab_pr: Option<String>,
-    pub tab_pipeline: Option<String>,
-    pub tab_job: Option<String>,
-    pub tab_runner: Option<String>,
-    pub tab_release: Option<String>,
-    pub tab_todo: Option<String>,
-    pub tab_milestone: Option<String>,
-    pub tab_branch: Option<String>,
-    pub tab_environment: Option<String>,
-    pub tab_terminal: Option<String>,
-    pub status_success: Option<String>,
-    pub status_failed: Option<String>,
-    pub status_running: Option<String>,
-    pub status_pending: Option<String>,
-    pub status_canceled: Option<String>,
-    pub status_skipped: Option<String>,
-    pub status_manual: Option<String>,
-    pub status_unknown: Option<String>,
-    pub header_github: Option<String>,
-    pub header_gitlab: Option<String>,
-    pub label_navigation: Option<String>,
-    pub label_terminal: Option<String>,
-    pub label_fetching: Option<String>,
-    pub label_searching: Option<String>,
-    pub label_filtered: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
 pub struct ThemeOverrides {
     bg: Option<String>,
     border: Option<String>,
@@ -880,7 +849,6 @@ pub struct Config {
     pub theme_preset: Option<String>,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
-    pub icons: Option<IconOverrides>,
     pub keybindings: KeybindingConfig,
     #[serde(default = "def_page_size")]
     pub page_size: usize,
@@ -905,7 +873,6 @@ impl Default for Config {
             theme_preset: Some("default".to_string()),
             active_tab: None,
             theme: ThemeOverrides::default(),
-            icons: None,
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             disabled_tabs: None,
@@ -1178,50 +1145,10 @@ view_deployments = "Enter"
         apply_overrides(&mut theme, &self.theme);
         theme
     }
-
-    pub fn resolve_icons(&self) -> Icons {
-        let mut icons = Icons::default();
-        if let Some(ref o) = self.icons {
-            macro_rules! apply {
-                ($field:ident) => {
-                    if let Some(ref s) = o.$field {
-                        icons.$field = s.clone();
-                    }
-                };
-            }
-            apply!(tab_issue);
-            apply!(tab_pr);
-            apply!(tab_pipeline);
-            apply!(tab_job);
-            apply!(tab_runner);
-            apply!(tab_release);
-            apply!(tab_todo);
-            apply!(tab_milestone);
-            apply!(tab_branch);
-            apply!(tab_environment);
-            apply!(tab_terminal);
-            apply!(status_success);
-            apply!(status_failed);
-            apply!(status_running);
-            apply!(status_pending);
-            apply!(status_canceled);
-            apply!(status_skipped);
-            apply!(status_manual);
-            apply!(status_unknown);
-            apply!(header_github);
-            apply!(header_gitlab);
-            apply!(label_navigation);
-            apply!(label_terminal);
-            apply!(label_fetching);
-            apply!(label_searching);
-            apply!(label_filtered);
-        }
-        icons
-    }
 }
 
 pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
-pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().resolve_icons()));
+pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Icons::default()));
 
 pub const THEME_PRESETS: &[&str] = &[
     "default",

@@ -2,7 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.0] - 2026-07-07
+## [0.5.1] - 2026-07-11
+
+### Added
+- **Nerd Font icon system** — All tab titles, status badges, labels, and UI indicators can now render configurable icons via a new `[icons]` section in `config.toml`. Includes 70+ customizable icon fields with professional nerd font defaults. Fully themable per-pane and per-status (#156).
+- **Pipeline / Action status in MR/PR pane** — The MR/PR details panel now displays the pipeline (GitLab) or workflow action (GitHub) status graphically with stage dots, adapting terminology to the remote host (#144, #126).
+- **Confirmation prompts for destructive actions** — Closing issues, closing MRs, merging MRs, and deleting branches/releases/milestones now show a confirmation dialog before executing. Reduces accidental destructive operations (#141, #146).
+- **Entity deletion** — Issues and merge requests can now be deleted directly from the TUI. New `delete_entity` keybinding added to the issues and MRs keybinding tables (#150).
+- **Fetchable selectors for free-form fields** — Branch inputs, environment selectors, and other free-form fields were upgraded to fetchable `Selector` lists with fuzzy matching, matching the selector UX used elsewhere (#145).
+- **Improved cache persistence** — Selector items and milestone issues are now persisted to disk cache alongside API payload data, reducing redundant network fetches on tab switches (#147).
+
+### Fixed
+- **Column widths bounded** — All table columns now use fixed `Length` constraints instead of `Fill`, guaranteeing every column stays within the terminal viewport. Affects issues, MRs, pipelines, jobs, runners, releases, todos, milestones, branches, and environments (#125, #155).
+- **Config auto-create removed** — `Config::load()` no longer writes `config.toml` on startup when missing. The file is now created only by an explicit `save_view` / `save_layout` action, aligning with the documented behavior (#74daa1b).
+- **Homebrew installation** — Fixed wrong version pinning and corrected the installation method in the Homebrew formula (#148).
+- **E2E test deadlocks** — Resolved deadlocks in parallel PTY spawning by preparing process allocations before forking; refactored `test_cascading_repo_override` to use `Pty::spawn` (#fcb16b3, #4118699).
+- **Install script asset matching** — `install.sh` now matches exact asset names to avoid downloading multiple release URLs (#c6acf24).
+- **CI rate limiting** — `GITHUB_TOKEN` is now passed to install scripts in CI workflows to avoid GitHub API rate limits (#b8079f8).
+
+### Changed
+- **Tab titles** — Now include nerd font icons (e.g., ` Issues`, ` PRs`, ` Pipelines`/` Actions`). Falls back gracefully on non-nerd-font terminals via config override.
+- **Pipeline column in MRs** — Renamed to "Pipeline" on GitLab, "Action" on GitHub, gated by host detection.
+- **Confirmation UX** — `ConfirmAction` enum expanded with `DeleteBranch`, `DeleteIssue`, `DeleteMr`, `CloseIssue`, `CloseMr`, `MergeMr` variants; new `confirm_popup_selected_yes` state field.
+- Removed opencode agent configurations and skill definitions from the repository.
+
+### Dependencies
+- Bump `docker/login-action` from 3 to 4 (CI)
+- Bump `docker/build-push-action` from 6 to 7 (CI)
+
+---
 
 ### Added
 - **Save view configurations** — Inline page size editing, multi-page fetching, and config persistence validation in the configuration view (#142).

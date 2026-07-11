@@ -45,6 +45,10 @@ pub struct Icons {
     pub status_failed: String,
     pub status_running: String,
     pub status_pending: String,
+    pub status_canceled: String,
+    pub status_skipped: String,
+    pub status_manual: String,
+    pub status_unknown: String,
     pub header_github: String,
     pub header_gitlab: String,
     pub label_navigation: String,
@@ -52,33 +56,111 @@ pub struct Icons {
     pub label_fetching: String,
     pub label_searching: String,
     pub label_filtered: String,
+    pub state_open: String,
+    pub state_closed: String,
+    pub state_merged: String,
+    pub status_draft: String,
+    pub status_ready: String,
+    pub runner_online: String,
+    pub runner_paused: String,
+    pub runner_offline: String,
+    pub highlight_arrow: String,
+    pub separator: String,
+    pub check_on: String,
+    pub check_off: String,
+    pub radio_on: String,
+    pub radio_off: String,
+    pub label_details: String,
+    pub label_columns: String,
+    pub label_group: String,
+    pub label_order: String,
+    pub label_theme: String,
+    pub label_save: String,
+    pub label_branch: String,
+    pub label_environment: String,
+    pub label_deployment: String,
+    pub label_milestone: String,
+    pub label_loading: String,
+    pub comment: String,
+    pub comment_draft: String,
+    pub thread_unresolved: String,
+    pub matrix_variant: String,
+    pub dot_success: String,
+    pub dot_failed: String,
+    pub dot_running: String,
+    pub dot_canceled: String,
+    pub dot_pending: String,
+    pub dot_skipped: String,
+    pub suggestion_start: String,
+    pub suggestion_end: String,
 }
 
 impl Icons {
     pub fn default() -> Self {
         Self {
-            tab_issue: "󰏪".to_string(),
-            tab_pr: "󰊢".to_string(),
-            tab_pipeline: "󰎨".to_string(),
-            tab_job: "󱙃".to_string(),
-            tab_runner: "󰐂".to_string(),
-            tab_release: "󰷖".to_string(),
-            tab_todo: "󰅝".to_string(),
-            tab_milestone: "󰴀".to_string(),
-            tab_branch: "󰲆".to_string(),
-            tab_environment: "󰆍".to_string(),
-            tab_terminal: "󰁨".to_string(),
-            status_success: "✓".to_string(),
+            tab_issue: "\u{f41b}".to_string(),
+            tab_pr: "\u{f407}".to_string(),
+            tab_pipeline: "\u{f500}".to_string(),
+            tab_job: "\u{f491}".to_string(),
+            tab_runner: "\u{f427}".to_string(),
+            tab_release: "\u{f412}".to_string(),
+            tab_todo: "\u{f45e}".to_string(),
+            tab_milestone: "\u{f45d}".to_string(),
+            tab_branch: "\u{f418}".to_string(),
+            tab_environment: "\u{f450}".to_string(),
+            tab_terminal: "\u{f489}".to_string(),
+            status_success: "✔".to_string(),
             status_failed: "✘".to_string(),
-            status_running: "⟳".to_string(),
+            status_running: "▶".to_string(),
             status_pending: "◉".to_string(),
-            header_github: "󱘧".to_string(),
-            header_gitlab: "󱘤".to_string(),
+            status_canceled: "⊘".to_string(),
+            status_skipped: "⏭".to_string(),
+            status_manual: "✋".to_string(),
+            status_unknown: "?".to_string(),
+            header_github: "\u{e709}".to_string(),
+            header_gitlab: "\u{e7eb}".to_string(),
             label_navigation: "☰".to_string(),
-            label_terminal: "󰁨".to_string(),
+            label_terminal: "\u{f489}".to_string(),
             label_fetching: "⏳".to_string(),
             label_searching: "🔍".to_string(),
             label_filtered: "🔍".to_string(),
+            state_open: "●".to_string(),
+            state_closed: "○".to_string(),
+            state_merged: "🔀".to_string(),
+            status_draft: "✏".to_string(),
+            status_ready: "✔".to_string(),
+            runner_online: "●".to_string(),
+            runner_paused: "⏸".to_string(),
+            runner_offline: "○".to_string(),
+            highlight_arrow: "❯".to_string(),
+            separator: "❯".to_string(),
+            check_on: "▣".to_string(),
+            check_off: "☐".to_string(),
+            radio_on: "◉".to_string(),
+            radio_off: "○".to_string(),
+            label_details: "📄".to_string(),
+            label_columns: "📊".to_string(),
+            label_group: "📂".to_string(),
+            label_order: "↕".to_string(),
+            label_theme: "🎨".to_string(),
+            label_save: "💾".to_string(),
+            label_branch: "\u{f418}".to_string(),
+            label_environment: "\u{f450}".to_string(),
+            label_deployment: "🚀".to_string(),
+            label_milestone: "\u{f45d}".to_string(),
+            label_loading: "⏳".to_string(),
+            comment: "💬".to_string(),
+            comment_draft: "💬".to_string(),
+            thread_unresolved: "🔴".to_string(),
+            matrix_variant: "❖".to_string(),
+            dot_success: "🟢".to_string(),
+            dot_failed: "🔴".to_string(),
+            dot_running: "🔵".to_string(),
+            dot_canceled: "⚫".to_string(),
+            dot_pending: "🟡".to_string(),
+            dot_skipped: "⚪".to_string(),
+            suggestion_start: "┌─── Code Suggestion ───".to_string(),
+            suggestion_end: "└─── End of Suggestion ───".to_string(),
         }
     }
 }
@@ -300,6 +382,10 @@ pub struct IconOverrides {
     pub status_failed: Option<String>,
     pub status_running: Option<String>,
     pub status_pending: Option<String>,
+    pub status_canceled: Option<String>,
+    pub status_skipped: Option<String>,
+    pub status_manual: Option<String>,
+    pub status_unknown: Option<String>,
     pub header_github: Option<String>,
     pub header_gitlab: Option<String>,
     pub label_navigation: Option<String>,
@@ -1061,73 +1147,40 @@ view_deployments = "Enter"
 
     pub fn resolve_icons(&self) -> Icons {
         let mut icons = Icons::default();
-        if let Some(ref icon_overrides) = self.icons {
-            if let Some(ref s) = icon_overrides.tab_issue {
-                icons.tab_issue = s.clone();
+        if let Some(ref o) = self.icons {
+            macro_rules! apply {
+                ($field:ident) => {
+                    if let Some(ref s) = o.$field {
+                        icons.$field = s.clone();
+                    }
+                };
             }
-            if let Some(ref s) = icon_overrides.tab_pr {
-                icons.tab_pr = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_pipeline {
-                icons.tab_pipeline = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_job {
-                icons.tab_job = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_runner {
-                icons.tab_runner = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_release {
-                icons.tab_release = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_todo {
-                icons.tab_todo = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_milestone {
-                icons.tab_milestone = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_branch {
-                icons.tab_branch = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_environment {
-                icons.tab_environment = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.tab_terminal {
-                icons.tab_terminal = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.status_success {
-                icons.status_success = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.status_failed {
-                icons.status_failed = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.status_running {
-                icons.status_running = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.status_pending {
-                icons.status_pending = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.header_github {
-                icons.header_github = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.header_gitlab {
-                icons.header_gitlab = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.label_navigation {
-                icons.label_navigation = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.label_terminal {
-                icons.label_terminal = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.label_fetching {
-                icons.label_fetching = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.label_searching {
-                icons.label_searching = s.clone();
-            }
-            if let Some(ref s) = icon_overrides.label_filtered {
-                icons.label_filtered = s.clone();
-            }
+            apply!(tab_issue);
+            apply!(tab_pr);
+            apply!(tab_pipeline);
+            apply!(tab_job);
+            apply!(tab_runner);
+            apply!(tab_release);
+            apply!(tab_todo);
+            apply!(tab_milestone);
+            apply!(tab_branch);
+            apply!(tab_environment);
+            apply!(tab_terminal);
+            apply!(status_success);
+            apply!(status_failed);
+            apply!(status_running);
+            apply!(status_pending);
+            apply!(status_canceled);
+            apply!(status_skipped);
+            apply!(status_manual);
+            apply!(status_unknown);
+            apply!(header_github);
+            apply!(header_gitlab);
+            apply!(label_navigation);
+            apply!(label_terminal);
+            apply!(label_fetching);
+            apply!(label_searching);
+            apply!(label_filtered);
         }
         icons
     }

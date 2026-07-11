@@ -301,16 +301,17 @@ pub(crate) fn get_stages_summary(jobs: &[crate::gitlab::pipelines::Job]) -> Vec<
 }
 
 pub(crate) fn get_stages_dots(jobs: &[crate::gitlab::pipelines::Job]) -> String {
+    let icons = crate::config::ICONS.read().unwrap();
     let summaries = get_stages_summary(jobs);
     let mut dots = String::new();
     for s in summaries {
         let dot = match s.status.as_str() {
-            "success" => "🟢",
-            "failed" => "🔴",
-            "running" => "🔵",
-            "canceled" => "⚫",
-            "pending" => "🟡",
-            _ => "⚪",
+            "success" => &icons.dot_success,
+            "failed" => &icons.dot_failed,
+            "running" => &icons.dot_running,
+            "canceled" => &icons.dot_canceled,
+            "pending" => &icons.dot_pending,
+            _ => &icons.dot_skipped,
         };
         dots.push_str(dot);
     }
@@ -386,10 +387,22 @@ pub(crate) fn build_log_line(
 
     let icons = crate::config::ICONS.read().unwrap();
     let (status_text, status_color) = match cmd.status.as_str() {
-        "Success" => (format!("{} SUCCESS", icons.status_success), THEME.read().unwrap().green),
-        "Running" => (format!("{} RUNNING", icons.status_running), THEME.read().unwrap().yellow),
-        s if s.starts_with("Failed") => (format!("{} FAILED ", icons.status_failed), THEME.read().unwrap().red),
-        _ => (format!("{} PENDING", icons.status_pending), THEME.read().unwrap().yellow),
+        "Success" => (
+            format!("{} SUCCESS", icons.status_success),
+            THEME.read().unwrap().green,
+        ),
+        "Running" => (
+            format!("{} RUNNING", icons.status_running),
+            THEME.read().unwrap().yellow,
+        ),
+        s if s.starts_with("Failed") => (
+            format!("{} FAILED ", icons.status_failed),
+            THEME.read().unwrap().red,
+        ),
+        _ => (
+            format!("{} PENDING", icons.status_pending),
+            THEME.read().unwrap().yellow,
+        ),
     };
 
     let err_detail = if cmd.status.starts_with("Failed: ") {

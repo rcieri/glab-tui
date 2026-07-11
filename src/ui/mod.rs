@@ -17,7 +17,7 @@ use self::diff::{centered_rect_min, format_comment_with_suggestions};
 use self::helpers::build_log_line;
 use self::overlays::render_overlays;
 use crate::app::{App, Tab};
-use crate::config::THEME;
+use crate::config::{ICONS, THEME};
 
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
@@ -61,7 +61,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" ❯ {} ", app.project_context),
+            format!(
+                " {} {} ",
+                &crate::config::ICONS.read().unwrap().separator,
+                app.project_context
+            ),
             Style::default()
                 .fg(THEME.read().unwrap().text_normal)
                 .add_modifier(Modifier::BOLD),
@@ -176,7 +180,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .available_tabs()
         .iter()
         .map(|t| {
-            let title = format!("  {}  ", t.title(is_github).to_uppercase());
+            let title = format!(" {} ", t.title(is_github).to_uppercase());
             if *t == app.active_tab {
                 ListItem::new(title).style(
                     Style::default()
@@ -409,7 +413,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
         let unresolved_count = app.unresolved_threads_count();
         let unresolved_suffix = if unresolved_count > 0 {
-            format!(" [🔴 Unresolved Threads: {}] ", unresolved_count)
+            format!(
+                " [{} Unresolved Threads: {}] ",
+                &ICONS.read().unwrap().thread_unresolved,
+                unresolved_count
+            )
         } else {
             String::new()
         };
@@ -486,7 +494,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
             let count_suffix = if unresolved_count > 0 {
-                format!(" (🔴 {})", unresolved_count)
+                format!(
+                    " ({} {})",
+                    &ICONS.read().unwrap().thread_unresolved,
+                    unresolved_count
+                )
             } else {
                 String::new()
             };

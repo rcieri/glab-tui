@@ -2,7 +2,7 @@ use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::{get_label_color, highlight_fuzzy_match};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
-use crate::config::THEME;
+use crate::config::{ICONS, THEME};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -14,6 +14,7 @@ use ratatui::{
 };
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
+    let icons = ICONS.read().unwrap();
     if let Some(menu) = &mut app.edit_menu {
         let block = Block::default()
             .title(format!(" {} ", menu.title))
@@ -190,7 +191,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         format!("  {:label_width$} ", label, label_width = label_width),
                         label_style,
                     ),
-                    Span::styled(" ❯ ", sep_style),
+                    Span::styled(format!(" {} ", icons.separator), sep_style),
                 ];
                 line_spans.extend(val_spans);
                 let line = Line::from(line_spans);
@@ -397,7 +398,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 selector.selected_items.contains(item)
                             };
 
-                            let marker = if is_selected { " ▣ " } else { " ☐ " };
+                            let marker = if is_selected {
+                                format!(" {} ", icons.check_on)
+                            } else {
+                                format!(" {} ", icons.check_off)
+                            };
                             let marker_color = if is_selected {
                                 THEME.read().unwrap().green
                             } else {
@@ -1263,7 +1268,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let mut chunk_idx = 0;
 
-        let columns_header = Paragraph::new("  📊 COLUMNS").style(
+        let columns_header = Paragraph::new(format!("  {} COLUMNS", icons.label_columns)).style(
             Style::default()
                 .fg(THEME.read().unwrap().header_fg)
                 .add_modifier(Modifier::BOLD),
@@ -1308,7 +1313,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
-        let group_header = Paragraph::new("  📂 GROUP BY").style(
+        let group_header = Paragraph::new(format!("  {} GROUP BY", icons.label_group)).style(
             Style::default()
                 .fg(THEME.read().unwrap().green)
                 .add_modifier(Modifier::BOLD),
@@ -1323,7 +1328,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let flat_idx = cols_end + i;
                 let is_selected =
                     app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
-                let text = format!("  {} {}", if is_selected { "◉" } else { "○" }, col);
+                let text = format!(
+                    "  {} {}",
+                    if is_selected {
+                        &icons.radio_on
+                    } else {
+                        &icons.radio_off
+                    },
+                    col
+                );
                 let is_active = flat_idx == active_idx;
                 let style = if is_active {
                     Style::default()
@@ -1343,7 +1356,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
-        let order_header = Paragraph::new("  ↕ ORDER").style(
+        let order_header = Paragraph::new(format!("  {} ORDER", icons.label_order)).style(
             Style::default()
                 .fg(THEME.read().unwrap().yellow)
                 .add_modifier(Modifier::BOLD),
@@ -1358,7 +1371,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let flat_idx = group_end + i;
                 let is_selected =
                     app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
-                let text = format!(" {} {}", if is_selected { "◉" } else { "○" }, label);
+                let text = format!(
+                    " {} {}",
+                    if is_selected {
+                        &icons.radio_on
+                    } else {
+                        &icons.radio_off
+                    },
+                    label
+                );
                 let is_active = flat_idx == active_idx;
                 let style = if is_active {
                     Style::default()
@@ -1416,7 +1437,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         chunk_idx += 1; // spacer
 
-        let theme_header = Paragraph::new("  🎨 THEME").style(
+        let theme_header = Paragraph::new(format!("  {} THEME", icons.label_theme)).style(
             Style::default()
                 .fg(THEME.read().unwrap().purple)
                 .add_modifier(Modifier::BOLD),
@@ -1430,7 +1451,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .map(|(i, name)| {
                 let flat_idx = theme_start + i;
                 let is_selected = app.config.theme_preset.as_deref().unwrap_or("default") == *name;
-                let text = format!(" {} {}", if is_selected { "◉" } else { "○" }, name);
+                let text = format!(
+                    " {} {}",
+                    if is_selected {
+                        &icons.radio_on
+                    } else {
+                        &icons.radio_off
+                    },
+                    name
+                );
                 let is_active = flat_idx == active_idx;
                 let style = if is_active {
                     Style::default()
@@ -1461,9 +1490,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let is_save_selected = active_idx == save_end;
         let save_button_text = if is_save_selected {
-            " › 💾 Save View ‹"
+            format!(" › {} Save View ‹", icons.label_save)
         } else {
-            "   💾 Save View"
+            format!("   {} Save View", icons.label_save)
         };
         let save_button_style = if is_save_selected {
             Style::default()
@@ -1497,7 +1526,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let submenu_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-                .title(" 💾 Save to Config ")
+                .title(format!(" {} Save to Config ", icons.label_save))
                 .title_style(
                     Style::default()
                         .fg(THEME.read().unwrap().border_focused)
@@ -1610,7 +1639,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .map(|(i, (item, indices))| {
                     let is_selected = selector.selected_items.contains(item);
 
-                    let marker = if is_selected { " ▣ " } else { " ☐ " };
+                    let marker = if is_selected {
+                        format!(" {} ", icons.check_on)
+                    } else {
+                        format!(" {} ", icons.check_off)
+                    };
                     let marker_color = if is_selected {
                         THEME.read().unwrap().green
                     } else {

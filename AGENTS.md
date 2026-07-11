@@ -23,7 +23,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 
 * [src/main.rs](src/main.rs): Entry point. Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
 * [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic. `App` now holds a `config: Config` field loaded at startup.
-* [src/config.rs](src/config.rs): Config and theme system. Defines `Config`, `Theme`, `ThemeOverrides`, and all `KeybindingXxx` structs. Loads `~/.config/glab-tui/config.toml`, generates a default template on first run, and exposes `Theme::preset(name)` for built-in theme lookup.
+* [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, `IconOverrides`, and all `KeybindingXxx` structs. Loads `~/.config/glab-tui/config.toml`, generates a default template on first run, and exposes `Theme::preset(name)` for built-in theme lookup. Icons are a separate global `RwLock` (`ICONS`) initialized at startup alongside `THEME`.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/ui.rs](src/ui.rs): The purely functional rendering layer. Translates `App` state into `ratatui` widgets. Reads theme colors from `app.config` (via the global `THEME` which is now initialized from config at startup).
 * [src/themes/](src/themes/): Bundled theme TOML files (`default`, `tokyo-night`, `gruvbox`, `nord`, `catppuccin-mocha`, `dracula`). Compiled into the binary via `include_str!`. Also written to `~/.config/glab-tui/themes/` on first run so users can copy/edit them.
@@ -85,6 +85,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Config is loaded via `Config::load()` in [src/config.rs](src/config.rs) at startup and stored on `App` as `app.config`.
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` / the `save_view` keybinding), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
 * Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`.
+* Icons: `Config` also holds an optional `icons: Option<IconOverrides>`. The global `ICONS` `RwLock` is initialized at startup from the config (with nerd font defaults). All 70+ icon fields are customizable via `[icons]` in `config.toml`.
 * Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES`. User themes in `~/.config/glab-tui/themes/` take precedence.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens to `Theme` if needed.
 
@@ -103,11 +104,17 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Open it by pushing `Some(DatePicker::new(...))` into `app.date_picker`; close it by setting to `None`.
 * Navigation: `h`/`l` → previous/next month, `j`/`k` → previous/next day, `Enter` → confirm, `Esc` → cancel.
 
+### Confirmation Popup
+* Destructive actions (close issue/MR, merge MR, delete branch/release/milestone/issue/MR) show a confirmation popup before executing.
+* `ConfirmAction` enum in [src/app.rs](src/app.rs) lists all confirmable actions. The UI renders a yes/no box; the selected state is `app.confirm_popup_selected_yes: bool`.
+* Add new variants to `ConfirmAction` when introducing destructive operations. Handle the confirmation flow in [src/main.rs](src/main.rs) by checking `app.confirm_popup` before proceeding.
+
 ### Column Configure Popup
 * The configure overlay (`Tab`) has three sections: **COLUMNS** (checkbox toggle), **GROUP BY** (single-select), and **ORDER** (Ascending/Descending).
 * Value-based column filtering is available by pressing `Enter` on a focused column item, which opens a selector overlay with distinct values for that column.
 * Column filter state is tracked via `app.column_filter_context` and `app.column_filters: HashMap<Tab, HashMap<String, Vec<String>>>`.
 * Group state is tracked via `app.group_by_column: Option<String>` and `app.group_ascending: bool`.
+* When rendering the MR/PR pipeline status column, check `is_github` to display "Pipeline" (GitLab) or "Action" (GitHub) terminology.
 
 ## 4. UI & Rendering Guidelines (`ratatui`)
 

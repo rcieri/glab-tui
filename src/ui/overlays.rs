@@ -1213,7 +1213,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
-        let theme_list_len = crate::config::THEME_PRESETS.len();
+        let themes = crate::config::all_theme_presets();
+        let theme_list_len = themes.len();
         let width = 48;
         let height =
             (columns_list.len() + group_cols.len() + theme_list_len + 4 + 2 + 2 + 6 + 6) as u16;
@@ -1238,7 +1239,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let inner_area = checklist_block.inner(area);
 
-        let themes = crate::config::THEME_PRESETS;
         let order_end = group_end + 2;
         let page_size_idx = order_end;
         let theme_start = page_size_idx + 1;

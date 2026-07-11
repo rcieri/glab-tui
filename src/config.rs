@@ -284,6 +284,15 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
         include_str!("themes/catppuccin-mocha.toml"),
     ),
     ("dracula", include_str!("themes/dracula.toml")),
+    ("deep-space", include_str!("themes/deep-space.toml")),
+    ("solarized-dark", include_str!("themes/solarized-dark.toml")),
+    ("monokai", include_str!("themes/monokai.toml")),
+    ("one-dark", include_str!("themes/one-dark.toml")),
+    ("synthwave-84", include_str!("themes/synthwave-84.toml")),
+    (
+        "everforest-dark",
+        include_str!("themes/everforest-dark.toml"),
+    ),
 ];
 
 fn config_dir() -> PathBuf {
@@ -906,7 +915,8 @@ impl Config {
             r##"# glab-tui configuration
 # See https://github.com/rcieri/glab-tui for documentation
 
-# Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula"
+# Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
+# "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark"
 theme_preset = "default"
 
 # Default request page size
@@ -1150,14 +1160,40 @@ view_deployments = "Enter"
 pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
 pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Icons::default()));
 
-pub const THEME_PRESETS: &[&str] = &[
-    "default",
-    "tokyo-night",
-    "gruvbox",
-    "nord",
-    "catppuccin-mocha",
-    "dracula",
-];
+pub fn all_theme_presets() -> Vec<String> {
+    let mut presets: Vec<String> = vec![
+        "default".into(),
+        "tokyo-night".into(),
+        "gruvbox".into(),
+        "nord".into(),
+        "catppuccin-mocha".into(),
+        "dracula".into(),
+        "deep-space".into(),
+        "solarized-dark".into(),
+        "monokai".into(),
+        "one-dark".into(),
+        "synthwave-84".into(),
+        "everforest-dark".into(),
+    ];
+
+    // Scan user themes directory for additional .toml files
+    let dir = themes_dir();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "toml") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    let name = stem.to_string();
+                    if !presets.contains(&name) {
+                        presets.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    presets
+}
 
 impl Config {
     pub fn load_global_only() -> Self {

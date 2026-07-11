@@ -5805,7 +5805,8 @@ async fn main() -> Result<()> {
                         let order_end = group_end + 2;
                         let page_size_idx = order_end;
                         let theme_start = page_size_idx + 1;
-                        let theme_end = theme_start + crate::config::THEME_PRESETS.len();
+                        let themes = crate::config::all_theme_presets();
+                        let theme_end = theme_start + themes.len();
                         let max_idx = theme_end; // Save button is at index theme_end
 
                         match key_event.code {
@@ -5891,8 +5892,7 @@ async fn main() -> Result<()> {
                                     app.page_size_input = app.page_size.to_string();
                                 } else if idx < theme_end {
                                     let theme_idx = idx - theme_start;
-                                    if let Some(name) = crate::config::THEME_PRESETS.get(theme_idx)
-                                    {
+                                    if let Some(name) = themes.get(theme_idx) {
                                         crate::config::set_theme_preset(name);
                                         app.config.theme_preset = Some(name.to_string());
                                     }
@@ -5984,8 +5984,7 @@ async fn main() -> Result<()> {
                                     app.page_size_input = app.page_size.to_string();
                                 } else if idx < theme_end {
                                     let theme_idx = idx - theme_start;
-                                    if let Some(name) = crate::config::THEME_PRESETS.get(theme_idx)
-                                    {
+                                    if let Some(name) = themes.get(theme_idx) {
                                         crate::config::set_theme_preset(name);
                                         app.config.theme_preset = Some(name.to_string());
                                     }

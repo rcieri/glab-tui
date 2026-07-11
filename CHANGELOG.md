@@ -18,13 +18,11 @@ All notable changes to this project will be documented in this file.
 - **Homebrew installation** — Fixed wrong version pinning and corrected the installation method in the Homebrew formula (#148).
 - **E2E test deadlocks** — Resolved deadlocks in parallel PTY spawning by preparing process allocations before forking; refactored `test_cascading_repo_override` to use `Pty::spawn` (#fcb16b3, #4118699).
 - **Install script asset matching** — `install.sh` now matches exact asset names to avoid downloading multiple release URLs (#c6acf24).
-- **CI rate limiting** — `GITHUB_TOKEN` is now passed to install scripts in CI workflows to avoid GitHub API rate limits (#b8079f8).
 
 ### Changed
 - **Tab titles** — Now include nerd font icons (e.g., ` Issues`, ` PRs`, ` Pipelines`/` Actions`). Falls back gracefully on non-nerd-font terminals via config override.
 - **Pipeline column in MRs** — Renamed to "Pipeline" on GitLab, "Action" on GitHub, gated by host detection.
 - **Confirmation UX** — `ConfirmAction` enum expanded with `DeleteBranch`, `DeleteIssue`, `DeleteMr`, `CloseIssue`, `CloseMr`, `MergeMr` variants; new `confirm_popup_selected_yes` state field.
-- Removed opencode agent configurations and skill definitions from the repository.
 
 ### Dependencies
 - Bump `docker/login-action` from 3 to 4 (CI)

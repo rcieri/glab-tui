@@ -32,6 +32,8 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [0.5.0] - 2026-07-07
+
 ### Added
 - **Save view configurations** — Inline page size editing, multi-page fetching, and config persistence validation in the configuration view (#142).
 - **Milestone tracker & editing** — Support editing milestone fields, color-coded progress bars, caching milestone issues to avoid redundant network fetches, and dynamically rendering milestones column headers (#106, #110, #140).

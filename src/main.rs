@@ -501,7 +501,7 @@ async fn main() -> Result<()> {
         if app.active_tab == app::Tab::Pipelines {
             if let Some(client) = &app.gitlab_client {
                 if let Some(idx) = app.pipelines.state.selected() {
-                    let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id);
+                    let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
                     if let Some(pipe_id) = pipe_id {
                         if !app.pipeline_jobs.contains_key(&pipe_id)
                             && !app.fetching_pipelines.contains(&pipe_id)
@@ -535,17 +535,18 @@ async fn main() -> Result<()> {
                     let m = app.filtered_mrs().get(idx).cloned();
                     if let Some(m) = m {
                         let is_github = client.is_github;
-                        let resolved_pipe = m.head_pipeline.as_ref().map(|p| p.id).or_else(|| {
-                            if is_github {
-                                app.pipelines
-                                    .items
-                                    .iter()
-                                    .find(|p| p.r#ref == m.source_branch)
-                                    .map(|p| p.id)
-                            } else {
-                                None
-                            }
-                        });
+                        let resolved_pipe =
+                            m.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
+                                if is_github {
+                                    app.pipelines
+                                        .items
+                                        .iter()
+                                        .find(|p| p.ref_branch() == m.source_branch)
+                                        .map(|p| p.id())
+                                } else {
+                                    None
+                                }
+                            });
                         if let Some(pipe_id) = resolved_pipe {
                             if !app.pipeline_jobs.contains_key(&pipe_id)
                                 && !app.fetching_pipelines.contains(&pipe_id)
@@ -646,7 +647,7 @@ async fn main() -> Result<()> {
                         is_active = true;
                     } else if app.active_tab == app::Tab::Pipelines {
                         if let Some(idx) = app.pipelines.state.selected() {
-                            if app.filtered_pipelines().get(idx).map(|p| p.id) == Some(id) {
+                            if app.filtered_pipelines().get(idx).map(|p| p.id()) == Some(id) {
                                 is_active = true;
                             }
                         }
@@ -674,14 +675,14 @@ async fn main() -> Result<()> {
                     let current_selected_job_id = match app.active_tab {
                         app::Tab::Jobs => {
                             if let Some(idx) = app.jobs.state.selected() {
-                                app.filtered_jobs().get(idx).map(|j| j.id)
+                                app.filtered_jobs().get(idx).map(|j| j.id())
                             } else {
                                 None
                             }
                         }
                         app::Tab::Pipelines => {
                             if let Some(idx) = app.jobs.state.selected() {
-                                app.jobs.items.get(idx).map(|j| j.id)
+                                app.jobs.items.get(idx).map(|j| j.id())
                             } else {
                                 None
                             }
@@ -729,7 +730,7 @@ async fn main() -> Result<()> {
                     app.pipelines.items = pipelines;
                     app.update_filter_selection();
                     let new_ids: std::collections::HashSet<u64> =
-                        app.pipelines.items.iter().map(|p| p.id).collect();
+                        app.pipelines.items.iter().map(|p| p.id()).collect();
                     app.pipeline_jobs.retain(|id, _| new_ids.contains(id));
                     app.fetching_pipelines.clear();
                     app.project_cache.pipelines = app.pipelines.items.clone();

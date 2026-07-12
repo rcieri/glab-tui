@@ -697,20 +697,20 @@ pub(crate) fn render_tab_merge_requests(
                         app.pipelines
                             .items
                             .iter()
-                            .find(|p| p.r#ref == m.source_branch)
+                            .find(|p| p.ref_branch() == m.source_branch)
                     } else {
                         None
                     }
                 });
                 if let Some(pipe) = resolved_pipe {
-                    let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id) {
+                    let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id()) {
                         super::helpers::get_stages_dots(jobs)
                     } else {
                         icons.label_loading.clone()
                     };
 
                     if stages_dots.is_empty() {
-                        let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
+                        let (pipe_text, pipe_color, pipe_bg) = match pipe.status() {
                             "success" => (
                                 format!("{} SUCCESS", icons.status_success),
                                 THEME.read().unwrap().green,
@@ -1032,19 +1032,20 @@ pub(crate) fn render_tab_merge_requests(
                         app.pipelines
                             .items
                             .iter()
-                            .find(|p| p.r#ref == mr.source_branch)
+                            .find(|p| p.ref_branch() == mr.source_branch)
                     } else {
                         None
                     }
                 });
                 if let Some(pipe) = resolved_pipe {
-                    let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id) {
+                    let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id()) {
                         super::helpers::get_stages_dots(jobs)
                     } else {
                         icons.label_loading.clone()
                     };
+
                     if stages_dots.is_empty() {
-                        let (pipe_text, pipe_color, pipe_bg) = match pipe.status.as_str() {
+                        let (pipe_text, pipe_color, pipe_bg) = match pipe.status() {
                             "success" => (
                                 format!("{} SUCCESS", icons.status_success),
                                 THEME.read().unwrap().green,
@@ -1277,16 +1278,16 @@ pub(crate) fn render_tab_pipelines(
             &app.column_filters,
             Tab::Pipelines,
             |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Status" => vec![item.status.clone()],
-                "Ref" => vec![item.r#ref.clone()],
+                "ID" => vec![item.id().to_string()],
+                "Status" => vec![item.status().to_string()],
+                "Ref" => vec![item.ref_branch().to_string()],
                 _ => vec![],
             },
         );
 
         let rows = filtered_pipelines.iter().enumerate().map(|(idx, p)| {
             let is_row_highlighted = app.pipelines.state.selected() == Some(idx);
-            let (status_text, status_color, bg_color) = match p.status.as_str() {
+            let (status_text, status_color, bg_color) = match p.status() {
                 "success" => (
                     format!("{} SUCCESS", icons.status_success),
                     THEME.read().unwrap().green,
@@ -1328,12 +1329,12 @@ pub(crate) fn render_tab_pipelines(
                     THEME.read().unwrap().inactive_bg,
                 ),
             };
-            let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&p.id) {
+            let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
                 super::helpers::get_stages_dots(jobs)
             } else {
                 icons.label_loading.clone()
             };
-            let is_checked = app.selected_pipelines.contains(&p.id);
+            let is_checked = app.selected_pipelines.contains(&p.id());
             let status_bg = if is_row_highlighted {
                 THEME.read().unwrap().highlight_bg
             } else if is_checked {
@@ -1344,7 +1345,7 @@ pub(crate) fn render_tab_pipelines(
             let mut row_cells = Vec::new();
             if app.is_column_visible(Tab::Pipelines, "ID") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &format!("#{}", p.id),
+                    &format!("#{}", p.id()),
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
@@ -1377,7 +1378,7 @@ pub(crate) fn render_tab_pipelines(
             }
             if app.is_column_visible(Tab::Pipelines, "Ref") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(&format_ref(&p.r#ref), 100),
+                    &truncate(&format_ref(p.ref_branch()), 100),
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
@@ -1447,7 +1448,7 @@ pub(crate) fn render_tab_pipelines(
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ),
                     Span::styled(
-                        format!("#{}", p.id),
+                        format!("#{}", p.id()),
                         Style::default()
                             .fg(THEME.read().unwrap().blue)
                             .add_modifier(Modifier::BOLD),
@@ -1459,12 +1460,12 @@ pub(crate) fn render_tab_pipelines(
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ),
                     Span::styled(
-                        format_ref(&p.r#ref),
+                        format_ref(p.ref_branch()),
                         Style::default().fg(THEME.read().unwrap().purple),
                     ),
                 ]));
 
-                let (status_text, status_color) = match p.status.as_str() {
+                let (status_text, status_color) = match p.status() {
                     "success" => ("success", THEME.read().unwrap().green),
                     "failed" => ("failed", THEME.read().unwrap().red),
                     "running" => ("running", THEME.read().unwrap().blue),
@@ -1491,13 +1492,13 @@ pub(crate) fn render_tab_pipelines(
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ),
                     Span::styled(
-                        time_ago(&p.updated_at),
+                        time_ago(p.updated_at()),
                         Style::default().fg(THEME.read().unwrap().yellow),
                     ),
                 ]));
                 text.push(Line::from(""));
 
-                if let Some(jobs) = app.pipeline_jobs.get(&p.id) {
+                if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
                     text.push(Line::from(vec![Span::styled(
                         format!("{} Stages Success Rate:", icons.label_stages),
                         Style::default()
@@ -1572,11 +1573,11 @@ pub(crate) fn render_tab_jobs(
             &app.column_filters,
             Tab::Jobs,
             |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Stage" => vec![item.stage.clone()],
-                "Status" => vec![item.status.clone()],
-                "Name" => vec![item.name.clone()],
-                "Matrix" => vec![item.matrix.clone().unwrap_or_default()],
+                "ID" => vec![item.id().to_string()],
+                "Stage" => vec![item.stage().to_string()],
+                "Status" => vec![item.status().to_string()],
+                "Name" => vec![item.name().to_string()],
+                "Matrix" => vec![item.matrix().map(|m| m.to_string()).unwrap_or_default()],
                 _ => vec![],
             },
         );
@@ -1584,28 +1585,28 @@ pub(crate) fn render_tab_jobs(
         let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
             let (matrix_display, status_text_display, status_color_display, status_bg_display) =
                 if app.collapse_matrix_jobs {
-                    let variants: Vec<&crate::gitlab::pipelines::Job> = app
+                    let variants: Vec<&crate::gitlab::pipelines::JobItem> = app
                         .jobs
                         .items
                         .iter()
-                        .filter(|job| job.name == j.name)
+                        .filter(|job| job.name() == j.name())
                         .collect();
 
                     let count = variants.len();
                     let mut overall_status = "success";
-                    if variants.iter().any(|v| v.status == "failed") {
+                    if variants.iter().any(|v| v.status() == "failed") {
                         overall_status = "failed";
-                    } else if variants.iter().any(|v| v.status == "running") {
+                    } else if variants.iter().any(|v| v.status() == "running") {
                         overall_status = "running";
                     } else if variants
                         .iter()
-                        .any(|v| v.status == "pending" || v.status == "preparing")
+                        .any(|v| v.status() == "pending" || v.status() == "preparing")
                     {
                         overall_status = "pending";
-                    } else if variants.iter().any(|v| v.status == "skipped")
+                    } else if variants.iter().any(|v| v.status() == "skipped")
                         && variants
                             .iter()
-                            .all(|v| v.status == "skipped" || v.status == "success")
+                            .all(|v| v.status() == "skipped" || v.status() == "success")
                     {
                         overall_status = "skipped";
                     }
@@ -1640,7 +1641,7 @@ pub(crate) fn render_tab_jobs(
 
                     let m_str = if count > 1 {
                         format!("{} [{} variants]", icons.matrix_variant, count)
-                    } else if let Some(m) = &j.matrix {
+                    } else if let Some(m) = j.matrix() {
                         format!("{} [{}]", icons.matrix_variant, m)
                     } else {
                         String::new()
@@ -1648,7 +1649,7 @@ pub(crate) fn render_tab_jobs(
 
                     (m_str, st, sc, sbg)
                 } else {
-                    let (status_text, status_color, bg_color) = match j.status.as_str() {
+                    let (status_text, status_color, bg_color) = match j.status() {
                         "success" => (
                             format!("{} SUCCESS", icons.status_success),
                             THEME.read().unwrap().green,
@@ -1690,7 +1691,7 @@ pub(crate) fn render_tab_jobs(
                             THEME.read().unwrap().inactive_bg,
                         ),
                     };
-                    let m_str = if let Some(m) = &j.matrix {
+                    let m_str = if let Some(m) = j.matrix() {
                         format!("{} [{}]", icons.matrix_variant, m)
                     } else {
                         String::new()
@@ -1699,7 +1700,7 @@ pub(crate) fn render_tab_jobs(
                 };
 
             let is_job_selected = Some(i) == app.jobs.state.selected();
-            let is_checked = app.selected_jobs.contains(&j.id);
+            let is_checked = app.selected_jobs.contains(&j.id());
             let status_bg = if is_job_selected {
                 THEME.read().unwrap().highlight_bg
             } else if is_checked {
@@ -1714,7 +1715,7 @@ pub(crate) fn render_tab_jobs(
             let mut row_cells = Vec::new();
             if app.is_column_visible(Tab::Jobs, "ID") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.id.to_string(),
+                    &j.id().to_string(),
                     &app.search_query,
                     is_job_selected,
                     is_checked,
@@ -1724,7 +1725,7 @@ pub(crate) fn render_tab_jobs(
             }
             if app.is_column_visible(Tab::Jobs, "Stage") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.stage,
+                    &j.stage(),
                     &app.search_query,
                     is_job_selected,
                     is_checked,
@@ -1747,7 +1748,7 @@ pub(crate) fn render_tab_jobs(
             }
             if app.is_column_visible(Tab::Jobs, "Name") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.name,
+                    &j.name(),
                     &app.search_query,
                     is_job_selected,
                     is_checked,

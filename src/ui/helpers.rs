@@ -244,17 +244,18 @@ pub(crate) struct StageSummary {
     pub(crate) status: String,
 }
 
-pub(crate) fn get_stages_summary(jobs: &[crate::gitlab::pipelines::Job]) -> Vec<StageSummary> {
+pub(crate) fn get_stages_summary(jobs: &[crate::gitlab::pipelines::JobItem]) -> Vec<StageSummary> {
     let mut stage_names = Vec::new();
     let mut stage_jobs = std::collections::HashMap::new();
     for j in jobs {
-        if !stage_names.contains(&j.stage) {
-            stage_names.push(j.stage.clone());
+        let stage_name = j.stage().to_string();
+        if !stage_names.contains(&stage_name) {
+            stage_names.push(stage_name.clone());
         }
         stage_jobs
-            .entry(j.stage.clone())
+            .entry(stage_name)
             .or_insert_with(Vec::new)
-            .push(j.status.clone());
+            .push(j.status().to_string());
     }
 
     let mut summaries = Vec::new();
@@ -300,7 +301,7 @@ pub(crate) fn get_stages_summary(jobs: &[crate::gitlab::pipelines::Job]) -> Vec<
     summaries
 }
 
-pub(crate) fn get_stages_dots(jobs: &[crate::gitlab::pipelines::Job]) -> String {
+pub(crate) fn get_stages_dots(jobs: &[crate::gitlab::pipelines::JobItem]) -> String {
     let icons = crate::config::ICONS.read().unwrap();
     let summaries = get_stages_summary(jobs);
     let mut dots = String::new();
@@ -320,7 +321,7 @@ pub(crate) fn get_stages_dots(jobs: &[crate::gitlab::pipelines::Job]) -> String 
 
 pub(crate) fn append_stage_summaries(
     text: &mut Vec<Line<'static>>,
-    jobs: &[crate::gitlab::pipelines::Job],
+    jobs: &[crate::gitlab::pipelines::JobItem],
 ) {
     let summaries = get_stages_summary(jobs);
     for s in summaries {
@@ -619,43 +620,29 @@ pub(crate) fn render_fuzzy_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gitlab::pipelines::Job;
+    use crate::gitlab::pipelines::{GitlabJob, JobItem};
     use crate::ui::diff::count_wrapped_lines;
     use crate::ui::diff::format_comment_with_suggestions;
+
+    fn make_job(id: u64, stage: &str, name: &str, status: &str) -> JobItem {
+        JobItem::from_gitlab(GitlabJob {
+            id,
+            stage: stage.to_string(),
+            name: name.to_string(),
+            status: status.to_string(),
+            matrix: None,
+        })
+    }
 
     #[test]
     fn test_get_stages_summary() {
         // Test case 1: Stage with mixed success and skipped jobs
         // This stage should be reported as "success" status, and 100% success rate.
         let jobs = vec![
-            Job {
-                id: 1,
-                stage: "build".to_string(),
-                name: "compile".to_string(),
-                status: "success".to_string(),
-                matrix: None,
-            },
-            Job {
-                id: 2,
-                stage: "build".to_string(),
-                name: "cache".to_string(),
-                status: "skipped".to_string(),
-                matrix: None,
-            },
-            Job {
-                id: 3,
-                stage: "test".to_string(),
-                name: "unit".to_string(),
-                status: "failed".to_string(),
-                matrix: None,
-            },
-            Job {
-                id: 4,
-                stage: "test".to_string(),
-                name: "integration".to_string(),
-                status: "success".to_string(),
-                matrix: None,
-            },
+            make_job(1, "build", "compile", "success"),
+            make_job(2, "build", "cache", "skipped"),
+            make_job(3, "test", "unit", "failed"),
+            make_job(4, "test", "integration", "success"),
         ];
 
         let summaries = get_stages_summary(&jobs);

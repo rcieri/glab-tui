@@ -43,7 +43,7 @@ pub struct MergeRequest {
     pub draft: bool,
     pub description: Option<String>,
     #[serde(default)]
-    pub head_pipeline: Option<super::pipelines::Pipeline>,
+    pub head_pipeline: Option<super::pipelines::PipelineItem>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -110,7 +110,9 @@ impl From<GitlabMergeRequest> for MergeRequest {
             source_branch: gl.source_branch,
             draft: gl.draft,
             description: gl.description,
-            head_pipeline: gl.head_pipeline.map(|p| p.into()),
+            head_pipeline: gl
+                .head_pipeline
+                .map(super::pipelines::PipelineItem::from_gitlab),
         }
     }
 }

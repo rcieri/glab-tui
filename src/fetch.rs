@@ -127,10 +127,10 @@ pub fn spawn_refresh_active_tab(
                         let target_ref =
                             mr_iid.map(|iid| format!("refs/merge-requests/{}/head", iid));
                         if let Some(pipeline) = pipelines.into_iter().find(|p| {
-                            &p.r#ref == branch
-                                || target_ref.as_ref().map_or(false, |tr| &p.r#ref == tr)
+                            p.ref_branch() == branch
+                                || target_ref.as_ref().map_or(false, |tr| p.ref_branch() == tr)
                         }) {
-                            found_pipeline_id = Some(pipeline.id);
+                            found_pipeline_id = Some(pipeline.id());
                         }
                     }
                 }

@@ -7,12 +7,12 @@ use std::path::PathBuf;
 pub struct ProjectCache {
     pub issues: Vec<crate::gitlab::issues::Issue>,
     pub mrs: Vec<crate::gitlab::mr::MergeRequest>,
-    pub pipelines: Vec<crate::gitlab::pipelines::Pipeline>,
+    pub pipelines: Vec<crate::gitlab::pipelines::PipelineItem>,
     pub runners: Vec<crate::gitlab::runners::Runner>,
     pub releases: Vec<crate::gitlab::releases::Release>,
     pub todos: Vec<crate::gitlab::notifications::Notification>,
     pub milestones: Vec<crate::gitlab::milestones::Milestone>,
-    pub pipeline_jobs: HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
+    pub pipeline_jobs: HashMap<u64, Vec<crate::gitlab::pipelines::JobItem>>,
     pub branches: Vec<crate::gitlab::branches::Branch>,
     pub environments: Vec<crate::gitlab::deployments::Environment>,
     #[serde(default)]

@@ -219,8 +219,27 @@ impl Tab {
                 cols.push("Author");
                 cols
             }
-            Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
-            Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
+            Tab::Pipelines => {
+                let mut cols = vec!["ID", "Status", "Ref"];
+                if is_github {
+                    cols.push("Name");
+                    cols.push("Event");
+                    cols.push("SHA");
+                    cols.push("Actor");
+                } else {
+                    cols.push("Stages");
+                }
+                cols
+            }
+            Tab::Jobs => {
+                let mut cols = vec!["ID", "Status", "Name", "Matrix"];
+                if is_github {
+                    cols.push("Runner");
+                } else {
+                    cols.push("Stage");
+                }
+                cols
+            }
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec![
                 "Tag",
@@ -248,8 +267,20 @@ impl Tab {
                 cols
             }
             Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
-            Tab::Pipelines => vec!["ID", "Status", "Stages", "Ref"],
-            Tab::Jobs => vec!["ID", "Stage", "Status", "Name", "Matrix"],
+            Tab::Pipelines => {
+                if is_github {
+                    vec!["Name", "Status", "Event", "Ref"]
+                } else {
+                    vec!["ID", "Status", "Stages", "Ref"]
+                }
+            }
+            Tab::Jobs => {
+                if is_github {
+                    vec!["Name", "Status", "Ref"]
+                } else {
+                    vec!["ID", "Stage", "Status", "Name", "Matrix"]
+                }
+            }
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec!["Tag", "Release Name", "Date"],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
@@ -1261,7 +1292,7 @@ pub struct App {
     pub terminal_commands: Vec<TerminalCommand>,
     pub issues: StatefulTable<crate::gitlab::issues::Issue>,
     pub mrs: StatefulTable<crate::gitlab::mr::MergeRequest>,
-    pub pipelines: StatefulTable<crate::gitlab::pipelines::Pipeline>,
+    pub pipelines: StatefulTable<crate::gitlab::pipelines::PipelineItem>,
     pub search_query: String,
     pub is_typing_search: bool,
     pub active_pipeline_id: Option<u64>,
@@ -1269,7 +1300,7 @@ pub struct App {
     pub error_message: Option<String>,
     pub runners: StatefulTable<crate::gitlab::runners::Runner>,
     pub releases: StatefulTable<crate::gitlab::releases::Release>,
-    pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
+    pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::gitlab::pipelines::JobItem>>,
     pub fetching_pipelines: std::collections::HashSet<u64>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
@@ -1279,7 +1310,7 @@ pub struct App {
     pub editing_page_size: bool,
     pub page_size_input: String,
     pub date_picker: Option<DatePicker>,
-    pub jobs: StatefulTable<crate::gitlab::pipelines::Job>,
+    pub jobs: StatefulTable<crate::gitlab::pipelines::JobItem>,
     pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
@@ -2004,16 +2035,16 @@ impl App {
     }
 
     pub fn filter_pipelines_list<'a>(
-        items: &'a [crate::gitlab::pipelines::Pipeline],
+        items: &'a [crate::gitlab::pipelines::PipelineItem],
         query: &str,
-        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
+        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::gitlab::pipelines::JobItem>>,
         enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::gitlab::pipelines::Pipeline> {
+    ) -> Vec<&'a crate::gitlab::pipelines::PipelineItem> {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
         let matcher = SkimMatcherV2::default();
-        let mut scored_items: Vec<(i64, &crate::gitlab::pipelines::Pipeline)> = Vec::new();
+        let mut scored_items: Vec<(i64, &crate::gitlab::pipelines::PipelineItem)> = Vec::new();
 
         for item in items {
             let mut best_score: Option<i64> = None;
@@ -2027,21 +2058,21 @@ impl App {
             };
 
             if enabled_cols.contains("ID") {
-                check_match(&format!("#{}", item.id));
-                check_match(&item.id.to_string());
+                check_match(&format!("#{}", item.id()));
+                check_match(&item.id().to_string());
             }
             if enabled_cols.contains("Status") {
-                check_match(&item.status);
+                check_match(item.status());
             }
             if enabled_cols.contains("Ref") {
-                check_match(&item.r#ref);
+                check_match(item.ref_branch());
             }
             if enabled_cols.contains("Stages") {
-                if let Some(jobs) = pipeline_jobs.get(&item.id) {
+                if let Some(jobs) = pipeline_jobs.get(&item.id()) {
                     for job in jobs {
-                        check_match(&job.name);
-                        check_match(&job.stage);
-                        check_match(&job.status);
+                        check_match(job.name());
+                        check_match(job.stage());
+                        check_match(job.status());
                     }
                 }
             }
@@ -2056,28 +2087,28 @@ impl App {
     }
 
     pub fn filtered_pipelines_list<'a>(
-        items: &'a [crate::gitlab::pipelines::Pipeline],
+        items: &'a [crate::gitlab::pipelines::PipelineItem],
         query: &str,
-        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
+        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::gitlab::pipelines::JobItem>>,
         enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
         ascending: bool,
         group_by_column: &Option<String>,
-    ) -> Vec<&'a crate::gitlab::pipelines::Pipeline> {
+    ) -> Vec<&'a crate::gitlab::pipelines::PipelineItem> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = enabled_columns.get(&Tab::Pipelines).unwrap_or(&default_set);
         let mut list = Self::filter_pipelines_list(items, query, pipeline_jobs, enabled_cols);
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
                 let val_a = match col.as_str() {
-                    "Status" => a.status.clone(),
-                    "Ref" => a.r#ref.clone(),
-                    "ID" => a.id.to_string(),
+                    "Status" => a.status().to_string(),
+                    "Ref" => a.ref_branch().to_string(),
+                    "ID" => a.id().to_string(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
-                    "Status" => b.status.clone(),
-                    "Ref" => b.r#ref.clone(),
-                    "ID" => b.id.to_string(),
+                    "Status" => b.status().to_string(),
+                    "Ref" => b.ref_branch().to_string(),
+                    "ID" => b.id().to_string(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2090,7 +2121,7 @@ impl App {
         list
     }
 
-    pub fn filtered_pipelines(&self) -> Vec<&crate::gitlab::pipelines::Pipeline> {
+    pub fn filtered_pipelines(&self) -> Vec<&crate::gitlab::pipelines::PipelineItem> {
         let mut list = Self::filtered_pipelines_list(
             &self.pipelines.items,
             &self.search_query,
@@ -2107,9 +2138,9 @@ impl App {
             &self.column_filters,
             Tab::Pipelines,
             |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Status" => vec![item.status.clone()],
-                "Ref" => vec![item.r#ref.clone()],
+                "ID" => vec![item.id().to_string()],
+                "Status" => vec![item.status().to_string()],
+                "Ref" => vec![item.ref_branch().to_string()],
                 _ => vec![],
             },
         );
@@ -2117,15 +2148,15 @@ impl App {
     }
 
     pub fn filter_jobs_list<'a>(
-        items: &'a [crate::gitlab::pipelines::Job],
+        items: &'a [crate::gitlab::pipelines::JobItem],
         query: &str,
         enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::gitlab::pipelines::Job> {
+    ) -> Vec<&'a crate::gitlab::pipelines::JobItem> {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
         let matcher = SkimMatcherV2::default();
-        let mut scored_items: Vec<(i64, &crate::gitlab::pipelines::Job)> = Vec::new();
+        let mut scored_items: Vec<(i64, &crate::gitlab::pipelines::JobItem)> = Vec::new();
 
         for item in items {
             let mut best_score: Option<i64> = None;
@@ -2139,19 +2170,19 @@ impl App {
             };
 
             if enabled_cols.contains("ID") {
-                check_match(&item.id.to_string());
+                check_match(&item.id().to_string());
             }
             if enabled_cols.contains("Status") {
-                check_match(&item.status);
+                check_match(item.status());
             }
             if enabled_cols.contains("Stage") {
-                check_match(&item.stage);
+                check_match(item.stage());
             }
             if enabled_cols.contains("Name") {
-                check_match(&item.name);
+                check_match(item.name());
             }
             if enabled_cols.contains("Matrix") {
-                if let Some(matrix) = &item.matrix {
+                if let Some(matrix) = item.matrix() {
                     check_match(matrix);
                 }
             }
@@ -2166,29 +2197,29 @@ impl App {
     }
 
     pub fn filtered_jobs_list<'a>(
-        items: &'a [crate::gitlab::pipelines::Job],
+        items: &'a [crate::gitlab::pipelines::JobItem],
         query: &str,
         enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
         ascending: bool,
         group_by_column: &Option<String>,
-    ) -> Vec<&'a crate::gitlab::pipelines::Job> {
+    ) -> Vec<&'a crate::gitlab::pipelines::JobItem> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = enabled_columns.get(&Tab::Jobs).unwrap_or(&default_set);
         let mut list = Self::filter_jobs_list(items, query, enabled_cols);
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
                 let val_a = match col.as_str() {
-                    "Status" => a.status.clone(),
-                    "Stage" => a.stage.clone(),
-                    "Name" => a.name.clone(),
-                    "ID" => a.id.to_string(),
+                    "Status" => a.status().to_string(),
+                    "Stage" => a.stage().to_string(),
+                    "Name" => a.name().to_string(),
+                    "ID" => a.id().to_string(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
-                    "Status" => b.status.clone(),
-                    "Stage" => b.stage.clone(),
-                    "Name" => b.name.clone(),
-                    "ID" => b.id.to_string(),
+                    "Status" => b.status().to_string(),
+                    "Stage" => b.stage().to_string(),
+                    "Name" => b.name().to_string(),
+                    "ID" => b.id().to_string(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2201,7 +2232,7 @@ impl App {
         list
     }
 
-    pub fn filtered_jobs(&self) -> Vec<&crate::gitlab::pipelines::Job> {
+    pub fn filtered_jobs(&self) -> Vec<&crate::gitlab::pipelines::JobItem> {
         let mut list = Self::filtered_jobs_list(
             &self.jobs.items,
             &self.search_query,
@@ -2217,19 +2248,19 @@ impl App {
             &self.column_filters,
             Tab::Jobs,
             |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Stage" => vec![item.stage.clone()],
-                "Status" => vec![item.status.clone()],
-                "Name" => vec![item.name.clone()],
+                "ID" => vec![item.id().to_string()],
+                "Stage" => vec![item.stage().to_string()],
+                "Status" => vec![item.status().to_string()],
+                "Name" => vec![item.name().to_string()],
                 _ => vec![],
             },
         );
 
         if self.collapse_matrix_jobs {
-            let mut collapsed: Vec<&crate::gitlab::pipelines::Job> = Vec::new();
+            let mut collapsed: Vec<&crate::gitlab::pipelines::JobItem> = Vec::new();
             let mut seen_names = std::collections::HashSet::new();
             for job in list {
-                if seen_names.insert(&job.name) {
+                if seen_names.insert(job.name().to_string()) {
                     collapsed.push(job);
                 }
             }
@@ -2883,14 +2914,40 @@ impl App {
                 for item in &self.pipelines.items {
                     match col {
                         "ID" => {
-                            values.insert(item.id.to_string());
+                            values.insert(item.id().to_string());
                         }
                         "Status" => {
-                            values.insert(item.status.clone());
+                            values.insert(item.status().to_string());
                         }
                         "Ref" => {
-                            values.insert(item.r#ref.clone());
+                            values.insert(item.ref_branch().to_string());
                         }
+                        "Name" => match item {
+                            crate::gitlab::pipelines::PipelineItem::Github { run, .. } => {
+                                values.insert(run.name.clone());
+                            }
+                            _ => {}
+                        },
+                        "Event" => match item {
+                            crate::gitlab::pipelines::PipelineItem::Github { run, .. } => {
+                                values.insert(run.event.clone());
+                            }
+                            _ => {}
+                        },
+                        "SHA" => match item {
+                            crate::gitlab::pipelines::PipelineItem::Github { run, .. } => {
+                                values.insert(run.head_sha.clone());
+                            }
+                            _ => {}
+                        },
+                        "Actor" => match item {
+                            crate::gitlab::pipelines::PipelineItem::Github { run, .. } => {
+                                if let Some(login) = &run.actor_login {
+                                    values.insert(login.clone());
+                                }
+                            }
+                            _ => {}
+                        },
                         _ => {}
                     }
                 }
@@ -2899,16 +2956,16 @@ impl App {
                 for item in &self.jobs.items {
                     match col {
                         "ID" => {
-                            values.insert(item.id.to_string());
+                            values.insert(item.id().to_string());
                         }
                         "Stage" => {
-                            values.insert(item.stage.clone());
+                            values.insert(item.stage().to_string());
                         }
                         "Status" => {
-                            values.insert(item.status.clone());
+                            values.insert(item.status().to_string());
                         }
                         "Name" => {
-                            values.insert(item.name.clone());
+                            values.insert(item.name().to_string());
                         }
                         _ => {}
                     }
@@ -3170,9 +3227,27 @@ impl App {
                     std::collections::BTreeMap::new();
                 for (idx, p) in items.iter().enumerate() {
                     let key = match col.as_str() {
-                        "Status" => p.status.clone(),
-                        "Ref" => p.r#ref.clone(),
-                        "ID" => format!("#{}", p.id),
+                        "Status" => p.status().to_string(),
+                        "Ref" => p.ref_branch().to_string(),
+                        "ID" => format!("#{}", p.id()),
+                        "Name" => match p {
+                            crate::gitlab::pipelines::PipelineItem::Github { run, .. } => {
+                                run.name.clone()
+                            }
+                            _ => format!("#{}", p.id()),
+                        },
+                        "Event" => match p {
+                            crate::gitlab::pipelines::PipelineItem::Github { run, .. } => {
+                                run.event.clone()
+                            }
+                            _ => "Unknown".to_string(),
+                        },
+                        "SHA" => match p {
+                            crate::gitlab::pipelines::PipelineItem::Github { run, .. } => {
+                                run.head_sha[..usize::min(7, run.head_sha.len())].to_string()
+                            }
+                            _ => "Unknown".to_string(),
+                        },
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -3185,10 +3260,10 @@ impl App {
                     std::collections::BTreeMap::new();
                 for (idx, j) in items.iter().enumerate() {
                     let key = match col.as_str() {
-                        "Status" => j.status.clone(),
-                        "Stage" => j.stage.clone(),
-                        "Name" => j.name.clone(),
-                        "ID" => format!("#{}", j.id),
+                        "Status" => j.status().to_string(),
+                        "Stage" => j.stage().to_string(),
+                        "Name" => j.name().to_string(),
+                        "ID" => format!("#{}", j.id()),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);

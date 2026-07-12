@@ -553,7 +553,7 @@ pub async fn handle_active_tab_key(
                 crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
             } else if let Some(selected_idx) = app.pipelines.state.selected() {
                 if let Some(item) = app.filtered_pipelines().get(selected_idx) {
-                    let pipe_id = item.id;
+                    let pipe_id = item.id();
                     match key_event.code {
                         KeyCode::Char(' ') => {
                             if app.selected_pipelines.contains(&pipe_id) {
@@ -581,9 +581,13 @@ pub async fn handle_active_tab_key(
                                             .pipelines
                                             .items
                                             .iter_mut()
-                                            .find(|pipe| pipe.id == *p_id)
+                                            .find(|pipe| pipe.id() == *p_id)
                                         {
-                                            p.status = "running".to_string();
+                                            match p {
+                                                crate::gitlab::pipelines::PipelineItem::Gitlab(p) => p.status = "running".to_string(),
+                                                crate::gitlab::pipelines::PipelineItem::Github { effective_status, .. } => *effective_status = "running".to_string(),
+                                                _ => {}
+                                            }
                                         }
                                     }
                                     app.selected_pipelines.clear();
@@ -609,9 +613,18 @@ pub async fn handle_active_tab_key(
                                         .pipelines
                                         .items
                                         .iter_mut()
-                                        .find(|pipe| pipe.id == pipe_id)
+                                        .find(|pipe| pipe.id() == pipe_id)
                                     {
-                                        p.status = "running".to_string();
+                                        match p {
+                                            crate::gitlab::pipelines::PipelineItem::Gitlab(p) => {
+                                                p.status = "running".to_string()
+                                            }
+                                            crate::gitlab::pipelines::PipelineItem::Github {
+                                                effective_status,
+                                                ..
+                                            } => *effective_status = "running".to_string(),
+                                            _ => {}
+                                        }
                                     }
                                     let tx = tx.clone();
                                     tokio::spawn(async move {
@@ -642,9 +655,18 @@ pub async fn handle_active_tab_key(
                                 .pipelines
                                 .items
                                 .iter_mut()
-                                .find(|pipe| pipe.id == pipe_id)
+                                .find(|pipe| pipe.id() == pipe_id)
                             {
-                                p.status = "canceled".to_string();
+                                match p {
+                                    crate::gitlab::pipelines::PipelineItem::Gitlab(p) => {
+                                        p.status = "canceled".to_string()
+                                    }
+                                    crate::gitlab::pipelines::PipelineItem::Github {
+                                        effective_status,
+                                        ..
+                                    } => *effective_status = "canceled".to_string(),
+                                    _ => {}
+                                }
                             }
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
@@ -699,11 +721,11 @@ pub async fn handle_active_tab_key(
                     .pipelines
                     .items
                     .iter()
-                    .map(|p| format!("#{} — {} ({})", p.id, p.r#ref, p.status))
+                    .map(|p| format!("#{} — {} ({})", p.id(), p.ref_branch(), p.status()))
                     .collect();
                 let mut pre_selected = std::collections::HashSet::new();
                 if let Some(active_id) = app.active_pipeline_id {
-                    if let Some(i) = app.pipelines.items.iter().position(|p| p.id == active_id) {
+                    if let Some(i) = app.pipelines.items.iter().position(|p| p.id() == active_id) {
                         if let Some(p) = pipelines.get(i) {
                             pre_selected.insert(p.clone());
                         }
@@ -733,7 +755,10 @@ pub async fn handle_active_tab_key(
                     },
                 });
             } else if let Some(idx) = app.jobs.state.selected() {
-                let job_info = app.filtered_jobs().get(idx).map(|j| (j.id, j.name.clone()));
+                let job_info = app
+                    .filtered_jobs()
+                    .get(idx)
+                    .map(|j| (j.id(), j.name().to_string()));
                 if let Some((job_id, job_name)) = job_info {
                     match key_event.code {
                         _ if keybinding_matches(
@@ -758,8 +783,17 @@ pub async fn handle_active_tab_key(
                                     let job_ids: Vec<u64> =
                                         app.selected_jobs.iter().cloned().collect();
                                     for j in app.jobs.items.iter_mut() {
-                                        if app.selected_jobs.contains(&j.id) {
-                                            j.status = "running".to_string();
+                                        if app.selected_jobs.contains(&j.id()) {
+                                            match j {
+                                                crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                                    j.status = "running".to_string()
+                                                }
+                                                crate::gitlab::pipelines::JobItem::Github {
+                                                    effective_status,
+                                                    ..
+                                                } => *effective_status = "running".to_string(),
+                                                _ => {}
+                                            }
                                         }
                                     }
                                     app.selected_jobs.clear();
@@ -786,7 +820,16 @@ pub async fn handle_active_tab_key(
                                     });
                                 } else {
                                     if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        j.status = "running".to_string();
+                                        match j {
+                                            crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                                j.status = "running".to_string()
+                                            }
+                                            crate::gitlab::pipelines::JobItem::Github {
+                                                effective_status,
+                                                ..
+                                            } => *effective_status = "running".to_string(),
+                                            _ => {}
+                                        }
                                     }
                                     tokio::spawn(async move {
                                         let endpoint = format!(
@@ -817,10 +860,10 @@ pub async fn handle_active_tab_key(
                         {
                             let jobs = &app.jobs.items;
                             if let Some(highlighted_job) = jobs.get(idx) {
-                                let stage_name = &highlighted_job.stage;
+                                let stage_name = highlighted_job.stage();
                                 for job in jobs {
-                                    if &job.stage == stage_name {
-                                        app.selected_jobs.insert(job.id);
+                                    if job.stage() == stage_name {
+                                        app.selected_jobs.insert(job.id());
                                     }
                                 }
                                 app.status_message =
@@ -838,8 +881,17 @@ pub async fn handle_active_tab_key(
                                     let job_ids: Vec<u64> =
                                         app.selected_jobs.iter().cloned().collect();
                                     for j in app.jobs.items.iter_mut() {
-                                        if app.selected_jobs.contains(&j.id) {
-                                            j.status = "canceled".to_string();
+                                        if app.selected_jobs.contains(&j.id()) {
+                                            match j {
+                                                crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                                    j.status = "canceled".to_string()
+                                                }
+                                                crate::gitlab::pipelines::JobItem::Github {
+                                                    effective_status,
+                                                    ..
+                                                } => *effective_status = "canceled".to_string(),
+                                                _ => {}
+                                            }
                                         }
                                     }
                                     app.selected_jobs.clear();
@@ -875,7 +927,16 @@ pub async fn handle_active_tab_key(
                                     });
                                 } else {
                                     if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        j.status = "canceled".to_string();
+                                        match j {
+                                            crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                                j.status = "canceled".to_string()
+                                            }
+                                            crate::gitlab::pipelines::JobItem::Github {
+                                                effective_status,
+                                                ..
+                                            } => *effective_status = "canceled".to_string(),
+                                            _ => {}
+                                        }
                                     }
                                     tokio::spawn(async move {
                                         let endpoint = if client_clone.is_github {
@@ -928,8 +989,8 @@ pub async fn handle_active_tab_key(
                                         app.pipelines
                                             .items
                                             .iter()
-                                            .find(|p| p.id == pipe_id)
-                                            .map(|p| p.r#ref.clone())
+                                            .find(|p| p.id() == pipe_id)
+                                            .map(|p| p.ref_branch().to_string())
                                     })
                                     .unwrap_or_else(|| "master".to_string());
                                 vec![
@@ -1647,7 +1708,7 @@ pub async fn handle_active_tab_key(
                 }
                 crate::app::Tab::Pipelines => {
                     if let Some(idx) = app.pipelines.state.selected() {
-                        let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id);
+                        let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
                         if let Some(pipeline_id) = pipe_id {
                             if let Some(client) = &app.gitlab_client {
                                 app.loading_tabs.insert(crate::app::Tab::Jobs);
@@ -1678,7 +1739,10 @@ pub async fn handle_active_tab_key(
                     if app.job_trace.is_some() {
                         app.details_zoomed = !app.details_zoomed;
                     } else if let Some(idx) = app.jobs.state.selected() {
-                        let job_info = app.filtered_jobs().get(idx).map(|j| (j.id, j.name.clone()));
+                        let job_info = app
+                            .filtered_jobs()
+                            .get(idx)
+                            .map(|j| (j.id(), j.name().to_string()));
                         if let Some((job_id, _)) = job_info {
                             if let Some(client) = &app.gitlab_client {
                                 let client = client.clone();

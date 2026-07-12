@@ -214,12 +214,23 @@ async fn run_cli(
             let mut cmd = tokio::process::Command::new(&program);
             cmd.args(&actual_args);
 
+            let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
             match cmd.output().await {
                 Ok(output) => {
                     if output.status.success() {
+                        let _ = tx_clone.send(Event::TerminalCommandLogged {
+                            timestamp,
+                            command: status_msg.clone(),
+                            status: "Success".to_string(),
+                        });
                         let _ = tx_clone.send(Event::CommandCompleted(tab, Ok(())));
                     } else {
                         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        let _ = tx_clone.send(Event::TerminalCommandLogged {
+                            timestamp,
+                            command: status_msg.clone(),
+                            status: format!("Failed: {}", err_msg),
+                        });
                         let _ = tx_clone.send(Event::CommandCompleted(
                             tab,
                             Err(format!("Command failed: {}", err_msg)),
@@ -227,6 +238,11 @@ async fn run_cli(
                     }
                 }
                 Err(e) => {
+                    let _ = tx_clone.send(Event::TerminalCommandLogged {
+                        timestamp,
+                        command: status_msg.clone(),
+                        status: format!("Failed: {}", e),
+                    });
                     let _ = tx_clone.send(Event::CommandCompleted(
                         tab,
                         Err(format!("Failed to execute command: {}", e)),

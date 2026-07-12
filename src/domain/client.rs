@@ -372,15 +372,6 @@ impl GitlabClient {
     ) -> Result<String> {
         let label = format!("{:<24}", desc.to_uppercase());
         let cmd_str = format!("{} {}", program, args.join(" "));
-        let cmd_log_str = format!("{} {}", label, cmd_str);
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        if let Some(ref tx) = self.tx {
-            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                timestamp: timestamp.clone(),
-                command: cmd_log_str.clone(),
-                status: "Running".to_string(),
-            });
-        }
 
         let output = Command::new(program)
             .args(args)
@@ -388,6 +379,7 @@ impl GitlabClient {
             .await
             .context(format!("Failed to execute {} command", program));
 
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         match output {
             Ok(out) => {
                 if out.status.success() {
@@ -395,7 +387,7 @@ impl GitlabClient {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(crate::event::Event::TerminalCommandLogged {
                             timestamp: timestamp.clone(),
-                            command: cmd_log_str.clone(),
+                            command: format!("{} {}", label, cmd_str),
                             status: "Success".to_string(),
                         });
                     }
@@ -405,7 +397,7 @@ impl GitlabClient {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(crate::event::Event::TerminalCommandLogged {
                             timestamp: timestamp.clone(),
-                            command: cmd_log_str.clone(),
+                            command: format!("{} {}", label, cmd_str),
                             status: format!("Failed: {}", err_msg),
                         });
                     }
@@ -417,7 +409,7 @@ impl GitlabClient {
                 if let Some(ref tx) = self.tx {
                     let _ = tx.send(crate::event::Event::TerminalCommandLogged {
                         timestamp: timestamp.clone(),
-                        command: cmd_log_str.clone(),
+                        command: format!("{} {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }

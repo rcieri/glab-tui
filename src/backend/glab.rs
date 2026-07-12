@@ -29,16 +29,8 @@ impl GlabBackend {
     }
 
     async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         let label = format!("{:<24}", desc.to_uppercase());
         let cmd_str = format!("glab {}", args.join(" "));
-        if let Some(ref tx) = self.tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp: timestamp.clone(),
-                command: format!("{} {}", label, cmd_str),
-                status: "Running".to_string(),
-            });
-        }
 
         let output = Command::new("glab")
             .args(args)
@@ -46,6 +38,7 @@ impl GlabBackend {
             .await
             .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
 
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         if output.status.success() {
             let s = String::from_utf8(output.stdout)?;
             if let Some(ref tx) = self.tx {
@@ -1398,7 +1391,6 @@ impl Backend for GlabBackend {
         body: Option<&str>,
         desc: &str,
     ) -> Result<String> {
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         let mut cmd_args: Vec<String> = vec!["api".into()];
         if method != "GET" {
             cmd_args.push("-X".into());
@@ -1407,13 +1399,6 @@ impl Backend for GlabBackend {
         cmd_args.push(endpoint.into());
         let cmd_str = format!("glab {}", cmd_args.join(" "));
         let label = format!("{:<24}", desc.to_uppercase());
-        if let Some(ref tx) = self.tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp: timestamp.clone(),
-                command: format!("{} {}", label, cmd_str),
-                status: "Running".to_string(),
-            });
-        }
 
         let mut cmd = Command::new("glab");
         cmd.arg("api");
@@ -1446,6 +1431,7 @@ impl Backend for GlabBackend {
             cmd.output().await
         };
 
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         match output {
             Ok(out) => {
                 if out.status.success() {

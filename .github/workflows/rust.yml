@@ -64,8 +64,12 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Run unit tests
+        run: cargo test --bin glab-tui --verbose
+
+      - name: Run e2e tests
+        timeout-minutes: 15
+        run: cargo test --test e2e --verbose -- --test-threads=1
 
       - name: Test install.sh (Linux & macOS)
         if: matrix.os != 'windows-latest'

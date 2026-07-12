@@ -1,6 +1,6 @@
 #!/bin/bash
 LOG_FILE="${TEST_LOG_PATH:-/tmp/glab_tui_test_calls.log}"
-FIXTURES_DIR="${TEST_FIXTURES_DIR:-/home/rcieri/repos/glab-tui/tests/fixtures}"
+FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "glab $*" >> "$LOG_FILE"
 

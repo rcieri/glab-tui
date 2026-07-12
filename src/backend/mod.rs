@@ -1,7 +1,6 @@
 pub mod gh;
 pub mod glab;
 
-use crate::event::Event;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::Issue;
@@ -11,6 +10,7 @@ use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::runners::Runner;
+use crate::event::Event;
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc::UnboundedSender;
@@ -47,11 +47,7 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<DiscussionNote>>;
 
     // ── Pipelines ──
-    async fn list_pipelines(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Pipeline>>;
+    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>>;
     async fn list_pipeline_jobs(
         &self,
         project: &str,
@@ -81,8 +77,7 @@ pub trait Backend: Send + Sync {
     async fn delete_release(&self, project: &str, tag_name: &str) -> Result<()>;
 
     // ── Milestones ──
-    async fn list_milestones(&self, project: &str, page_size: usize)
-        -> Result<Vec<Milestone>>;
+    async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>>;
     async fn list_milestone_issues(
         &self,
         project: &str,
@@ -113,15 +108,11 @@ pub trait Backend: Send + Sync {
     // ── Branches ──
     async fn list_branches(&self, project: &str, page_size: usize) -> Result<Vec<Branch>>;
     async fn create_branch(&self, project: &str, branch_name: &str, ref_branch: &str)
-        -> Result<()>;
+    -> Result<()>;
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()>;
 
     // ── Environments / Deployments ──
-    async fn list_environments(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Environment>>;
+    async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>>;
     async fn list_deployments(
         &self,
         project: &str,
@@ -136,12 +127,7 @@ pub trait Backend: Send + Sync {
     async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>>;
 
     // ── Raw API fallback ──
-    async fn raw_api(
-        &self,
-        endpoint: &str,
-        method: &str,
-        body: Option<&str>,
-    ) -> Result<String>;
+    async fn raw_api(&self, endpoint: &str, method: &str, body: Option<&str>) -> Result<String>;
 }
 
 pub fn create_backend(project_url_contains_github: bool) -> Box<dyn Backend> {

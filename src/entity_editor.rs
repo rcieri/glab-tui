@@ -4,8 +4,17 @@ use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crate::templates::get_default_template;
 use crossterm::event::KeyCode;
-fn build_update_args(is_github: bool, entity_type: &str, iid: u64, flags: &[(&str, Option<&str>)]) -> Vec<String> {
-    let entity = if is_github && entity_type == "mr" { "pr" } else { entity_type };
+fn build_update_args(
+    is_github: bool,
+    entity_type: &str,
+    iid: u64,
+    flags: &[(&str, Option<&str>)],
+) -> Vec<String> {
+    let entity = if is_github && entity_type == "mr" {
+        "pr"
+    } else {
+        entity_type
+    };
     let sub = if is_github { "edit" } else { "update" };
     let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
     for (flag, value) in flags {
@@ -159,7 +168,12 @@ pub async fn apply_field_text_change(
         }
         "target_branch" => {
             if entity_type == "mr" {
-                let args = build_update_args(is_github, entity_type, iid, &[("--target-branch", Some(&value))]);
+                let args = build_update_args(
+                    is_github,
+                    entity_type,
+                    iid,
+                    &[("--target-branch", Some(&value))],
+                );
                 crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.target_branch = value;
@@ -173,7 +187,12 @@ pub async fn apply_field_text_change(
                 } else {
                     &value
                 };
-                let args = build_update_args(is_github, entity_type, iid, &[("--due-date", Some(flag_value))]);
+                let args = build_update_args(
+                    is_github,
+                    entity_type,
+                    iid,
+                    &[("--due-date", Some(flag_value))],
+                );
                 crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.due_date = if flag_value.is_empty() {
@@ -186,7 +205,8 @@ pub async fn apply_field_text_change(
         }
         "weight" => {
             if entity_type == "issue" {
-                let args = build_update_args(is_github, entity_type, iid, &[("--weight", Some(&value))]);
+                let args =
+                    build_update_args(is_github, entity_type, iid, &[("--weight", Some(&value))]);
                 crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
             }
         }
@@ -259,7 +279,11 @@ pub async fn apply_selector_changes(
             let to_add: Vec<&String> = value_set.difference(&current_set).collect();
             let to_remove: Vec<&String> = current_set.difference(&value_set).collect();
 
-            let entity = if is_github && entity_type == "mr" { "pr" } else { entity_type };
+            let entity = if is_github && entity_type == "mr" {
+                "pr"
+            } else {
+                entity_type
+            };
             let sub = if is_github { "edit" } else { "update" };
             let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
             for label in &to_add {
@@ -268,7 +292,11 @@ pub async fn apply_selector_changes(
                 args.push(label.to_string());
             }
             for label in &to_remove {
-                let flag = if is_github { "--remove-label" } else { "--unlabel" };
+                let flag = if is_github {
+                    "--remove-label"
+                } else {
+                    "--unlabel"
+                };
                 args.push(flag.to_string());
                 args.push(label.to_string());
             }
@@ -316,16 +344,28 @@ pub async fn apply_selector_changes(
             let to_add: Vec<&String> = value_set.difference(&current_set).collect();
             let to_remove: Vec<&String> = current_set.difference(&value_set).collect();
 
-            let entity = if is_github && entity_type == "mr" { "pr" } else { entity_type };
+            let entity = if is_github && entity_type == "mr" {
+                "pr"
+            } else {
+                entity_type
+            };
             let sub = if is_github { "edit" } else { "update" };
             let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
             for assignee in &to_add {
-                let flag = if is_github { "--add-assignee" } else { "--assignee" };
+                let flag = if is_github {
+                    "--add-assignee"
+                } else {
+                    "--assignee"
+                };
                 args.push(flag.to_string());
                 args.push(assignee.to_string());
             }
             for assignee in &to_remove {
-                let flag = if is_github { "--remove-assignee" } else { "--unassign" };
+                let flag = if is_github {
+                    "--remove-assignee"
+                } else {
+                    "--unassign"
+                };
                 args.push(flag.to_string());
                 args.push(assignee.to_string());
             }
@@ -376,16 +416,28 @@ pub async fn apply_selector_changes(
                 let to_add: Vec<&String> = value_set.difference(&current_set).collect();
                 let to_remove: Vec<&String> = current_set.difference(&value_set).collect();
 
-                let entity = if is_github && entity_type == "mr" { "pr" } else { entity_type };
+                let entity = if is_github && entity_type == "mr" {
+                    "pr"
+                } else {
+                    entity_type
+                };
                 let sub = if is_github { "edit" } else { "update" };
                 let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
                 for reviewer in &to_add {
-                    let flag = if is_github { "--add-reviewer" } else { "--reviewer" };
+                    let flag = if is_github {
+                        "--add-reviewer"
+                    } else {
+                        "--reviewer"
+                    };
                     args.push(flag.to_string());
                     args.push(reviewer.to_string());
                 }
                 for reviewer in &to_remove {
-                    let flag = if is_github { "--remove-reviewer" } else { "--unreviewer" };
+                    let flag = if is_github {
+                        "--remove-reviewer"
+                    } else {
+                        "--unreviewer"
+                    };
                     args.push(flag.to_string());
                     args.push(reviewer.to_string());
                 }
@@ -407,7 +459,12 @@ pub async fn apply_selector_changes(
         "milestone" => {
             // For milestones, cli expects the title, not the id
             let first_val = values.first().cloned().unwrap_or_default();
-            let args = build_update_args(is_github, entity_type, iid, &[("--milestone", Some(&first_val))]);
+            let args = build_update_args(
+                is_github,
+                entity_type,
+                iid,
+                &[("--milestone", Some(&first_val))],
+            );
             crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
@@ -512,7 +569,12 @@ pub async fn apply_selector_changes(
                                 item.description = Some(new_desc.clone());
                             }
                         }
-                        let args = build_update_args(is_github, entity_type, iid, &[("-d", Some(&new_desc))]);
+                        let args = build_update_args(
+                            is_github,
+                            entity_type,
+                            iid,
+                            &[("-d", Some(&new_desc))],
+                        );
                         crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
                     }
                     if let Some(client) = &app.gitlab_client {
@@ -747,7 +809,12 @@ pub async fn handle_entity_update(
             };
 
             if let Some(new_title) = edit_in_editor(&current_title, terminal) {
-                let args = build_update_args(is_github, entity_type, iid, &[("--title", Some(&new_title))]);
+                let args = build_update_args(
+                    is_github,
+                    entity_type,
+                    iid,
+                    &[("--title", Some(&new_title))],
+                );
                 crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
                 if entity_type == "issue" {
                     if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
@@ -791,7 +858,12 @@ pub async fn handle_entity_update(
                     .map(|m| m.target_branch.clone())
                     .unwrap_or_default();
                 if let Some(target) = edit_in_editor(&current_branch, terminal) {
-                    let args = build_update_args(is_github, entity_type, iid, &[("--target-branch", Some(&target))]);
+                    let args = build_update_args(
+                        is_github,
+                        entity_type,
+                        iid,
+                        &[("--target-branch", Some(&target))],
+                    );
                     crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                         item.target_branch = target;
@@ -820,7 +892,12 @@ pub async fn handle_entity_update(
                     } else {
                         &due_date
                     };
-                    let args = build_update_args(is_github, entity_type, iid, &[("--due-date", Some(flag_value))]);
+                    let args = build_update_args(
+                        is_github,
+                        entity_type,
+                        iid,
+                        &[("--due-date", Some(flag_value))],
+                    );
                     crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
                 }
             }
@@ -828,7 +905,12 @@ pub async fn handle_entity_update(
         KeyCode::Char('w') => {
             if entity_type == "issue" {
                 if let Some(weight) = edit_in_editor("0", terminal) {
-                    let args = build_update_args(is_github, entity_type, iid, &[("--weight", Some(&weight))]);
+                    let args = build_update_args(
+                        is_github,
+                        entity_type,
+                        iid,
+                        &[("--weight", Some(&weight))],
+                    );
                     crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
                 }
             }
@@ -886,7 +968,8 @@ pub async fn handle_entity_update(
                         item.description = Some(new_desc.clone());
                     }
                 }
-                let args = build_update_args(is_github, entity_type, iid, &[("-d", Some(&new_desc))]);
+                let args =
+                    build_update_args(is_github, entity_type, iid, &[("-d", Some(&new_desc))]);
                 crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
             }
         }

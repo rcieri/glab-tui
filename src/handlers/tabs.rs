@@ -132,7 +132,7 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let args = vec![
                             "issue".to_string(),
                             "view".to_string(),
@@ -149,7 +149,7 @@ pub async fn handle_active_tab_key(
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let args = vec![
                             "issue".to_string(),
                             "reopen".to_string(),
@@ -295,8 +295,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let args = if is_github {
                                 vec![
                                     "pr".to_string(),
@@ -307,7 +308,8 @@ pub async fn handle_active_tab_key(
                             } else {
                                 vec!["mr".to_string(), "approve".to_string(), mr_iid.to_string()]
                             };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.merge_mr,
@@ -424,23 +426,26 @@ pub async fn handle_active_tab_key(
                             });
                         }
                         KeyCode::Char('o') => {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let args = vec![
                                 if is_github { "pr" } else { "mr" }.to_string(),
                                 "view".to_string(),
                                 mr_iid.to_string(),
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.toggle_draft,
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let is_draft = app
                                 .mrs
                                 .items
@@ -458,9 +463,15 @@ pub async fn handle_active_tab_key(
                                 let action = if is_draft { "--ready" } else { "--draft" };
                                 let entity = if is_github { "pr" } else { "mr" };
                                 let sub = if is_github { "edit" } else { "update" };
-                                vec![entity.to_string(), sub.to_string(), mr_iid.to_string(), action.to_string()]
+                                vec![
+                                    entity.to_string(),
+                                    sub.to_string(),
+                                    mr_iid.to_string(),
+                                    action.to_string(),
+                                ]
                             };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                             if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
                                 item.draft = !is_draft;
                             }
@@ -496,14 +507,16 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let args = vec![
                                 if is_github { "pr" } else { "mr" }.to_string(),
                                 "reopen".to_string(),
                                 mr_iid.to_string(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                         }
                         _ => handled = false,
                     }
@@ -544,7 +557,7 @@ pub async fn handle_active_tab_key(
                 )
             {
                 let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                let program = if is_github { "gh" } else { "glab" };
                 let args = if is_github {
                     vec!["workflow".to_string(), "run".to_string()]
                 } else {
@@ -583,22 +596,15 @@ pub async fn handle_active_tab_key(
                                             .iter_mut()
                                             .find(|pipe| pipe.id() == *p_id)
                                         {
-                                            match p {
-                                                crate::domain::pipelines::PipelineItem::Gitlab(p) => p.status = "running".to_string(),
-                                                crate::domain::pipelines::PipelineItem::Github { effective_status, .. } => *effective_status = "running".to_string(),
-                                                _ => {}
-                                            }
+                                            p.status = "running".to_string();
                                         }
                                     }
                                     app.selected_pipelines.clear();
                                     tokio::spawn(async move {
-                                        for p_id in pipe_ids {
-                                            let endpoint = format!(
-                                                "projects/{}/pipelines/{}/retry",
-                                                project_context.replace("/", "%2F"),
-                                                p_id
-                                            );
-                                            let _ = client_clone.fetch_raw_api(&endpoint).await;
+                                        for p_id in &pipe_ids {
+                                            let _ = client_clone
+                                                .retry_pipeline(&project_context, *p_id)
+                                                .await;
                                         }
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         spawn_refresh_active_tab(
@@ -615,25 +621,13 @@ pub async fn handle_active_tab_key(
                                         .iter_mut()
                                         .find(|pipe| pipe.id() == pipe_id)
                                     {
-                                        match p {
-                                            crate::domain::pipelines::PipelineItem::Gitlab(p) => {
-                                                p.status = "running".to_string()
-                                            }
-                                            crate::domain::pipelines::PipelineItem::Github {
-                                                effective_status,
-                                                ..
-                                            } => *effective_status = "running".to_string(),
-                                            _ => {}
-                                        }
+                                        p.status = "running".to_string();
                                     }
                                     let tx = tx.clone();
                                     tokio::spawn(async move {
-                                        let endpoint = format!(
-                                            "projects/{}/pipelines/{}/retry",
-                                            project_context.replace("/", "%2F"),
-                                            pipe_id
-                                        );
-                                        let _ = client_clone.fetch_raw_api(&endpoint).await;
+                                        let _ = client_clone
+                                            .retry_pipeline(&project_context, pipe_id)
+                                            .await;
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         spawn_refresh_active_tab(
                                             &client_clone,
@@ -657,16 +651,7 @@ pub async fn handle_active_tab_key(
                                 .iter_mut()
                                 .find(|pipe| pipe.id() == pipe_id)
                             {
-                                match p {
-                                    crate::domain::pipelines::PipelineItem::Gitlab(p) => {
-                                        p.status = "canceled".to_string()
-                                    }
-                                    crate::domain::pipelines::PipelineItem::Github {
-                                        effective_status,
-                                        ..
-                                    } => *effective_status = "canceled".to_string(),
-                                    _ => {}
-                                }
+                                p.status = "canceled".to_string();
                             }
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
@@ -674,12 +659,9 @@ pub async fn handle_active_tab_key(
                                 let tx = tx.clone();
                                 let active_tab = app.active_tab;
                                 tokio::spawn(async move {
-                                    let endpoint = format!(
-                                        "projects/{}/pipelines/{}/cancel",
-                                        project_context.replace("/", "%2F"),
-                                        pipe_id
-                                    );
-                                    let _ = client_clone.fetch_raw_api(&endpoint).await;
+                                    let _ = client_clone
+                                        .cancel_pipeline(&project_context, pipe_id)
+                                        .await;
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                     spawn_refresh_active_tab(
                                         &client_clone,
@@ -691,8 +673,9 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         KeyCode::Char('o') => {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let (entity, sub) = if is_github {
                                 ("run", "view")
                             } else {
@@ -704,7 +687,8 @@ pub async fn handle_active_tab_key(
                                 pipe_id.to_string(),
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                         }
                         _ => handled = false,
                     }
@@ -784,27 +768,15 @@ pub async fn handle_active_tab_key(
                                         app.selected_jobs.iter().cloned().collect();
                                     for j in app.jobs.items.iter_mut() {
                                         if app.selected_jobs.contains(&j.id()) {
-                                            match j {
-                                                crate::domain::pipelines::JobItem::Gitlab(j) => {
-                                                    j.status = "running".to_string()
-                                                }
-                                                crate::domain::pipelines::JobItem::Github {
-                                                    effective_status,
-                                                    ..
-                                                } => *effective_status = "running".to_string(),
-                                                _ => {}
-                                            }
+                                            j.status = "running".to_string();
                                         }
                                     }
                                     app.selected_jobs.clear();
                                     tokio::spawn(async move {
-                                        for j_id in job_ids {
-                                            let endpoint = format!(
-                                                "projects/{}/jobs/{}/retry",
-                                                project_context.replace("/", "%2F"),
-                                                j_id
-                                            );
-                                            let _ = client_clone.fetch_raw_api(&endpoint).await;
+                                        for j_id in &job_ids {
+                                            let _ = client_clone
+                                                .retry_job(&project_context, *j_id)
+                                                .await;
                                         }
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
@@ -820,24 +792,11 @@ pub async fn handle_active_tab_key(
                                     });
                                 } else {
                                     if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        match j {
-                                            crate::domain::pipelines::JobItem::Gitlab(j) => {
-                                                j.status = "running".to_string()
-                                            }
-                                            crate::domain::pipelines::JobItem::Github {
-                                                effective_status,
-                                                ..
-                                            } => *effective_status = "running".to_string(),
-                                            _ => {}
-                                        }
+                                        j.status = "running".to_string();
                                     }
                                     tokio::spawn(async move {
-                                        let endpoint = format!(
-                                            "projects/{}/jobs/{}/retry",
-                                            project_context.replace("/", "%2F"),
-                                            job_id
-                                        );
-                                        let _ = client_clone.fetch_raw_api(&endpoint).await;
+                                        let _ =
+                                            client_clone.retry_job(&project_context, job_id).await;
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
                                             crate::domain::pipelines::list_pipeline_jobs(
@@ -882,36 +841,15 @@ pub async fn handle_active_tab_key(
                                         app.selected_jobs.iter().cloned().collect();
                                     for j in app.jobs.items.iter_mut() {
                                         if app.selected_jobs.contains(&j.id()) {
-                                            match j {
-                                                crate::domain::pipelines::JobItem::Gitlab(j) => {
-                                                    j.status = "canceled".to_string()
-                                                }
-                                                crate::domain::pipelines::JobItem::Github {
-                                                    effective_status,
-                                                    ..
-                                                } => *effective_status = "canceled".to_string(),
-                                                _ => {}
-                                            }
+                                            j.status = "canceled".to_string();
                                         }
                                     }
                                     app.selected_jobs.clear();
                                     tokio::spawn(async move {
-                                        if client_clone.is_github {
-                                            let endpoint = format!(
-                                                "projects/{}/pipelines/{}/cancel",
-                                                project_context.replace("/", "%2F"),
-                                                pipe_id
-                                            );
-                                            let _ = client_clone.fetch_raw_api(&endpoint).await;
-                                        } else {
-                                            for j_id in job_ids {
-                                                let endpoint = format!(
-                                                    "projects/{}/jobs/{}/cancel",
-                                                    project_context.replace("/", "%2F"),
-                                                    j_id
-                                                );
-                                                let _ = client_clone.fetch_raw_api(&endpoint).await;
-                                            }
+                                        for j_id in &job_ids {
+                                            let _ = client_clone
+                                                .cancel_job(&project_context, *j_id)
+                                                .await;
                                         }
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
@@ -927,32 +865,11 @@ pub async fn handle_active_tab_key(
                                     });
                                 } else {
                                     if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        match j {
-                                            crate::domain::pipelines::JobItem::Gitlab(j) => {
-                                                j.status = "canceled".to_string()
-                                            }
-                                            crate::domain::pipelines::JobItem::Github {
-                                                effective_status,
-                                                ..
-                                            } => *effective_status = "canceled".to_string(),
-                                            _ => {}
-                                        }
+                                        j.status = "canceled".to_string();
                                     }
                                     tokio::spawn(async move {
-                                        let endpoint = if client_clone.is_github {
-                                            format!(
-                                                "projects/{}/pipelines/{}/cancel",
-                                                project_context.replace("/", "%2F"),
-                                                pipe_id
-                                            )
-                                        } else {
-                                            format!(
-                                                "projects/{}/jobs/{}/cancel",
-                                                project_context.replace("/", "%2F"),
-                                                job_id
-                                            )
-                                        };
-                                        let _ = client_clone.fetch_raw_api(&endpoint).await;
+                                        let _ =
+                                            client_clone.cancel_job(&project_context, job_id).await;
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
                                             crate::domain::pipelines::list_pipeline_jobs(
@@ -973,8 +890,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let args = if is_github {
                                 vec![
                                     "run".to_string(),
@@ -1000,15 +918,17 @@ pub async fn handle_active_tab_key(
                                     job_name,
                                 ]
                             };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.open_in_browser,
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let args = if is_github {
                                 if let Some(pipe_id) = app.active_pipeline_id {
                                     vec![
@@ -1033,7 +953,8 @@ pub async fn handle_active_tab_key(
                                     if is_github { "--web" } else { "-w" }.to_string(),
                                 ]
                             };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace_editor,
@@ -1121,8 +1042,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let args: Vec<String> = vec![
                                 "api".into(),
                                 "-X".into(),
@@ -1131,7 +1053,8 @@ pub async fn handle_active_tab_key(
                                 "-f".into(),
                                 "paused=true".into(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
@@ -1144,8 +1067,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let args: Vec<String> = vec![
                                 "api".into(),
                                 "-X".into(),
@@ -1154,7 +1078,8 @@ pub async fn handle_active_tab_key(
                                 "-f".into(),
                                 "paused=false".into(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
@@ -1244,7 +1169,7 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let args = vec![
                             "release".to_string(),
                             "view".to_string(),
@@ -1307,8 +1232,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                            let is_github =
+                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let program = if is_github { "gh" } else { "glab" };
                             let entity = if item.target_type.contains("MergeRequest") {
                                 if is_github { "pr" } else { "mr" }
                             } else {
@@ -1320,7 +1246,8 @@ pub async fn handle_active_tab_key(
                                 item.target_iid.to_string(),
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
+                                .await;
                         }
                         _ => handled = false,
                     }
@@ -1483,7 +1410,7 @@ pub async fn handle_active_tab_key(
                             .map(|c| c.is_github)
                             .unwrap_or(false);
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let args = if is_github {
                             vec!["browse".to_string(), format!("milestone/{}", milestone.iid)]
                         } else {

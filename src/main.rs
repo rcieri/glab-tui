@@ -4,13 +4,14 @@
 #![allow(unused_assignments)]
 
 mod app;
+mod backend;
 mod config;
+mod domain;
 mod editor;
 mod entity_editor;
 mod event;
 mod fetch;
 mod git_helpers;
-mod domain;
 pub mod handlers;
 mod keybinding;
 mod templates;
@@ -257,8 +258,17 @@ async fn run_cli(
     }
 }
 
-fn build_update_args(is_github: bool, entity_type: &str, iid: u64, flags: &[(&str, Option<&str>)]) -> Vec<String> {
-    let entity = if is_github && entity_type == "mr" { "pr" } else { entity_type };
+fn build_update_args(
+    is_github: bool,
+    entity_type: &str,
+    iid: u64,
+    flags: &[(&str, Option<&str>)],
+) -> Vec<String> {
+    let entity = if is_github && entity_type == "mr" {
+        "pr"
+    } else {
+        entity_type
+    };
     let sub = if is_github { "edit" } else { "update" };
     let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
     for (flag, value) in flags {
@@ -1270,8 +1280,11 @@ async fn main() -> Result<()> {
                                     }
                                     crate::app::TextInputAction::CreateIssue => {
                                         if !value.trim().is_empty() {
-                                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map_or(false, |c| c.is_github);
+                                            let program = if is_github { "gh" } else { "glab" };
                                             let mut args: Vec<String> =
                                                 vec!["issue".into(), "create".into()];
                                             if !is_github {
@@ -1312,8 +1325,11 @@ async fn main() -> Result<()> {
                                                     app.draft_comments.len()
                                                 ));
                                             } else {
-                                                let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                                let is_github = app
+                                                    .gitlab_client
+                                                    .as_ref()
+                                                    .map_or(false, |c| c.is_github);
+                                                let program = if is_github { "gh" } else { "glab" };
                                                 let mut args = if is_github {
                                                     vec![
                                                         "pr".to_string(),
@@ -2540,6 +2556,7 @@ async fn main() -> Result<()> {
                                                         client.page_size = app.config.page_size;
                                                         client.page_limit = app.config.page_limit;
                                                         client.tx = Some(events.sender());
+                                                        client.backend.set_tx(events.sender());
                                                         app.gitlab_client = Some(client.clone());
                                                     } else {
                                                         app.gitlab_client = None;
@@ -2963,8 +2980,11 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         app.selector = None;
-                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let mut args = if is_github {
                                             vec![
                                                 "pr".to_string(),
@@ -3629,9 +3649,18 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
-                                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                                                        let program = if is_github { "gh" } else { "glab" };
-                                                        let args = build_update_args(is_github, &entity_type, entity_iid, &[("-d", Some(&new_desc))]);
+                                                        let is_github = app
+                                                            .gitlab_client
+                                                            .as_ref()
+                                                            .map_or(false, |c| c.is_github);
+                                                        let program =
+                                                            if is_github { "gh" } else { "glab" };
+                                                        let args = build_update_args(
+                                                            is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                            &[("-d", Some(&new_desc))],
+                                                        );
                                                         run_cli(
                                                             program,
                                                             &args,
@@ -3650,9 +3679,18 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
-                                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                                                        let program = if is_github { "gh" } else { "glab" };
-                                                        let args = build_update_args(is_github, &entity_type, entity_iid, &[("-d", Some(&new_desc))]);
+                                                        let is_github = app
+                                                            .gitlab_client
+                                                            .as_ref()
+                                                            .map_or(false, |c| c.is_github);
+                                                        let program =
+                                                            if is_github { "gh" } else { "glab" };
+                                                        let args = build_update_args(
+                                                            is_github,
+                                                            &entity_type,
+                                                            entity_iid,
+                                                            &[("-d", Some(&new_desc))],
+                                                        );
                                                         run_cli(
                                                             program,
                                                             &args,
@@ -3931,8 +3969,11 @@ async fn main() -> Result<()> {
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {
-                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let title = menu
                                             .fields
                                             .iter()
@@ -3989,7 +4030,10 @@ async fn main() -> Result<()> {
                                             cmd_args.push(title);
                                         }
                                         if !description.is_empty() {
-                                            cmd_args.push(if is_github { "--body" } else { "--description" }.to_string());
+                                            cmd_args.push(
+                                                if is_github { "--body" } else { "--description" }
+                                                    .to_string(),
+                                            );
                                             cmd_args.push(description);
                                         }
                                         if !labels.is_empty() {
@@ -4043,8 +4087,11 @@ async fn main() -> Result<()> {
                                         }
                                         continue;
                                     } else if entity_type == "new_mr" {
-                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let title = menu
                                             .fields
                                             .iter()
@@ -4123,8 +4170,10 @@ async fn main() -> Result<()> {
                                         }
 
                                         let entity_iid_str = menu.entity_iid.to_string();
-                                        let mut cmd_args: Vec<String> =
-                                            vec![if is_github { "pr" } else { "mr" }.into(), "create".into()];
+                                        let mut cmd_args: Vec<String> = vec![
+                                            if is_github { "pr" } else { "mr" }.into(),
+                                            "create".into(),
+                                        ];
                                         if !is_github {
                                             cmd_args.push("-y".into());
                                         }
@@ -4201,7 +4250,10 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         if !description.is_empty() {
-                                            cmd_args.push(if is_github { "--body" } else { "--description" }.to_string());
+                                            cmd_args.push(
+                                                if is_github { "--body" } else { "--description" }
+                                                    .to_string(),
+                                            );
                                             cmd_args.push(description);
                                         } else if is_github {
                                             cmd_args.push("--body".into());
@@ -4253,8 +4305,11 @@ async fn main() -> Result<()> {
                                             .map(|(_, v)| v.trim().to_string())
                                             .unwrap_or_default();
 
-                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let is_github = is_github;
                                         let project_context = app.project_context.clone();
                                         let encoded_path = project_context.replace("/", "%2F");
@@ -4376,8 +4431,11 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_pipeline" {
-                                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let branch = menu
                                             .fields
                                             .iter()
@@ -4443,7 +4501,9 @@ async fn main() -> Result<()> {
                                             cmd_args.push(workflow);
                                         }
                                         if !branch.is_empty() {
-                                            cmd_args.push(if is_github { "-r" } else { "-b" }.to_string());
+                                            cmd_args.push(
+                                                if is_github { "-r" } else { "-b" }.to_string(),
+                                            );
                                             cmd_args.push(branch);
                                         }
                                         if mr.to_lowercase() == "yes" && !is_github {
@@ -4500,8 +4560,11 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         if !tag.is_empty() {
-                                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map_or(false, |c| c.is_github);
+                                            let program = if is_github { "gh" } else { "glab" };
                                             let mut cmd_args = vec![
                                                 "release".to_string(),
                                                 "create".to_string(),
@@ -5555,8 +5618,11 @@ async fn main() -> Result<()> {
                                                     app.draft_comments.len()
                                                 ));
                                             } else {
-                                                let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                                let is_github = app
+                                                    .gitlab_client
+                                                    .as_ref()
+                                                    .map_or(false, |c| c.is_github);
+                                                let program = if is_github { "gh" } else { "glab" };
                                                 let mut args = if is_github {
                                                     vec![
                                                         "pr".to_string(),
@@ -5683,8 +5749,11 @@ async fn main() -> Result<()> {
                                                 app.draft_comments.len()
                                             ));
                                         } else {
-                                            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map_or(false, |c| c.is_github);
+                                            let program = if is_github { "gh" } else { "glab" };
                                             let mut args = if is_github {
                                                 vec![
                                                     "pr".to_string(),

@@ -1292,7 +1292,7 @@ pub struct App {
     pub terminal_commands: Vec<TerminalCommand>,
     pub issues: StatefulTable<crate::domain::issues::Issue>,
     pub mrs: StatefulTable<crate::domain::mr::MergeRequest>,
-    pub pipelines: StatefulTable<crate::domain::pipelines::PipelineItem>,
+    pub pipelines: StatefulTable<crate::domain::pipelines::Pipeline>,
     pub search_query: String,
     pub is_typing_search: bool,
     pub active_pipeline_id: Option<u64>,
@@ -1300,7 +1300,7 @@ pub struct App {
     pub error_message: Option<String>,
     pub runners: StatefulTable<crate::domain::runners::Runner>,
     pub releases: StatefulTable<crate::domain::releases::Release>,
-    pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::JobItem>>,
+    pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
     pub fetching_pipelines: std::collections::HashSet<u64>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
@@ -1310,7 +1310,7 @@ pub struct App {
     pub editing_page_size: bool,
     pub page_size_input: String,
     pub date_picker: Option<DatePicker>,
-    pub jobs: StatefulTable<crate::domain::pipelines::JobItem>,
+    pub jobs: StatefulTable<crate::domain::pipelines::Job>,
     pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
@@ -2035,16 +2035,16 @@ impl App {
     }
 
     pub fn filter_pipelines_list<'a>(
-        items: &'a [crate::domain::pipelines::PipelineItem],
+        items: &'a [crate::domain::pipelines::Pipeline],
         query: &str,
-        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::domain::pipelines::JobItem>>,
+        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
         enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::pipelines::PipelineItem> {
+    ) -> Vec<&'a crate::domain::pipelines::Pipeline> {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
         let matcher = SkimMatcherV2::default();
-        let mut scored_items: Vec<(i64, &crate::domain::pipelines::PipelineItem)> = Vec::new();
+        let mut scored_items: Vec<(i64, &crate::domain::pipelines::Pipeline)> = Vec::new();
 
         for item in items {
             let mut best_score: Option<i64> = None;
@@ -2087,13 +2087,13 @@ impl App {
     }
 
     pub fn filtered_pipelines_list<'a>(
-        items: &'a [crate::domain::pipelines::PipelineItem],
+        items: &'a [crate::domain::pipelines::Pipeline],
         query: &str,
-        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::domain::pipelines::JobItem>>,
+        pipeline_jobs: &std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
         enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
         ascending: bool,
         group_by_column: &Option<String>,
-    ) -> Vec<&'a crate::domain::pipelines::PipelineItem> {
+    ) -> Vec<&'a crate::domain::pipelines::Pipeline> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = enabled_columns.get(&Tab::Pipelines).unwrap_or(&default_set);
         let mut list = Self::filter_pipelines_list(items, query, pipeline_jobs, enabled_cols);
@@ -2121,7 +2121,7 @@ impl App {
         list
     }
 
-    pub fn filtered_pipelines(&self) -> Vec<&crate::domain::pipelines::PipelineItem> {
+    pub fn filtered_pipelines(&self) -> Vec<&crate::domain::pipelines::Pipeline> {
         let mut list = Self::filtered_pipelines_list(
             &self.pipelines.items,
             &self.search_query,
@@ -2148,15 +2148,15 @@ impl App {
     }
 
     pub fn filter_jobs_list<'a>(
-        items: &'a [crate::domain::pipelines::JobItem],
+        items: &'a [crate::domain::pipelines::Job],
         query: &str,
         enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::pipelines::JobItem> {
+    ) -> Vec<&'a crate::domain::pipelines::Job> {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
         let matcher = SkimMatcherV2::default();
-        let mut scored_items: Vec<(i64, &crate::domain::pipelines::JobItem)> = Vec::new();
+        let mut scored_items: Vec<(i64, &crate::domain::pipelines::Job)> = Vec::new();
 
         for item in items {
             let mut best_score: Option<i64> = None;
@@ -2197,12 +2197,12 @@ impl App {
     }
 
     pub fn filtered_jobs_list<'a>(
-        items: &'a [crate::domain::pipelines::JobItem],
+        items: &'a [crate::domain::pipelines::Job],
         query: &str,
         enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
         ascending: bool,
         group_by_column: &Option<String>,
-    ) -> Vec<&'a crate::domain::pipelines::JobItem> {
+    ) -> Vec<&'a crate::domain::pipelines::Job> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = enabled_columns.get(&Tab::Jobs).unwrap_or(&default_set);
         let mut list = Self::filter_jobs_list(items, query, enabled_cols);
@@ -2232,7 +2232,7 @@ impl App {
         list
     }
 
-    pub fn filtered_jobs(&self) -> Vec<&crate::domain::pipelines::JobItem> {
+    pub fn filtered_jobs(&self) -> Vec<&crate::domain::pipelines::Job> {
         let mut list = Self::filtered_jobs_list(
             &self.jobs.items,
             &self.search_query,
@@ -2257,7 +2257,7 @@ impl App {
         );
 
         if self.collapse_matrix_jobs {
-            let mut collapsed: Vec<&crate::domain::pipelines::JobItem> = Vec::new();
+            let mut collapsed: Vec<&crate::domain::pipelines::Job> = Vec::new();
             let mut seen_names = std::collections::HashSet::new();
             for job in list {
                 if seen_names.insert(job.name().to_string()) {
@@ -2922,33 +2922,7 @@ impl App {
                         "Ref" => {
                             values.insert(item.ref_branch().to_string());
                         }
-                        "Name" => match item {
-                            crate::domain::pipelines::PipelineItem::Github { run, .. } => {
-                                values.insert(run.name.clone());
-                            }
-                            _ => {}
-                        },
-                        "Event" => match item {
-                            crate::domain::pipelines::PipelineItem::Github { run, .. } => {
-                                values.insert(run.event.clone());
-                            }
-                            _ => {}
-                        },
-                        "SHA" => match item {
-                            crate::domain::pipelines::PipelineItem::Github { run, .. } => {
-                                values.insert(run.head_sha.clone());
-                            }
-                            _ => {}
-                        },
-                        "Actor" => match item {
-                            crate::domain::pipelines::PipelineItem::Github { run, .. } => {
-                                if let Some(login) = &run.actor_login {
-                                    values.insert(login.clone());
-                                }
-                            }
-                            _ => {}
-                        },
-                        _ => {}
+                        _ => {} // Pipeline no longer carries GitHub-specific fields
                     }
                 }
             }
@@ -3230,24 +3204,9 @@ impl App {
                         "Status" => p.status().to_string(),
                         "Ref" => p.ref_branch().to_string(),
                         "ID" => format!("#{}", p.id()),
-                        "Name" => match p {
-                            crate::domain::pipelines::PipelineItem::Github { run, .. } => {
-                                run.name.clone()
-                            }
-                            _ => format!("#{}", p.id()),
-                        },
-                        "Event" => match p {
-                            crate::domain::pipelines::PipelineItem::Github { run, .. } => {
-                                run.event.clone()
-                            }
-                            _ => "Unknown".to_string(),
-                        },
-                        "SHA" => match p {
-                            crate::domain::pipelines::PipelineItem::Github { run, .. } => {
-                                run.head_sha[..usize::min(7, run.head_sha.len())].to_string()
-                            }
-                            _ => "Unknown".to_string(),
-                        },
+                        "Name" => format!("#{}", p.id()),
+                        "Event" => "Unknown".to_string(),
+                        "SHA" => "Unknown".to_string(),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);

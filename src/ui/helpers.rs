@@ -244,7 +244,7 @@ pub(crate) struct StageSummary {
     pub(crate) status: String,
 }
 
-pub(crate) fn get_stages_summary(jobs: &[crate::domain::pipelines::JobItem]) -> Vec<StageSummary> {
+pub(crate) fn get_stages_summary(jobs: &[crate::domain::pipelines::Job]) -> Vec<StageSummary> {
     let mut stage_names = Vec::new();
     let mut stage_jobs = std::collections::HashMap::new();
     for j in jobs {
@@ -301,7 +301,7 @@ pub(crate) fn get_stages_summary(jobs: &[crate::domain::pipelines::JobItem]) -> 
     summaries
 }
 
-pub(crate) fn get_stages_dots(jobs: &[crate::domain::pipelines::JobItem]) -> String {
+pub(crate) fn get_stages_dots(jobs: &[crate::domain::pipelines::Job]) -> String {
     let icons = crate::config::ICONS.read().unwrap();
     let summaries = get_stages_summary(jobs);
     let mut dots = String::new();
@@ -321,7 +321,7 @@ pub(crate) fn get_stages_dots(jobs: &[crate::domain::pipelines::JobItem]) -> Str
 
 pub(crate) fn append_stage_summaries(
     text: &mut Vec<Line<'static>>,
-    jobs: &[crate::domain::pipelines::JobItem],
+    jobs: &[crate::domain::pipelines::Job],
 ) {
     let summaries = get_stages_summary(jobs);
     for s in summaries {
@@ -620,18 +620,18 @@ pub(crate) fn render_fuzzy_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::pipelines::{GitlabJob, JobItem};
+    use crate::domain::pipelines::Job;
     use crate::ui::diff::count_wrapped_lines;
     use crate::ui::diff::format_comment_with_suggestions;
 
-    fn make_job(id: u64, stage: &str, name: &str, status: &str) -> JobItem {
-        JobItem::from_gitlab(GitlabJob {
+    fn make_job(id: u64, stage: &str, name: &str, status: &str) -> Job {
+        Job {
             id,
             stage: stage.to_string(),
             name: name.to_string(),
             status: status.to_string(),
             matrix: None,
-        })
+        }
     }
 
     #[test]

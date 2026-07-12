@@ -1,7 +1,7 @@
 use crate::app;
+use crate::domain;
 use crate::event::Event;
 use crate::git_helpers::get_current_branch;
-use crate::domain;
 
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,

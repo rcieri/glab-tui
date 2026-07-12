@@ -1,9 +1,10 @@
+use crate::backend::Backend;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-#[derive(Debug, Clone)]
 pub struct GitlabClient {
     pub is_github: bool,
+    pub backend: Box<dyn Backend>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub page_size: usize,
     pub page_limit: Option<u32>,
@@ -22,14 +23,91 @@ impl GitlabClient {
             }
             _ => false,
         };
+        let backend = crate::backend::create_backend(is_github);
         Ok(Self {
             is_github,
+            backend,
             tx: None,
             page_size: 100,
             page_limit: Some(10),
         })
     }
 
+    pub fn program(&self) -> &'static str {
+        self.backend.program()
+    }
+
+    pub async fn retry_pipeline(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
+        self.backend.retry_pipeline(project_path, pipeline_id).await
+    }
+
+    pub async fn cancel_pipeline(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
+        self.backend
+            .cancel_pipeline(project_path, pipeline_id)
+            .await
+    }
+
+    pub async fn retry_job(&self, project_path: &str, job_id: u64) -> Result<()> {
+        self.backend.retry_job(project_path, job_id).await
+    }
+
+    pub async fn cancel_job(&self, project_path: &str, job_id: u64) -> Result<()> {
+        self.backend.cancel_job(project_path, job_id).await
+    }
+
+    pub async fn fetch_labels(&self, project_path: &str) -> Result<Vec<String>> {
+        self.backend.fetch_labels(project_path).await
+    }
+
+    pub async fn fetch_members(&self, project_path: &str) -> Result<Vec<String>> {
+        self.backend.fetch_members(project_path).await
+    }
+
+    pub async fn fetch_branches(&self, project_path: &str) -> Result<Vec<String>> {
+        self.backend.fetch_branch_names(project_path).await
+    }
+
+    pub async fn fetch_milestones(&self, project_path: &str) -> Result<Vec<String>> {
+        self.backend.fetch_milestone_titles(project_path).await
+    }
+
+    pub async fn raw_api(
+        &self,
+        endpoint: &str,
+        method: &str,
+        body: Option<&str>,
+    ) -> Result<String> {
+        self.backend.raw_api(endpoint, method, body).await
+    }
+}
+
+impl Clone for GitlabClient {
+    fn clone(&self) -> Self {
+        let mut backend = crate::backend::create_backend(self.is_github);
+        if let Some(ref tx) = self.tx {
+            backend.set_tx(tx.clone());
+        }
+        Self {
+            is_github: self.is_github,
+            backend,
+            tx: self.tx.clone(),
+            page_size: self.page_size,
+            page_limit: self.page_limit,
+        }
+    }
+}
+
+impl std::fmt::Debug for GitlabClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitlabClient")
+            .field("is_github", &self.is_github)
+            .field("page_size", &self.page_size)
+            .field("page_limit", &self.page_limit)
+            .finish()
+    }
+}
+
+impl GitlabClient {
     // Helper to generate human-readable action label from method and endpoint
     // Outputs concise, uppercase action label, e.g., "FETCHING BRANCHES", "CREATING BRANCH"
     fn generate_action_label(&self, endpoint: &str, method: &str) -> String {
@@ -429,114 +507,9 @@ impl GitlabClient {
             self.execute_gitlab_api(endpoint, method, None).await
         }
     }
-
-    pub async fn fetch_labels(&self, project_path: &str) -> Result<Vec<String>> {
-        if self.is_github {
-            #[derive(serde::Deserialize)]
-            struct GithubLabel {
-                name: String,
-            }
-            let endpoint = format!("/repos/{}/labels?per_page=100", project_path);
-            let raw = self.execute_github_api(&endpoint, "GET", None).await?;
-            let labels: Vec<GithubLabel> = serde_json::from_str(&raw)?;
-            Ok(labels.into_iter().map(|l| l.name).collect())
-        } else {
-            #[derive(serde::Deserialize)]
-            struct GitlabLabel {
-                name: String,
-            }
-            let encoded_path = project_path.replace("/", "%2F");
-            let endpoint = format!("/projects/{}/labels?per_page=100", encoded_path);
-            let raw = self.execute_gitlab_api(&endpoint, "GET", None).await?;
-            let labels: Vec<GitlabLabel> = serde_json::from_str(&raw)?;
-            Ok(labels.into_iter().map(|l| l.name).collect())
-        }
-    }
-
-    pub async fn fetch_members(&self, project_path: &str) -> Result<Vec<String>> {
-        if self.is_github {
-            #[derive(serde::Deserialize)]
-            struct GithubAssignee {
-                login: String,
-            }
-            let endpoint = format!("/repos/{}/assignees?per_page=100", project_path);
-            let raw = self.execute_github_api(&endpoint, "GET", None).await?;
-            let assignees: Vec<GithubAssignee> = serde_json::from_str(&raw)?;
-            Ok(assignees
-                .into_iter()
-                .map(|a| format!("@{}", a.login))
-                .collect())
-        } else {
-            #[derive(serde::Deserialize)]
-            struct GitlabMember {
-                username: String,
-            }
-            let encoded_path = project_path.replace("/", "%2F");
-            let endpoint = format!("/projects/{}/members/all?per_page=100", encoded_path);
-            let raw = self.execute_gitlab_api(&endpoint, "GET", None).await?;
-            let members: Vec<GitlabMember> = serde_json::from_str(&raw)?;
-            Ok(members
-                .into_iter()
-                .map(|m| format!("@{}", m.username))
-                .collect())
-        }
-    }
-
-    pub async fn fetch_branches(&self, project_path: &str) -> Result<Vec<String>> {
-        if self.is_github {
-            #[derive(serde::Deserialize)]
-            struct GithubBranch {
-                name: String,
-            }
-            let endpoint = format!("/repos/{}/branches?per_page=100", project_path);
-            let raw = self.execute_github_api(&endpoint, "GET", None).await?;
-            let branches: Vec<GithubBranch> = serde_json::from_str(&raw)?;
-            Ok(branches.into_iter().map(|b| b.name).collect())
-        } else {
-            #[derive(serde::Deserialize)]
-            struct GitlabBranch {
-                name: String,
-            }
-            let encoded_path = project_path.replace("/", "%2F");
-            let endpoint = format!(
-                "/projects/{}/repository/branches?per_page=100",
-                encoded_path
-            );
-            let raw = self.execute_gitlab_api(&endpoint, "GET", None).await?;
-            let branches: Vec<GitlabBranch> = serde_json::from_str(&raw)?;
-            Ok(branches.into_iter().map(|b| b.name).collect())
-        }
-    }
-
-    pub async fn fetch_milestones(&self, project_path: &str) -> Result<Vec<String>> {
-        if self.is_github {
-            #[derive(serde::Deserialize)]
-            struct GithubMilestone {
-                title: String,
-            }
-            let endpoint = format!("/repos/{}/milestones?state=open&per_page=100", project_path);
-            let raw = self.execute_github_api(&endpoint, "GET", None).await?;
-            let milestones: Vec<GithubMilestone> = serde_json::from_str(&raw)?;
-            Ok(milestones.into_iter().map(|m| m.title).collect())
-        } else {
-            #[derive(serde::Deserialize)]
-            struct GitlabMilestone {
-                title: String,
-            }
-            let encoded_path = project_path.replace("/", "%2F");
-            let endpoint = format!(
-                "/projects/{}/milestones?state=active&per_page=100",
-                encoded_path
-            );
-            let raw = self.execute_gitlab_api(&endpoint, "GET", None).await?;
-            let milestones: Vec<GitlabMilestone> = serde_json::from_str(&raw)?;
-            Ok(milestones.into_iter().map(|m| m.title).collect())
-        }
-    }
 }
 
 pub async fn get_project_context() -> Result<String> {
-    // Execute `git remote get-url origin`
     let output = std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()
@@ -567,159 +540,5 @@ pub async fn get_project_context() -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn test_deserialize_github_issue() {
-        use crate::domain::issues::{GithubIssue, Issue};
-        let json_data = r#"{
-            "number": 42,
-            "title": "A github issue",
-            "state": "open",
-            "labels": [{"name": "bug"}],
-            "updated_at": "2026-06-01T00:00:00Z",
-            "created_at": "2026-06-01T00:00:00Z",
-            "closed_at": null,
-            "user": {"login": "octocat"},
-            "milestone": {"title": "v1.0"},
-            "assignees": [{"login": "octocat"}],
-            "body": "Issue description",
-            "pull_request": null
-        }"#;
-
-        let gh_issue: GithubIssue = serde_json::from_str(json_data).unwrap();
-        let issue = Issue::from(gh_issue);
-
-        assert_eq!(issue.iid, 42);
-        assert_eq!(issue.title, "A github issue");
-        assert_eq!(issue.state, "opened");
-        assert_eq!(issue.labels[0], "bug");
-        assert_eq!(issue.author.username, "octocat");
-        assert_eq!(issue.milestone.unwrap().title, "v1.0");
-        assert_eq!(issue.assignees[0].username, "octocat");
-        assert_eq!(issue.description.unwrap(), "Issue description");
-    }
-
-    #[test]
-    fn test_deserialize_github_pull_request() {
-        use crate::domain::mr::{GithubPullRequest, MergeRequest};
-        let json_data = r#"{
-            "number": 101,
-            "title": "Fix a bug",
-            "state": "open",
-            "labels": [{"name": "enhancement"}],
-            "updated_at": "2026-06-01T00:00:00Z",
-            "user": {"login": "octocat"},
-            "milestone": {"title": "v1.0"},
-            "assignees": [{"login": "octocat"}],
-            "requested_reviewers": [{"login": "reviewer1"}],
-            "base": {"ref": "main"},
-            "head": {"ref": "feature-bug"},
-            "draft": false,
-            "body": "PR description"
-        }"#;
-
-        let gh_pr: GithubPullRequest = serde_json::from_str(json_data).unwrap();
-        let mr = MergeRequest::from(gh_pr);
-
-        assert_eq!(mr.iid, 101);
-        assert_eq!(mr.title, "Fix a bug");
-        assert_eq!(mr.state, "opened");
-        assert_eq!(mr.labels[0], "enhancement");
-        assert_eq!(mr.author.username, "octocat");
-        assert_eq!(mr.milestone.unwrap().title, "v1.0");
-        assert_eq!(mr.assignees[0].username, "octocat");
-        assert_eq!(mr.reviewers[0].username, "reviewer1");
-        assert_eq!(mr.target_branch, "main");
-        assert_eq!(mr.source_branch, "feature-bug");
-        assert!(!mr.draft);
-        assert_eq!(mr.description.unwrap(), "PR description");
-    }
-
-    #[test]
-    fn test_github_issue_list_filters_prs() {
-        use crate::domain::issues::GithubIssue;
-        let json_data = r#"[
-            {
-                "number": 1,
-                "title": "Normal issue",
-                "state": "open",
-                "labels": [],
-                "updated_at": "2026-06-01T00:00:00Z",
-                "user": {"login": "user"},
-                "milestone": null,
-                "assignees": [],
-                "body": "desc",
-                "pull_request": null
-            },
-            {
-                "number": 2,
-                "title": "A pull request",
-                "state": "open",
-                "labels": [],
-                "updated_at": "2026-06-01T00:00:00Z",
-                "user": {"login": "user"},
-                "milestone": null,
-                "assignees": [],
-                "body": "desc",
-                "pull_request": {"url": "https://api.github.com/..."}
-            }
-        ]"#;
-
-        let gh_issues: Vec<GithubIssue> = serde_json::from_str(json_data).unwrap();
-        let filtered: Vec<GithubIssue> = gh_issues
-            .into_iter()
-            .filter(|i| i.pull_request.is_none())
-            .collect();
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].number, 1);
-        assert_eq!(filtered[0].title, "Normal issue");
-    }
-
-    #[test]
-    fn test_deserialize_github_pull_request_comments() {
-        use crate::domain::mr::{DiscussionNote, GithubPullComment};
-        let json_data = r#"[
-            {
-                "id": 1,
-                "body": "a code comment",
-                "path": "src/main.rs",
-                "line": 42,
-                "side": "RIGHT",
-                "user": {"login": "octocat"},
-                "created_at": "2026-06-01T00:00:00Z",
-                "in_reply_to_id": null
-            },
-            {
-                "id": 2,
-                "body": "another code comment",
-                "path": "src/main.rs",
-                "line": 10,
-                "side": "LEFT",
-                "user": {"login": "octocat"},
-                "created_at": "2026-06-01T00:00:00Z",
-                "in_reply_to_id": 1
-            }
-        ]"#;
-
-        let gh_comments: Vec<GithubPullComment> = serde_json::from_str(json_data).unwrap();
-        let notes: Vec<DiscussionNote> =
-            gh_comments.into_iter().map(DiscussionNote::from).collect();
-        assert_eq!(notes.len(), 2);
-
-        assert_eq!(notes[0].id, 1);
-        assert_eq!(notes[0].body, "a code comment");
-        assert_eq!(notes[0].author.username, "octocat");
-        let pos1 = notes[0].position.as_ref().unwrap();
-        assert_eq!(pos1.new_path.as_deref(), Some("src/main.rs"));
-        assert_eq!(pos1.new_line, Some(42));
-        assert!(pos1.old_line.is_none());
-
-        assert_eq!(notes[1].id, 2);
-        assert_eq!(notes[1].body, "another code comment");
-        assert_eq!(notes[1].author.username, "octocat");
-        let pos2 = notes[1].position.as_ref().unwrap();
-        assert_eq!(pos2.new_path.as_deref(), Some("src/main.rs"));
-        assert_eq!(pos2.old_line, Some(10));
-        assert!(pos2.new_line.is_none());
-        assert_eq!(notes[1].discussion_id.as_deref(), Some("1"));
-    }
+    // Tests moved to domain files and backend modules.
 }

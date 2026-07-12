@@ -7,12 +7,12 @@ use std::path::PathBuf;
 pub struct ProjectCache {
     pub issues: Vec<crate::domain::issues::Issue>,
     pub mrs: Vec<crate::domain::mr::MergeRequest>,
-    pub pipelines: Vec<crate::domain::pipelines::PipelineItem>,
+    pub pipelines: Vec<crate::domain::pipelines::Pipeline>,
     pub runners: Vec<crate::domain::runners::Runner>,
     pub releases: Vec<crate::domain::releases::Release>,
     pub todos: Vec<crate::domain::notifications::Notification>,
     pub milestones: Vec<crate::domain::milestones::Milestone>,
-    pub pipeline_jobs: HashMap<u64, Vec<crate::domain::pipelines::JobItem>>,
+    pub pipeline_jobs: HashMap<u64, Vec<crate::domain::pipelines::Job>>,
     pub branches: Vec<crate::domain::branches::Branch>,
     pub environments: Vec<crate::domain::deployments::Environment>,
     #[serde(default)]

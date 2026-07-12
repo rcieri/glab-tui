@@ -1,5 +1,4 @@
 use super::Backend;
-use crate::event::Event;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::Issue;
@@ -9,6 +8,7 @@ use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::runners::Runner;
+use crate::event::Event;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -141,14 +141,17 @@ impl Backend for GhBackend {
                     "closed"
                 }
                 .to_string();
-                let labels: Vec<String> =
-                    gi.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
+                let labels: Vec<String> = gi
+                    .labels
+                    .iter()
+                    .filter_map(|v| v.get("name")?.as_str().map(String::from))
+                    .collect();
                 let author = crate::domain::issues::Author {
                     username: gi.author.map(|a| a.login).unwrap_or_default(),
                 };
-                let milestone = gi.milestone.map(|m| crate::domain::issues::Milestone {
-                    title: m.title,
-                });
+                let milestone = gi
+                    .milestone
+                    .map(|m| crate::domain::issues::Milestone { title: m.title });
                 let assignees: Vec<crate::domain::issues::Assignee> = gi
                     .assignees
                     .into_iter()
@@ -221,12 +224,17 @@ impl Backend for GhBackend {
             "closed"
         }
         .to_string();
-        let labels: Vec<String> =
-            gi.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
+        let labels: Vec<String> = gi
+            .labels
+            .iter()
+            .filter_map(|v| v.get("name")?.as_str().map(String::from))
+            .collect();
         let author = crate::domain::issues::Author {
             username: gi.author.map(|a| a.login).unwrap_or_default(),
         };
-        let milestone = gi.milestone.map(|m| crate::domain::issues::Milestone { title: m.title });
+        let milestone = gi
+            .milestone
+            .map(|m| crate::domain::issues::Milestone { title: m.title });
         let assignees: Vec<crate::domain::issues::Assignee> = gi
             .assignees
             .into_iter()
@@ -318,12 +326,17 @@ impl Backend for GhBackend {
                     "closed"
                 }
                 .to_string();
-                let labels: Vec<String> =
-                    gp.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
+                let labels: Vec<String> = gp
+                    .labels
+                    .iter()
+                    .filter_map(|v| v.get("name")?.as_str().map(String::from))
+                    .collect();
                 let author = crate::domain::mr::Author {
                     username: gp.author.map(|a| a.login).unwrap_or_default(),
                 };
-                let milestone = gp.milestone.map(|m| crate::domain::mr::Milestone { title: m.title });
+                let milestone = gp
+                    .milestone
+                    .map(|m| crate::domain::mr::Milestone { title: m.title });
                 let assignees: Vec<crate::domain::mr::Assignee> = gp
                     .assignees
                     .into_iter()
@@ -402,12 +415,17 @@ impl Backend for GhBackend {
             "closed"
         }
         .to_string();
-        let labels: Vec<String> =
-            gp.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
+        let labels: Vec<String> = gp
+            .labels
+            .iter()
+            .filter_map(|v| v.get("name")?.as_str().map(String::from))
+            .collect();
         let author = crate::domain::mr::Author {
             username: gp.author.map(|a| a.login).unwrap_or_default(),
         };
-        let milestone = gp.milestone.map(|m| crate::domain::mr::Milestone { title: m.title });
+        let milestone = gp
+            .milestone
+            .map(|m| crate::domain::mr::Milestone { title: m.title });
         let assignees: Vec<crate::domain::mr::Assignee> = gp
             .assignees
             .into_iter()
@@ -515,11 +533,7 @@ impl Backend for GhBackend {
 
     // ── Pipelines ──
 
-    async fn list_pipelines(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Pipeline>> {
+    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
         let total = page_size * 10;
         let raw = self
             .run_gh(
@@ -800,11 +814,7 @@ impl Backend for GhBackend {
 
     // ── Milestones ──
 
-    async fn list_milestones(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Milestone>> {
+    async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>> {
         let endpoint = format!(
             "/repos/{}/milestones?state=all&per_page={}",
             project, page_size
@@ -895,14 +905,17 @@ impl Backend for GhBackend {
                     "closed"
                 }
                 .to_string();
-                let labels: Vec<String> =
-                    gi.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
+                let labels: Vec<String> = gi
+                    .labels
+                    .iter()
+                    .filter_map(|v| v.get("name")?.as_str().map(String::from))
+                    .collect();
                 let author = crate::domain::issues::Author {
                     username: gi.user.map(|u| u.login).unwrap_or_default(),
                 };
-                let milestone = gi.milestone.map(|m| crate::domain::issues::Milestone {
-                    title: m.title,
-                });
+                let milestone = gi
+                    .milestone
+                    .map(|m| crate::domain::issues::Milestone { title: m.title });
                 let assignees: Vec<crate::domain::issues::Assignee> = gi
                     .assignees
                     .into_iter()
@@ -1089,11 +1102,7 @@ impl Backend for GhBackend {
                 protected: b.protected,
                 web_url: String::new(),
                 can_push: false,
-                commit_sha: b
-                    .commit
-                    .as_ref()
-                    .map(|c| c.sha.clone())
-                    .unwrap_or_default(),
+                commit_sha: b.commit.as_ref().map(|c| c.sha.clone()).unwrap_or_default(),
             })
             .collect();
         if let Some(first) = branches.first_mut() {
@@ -1126,11 +1135,7 @@ impl Backend for GhBackend {
 
     // ── Environments / Deployments ──
 
-    async fn list_environments(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Environment>> {
+    async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>> {
         let endpoint = format!("/repos/{}/environments?per_page={}", project, page_size);
         let raw = self.raw_api(&endpoint, "GET", None).await?;
         #[derive(Deserialize)]
@@ -1195,10 +1200,12 @@ impl Backend for GhBackend {
                 status: d.status.unwrap_or_default(),
                 created_at: d.created_at,
                 updated_at: d.updated_at,
-                environment: d.environment.map(|e| crate::domain::deployments::EnvironmentInfo {
-                    name: e,
-                    external_url: None,
-                }),
+                environment: d
+                    .environment
+                    .map(|e| crate::domain::deployments::EnvironmentInfo {
+                        name: e,
+                        external_url: None,
+                    }),
                 deployable: None,
                 description: d.description,
                 user: None,
@@ -1211,7 +1218,9 @@ impl Backend for GhBackend {
     async fn fetch_labels(&self, project: &str) -> Result<Vec<String>> {
         let raw = self
             .run_gh(
-                &["label", "list", "--json", "name", "-R", project, "--limit", "100"],
+                &[
+                    "label", "list", "--json", "name", "-R", project, "--limit", "100",
+                ],
                 "Fetching Labels",
             )
             .await?;
@@ -1231,7 +1240,10 @@ impl Backend for GhBackend {
             login: String,
         }
         let members: Vec<GhAsn> = serde_json::from_str(&raw)?;
-        Ok(members.into_iter().map(|a| format!("@{}", a.login)).collect())
+        Ok(members
+            .into_iter()
+            .map(|a| format!("@{}", a.login))
+            .collect())
     }
 
     async fn fetch_branch_names(&self, project: &str) -> Result<Vec<String>> {
@@ -1258,12 +1270,7 @@ impl Backend for GhBackend {
 
     // ── Raw API ──
 
-    async fn raw_api(
-        &self,
-        endpoint: &str,
-        method: &str,
-        body: Option<&str>,
-    ) -> Result<String> {
+    async fn raw_api(&self, endpoint: &str, method: &str, body: Option<&str>) -> Result<String> {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         let mut cmd_args: Vec<String> = vec!["api".into()];
         if method != "GET" {

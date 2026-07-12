@@ -157,7 +157,7 @@ pub async fn handle_confirm_popup(
                     }
                     crate::app::ConfirmAction::CloseIssue(iid) => {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let args = vec!["issue".to_string(), "close".to_string(), iid.to_string()];
                         let active_tab = app.active_tab;
                         crate::run_cli(program, &args, terminal, tx.clone(), active_tab).await;
@@ -168,7 +168,7 @@ pub async fn handle_confirm_popup(
                     }
                     crate::app::ConfirmAction::DeleteIssue(iid) => {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let is_github = is_github;
                         let project_path = app.project_context.clone();
                         let client = app.gitlab_client.clone().unwrap();
@@ -192,7 +192,7 @@ pub async fn handle_confirm_popup(
                             } else {
                                 let encoded_path = project_path.replace("/", "%2F");
                                 let endpoint = format!("/projects/{}/issues/{}", encoded_path, iid);
-                                client.execute_gitlab_api(&endpoint, "DELETE", None).await
+                                client.raw_api(&endpoint, "DELETE", None).await
                             };
                             match res {
                                 Ok(_) => {
@@ -209,7 +209,7 @@ pub async fn handle_confirm_popup(
                     }
                     crate::app::ConfirmAction::CloseMr(iid) => {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let args = vec![
                             if is_github { "pr" } else { "mr" }.to_string(),
                             "close".to_string(),
@@ -230,7 +230,7 @@ pub async fn handle_confirm_popup(
                             let encoded_path = project_path.replace("/", "%2F");
                             let endpoint =
                                 format!("/projects/{}/merge_requests/{}", encoded_path, iid);
-                            let res = client.execute_gitlab_api(&endpoint, "DELETE", None).await;
+                            let res = client.raw_api(&endpoint, "DELETE", None).await;
                             match res {
                                 Ok(_) => {
                                     let _ = tx.send(Event::MrDeleted);
@@ -246,7 +246,7 @@ pub async fn handle_confirm_popup(
                     }
                     crate::app::ConfirmAction::MergeMr(iid) => {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-        let program = if is_github { "gh" } else { "glab" };
+                        let program = if is_github { "gh" } else { "glab" };
                         let args = if is_github {
                             vec![
                                 "pr".to_string(),

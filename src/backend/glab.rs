@@ -1,5 +1,4 @@
 use super::Backend;
-use crate::event::Event;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::Issue;
@@ -9,6 +8,7 @@ use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::runners::Runner;
+use crate::event::Event;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -133,32 +133,44 @@ impl Backend for GlabBackend {
                 due_date: Option<String>,
             }
             #[derive(Deserialize)]
-            struct GiAuthor { username: String }
+            struct GiAuthor {
+                username: String,
+            }
             #[derive(Deserialize)]
-            struct GiMilestone { title: String }
+            struct GiMilestone {
+                title: String,
+            }
             #[derive(Deserialize)]
-            struct GiAssignee { username: String }
+            struct GiAssignee {
+                username: String,
+            }
             let issues: Vec<GiIssue> = serde_json::from_str(&raw).unwrap_or_default();
             let len = issues.len();
-            all.extend(issues.into_iter().map(|i| Issue {
-                iid: i.iid,
-                title: i.title,
-                state: i.state,
-                labels: i.labels,
-                updated_at: i.updated_at,
-                created_at: i.created_at,
-                closed_at: i.closed_at,
-                author: crate::domain::issues::Author {
-                    username: i.author.username,
-                },
-                milestone: i.milestone.map(|m| crate::domain::issues::Milestone {
-                    title: m.title,
-                }),
-                assignees: i.assignees.into_iter().map(|a| crate::domain::issues::Assignee {
-                    username: a.username,
-                }).collect(),
-                description: i.description,
-                due_date: i.due_date,
+            all.extend(issues.into_iter().map(|i| {
+                Issue {
+                    iid: i.iid,
+                    title: i.title,
+                    state: i.state,
+                    labels: i.labels,
+                    updated_at: i.updated_at,
+                    created_at: i.created_at,
+                    closed_at: i.closed_at,
+                    author: crate::domain::issues::Author {
+                        username: i.author.username,
+                    },
+                    milestone: i
+                        .milestone
+                        .map(|m| crate::domain::issues::Milestone { title: m.title }),
+                    assignees: i
+                        .assignees
+                        .into_iter()
+                        .map(|a| crate::domain::issues::Assignee {
+                            username: a.username,
+                        })
+                        .collect(),
+                    description: i.description,
+                    due_date: i.due_date,
+                }
             }));
             if len < 100 {
                 break;
@@ -205,11 +217,17 @@ impl Backend for GlabBackend {
             due_date: Option<String>,
         }
         #[derive(Deserialize)]
-        struct GiAuthor { username: String }
+        struct GiAuthor {
+            username: String,
+        }
         #[derive(Deserialize)]
-        struct GiMilestone { title: String }
+        struct GiMilestone {
+            title: String,
+        }
         #[derive(Deserialize)]
-        struct GiAssignee { username: String }
+        struct GiAssignee {
+            username: String,
+        }
         let i: GiIssue = serde_json::from_str(&raw)?;
         Ok(Issue {
             iid: i.iid,
@@ -219,9 +237,19 @@ impl Backend for GlabBackend {
             updated_at: i.updated_at,
             created_at: i.created_at,
             closed_at: i.closed_at,
-            author: crate::domain::issues::Author { username: i.author.username },
-            milestone: i.milestone.map(|m| crate::domain::issues::Milestone { title: m.title }),
-            assignees: i.assignees.into_iter().map(|a| crate::domain::issues::Assignee { username: a.username }).collect(),
+            author: crate::domain::issues::Author {
+                username: i.author.username,
+            },
+            milestone: i
+                .milestone
+                .map(|m| crate::domain::issues::Milestone { title: m.title }),
+            assignees: i
+                .assignees
+                .into_iter()
+                .map(|a| crate::domain::issues::Assignee {
+                    username: a.username,
+                })
+                .collect(),
             description: i.description,
             due_date: i.due_date,
         })
@@ -283,13 +311,21 @@ impl Backend for GlabBackend {
                 head_pipeline: Option<GiPipeline>,
             }
             #[derive(Deserialize)]
-            struct GiAuthor { username: String }
+            struct GiAuthor {
+                username: String,
+            }
             #[derive(Deserialize)]
-            struct GiMilestone { title: String }
+            struct GiMilestone {
+                title: String,
+            }
             #[derive(Deserialize)]
-            struct GiAssignee { username: String }
+            struct GiAssignee {
+                username: String,
+            }
             #[derive(Deserialize)]
-            struct GiReviewer { username: String }
+            struct GiReviewer {
+                username: String,
+            }
             #[derive(Deserialize)]
             struct GiPipeline {
                 id: u64,
@@ -300,26 +336,44 @@ impl Backend for GlabBackend {
             }
             let mrs: Vec<GiMr> = serde_json::from_str(&raw).unwrap_or_default();
             let len = mrs.len();
-            all.extend(mrs.into_iter().map(|m| MergeRequest {
-                iid: m.iid,
-                title: m.title,
-                state: m.state,
-                labels: m.labels,
-                updated_at: m.updated_at,
-                author: crate::domain::mr::Author { username: m.author.username },
-                milestone: m.milestone.map(|ms| crate::domain::mr::Milestone { title: ms.title }),
-                assignees: m.assignees.into_iter().map(|a| crate::domain::mr::Assignee { username: a.username }).collect(),
-                reviewers: m.reviewers.into_iter().map(|r| crate::domain::mr::Reviewer { username: r.username }).collect(),
-                target_branch: m.target_branch,
-                source_branch: m.source_branch,
-                draft: m.draft,
-                description: m.description,
-                head_pipeline: m.head_pipeline.map(|p| Pipeline {
-                    id: p.id,
-                    status: p.status,
-                    r#ref: p.pipe_ref,
-                    updated_at: p.updated_at,
-                }),
+            all.extend(mrs.into_iter().map(|m| {
+                MergeRequest {
+                    iid: m.iid,
+                    title: m.title,
+                    state: m.state,
+                    labels: m.labels,
+                    updated_at: m.updated_at,
+                    author: crate::domain::mr::Author {
+                        username: m.author.username,
+                    },
+                    milestone: m
+                        .milestone
+                        .map(|ms| crate::domain::mr::Milestone { title: ms.title }),
+                    assignees: m
+                        .assignees
+                        .into_iter()
+                        .map(|a| crate::domain::mr::Assignee {
+                            username: a.username,
+                        })
+                        .collect(),
+                    reviewers: m
+                        .reviewers
+                        .into_iter()
+                        .map(|r| crate::domain::mr::Reviewer {
+                            username: r.username,
+                        })
+                        .collect(),
+                    target_branch: m.target_branch,
+                    source_branch: m.source_branch,
+                    draft: m.draft,
+                    description: m.description,
+                    head_pipeline: m.head_pipeline.map(|p| Pipeline {
+                        id: p.id,
+                        status: p.status,
+                        r#ref: p.pipe_ref,
+                        updated_at: p.updated_at,
+                    }),
+                }
             }));
             if len < 100 {
                 break;
@@ -368,13 +422,21 @@ impl Backend for GlabBackend {
             head_pipeline: Option<GiPipeline>,
         }
         #[derive(Deserialize)]
-        struct GiAuthor { username: String }
+        struct GiAuthor {
+            username: String,
+        }
         #[derive(Deserialize)]
-        struct GiMilestone { title: String }
+        struct GiMilestone {
+            title: String,
+        }
         #[derive(Deserialize)]
-        struct GiAssignee { username: String }
+        struct GiAssignee {
+            username: String,
+        }
         #[derive(Deserialize)]
-        struct GiReviewer { username: String }
+        struct GiReviewer {
+            username: String,
+        }
         #[derive(Deserialize)]
         struct GiPipeline {
             id: u64,
@@ -390,10 +452,26 @@ impl Backend for GlabBackend {
             state: m.state,
             labels: m.labels,
             updated_at: m.updated_at,
-            author: crate::domain::mr::Author { username: m.author.username },
-            milestone: m.milestone.map(|ms| crate::domain::mr::Milestone { title: ms.title }),
-            assignees: m.assignees.into_iter().map(|a| crate::domain::mr::Assignee { username: a.username }).collect(),
-            reviewers: m.reviewers.into_iter().map(|r| crate::domain::mr::Reviewer { username: r.username }).collect(),
+            author: crate::domain::mr::Author {
+                username: m.author.username,
+            },
+            milestone: m
+                .milestone
+                .map(|ms| crate::domain::mr::Milestone { title: ms.title }),
+            assignees: m
+                .assignees
+                .into_iter()
+                .map(|a| crate::domain::mr::Assignee {
+                    username: a.username,
+                })
+                .collect(),
+            reviewers: m
+                .reviewers
+                .into_iter()
+                .map(|r| crate::domain::mr::Reviewer {
+                    username: r.username,
+                })
+                .collect(),
             target_branch: m.target_branch,
             source_branch: m.source_branch,
             draft: m.draft,
@@ -455,7 +533,9 @@ impl Backend for GlabBackend {
             resolvable: Option<bool>,
         }
         #[derive(Deserialize)]
-        struct GiAuthor { username: String }
+        struct GiAuthor {
+            username: String,
+        }
         #[derive(Deserialize)]
         struct GiPosition {
             #[serde(default)]
@@ -499,11 +579,7 @@ impl Backend for GlabBackend {
 
     // ── Pipelines ──
 
-    async fn list_pipelines(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Pipeline>> {
+    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
         let encoded = Self::encode_path(project);
         let pages = page_size.div_ceil(100).max(1);
         let mut all: Vec<Pipeline> = Vec::new();
@@ -756,11 +832,7 @@ impl Backend for GlabBackend {
 
     // ── Milestones ──
 
-    async fn list_milestones(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Milestone>> {
+    async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>> {
         let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
@@ -841,11 +913,17 @@ impl Backend for GlabBackend {
             due_date: Option<String>,
         }
         #[derive(Deserialize)]
-        struct GiAuthor { username: String }
+        struct GiAuthor {
+            username: String,
+        }
         #[derive(Deserialize)]
-        struct GiMilestone { title: String }
+        struct GiMilestone {
+            title: String,
+        }
         #[derive(Deserialize)]
-        struct GiAssignee { username: String }
+        struct GiAssignee {
+            username: String,
+        }
         let issues: Vec<GiIssue> = serde_json::from_str(&raw)?;
         Ok(issues
             .into_iter()
@@ -860,12 +938,16 @@ impl Backend for GlabBackend {
                 author: crate::domain::issues::Author {
                     username: i.author.username,
                 },
-                milestone: i.milestone.map(|m| crate::domain::issues::Milestone {
-                    title: m.title,
-                }),
-                assignees: i.assignees.into_iter().map(|a| crate::domain::issues::Assignee {
-                    username: a.username,
-                }).collect(),
+                milestone: i
+                    .milestone
+                    .map(|m| crate::domain::issues::Milestone { title: m.title }),
+                assignees: i
+                    .assignees
+                    .into_iter()
+                    .map(|a| crate::domain::issues::Assignee {
+                        username: a.username,
+                    })
+                    .collect(),
                 description: i.description,
                 due_date: i.due_date,
             })
@@ -954,10 +1036,7 @@ impl Backend for GlabBackend {
     async fn list_notifications(&self, show_read: bool) -> Result<Vec<Notification>> {
         // glab todo list does active todos; for "done" we use glab api
         let raw = self
-            .run_glab(
-                &["todo", "list", "--output=json"],
-                "Fetching Todos",
-            )
+            .run_glab(&["todo", "list", "--output=json"], "Fetching Todos")
             .await?;
         #[derive(Deserialize)]
         struct GiTodo {
@@ -1084,26 +1163,16 @@ impl Backend for GlabBackend {
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/repository/branches/{}",
-            encoded, branch_name
-        );
+        let endpoint = format!("/projects/{}/repository/branches/{}", encoded, branch_name);
         self.raw_api(&endpoint, "DELETE", None).await?;
         Ok(())
     }
 
     // ── Environments / Deployments ──
 
-    async fn list_environments(
-        &self,
-        project: &str,
-        page_size: usize,
-    ) -> Result<Vec<Environment>> {
+    async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/environments?per_page={}",
-            encoded, page_size
-        );
+        let endpoint = format!("/projects/{}/environments?per_page={}", encoded, page_size);
         let raw = self.raw_api(&endpoint, "GET", None).await?;
         #[derive(Deserialize)]
         struct GiEnv {
@@ -1168,10 +1237,7 @@ impl Backend for GlabBackend {
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>> {
         let encoded = Self::encode_path(project);
-        let mut endpoint = format!(
-            "/projects/{}/deployments?per_page={}",
-            encoded, page_size
-        );
+        let mut endpoint = format!("/projects/{}/deployments?per_page={}", encoded, page_size);
         if let Some(env) = environment {
             endpoint.push_str(&format!("&environment={}", env));
         }
@@ -1252,15 +1318,15 @@ impl Backend for GlabBackend {
             username: String,
         }
         let members: Vec<GiMember> = serde_json::from_str(&raw)?;
-        Ok(members.into_iter().map(|m| format!("@{}", m.username)).collect())
+        Ok(members
+            .into_iter()
+            .map(|m| format!("@{}", m.username))
+            .collect())
     }
 
     async fn fetch_branch_names(&self, project: &str) -> Result<Vec<String>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/repository/branches?per_page=100",
-            encoded
-        );
+        let endpoint = format!("/projects/{}/repository/branches?per_page=100", encoded);
         let raw = self.raw_api(&endpoint, "GET", None).await?;
         #[derive(Deserialize)]
         struct GiBr {
@@ -1272,10 +1338,7 @@ impl Backend for GlabBackend {
 
     async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/milestones?state=active&per_page=100",
-            encoded
-        );
+        let endpoint = format!("/projects/{}/milestones?state=active&per_page=100", encoded);
         let raw = self.raw_api(&endpoint, "GET", None).await?;
         #[derive(Deserialize)]
         struct GiMs {
@@ -1287,12 +1350,7 @@ impl Backend for GlabBackend {
 
     // ── Raw API ──
 
-    async fn raw_api(
-        &self,
-        endpoint: &str,
-        method: &str,
-        body: Option<&str>,
-    ) -> Result<String> {
+    async fn raw_api(&self, endpoint: &str, method: &str, body: Option<&str>) -> Result<String> {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         let mut cmd_args: Vec<String> = vec!["api".into()];
         if method != "GET" {

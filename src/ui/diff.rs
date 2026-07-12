@@ -302,19 +302,19 @@ pub fn count_wrapped_lines(text: &str, width: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::pipelines::{GitlabJob, JobItem};
+    use crate::domain::pipelines::Job;
     use crate::ui::helpers::{
         floor_char_boundary, get_label_color, get_stages_summary, render_labels_cell,
     };
 
-    fn make_job(id: u64, stage: &str, name: &str, status: &str) -> JobItem {
-        JobItem::from_gitlab(GitlabJob {
+    fn make_job(id: u64, stage: &str, name: &str, status: &str) -> Job {
+        Job {
             id,
             stage: stage.to_string(),
             name: name.to_string(),
             status: status.to_string(),
             matrix: None,
-        })
+        }
     }
 
     #[test]

@@ -1,6 +1,5 @@
 use crate::AppTerminal;
 use crate::app::App;
-use crate::cli::app_cli;
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
@@ -157,18 +156,20 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::CloseIssue(iid) => {
-                        let cli = app_cli(app);
+                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+        let program = if is_github { "gh" } else { "glab" };
                         let args = vec!["issue".to_string(), "close".to_string(), iid.to_string()];
                         let active_tab = app.active_tab;
-                        crate::run_cli(&cli, &args, terminal, tx.clone(), active_tab).await;
+                        crate::run_cli(program, &args, terminal, tx.clone(), active_tab).await;
                         if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
                             app.issues.items.remove(pos);
                         }
                         app.update_filter_selection();
                     }
                     crate::app::ConfirmAction::DeleteIssue(iid) => {
-                        let cli = app_cli(app);
-                        let is_github = cli.is_github;
+                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+        let program = if is_github { "gh" } else { "glab" };
+                        let is_github = is_github;
                         let project_path = app.project_context.clone();
                         let client = app.gitlab_client.clone().unwrap();
                         let _ = tx.send(Event::CommandStarted(format!("Deleting issue #{}", iid)));
@@ -207,14 +208,15 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::CloseMr(iid) => {
-                        let cli = app_cli(app);
+                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+        let program = if is_github { "gh" } else { "glab" };
                         let args = vec![
-                            cli.entity("mr").to_string(),
+                            if is_github { "pr" } else { "mr" }.to_string(),
                             "close".to_string(),
                             iid.to_string(),
                         ];
                         let active_tab = app.active_tab;
-                        crate::run_cli(&cli, &args, terminal, tx.clone(), active_tab).await;
+                        crate::run_cli(program, &args, terminal, tx.clone(), active_tab).await;
                         if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                             app.mrs.items.remove(pos);
                         }
@@ -243,8 +245,9 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::MergeMr(iid) => {
-                        let cli = app_cli(app);
-                        let args = if cli.is_github {
+                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+        let program = if is_github { "gh" } else { "glab" };
+                        let args = if is_github {
                             vec![
                                 "pr".to_string(),
                                 "merge".to_string(),
@@ -262,7 +265,7 @@ pub async fn handle_confirm_popup(
                             ]
                         };
                         let active_tab = app.active_tab;
-                        crate::run_cli(&cli, &args, terminal, tx.clone(), active_tab).await;
+                        crate::run_cli(program, &args, terminal, tx.clone(), active_tab).await;
                         if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                             app.mrs.items.remove(pos);
                         }

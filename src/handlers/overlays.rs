@@ -192,7 +192,7 @@ pub async fn handle_confirm_popup(
                             } else {
                                 let encoded_path = project_path.replace("/", "%2F");
                                 let endpoint = format!("/projects/{}/issues/{}", encoded_path, iid);
-                                client.raw_api(&endpoint, "DELETE", None).await
+                                client.raw_api(&endpoint, "DELETE", None, "Deleting Issue").await
                             };
                             match res {
                                 Ok(_) => {
@@ -230,7 +230,9 @@ pub async fn handle_confirm_popup(
                             let encoded_path = project_path.replace("/", "%2F");
                             let endpoint =
                                 format!("/projects/{}/merge_requests/{}", encoded_path, iid);
-                            let res = client.raw_api(&endpoint, "DELETE", None).await;
+                            let res = client
+                                .raw_api(&endpoint, "DELETE", None, "Deleting MR")
+                                .await;
                             match res {
                                 Ok(_) => {
                                     let _ = tx.send(Event::MrDeleted);

@@ -127,7 +127,13 @@ pub trait Backend: Send + Sync {
     async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>>;
 
     // ── Raw API fallback ──
-    async fn raw_api(&self, endpoint: &str, method: &str, body: Option<&str>) -> Result<String>;
+    async fn raw_api(
+        &self,
+        endpoint: &str,
+        method: &str,
+        body: Option<&str>,
+        desc: &str,
+    ) -> Result<String>;
 }
 
 pub fn create_backend(project_url_contains_github: bool) -> Box<dyn Backend> {

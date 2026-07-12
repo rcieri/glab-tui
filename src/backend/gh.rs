@@ -26,11 +26,12 @@ impl GhBackend {
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        let label = format!("{:<24}", desc.to_uppercase());
         let cmd_str = format!("gh {}", args.join(" "));
         if let Some(ref tx) = self.tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp: timestamp.clone(),
-                command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+                command: format!("{} {}", label, cmd_str),
                 status: "Running".to_string(),
             });
         }
@@ -46,7 +47,7 @@ impl GhBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+                    command: format!("{} {}", label, cmd_str),
                     status: "Success".to_string(),
                 });
             }
@@ -56,7 +57,7 @@ impl GhBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+                    command: format!("{} {}", label, cmd_str),
                     status: format!("Failed: {}", err_msg),
                 });
             }
@@ -467,7 +468,7 @@ impl Backend for GhBackend {
             "/repos/{}/pulls/{}/comments?per_page={}",
             project, mr_iid, page_size
         );
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self.raw_api(&endpoint, "GET", None, "Fetching MR Notes").await?;
 
         #[derive(Deserialize)]
         struct GhComment {
@@ -541,7 +542,7 @@ impl Backend for GhBackend {
                     "run",
                     "list",
                     "--json",
-                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha",
+                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event",
                     "-R",
                     project,
                     "--limit",
@@ -561,24 +562,30 @@ impl Backend for GhBackend {
             head_branch: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
+            #[serde(rename = "workflowName")]
+            workflow_name: Option<String>,
+            #[serde(rename = "displayTitle")]
+            display_title: Option<String>,
+            #[serde(rename = "headSha")]
+            head_sha: Option<String>,
+            event: Option<String>,
         }
 
         let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
         Ok(runs
             .into_iter()
             .map(|r| {
-                let status = if r.status == "completed" {
-                    match r.conclusion.as_deref() {
-                        Some("success") => "success",
-                        Some("failure") => "failed",
-                        Some("cancelled") => "canceled",
-                        Some("skipped") => "skipped",
+                let status = match r.status.as_str() {
+                    "completed" | "COMPLETED" => match r.conclusion.as_deref() {
+                        Some("success") | Some("SUCCESS") => "success",
+                        Some("failure") | Some("FAILURE") => "failed",
+                        Some("cancelled") | Some("CANCELLED") | Some("canceled") | Some("CANCELED") => "canceled",
+                        Some("skipped") | Some("SKIPPED") => "skipped",
                         _ => "failed",
-                    }
-                } else if r.status == "in_progress" {
-                    "running"
-                } else {
-                    "pending"
+                    },
+                    "in_progress" | "IN_PROGRESS" => "running",
+                    "queued" | "QUEUED" | "waiting" | "WAITING" => "pending",
+                    _ => "pending",
                 }
                 .to_string();
                 Pipeline {
@@ -586,6 +593,11 @@ impl Backend for GhBackend {
                     status,
                     r#ref: r.head_branch,
                     updated_at: r.updated_at,
+                    name: r.workflow_name.unwrap_or_default(),
+                    display_title: r.display_title.unwrap_or_default(),
+                    event: r.event.unwrap_or_default(),
+                    head_sha: r.head_sha.unwrap_or_default(),
+                    actor_login: String::new(),
                 }
             })
             .collect())
@@ -597,7 +609,6 @@ impl Backend for GhBackend {
         pipeline_id: u64,
         _page_size: usize,
     ) -> Result<Vec<Job>> {
-        // gh run view <id> --json jobs --jq .jobs
         let raw = self
             .run_gh(
                 &[
@@ -617,6 +628,7 @@ impl Backend for GhBackend {
 
         #[derive(Deserialize)]
         struct GhJob {
+            #[serde(rename = "databaseId")]
             id: u64,
             name: String,
             status: String,
@@ -627,18 +639,17 @@ impl Backend for GhBackend {
         let all_jobs: Vec<Job> = jobs
             .into_iter()
             .map(|j| {
-                let status = if j.status == "completed" {
-                    match j.conclusion.as_deref() {
-                        Some("success") => "success",
-                        Some("failure") => "failed",
-                        Some("cancelled") => "canceled",
-                        Some("skipped") => "skipped",
+                let status = match j.status.as_str() {
+                    "completed" | "COMPLETED" => match j.conclusion.as_deref() {
+                        Some("success") | Some("SUCCESS") => "success",
+                        Some("failure") | Some("FAILURE") => "failed",
+                        Some("cancelled") | Some("CANCELLED") | Some("canceled") | Some("CANCELED") => "canceled",
+                        Some("skipped") | Some("SKIPPED") => "skipped",
                         _ => "failed",
-                    }
-                } else if j.status == "in_progress" {
-                    "running"
-                } else {
-                    "pending"
+                    },
+                    "in_progress" | "IN_PROGRESS" => "running",
+                    "queued" | "QUEUED" | "waiting" | "WAITING" => "pending",
+                    _ => "pending",
                 }
                 .to_string();
                 Job {
@@ -689,14 +700,15 @@ impl Backend for GhBackend {
 
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
         let endpoint = format!("/repos/{}/actions/jobs/{}/rerun", project, job_id);
-        self.raw_api(&endpoint, "POST", Some("")).await?;
+        self.raw_api(&endpoint, "POST", Some(""), "Retrying Job").await?;
         Ok(())
     }
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
         // GitHub cancels at the run level, but for individual jobs we use raw API
         let endpoint = format!("/repos/{}/actions/jobs/{}/cancel", project, job_id);
-        self.raw_api(&endpoint, "POST", Some("")).await?;
+        self.raw_api(&endpoint, "POST", Some(""), "Cancelling Job")
+            .await?;
         Ok(())
     }
 
@@ -704,7 +716,9 @@ impl Backend for GhBackend {
 
     async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>> {
         let endpoint = format!("/repos/{}/actions/runners?per_page={}", project, page_size);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Runners")
+            .await?;
         #[derive(Deserialize)]
         struct GhRunners {
             runners: Vec<GhRunner>,
@@ -819,7 +833,9 @@ impl Backend for GhBackend {
             "/repos/{}/milestones?state=all&per_page={}",
             project, page_size
         );
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Milestones")
+            .await?;
         #[derive(Deserialize)]
         struct GhMs {
             id: u64,
@@ -868,7 +884,9 @@ impl Backend for GhBackend {
             "/repos/{}/issues?milestone={}&state=all&per_page={}",
             project, milestone_iid, page_size
         );
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Milestone Issues")
+            .await?;
         #[derive(Deserialize)]
         struct GhIssue {
             number: u64,
@@ -1018,7 +1036,9 @@ impl Backend for GhBackend {
         } else {
             "notifications"
         };
-        let raw = self.raw_api(endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(endpoint, "GET", None, "Fetching Notifications")
+            .await?;
         #[derive(Deserialize)]
         struct GhNotif {
             id: String,
@@ -1073,7 +1093,8 @@ impl Backend for GhBackend {
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
         let endpoint = format!("notifications/threads/{}", id);
-        self.raw_api(&endpoint, "PATCH", None).await?;
+        self.raw_api(&endpoint, "PATCH", None, "Marking Thread Read")
+            .await?;
         Ok(())
     }
 
@@ -1081,7 +1102,9 @@ impl Backend for GhBackend {
 
     async fn list_branches(&self, project: &str, page_size: usize) -> Result<Vec<Branch>> {
         let endpoint = format!("/repos/{}/branches?per_page={}", project, page_size);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Branches")
+            .await?;
         #[derive(Deserialize)]
         struct GhBr {
             name: String,
@@ -1123,13 +1146,15 @@ impl Backend for GhBackend {
             "sha": ref_branch,
         });
         let json_str = serde_json::to_string(&payload)?;
-        self.raw_api(&endpoint, "POST", Some(&json_str)).await?;
+        self.raw_api(&endpoint, "POST", Some(&json_str), "Creating Branch")
+            .await?;
         Ok(())
     }
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let endpoint = format!("/repos/{}/git/refs/heads/{}", project, branch_name);
-        self.raw_api(&endpoint, "DELETE", None).await?;
+        self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
+            .await?;
         Ok(())
     }
 
@@ -1137,7 +1162,9 @@ impl Backend for GhBackend {
 
     async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>> {
         let endpoint = format!("/repos/{}/environments?per_page={}", project, page_size);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Environments")
+            .await?;
         #[derive(Deserialize)]
         struct GhEnvResp {
             environments: Vec<GhEnv>,
@@ -1173,7 +1200,9 @@ impl Backend for GhBackend {
         if let Some(env) = environment {
             endpoint.push_str(&format!("&environment={}", env));
         }
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
+            .await?;
         #[derive(Deserialize)]
         struct GhDeploy {
             id: u64,
@@ -1234,7 +1263,9 @@ impl Backend for GhBackend {
 
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>> {
         let endpoint = format!("/repos/{}/assignees?per_page=100", project);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Members")
+            .await?;
         #[derive(Deserialize)]
         struct GhAsn {
             login: String,
@@ -1248,7 +1279,9 @@ impl Backend for GhBackend {
 
     async fn fetch_branch_names(&self, project: &str) -> Result<Vec<String>> {
         let endpoint = format!("/repos/{}/branches?per_page=100", project);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Branch Names")
+            .await?;
         #[derive(Deserialize)]
         struct GhBr {
             name: String,
@@ -1259,7 +1292,9 @@ impl Backend for GhBackend {
 
     async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>> {
         let endpoint = format!("/repos/{}/milestones?state=open&per_page=100", project);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Milestone Titles")
+            .await?;
         #[derive(Deserialize)]
         struct GhMs {
             title: String,
@@ -1270,7 +1305,13 @@ impl Backend for GhBackend {
 
     // ── Raw API ──
 
-    async fn raw_api(&self, endpoint: &str, method: &str, body: Option<&str>) -> Result<String> {
+    async fn raw_api(
+        &self,
+        endpoint: &str,
+        method: &str,
+        body: Option<&str>,
+        desc: &str,
+    ) -> Result<String> {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         let mut cmd_args: Vec<String> = vec!["api".into()];
         if method != "GET" {
@@ -1279,10 +1320,11 @@ impl Backend for GhBackend {
         }
         cmd_args.push(endpoint.into());
         let cmd_str = format!("gh {}", cmd_args.join(" "));
+        let label = format!("{:<24}", desc.to_uppercase());
         if let Some(ref tx) = self.tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp: timestamp.clone(),
-                command: format!("API: {}", cmd_str),
+                command: format!("{} {}", label, cmd_str),
                 status: "Running".to_string(),
             });
         }
@@ -1325,7 +1367,7 @@ impl Backend for GhBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("API: {}", cmd_str),
+                            command: format!("{} {}", label, cmd_str),
                             status: "Success".to_string(),
                         });
                     }
@@ -1335,7 +1377,7 @@ impl Backend for GhBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("API: {}", cmd_str),
+                            command: format!("{} {}", label, cmd_str),
                             status: format!("Failed: {}", err_msg),
                         });
                     }
@@ -1347,7 +1389,7 @@ impl Backend for GhBackend {
                 if let Some(ref tx) = self.tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("API: {}", cmd_str),
+                        command: format!("{} {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }

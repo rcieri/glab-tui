@@ -8,6 +8,16 @@ pub struct Pipeline {
     pub status: String,
     pub r#ref: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub display_title: String,
+    #[serde(default)]
+    pub event: String,
+    #[serde(default)]
+    pub head_sha: String,
+    #[serde(default)]
+    pub actor_login: String,
 }
 
 impl Pipeline {
@@ -22,6 +32,21 @@ impl Pipeline {
     }
     pub fn updated_at(&self) -> &str {
         &self.updated_at
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn display_title(&self) -> &str {
+        &self.display_title
+    }
+    pub fn event(&self) -> &str {
+        &self.event
+    }
+    pub fn head_sha(&self) -> &str {
+        &self.head_sha
+    }
+    pub fn actor_login(&self) -> &str {
+        &self.actor_login
     }
 }
 

@@ -76,8 +76,9 @@ impl GitlabClient {
         endpoint: &str,
         method: &str,
         body: Option<&str>,
+        desc: &str,
     ) -> Result<String> {
-        self.backend.raw_api(endpoint, method, body).await
+        self.backend.raw_api(endpoint, method, body, desc).await
     }
 }
 
@@ -369,8 +370,9 @@ impl GitlabClient {
         args: &[&str],
         desc: &str,
     ) -> Result<String> {
+        let label = format!("{:<24}", desc.to_uppercase());
         let cmd_str = format!("{} {}", program, args.join(" "));
-        let cmd_log_str = format!("{}: {}", desc.to_uppercase(), cmd_str);
+        let cmd_log_str = format!("{} {}", label, cmd_str);
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         if let Some(ref tx) = self.tx {
             let _ = tx.send(crate::event::Event::TerminalCommandLogged {

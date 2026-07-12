@@ -201,7 +201,9 @@ async fn run_cli(
         }
     } else {
         let desc = generate_cli_desc(&program, args);
-        let status_msg = format!("{}: {} {}", desc, program, args.join(" "));
+        let label = format!("{:<24}", desc);
+        let cmd_str = format!("{} {}", program, args.join(" "));
+        let status_msg = format!("{} {}", label, cmd_str);
         let _ = tx.send(Event::CommandStarted(status_msg.clone()));
 
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();

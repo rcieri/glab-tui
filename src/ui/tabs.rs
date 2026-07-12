@@ -2,11 +2,11 @@ use crate::app::{App, Tab};
 use crate::config::THEME;
 use crate::utils::format::{format_ref, render_markdown, time_ago, truncate};
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    Frame,
 };
 
 pub(crate) fn render_tab_issues(
@@ -1369,6 +1369,46 @@ pub(crate) fn render_tab_pipelines(
             if app.is_column_visible(Tab::Pipelines, "Stages") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &stages_dots,
+                    &app.search_query,
+                    is_row_highlighted,
+                    is_checked,
+                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Pipelines, "Name") {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(p.name(), 30),
+                    &app.search_query,
+                    is_row_highlighted,
+                    is_checked,
+                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Pipelines, "Event") {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(p.event(), 15),
+                    &app.search_query,
+                    is_row_highlighted,
+                    is_checked,
+                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Pipelines, "SHA") {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(p.head_sha(), 8),
+                    &app.search_query,
+                    is_row_highlighted,
+                    is_checked,
+                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Pipelines, "Actor") {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(p.actor_login(), 20),
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,

@@ -30,11 +30,12 @@ impl GlabBackend {
 
     async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        let label = format!("{:<24}", desc.to_uppercase());
         let cmd_str = format!("glab {}", args.join(" "));
         if let Some(ref tx) = self.tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp: timestamp.clone(),
-                command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+                command: format!("{} {}", label, cmd_str),
                 status: "Running".to_string(),
             });
         }
@@ -50,7 +51,7 @@ impl GlabBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+                    command: format!("{} {}", label, cmd_str),
                     status: "Success".to_string(),
                 });
             }
@@ -60,7 +61,7 @@ impl GlabBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+                    command: format!("{} {}", label, cmd_str),
                     status: format!("Failed: {}", err_msg),
                 });
             }
@@ -372,6 +373,11 @@ impl Backend for GlabBackend {
                         status: p.status,
                         r#ref: p.pipe_ref,
                         updated_at: p.updated_at,
+                        name: String::new(),
+                        display_title: String::new(),
+                        event: String::new(),
+                        head_sha: String::new(),
+                        actor_login: String::new(),
                     }),
                 }
             }));
@@ -481,6 +487,11 @@ impl Backend for GlabBackend {
                 status: p.status,
                 r#ref: p.pipe_ref,
                 updated_at: p.updated_at,
+                name: String::new(),
+                display_title: String::new(),
+                event: String::new(),
+                head_sha: String::new(),
+                        actor_login: String::new(),
             }),
         })
     }
@@ -616,6 +627,11 @@ impl Backend for GlabBackend {
                 status: p.status,
                 r#ref: p.pipe_ref,
                 updated_at: p.updated_at,
+                name: String::new(),
+                display_title: String::new(),
+                event: String::new(),
+                head_sha: String::new(),
+                        actor_login: String::new(),
             }));
             if len < 100 {
                 break;
@@ -635,7 +651,9 @@ impl Backend for GlabBackend {
             "/projects/{}/pipelines/{}/jobs?per_page={}",
             encoded, pipeline_id, page_size
         );
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Pipeline Jobs")
+            .await?;
         #[derive(Deserialize)]
         struct GiJob {
             id: u64,
@@ -660,34 +678,38 @@ impl Backend for GlabBackend {
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/jobs/{}/trace", encoded, job_id);
-        self.raw_api(&endpoint, "GET", None).await
+        self.raw_api(&endpoint, "GET", None, "Fetching Job Log")
+            .await
     }
 
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/pipelines/{}/retry", encoded, pipeline_id);
-        self.raw_api(&endpoint, "POST", None).await?;
+        self.raw_api(&endpoint, "POST", None, "Retrying Pipeline")
+            .await?;
         Ok(())
     }
 
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/pipelines/{}/cancel", encoded, pipeline_id);
-        self.raw_api(&endpoint, "POST", None).await?;
+        self.raw_api(&endpoint, "POST", None, "Cancelling Pipeline")
+            .await?;
         Ok(())
     }
 
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/jobs/{}/retry", encoded, job_id);
-        self.raw_api(&endpoint, "POST", None).await?;
+        self.raw_api(&endpoint, "POST", None, "Retrying Job").await?;
         Ok(())
     }
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/jobs/{}/cancel", encoded, job_id);
-        self.raw_api(&endpoint, "POST", None).await?;
+        self.raw_api(&endpoint, "POST", None, "Cancelling Job")
+            .await?;
         Ok(())
     }
 
@@ -890,7 +912,9 @@ impl Backend for GlabBackend {
             "/projects/{}/milestones/{}/issues?per_page={}",
             encoded, milestone_iid, page_size
         );
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Milestone Issues")
+            .await?;
         #[derive(Deserialize)]
         struct GiIssue {
             iid: u64,
@@ -1078,7 +1102,9 @@ impl Backend for GlabBackend {
             .collect();
         if show_read {
             let endpoint = "todos?state=done";
-            let raw = self.raw_api(endpoint, "GET", None).await?;
+            let raw = self
+                .raw_api(endpoint, "GET", None, "Fetching Done Todos")
+                .await?;
             let done_todos: Vec<GiTodo> = serde_json::from_str(&raw).unwrap_or_default();
             list.extend(done_todos.into_iter().map(|item| {
                 let id = match item.id {
@@ -1102,7 +1128,8 @@ impl Backend for GlabBackend {
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
         let endpoint = format!("todos/{}/mark_as_done", id);
-        self.raw_api(&endpoint, "POST", None).await?;
+        self.raw_api(&endpoint, "POST", None, "Marking Todo Done")
+            .await?;
         Ok(())
     }
 
@@ -1114,7 +1141,9 @@ impl Backend for GlabBackend {
             "/projects/{}/repository/branches?per_page={}",
             encoded, page_size
         );
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Branches")
+            .await?;
         #[derive(Deserialize)]
         struct GiBr {
             name: String,
@@ -1157,14 +1186,16 @@ impl Backend for GlabBackend {
             "/projects/{}/repository/branches?branch={}&ref={}",
             encoded, branch_name, ref_branch
         );
-        self.raw_api(&endpoint, "POST", None).await?;
+        self.raw_api(&endpoint, "POST", None, "Creating Branch")
+            .await?;
         Ok(())
     }
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/repository/branches/{}", encoded, branch_name);
-        self.raw_api(&endpoint, "DELETE", None).await?;
+        self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
+            .await?;
         Ok(())
     }
 
@@ -1173,7 +1204,9 @@ impl Backend for GlabBackend {
     async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/environments?per_page={}", encoded, page_size);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Environments")
+            .await?;
         #[derive(Deserialize)]
         struct GiEnv {
             id: u64,
@@ -1241,7 +1274,9 @@ impl Backend for GlabBackend {
         if let Some(env) = environment {
             endpoint.push_str(&format!("&environment={}", env));
         }
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Deployments")
+            .await?;
         #[derive(Deserialize)]
         struct GiDeploy {
             id: u64,
@@ -1312,7 +1347,9 @@ impl Backend for GlabBackend {
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/members/all?per_page=100", encoded);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Members")
+            .await?;
         #[derive(Deserialize)]
         struct GiMember {
             username: String,
@@ -1327,7 +1364,9 @@ impl Backend for GlabBackend {
     async fn fetch_branch_names(&self, project: &str) -> Result<Vec<String>> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/repository/branches?per_page=100", encoded);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Branch Names")
+            .await?;
         #[derive(Deserialize)]
         struct GiBr {
             name: String,
@@ -1339,7 +1378,9 @@ impl Backend for GlabBackend {
     async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/milestones?state=active&per_page=100", encoded);
-        let raw = self.raw_api(&endpoint, "GET", None).await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Milestone Titles")
+            .await?;
         #[derive(Deserialize)]
         struct GiMs {
             title: String,
@@ -1350,7 +1391,13 @@ impl Backend for GlabBackend {
 
     // ── Raw API ──
 
-    async fn raw_api(&self, endpoint: &str, method: &str, body: Option<&str>) -> Result<String> {
+    async fn raw_api(
+        &self,
+        endpoint: &str,
+        method: &str,
+        body: Option<&str>,
+        desc: &str,
+    ) -> Result<String> {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         let mut cmd_args: Vec<String> = vec!["api".into()];
         if method != "GET" {
@@ -1359,10 +1406,11 @@ impl Backend for GlabBackend {
         }
         cmd_args.push(endpoint.into());
         let cmd_str = format!("glab {}", cmd_args.join(" "));
+        let label = format!("{:<24}", desc.to_uppercase());
         if let Some(ref tx) = self.tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp: timestamp.clone(),
-                command: format!("API: {}", cmd_str),
+                command: format!("{} {}", label, cmd_str),
                 status: "Running".to_string(),
             });
         }
@@ -1405,7 +1453,7 @@ impl Backend for GlabBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("API: {}", cmd_str),
+                            command: format!("{} {}", label, cmd_str),
                             status: "Success".to_string(),
                         });
                     }
@@ -1415,7 +1463,7 @@ impl Backend for GlabBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("API: {}", cmd_str),
+                            command: format!("{} {}", label, cmd_str),
                             status: format!("Failed: {}", err_msg),
                         });
                     }
@@ -1427,7 +1475,7 @@ impl Backend for GlabBackend {
                 if let Some(ref tx) = self.tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("API: {}", cmd_str),
+                        command: format!("{} {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }

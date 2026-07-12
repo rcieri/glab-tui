@@ -436,4 +436,4 @@ Unit tests live in several modules:
 
 ## License
 
-MIT — see [LICENSE](LICENSE) if present, or treat as unlicensed until one is added.
+[`MIT`](LICENSE.md)

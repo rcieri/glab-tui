@@ -1,0 +1,76 @@
+name: Install
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-cargo-install:
+    name: cargo install
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install from crates.io
+        run: |
+          cargo install glab-tui-crate
+          glab-tui --version
+          glab-tui --help
+
+  test-docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and test Docker image
+        run: |
+          docker pull ghcr.io/rcieri/glab-tui:${{ github.event.workflow_run.head_branch }}
+          docker run --rm ghcr.io/rcieri/glab-tui:${{ github.event.workflow_run.head_branch }} --help
+
+  test-install-sh:
+    name: install.sh
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Run install.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p temp-bin
+          PREFIX=$PWD/temp-bin ./install.sh
+          ./temp-bin/glab-tui --help
+
+  test-install-ps1:
+    name: install.ps1
+    runs-on: windows-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Run install.ps1
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force -Path temp-bin
+          ./install.ps1 -Prefix "$PWD/temp-bin"
+          ./temp-bin/glab-tui.exe --help

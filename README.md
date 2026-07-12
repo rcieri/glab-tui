@@ -66,6 +66,12 @@ Copy the binary somewhere on your `$PATH`, e.g.:
   Copy-Item target\release\glab-tui.exe $env:USERPROFILE\.local\bin\
   ```
 
+### With `cargo install` (from crates.io)
+
+```sh
+cargo install glab-tui-crate
+```
+
 ### With `cargo install` (from the repo root)
 
 ```sh

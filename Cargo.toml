@@ -1,5 +1,5 @@
 [package]
-name = "glab-tui"
+name = "glab-tui-crate"
 version = "0.6.0"
 edition = "2024"
 description = "A terminal user interface for GitLab and GitHub"
@@ -9,6 +9,10 @@ homepage = "https://github.com/rcieri/glab-tui"
 readme = "README.md"
 keywords = ["gitlab", "github", "tui", "terminal", "git"]
 categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "glab-tui"
+path = "src/main.rs"
 
 [dependencies]
 ratatui = "0.30.1"

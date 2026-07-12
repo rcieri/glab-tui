@@ -1,14 +1,14 @@
 use super::Backend;
 use crate::event::Event;
-use crate::gitlab::branches::Branch;
-use crate::gitlab::deployments::{Deployment, Environment};
-use crate::gitlab::issues::Issue;
-use crate::gitlab::milestones::Milestone;
-use crate::gitlab::mr::{DiscussionNote, MergeRequest};
-use crate::gitlab::notifications::Notification;
-use crate::gitlab::pipelines::{Job, Pipeline};
-use crate::gitlab::releases::Release;
-use crate::gitlab::runners::Runner;
+use crate::domain::branches::Branch;
+use crate::domain::deployments::{Deployment, Environment};
+use crate::domain::issues::Issue;
+use crate::domain::milestones::Milestone;
+use crate::domain::mr::{DiscussionNote, MergeRequest};
+use crate::domain::notifications::Notification;
+use crate::domain::pipelines::{Job, Pipeline};
+use crate::domain::releases::Release;
+use crate::domain::runners::Runner;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -148,13 +148,13 @@ impl Backend for GlabBackend {
                 updated_at: i.updated_at,
                 created_at: i.created_at,
                 closed_at: i.closed_at,
-                author: crate::gitlab::issues::Author {
+                author: crate::domain::issues::Author {
                     username: i.author.username,
                 },
-                milestone: i.milestone.map(|m| crate::gitlab::issues::Milestone {
+                milestone: i.milestone.map(|m| crate::domain::issues::Milestone {
                     title: m.title,
                 }),
-                assignees: i.assignees.into_iter().map(|a| crate::gitlab::issues::Assignee {
+                assignees: i.assignees.into_iter().map(|a| crate::domain::issues::Assignee {
                     username: a.username,
                 }).collect(),
                 description: i.description,
@@ -219,9 +219,9 @@ impl Backend for GlabBackend {
             updated_at: i.updated_at,
             created_at: i.created_at,
             closed_at: i.closed_at,
-            author: crate::gitlab::issues::Author { username: i.author.username },
-            milestone: i.milestone.map(|m| crate::gitlab::issues::Milestone { title: m.title }),
-            assignees: i.assignees.into_iter().map(|a| crate::gitlab::issues::Assignee { username: a.username }).collect(),
+            author: crate::domain::issues::Author { username: i.author.username },
+            milestone: i.milestone.map(|m| crate::domain::issues::Milestone { title: m.title }),
+            assignees: i.assignees.into_iter().map(|a| crate::domain::issues::Assignee { username: a.username }).collect(),
             description: i.description,
             due_date: i.due_date,
         })
@@ -306,10 +306,10 @@ impl Backend for GlabBackend {
                 state: m.state,
                 labels: m.labels,
                 updated_at: m.updated_at,
-                author: crate::gitlab::mr::Author { username: m.author.username },
-                milestone: m.milestone.map(|ms| crate::gitlab::mr::Milestone { title: ms.title }),
-                assignees: m.assignees.into_iter().map(|a| crate::gitlab::mr::Assignee { username: a.username }).collect(),
-                reviewers: m.reviewers.into_iter().map(|r| crate::gitlab::mr::Reviewer { username: r.username }).collect(),
+                author: crate::domain::mr::Author { username: m.author.username },
+                milestone: m.milestone.map(|ms| crate::domain::mr::Milestone { title: ms.title }),
+                assignees: m.assignees.into_iter().map(|a| crate::domain::mr::Assignee { username: a.username }).collect(),
+                reviewers: m.reviewers.into_iter().map(|r| crate::domain::mr::Reviewer { username: r.username }).collect(),
                 target_branch: m.target_branch,
                 source_branch: m.source_branch,
                 draft: m.draft,
@@ -390,10 +390,10 @@ impl Backend for GlabBackend {
             state: m.state,
             labels: m.labels,
             updated_at: m.updated_at,
-            author: crate::gitlab::mr::Author { username: m.author.username },
-            milestone: m.milestone.map(|ms| crate::gitlab::mr::Milestone { title: ms.title }),
-            assignees: m.assignees.into_iter().map(|a| crate::gitlab::mr::Assignee { username: a.username }).collect(),
-            reviewers: m.reviewers.into_iter().map(|r| crate::gitlab::mr::Reviewer { username: r.username }).collect(),
+            author: crate::domain::mr::Author { username: m.author.username },
+            milestone: m.milestone.map(|ms| crate::domain::mr::Milestone { title: ms.title }),
+            assignees: m.assignees.into_iter().map(|a| crate::domain::mr::Assignee { username: a.username }).collect(),
+            reviewers: m.reviewers.into_iter().map(|r| crate::domain::mr::Reviewer { username: r.username }).collect(),
             target_branch: m.target_branch,
             source_branch: m.source_branch,
             draft: m.draft,
@@ -477,12 +477,12 @@ impl Backend for GlabBackend {
             .map(|n| DiscussionNote {
                 id: n.id,
                 body: n.body,
-                author: crate::gitlab::mr::Author {
+                author: crate::domain::mr::Author {
                     username: n.author.username,
                 },
                 created_at: n.created_at,
                 system: n.system,
-                position: n.position.map(|p| crate::gitlab::mr::NotePosition {
+                position: n.position.map(|p| crate::domain::mr::NotePosition {
                     new_path: p.new_path,
                     old_path: p.old_path,
                     new_line: p.new_line,
@@ -578,7 +578,7 @@ impl Backend for GlabBackend {
                 matrix: None,
             })
             .collect();
-        Ok(crate::gitlab::pipelines::process_pipeline_jobs(all_jobs))
+        Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
     }
 
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {
@@ -857,13 +857,13 @@ impl Backend for GlabBackend {
                 updated_at: i.updated_at,
                 created_at: i.created_at,
                 closed_at: i.closed_at,
-                author: crate::gitlab::issues::Author {
+                author: crate::domain::issues::Author {
                     username: i.author.username,
                 },
-                milestone: i.milestone.map(|m| crate::gitlab::issues::Milestone {
+                milestone: i.milestone.map(|m| crate::domain::issues::Milestone {
                     title: m.title,
                 }),
-                assignees: i.assignees.into_iter().map(|a| crate::gitlab::issues::Assignee {
+                assignees: i.assignees.into_iter().map(|a| crate::domain::issues::Assignee {
                     username: a.username,
                 }).collect(),
                 description: i.description,
@@ -1127,13 +1127,13 @@ impl Backend for GlabBackend {
             created_at: String,
             updated_at: String,
             #[serde(default)]
-            environment: Option<crate::gitlab::deployments::EnvironmentInfo>,
+            environment: Option<crate::domain::deployments::EnvironmentInfo>,
             #[serde(default)]
-            deployable: Option<crate::gitlab::deployments::Deployable>,
+            deployable: Option<crate::domain::deployments::Deployable>,
             #[serde(default)]
             description: String,
             #[serde(default)]
-            user: Option<crate::gitlab::deployments::DeploymentUser>,
+            user: Option<crate::domain::deployments::DeploymentUser>,
         }
         let envs: Vec<GiEnv> = serde_json::from_str(&raw)?;
         Ok(envs
@@ -1188,13 +1188,13 @@ impl Backend for GlabBackend {
             created_at: String,
             updated_at: String,
             #[serde(default)]
-            environment: Option<crate::gitlab::deployments::EnvironmentInfo>,
+            environment: Option<crate::domain::deployments::EnvironmentInfo>,
             #[serde(default)]
-            deployable: Option<crate::gitlab::deployments::Deployable>,
+            deployable: Option<crate::domain::deployments::Deployable>,
             #[serde(default)]
             description: String,
             #[serde(default)]
-            user: Option<crate::gitlab::deployments::DeploymentUser>,
+            user: Option<crate::domain::deployments::DeploymentUser>,
         }
         let deploys: Vec<GiDeploy> = serde_json::from_str(&raw)?;
         Ok(deploys

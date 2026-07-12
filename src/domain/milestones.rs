@@ -1,5 +1,5 @@
-use super::client::GitlabClient;
-use super::issues::{GithubIssue, Issue};
+use crate::domain::client::GitlabClient;
+use crate::domain::issues::{GithubIssue, Issue};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -123,7 +123,7 @@ pub async fn list_milestone_issues(
             encoded_path, milestone_iid, client.page_size
         );
         let raw = client.execute_gitlab_api(&endpoint, "GET", None).await?;
-        let gl_issues: Vec<crate::gitlab::issues::GitlabIssue> = serde_json::from_str(&raw)?;
+        let gl_issues: Vec<crate::domain::issues::GitlabIssue> = serde_json::from_str(&raw)?;
         Ok(gl_issues.into_iter().map(Issue::from).collect())
     }
 }

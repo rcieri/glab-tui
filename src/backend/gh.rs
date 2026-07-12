@@ -1,14 +1,14 @@
 use super::Backend;
 use crate::event::Event;
-use crate::gitlab::branches::Branch;
-use crate::gitlab::deployments::{Deployment, Environment};
-use crate::gitlab::issues::Issue;
-use crate::gitlab::milestones::Milestone;
-use crate::gitlab::mr::{DiscussionNote, MergeRequest, NotePosition};
-use crate::gitlab::notifications::Notification;
-use crate::gitlab::pipelines::{Job, Pipeline};
-use crate::gitlab::releases::Release;
-use crate::gitlab::runners::Runner;
+use crate::domain::branches::Branch;
+use crate::domain::deployments::{Deployment, Environment};
+use crate::domain::issues::Issue;
+use crate::domain::milestones::Milestone;
+use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
+use crate::domain::notifications::Notification;
+use crate::domain::pipelines::{Job, Pipeline};
+use crate::domain::releases::Release;
+use crate::domain::runners::Runner;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -143,16 +143,16 @@ impl Backend for GhBackend {
                 .to_string();
                 let labels: Vec<String> =
                     gi.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
-                let author = crate::gitlab::issues::Author {
+                let author = crate::domain::issues::Author {
                     username: gi.author.map(|a| a.login).unwrap_or_default(),
                 };
-                let milestone = gi.milestone.map(|m| crate::gitlab::issues::Milestone {
+                let milestone = gi.milestone.map(|m| crate::domain::issues::Milestone {
                     title: m.title,
                 });
-                let assignees: Vec<crate::gitlab::issues::Assignee> = gi
+                let assignees: Vec<crate::domain::issues::Assignee> = gi
                     .assignees
                     .into_iter()
-                    .map(|a| crate::gitlab::issues::Assignee { username: a.login })
+                    .map(|a| crate::domain::issues::Assignee { username: a.login })
                     .collect();
                 Issue {
                     iid: gi.number,
@@ -223,14 +223,14 @@ impl Backend for GhBackend {
         .to_string();
         let labels: Vec<String> =
             gi.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
-        let author = crate::gitlab::issues::Author {
+        let author = crate::domain::issues::Author {
             username: gi.author.map(|a| a.login).unwrap_or_default(),
         };
-        let milestone = gi.milestone.map(|m| crate::gitlab::issues::Milestone { title: m.title });
-        let assignees: Vec<crate::gitlab::issues::Assignee> = gi
+        let milestone = gi.milestone.map(|m| crate::domain::issues::Milestone { title: m.title });
+        let assignees: Vec<crate::domain::issues::Assignee> = gi
             .assignees
             .into_iter()
-            .map(|a| crate::gitlab::issues::Assignee { username: a.login })
+            .map(|a| crate::domain::issues::Assignee { username: a.login })
             .collect();
         Ok(Issue {
             iid: gi.number,
@@ -320,14 +320,14 @@ impl Backend for GhBackend {
                 .to_string();
                 let labels: Vec<String> =
                     gp.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
-                let author = crate::gitlab::mr::Author {
+                let author = crate::domain::mr::Author {
                     username: gp.author.map(|a| a.login).unwrap_or_default(),
                 };
-                let milestone = gp.milestone.map(|m| crate::gitlab::mr::Milestone { title: m.title });
-                let assignees: Vec<crate::gitlab::mr::Assignee> = gp
+                let milestone = gp.milestone.map(|m| crate::domain::mr::Milestone { title: m.title });
+                let assignees: Vec<crate::domain::mr::Assignee> = gp
                     .assignees
                     .into_iter()
-                    .map(|a| crate::gitlab::mr::Assignee { username: a.login })
+                    .map(|a| crate::domain::mr::Assignee { username: a.login })
                     .collect();
                 MergeRequest {
                     iid: gp.number,
@@ -404,14 +404,14 @@ impl Backend for GhBackend {
         .to_string();
         let labels: Vec<String> =
             gp.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
-        let author = crate::gitlab::mr::Author {
+        let author = crate::domain::mr::Author {
             username: gp.author.map(|a| a.login).unwrap_or_default(),
         };
-        let milestone = gp.milestone.map(|m| crate::gitlab::mr::Milestone { title: m.title });
-        let assignees: Vec<crate::gitlab::mr::Assignee> = gp
+        let milestone = gp.milestone.map(|m| crate::domain::mr::Milestone { title: m.title });
+        let assignees: Vec<crate::domain::mr::Assignee> = gp
             .assignees
             .into_iter()
-            .map(|a| crate::gitlab::mr::Assignee { username: a.login })
+            .map(|a| crate::domain::mr::Assignee { username: a.login })
             .collect();
         Ok(MergeRequest {
             iid: gp.number,
@@ -501,7 +501,7 @@ impl Backend for GhBackend {
                 DiscussionNote {
                     id: gc.id,
                     body: gc.body,
-                    author: crate::gitlab::mr::Author { username },
+                    author: crate::domain::mr::Author { username },
                     created_at: gc.created_at,
                     system: false,
                     position,
@@ -636,7 +636,7 @@ impl Backend for GhBackend {
                 }
             })
             .collect();
-        Ok(crate::gitlab::pipelines::process_pipeline_jobs(all_jobs))
+        Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
     }
 
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {
@@ -897,16 +897,16 @@ impl Backend for GhBackend {
                 .to_string();
                 let labels: Vec<String> =
                     gi.labels.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect();
-                let author = crate::gitlab::issues::Author {
+                let author = crate::domain::issues::Author {
                     username: gi.user.map(|u| u.login).unwrap_or_default(),
                 };
-                let milestone = gi.milestone.map(|m| crate::gitlab::issues::Milestone {
+                let milestone = gi.milestone.map(|m| crate::domain::issues::Milestone {
                     title: m.title,
                 });
-                let assignees: Vec<crate::gitlab::issues::Assignee> = gi
+                let assignees: Vec<crate::domain::issues::Assignee> = gi
                     .assignees
                     .into_iter()
-                    .map(|a| crate::gitlab::issues::Assignee { username: a.login })
+                    .map(|a| crate::domain::issues::Assignee { username: a.login })
                     .collect();
                 Issue {
                     iid: gi.number,
@@ -1195,7 +1195,7 @@ impl Backend for GhBackend {
                 status: d.status.unwrap_or_default(),
                 created_at: d.created_at,
                 updated_at: d.updated_at,
-                environment: d.environment.map(|e| crate::gitlab::deployments::EnvironmentInfo {
+                environment: d.environment.map(|e| crate::domain::deployments::EnvironmentInfo {
                     name: e,
                     external_url: None,
                 }),

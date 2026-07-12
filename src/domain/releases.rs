@@ -1,5 +1,5 @@
-use super::client::GitlabClient;
-use super::issues::GithubUser;
+use crate::domain::client::GitlabClient;
+use crate::domain::issues::GithubUser;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 

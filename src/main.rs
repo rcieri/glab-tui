@@ -10,7 +10,7 @@ mod entity_editor;
 mod event;
 mod fetch;
 mod git_helpers;
-mod gitlab;
+mod domain;
 pub mod handlers;
 mod keybinding;
 mod templates;
@@ -429,7 +429,7 @@ async fn main() -> Result<()> {
     // Initialize gitlab context
     if let Some(repo) = custom_repo {
         app.project_context = repo;
-    } else if let Ok(context) = gitlab::client::get_project_context().await {
+    } else if let Ok(context) = domain::client::get_project_context().await {
         app.project_context = context;
     }
 
@@ -495,7 +495,7 @@ async fn main() -> Result<()> {
     }
     app.update_filter_selection();
 
-    if let Ok(mut client) = gitlab::client::GitlabClient::new().await {
+    if let Ok(mut client) = domain::client::GitlabClient::new().await {
         client.page_size = app.config.page_size;
         client.page_limit = app.config.page_limit;
         client.tx = Some(events.sender());
@@ -533,7 +533,7 @@ async fn main() -> Result<()> {
                             let project_context = app.project_context.clone();
                             let tx = events.sender();
                             tokio::spawn(async move {
-                                if let Ok(jobs) = gitlab::pipelines::list_pipeline_jobs(
+                                if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
                                     &client_clone,
                                     &project_context,
                                     pipe_id,
@@ -578,7 +578,7 @@ async fn main() -> Result<()> {
                                 let project_context = app.project_context.clone();
                                 let tx = events.sender();
                                 tokio::spawn(async move {
-                                    if let Ok(jobs) = gitlab::pipelines::list_pipeline_jobs(
+                                    if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
                                         &client_clone,
                                         &project_context,
                                         pipe_id,
@@ -613,7 +613,7 @@ async fn main() -> Result<()> {
                                 let project_context = app.project_context.clone();
                                 let tx = events.sender();
                                 tokio::spawn(async move {
-                                    if let Ok(issues) = gitlab::milestones::list_milestone_issues(
+                                    if let Ok(issues) = domain::milestones::list_milestone_issues(
                                         &client_clone,
                                         &project_context,
                                         iid,
@@ -1110,7 +1110,7 @@ async fn main() -> Result<()> {
                                     let diff_res = cmd.output().await;
 
                                     let comments = if let Some(ref c) = client {
-                                        crate::gitlab::mr::list_mr_notes(
+                                        crate::domain::mr::list_mr_notes(
                                             c,
                                             &project_context,
                                             mr_iid,
@@ -1362,7 +1362,7 @@ async fn main() -> Result<()> {
                                                 let project_context = app.project_context.clone();
                                                 let tx = events.sender();
                                                 tokio::spawn(async move {
-                                                    match gitlab::pipelines::list_pipeline_jobs(
+                                                    match domain::pipelines::list_pipeline_jobs(
                                                         &client_clone,
                                                         &project_context,
                                                         pipeline_id,
@@ -1566,7 +1566,7 @@ async fn main() -> Result<()> {
                                             )));
                                             tokio::spawn(async move {
                                                 if let Some(client) = client {
-                                                    match crate::gitlab::branches::create_branch(
+                                                    match crate::domain::branches::create_branch(
                                                         &client,
                                                         &project_context,
                                                         &branch_name,
@@ -2530,12 +2530,12 @@ async fn main() -> Result<()> {
                                                     crate::config::reload_theme();
 
                                                     if let Ok(context) =
-                                                        gitlab::client::get_project_context().await
+                                                        domain::client::get_project_context().await
                                                     {
                                                         app.project_context = context;
                                                     }
                                                     if let Ok(mut client) =
-                                                        gitlab::client::GitlabClient::new().await
+                                                        domain::client::GitlabClient::new().await
                                                     {
                                                         client.page_size = app.config.page_size;
                                                         client.page_limit = app.config.page_limit;
@@ -3044,7 +3044,7 @@ async fn main() -> Result<()> {
                                                             app.project_context.clone();
                                                         let tx = events.sender();
                                                         tokio::spawn(async move {
-                                                            match gitlab::pipelines::list_pipeline_jobs(
+                                                            match domain::pipelines::list_pipeline_jobs(
                                                                 &client_clone,
                                                                 &project_context,
                                                                 pipeline_id,
@@ -3683,7 +3683,7 @@ async fn main() -> Result<()> {
                                                             )),
                                                         );
                                                         tokio::spawn(async move {
-                                                            let res = crate::gitlab::milestones::update_milestone(
+                                                            let res = crate::domain::milestones::update_milestone(
                                                                 &client,
                                                                 &project_path,
                                                                 entity_iid,
@@ -3729,7 +3729,7 @@ async fn main() -> Result<()> {
                                                                 )),
                                                             );
                                                             tokio::spawn(async move {
-                                                                let res = crate::gitlab::releases::update_release(
+                                                                let res = crate::domain::releases::update_release(
                                                                     &client,
                                                                     &project_path,
                                                                     &tag,
@@ -3757,7 +3757,7 @@ async fn main() -> Result<()> {
                                                 if let Some(client) = &app.gitlab_client {
                                                     if entity_type == "issue" {
                                                         if let Ok(updated) =
-                                                            gitlab::issues::get_issue(
+                                                            domain::issues::get_issue(
                                                                 client,
                                                                 &app.project_context,
                                                                 entity_iid,
@@ -3774,7 +3774,7 @@ async fn main() -> Result<()> {
                                                             }
                                                         }
                                                     } else if entity_type == "mr" {
-                                                        if let Ok(updated) = gitlab::mr::get_mr(
+                                                        if let Ok(updated) = domain::mr::get_mr(
                                                             client,
                                                             &app.project_context,
                                                             entity_iid,

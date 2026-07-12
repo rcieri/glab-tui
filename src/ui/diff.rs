@@ -302,7 +302,7 @@ pub fn count_wrapped_lines(text: &str, width: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gitlab::pipelines::{GitlabJob, JobItem};
+    use crate::domain::pipelines::{GitlabJob, JobItem};
     use crate::ui::helpers::{
         floor_char_boundary, get_label_color, get_stages_summary, render_labels_cell,
     };

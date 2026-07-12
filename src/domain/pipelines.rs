@@ -1,4 +1,4 @@
-use super::client::GitlabClient;
+use crate::domain::client::GitlabClient;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 

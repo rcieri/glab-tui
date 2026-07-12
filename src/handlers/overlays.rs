@@ -79,7 +79,7 @@ pub async fn handle_confirm_popup(
                             iid
                         )));
                         tokio::spawn(async move {
-                            let res = crate::gitlab::milestones::delete_milestone(
+                            let res = crate::domain::milestones::delete_milestone(
                                 &client,
                                 &project_path,
                                 iid,
@@ -106,7 +106,7 @@ pub async fn handle_confirm_popup(
                             tag_name
                         )));
                         tokio::spawn(async move {
-                            let res = crate::gitlab::releases::delete_release(
+                            let res = crate::domain::releases::delete_release(
                                 &client,
                                 &project_path,
                                 &tag_name,
@@ -133,7 +133,7 @@ pub async fn handle_confirm_popup(
                             branch_name
                         )));
                         tokio::spawn(async move {
-                            let res = crate::gitlab::branches::delete_branch(
+                            let res = crate::domain::branches::delete_branch(
                                 &client,
                                 &project_path,
                                 &branch_name,

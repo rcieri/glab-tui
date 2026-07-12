@@ -390,7 +390,7 @@ pub async fn handle_active_tab_key(
                                 let diff_res = cmd.output().await;
 
                                 let comments = if let Some(ref c) = client {
-                                    crate::gitlab::mr::list_mr_notes(c, &project_context, mr_iid)
+                                    crate::domain::mr::list_mr_notes(c, &project_context, mr_iid)
                                         .await
                                         .unwrap_or_default()
                                 } else {
@@ -584,8 +584,8 @@ pub async fn handle_active_tab_key(
                                             .find(|pipe| pipe.id() == *p_id)
                                         {
                                             match p {
-                                                crate::gitlab::pipelines::PipelineItem::Gitlab(p) => p.status = "running".to_string(),
-                                                crate::gitlab::pipelines::PipelineItem::Github { effective_status, .. } => *effective_status = "running".to_string(),
+                                                crate::domain::pipelines::PipelineItem::Gitlab(p) => p.status = "running".to_string(),
+                                                crate::domain::pipelines::PipelineItem::Github { effective_status, .. } => *effective_status = "running".to_string(),
                                                 _ => {}
                                             }
                                         }
@@ -616,10 +616,10 @@ pub async fn handle_active_tab_key(
                                         .find(|pipe| pipe.id() == pipe_id)
                                     {
                                         match p {
-                                            crate::gitlab::pipelines::PipelineItem::Gitlab(p) => {
+                                            crate::domain::pipelines::PipelineItem::Gitlab(p) => {
                                                 p.status = "running".to_string()
                                             }
-                                            crate::gitlab::pipelines::PipelineItem::Github {
+                                            crate::domain::pipelines::PipelineItem::Github {
                                                 effective_status,
                                                 ..
                                             } => *effective_status = "running".to_string(),
@@ -658,10 +658,10 @@ pub async fn handle_active_tab_key(
                                 .find(|pipe| pipe.id() == pipe_id)
                             {
                                 match p {
-                                    crate::gitlab::pipelines::PipelineItem::Gitlab(p) => {
+                                    crate::domain::pipelines::PipelineItem::Gitlab(p) => {
                                         p.status = "canceled".to_string()
                                     }
-                                    crate::gitlab::pipelines::PipelineItem::Github {
+                                    crate::domain::pipelines::PipelineItem::Github {
                                         effective_status,
                                         ..
                                     } => *effective_status = "canceled".to_string(),
@@ -785,10 +785,10 @@ pub async fn handle_active_tab_key(
                                     for j in app.jobs.items.iter_mut() {
                                         if app.selected_jobs.contains(&j.id()) {
                                             match j {
-                                                crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                                crate::domain::pipelines::JobItem::Gitlab(j) => {
                                                     j.status = "running".to_string()
                                                 }
-                                                crate::gitlab::pipelines::JobItem::Github {
+                                                crate::domain::pipelines::JobItem::Github {
                                                     effective_status,
                                                     ..
                                                 } => *effective_status = "running".to_string(),
@@ -808,7 +808,7 @@ pub async fn handle_active_tab_key(
                                         }
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
-                                            crate::gitlab::pipelines::list_pipeline_jobs(
+                                            crate::domain::pipelines::list_pipeline_jobs(
                                                 &client_clone,
                                                 &project_context,
                                                 pipe_id,
@@ -821,10 +821,10 @@ pub async fn handle_active_tab_key(
                                 } else {
                                     if let Some(j) = app.jobs.items.get_mut(idx) {
                                         match j {
-                                            crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                            crate::domain::pipelines::JobItem::Gitlab(j) => {
                                                 j.status = "running".to_string()
                                             }
-                                            crate::gitlab::pipelines::JobItem::Github {
+                                            crate::domain::pipelines::JobItem::Github {
                                                 effective_status,
                                                 ..
                                             } => *effective_status = "running".to_string(),
@@ -840,7 +840,7 @@ pub async fn handle_active_tab_key(
                                         let _ = client_clone.fetch_raw_api(&endpoint).await;
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
-                                            crate::gitlab::pipelines::list_pipeline_jobs(
+                                            crate::domain::pipelines::list_pipeline_jobs(
                                                 &client_clone,
                                                 &project_context,
                                                 pipe_id,
@@ -883,10 +883,10 @@ pub async fn handle_active_tab_key(
                                     for j in app.jobs.items.iter_mut() {
                                         if app.selected_jobs.contains(&j.id()) {
                                             match j {
-                                                crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                                crate::domain::pipelines::JobItem::Gitlab(j) => {
                                                     j.status = "canceled".to_string()
                                                 }
-                                                crate::gitlab::pipelines::JobItem::Github {
+                                                crate::domain::pipelines::JobItem::Github {
                                                     effective_status,
                                                     ..
                                                 } => *effective_status = "canceled".to_string(),
@@ -915,7 +915,7 @@ pub async fn handle_active_tab_key(
                                         }
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
-                                            crate::gitlab::pipelines::list_pipeline_jobs(
+                                            crate::domain::pipelines::list_pipeline_jobs(
                                                 &client_clone,
                                                 &project_context,
                                                 pipe_id,
@@ -928,10 +928,10 @@ pub async fn handle_active_tab_key(
                                 } else {
                                     if let Some(j) = app.jobs.items.get_mut(idx) {
                                         match j {
-                                            crate::gitlab::pipelines::JobItem::Gitlab(j) => {
+                                            crate::domain::pipelines::JobItem::Gitlab(j) => {
                                                 j.status = "canceled".to_string()
                                             }
-                                            crate::gitlab::pipelines::JobItem::Github {
+                                            crate::domain::pipelines::JobItem::Github {
                                                 effective_status,
                                                 ..
                                             } => *effective_status = "canceled".to_string(),
@@ -955,7 +955,7 @@ pub async fn handle_active_tab_key(
                                         let _ = client_clone.fetch_raw_api(&endpoint).await;
                                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                         if let Ok(jobs) =
-                                            crate::gitlab::pipelines::list_pipeline_jobs(
+                                            crate::domain::pipelines::list_pipeline_jobs(
                                                 &client_clone,
                                                 &project_context,
                                                 pipe_id,
@@ -1089,7 +1089,7 @@ pub async fn handle_active_tab_key(
                                 let tx = tx.clone();
                                 app.job_trace_loading = true;
                                 tokio::spawn(async move {
-                                    let res = crate::gitlab::pipelines::get_job_trace(
+                                    let res = crate::domain::pipelines::get_job_trace(
                                         &client,
                                         &project_context,
                                         job_id,
@@ -1273,7 +1273,7 @@ pub async fn handle_active_tab_key(
                             if let Some(client) = client_opt {
                                 tokio::spawn(async move {
                                     let _ =
-                                        crate::gitlab::notifications::mark_notification_as_read(
+                                        crate::domain::notifications::mark_notification_as_read(
                                             &client, &n_id,
                                         )
                                         .await;
@@ -1395,7 +1395,7 @@ pub async fn handle_active_tab_key(
                             milestone_iid
                         )));
                         tokio::spawn(async move {
-                            let res = crate::gitlab::milestones::update_milestone_state(
+                            let res = crate::domain::milestones::update_milestone_state(
                                 &client,
                                 &project_path,
                                 milestone_iid,
@@ -1434,7 +1434,7 @@ pub async fn handle_active_tab_key(
                             milestone_iid
                         )));
                         tokio::spawn(async move {
-                            let res = crate::gitlab::milestones::update_milestone_state(
+                            let res = crate::domain::milestones::update_milestone_state(
                                 &client,
                                 &project_path,
                                 milestone_iid,
@@ -1544,7 +1544,7 @@ pub async fn handle_active_tab_key(
                         let tx = tx.clone();
                         tokio::spawn(async move {
                             if let Some(client) = client {
-                                match crate::gitlab::deployments::list_deployments(
+                                match crate::domain::deployments::list_deployments(
                                     &client,
                                     &project_context,
                                     Some(&env_name),
@@ -1675,7 +1675,7 @@ pub async fn handle_active_tab_key(
                             if let Some(client) = client_opt {
                                 tokio::spawn(async move {
                                     let _ =
-                                        crate::gitlab::notifications::mark_notification_as_read(
+                                        crate::domain::notifications::mark_notification_as_read(
                                             &client, &n_id,
                                         )
                                         .await;
@@ -1712,7 +1712,7 @@ pub async fn handle_active_tab_key(
                         if let Some(pipeline_id) = pipe_id {
                             if let Some(client) = &app.gitlab_client {
                                 app.loading_tabs.insert(crate::app::Tab::Jobs);
-                                if let Ok(jobs) = crate::gitlab::pipelines::list_pipeline_jobs(
+                                if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
                                     client,
                                     &app.project_context,
                                     pipeline_id,
@@ -1750,7 +1750,7 @@ pub async fn handle_active_tab_key(
                                 let tx = tx.clone();
                                 app.job_trace_loading = true;
                                 tokio::spawn(async move {
-                                    let res = crate::gitlab::pipelines::get_job_trace(
+                                    let res = crate::domain::pipelines::get_job_trace(
                                         &client,
                                         &project_context,
                                         job_id,

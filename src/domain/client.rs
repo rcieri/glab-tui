@@ -569,7 +569,7 @@ pub async fn get_project_context() -> Result<String> {
 mod tests {
     #[test]
     fn test_deserialize_github_issue() {
-        use crate::gitlab::issues::{GithubIssue, Issue};
+        use crate::domain::issues::{GithubIssue, Issue};
         let json_data = r#"{
             "number": 42,
             "title": "A github issue",
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_github_pull_request() {
-        use crate::gitlab::mr::{GithubPullRequest, MergeRequest};
+        use crate::domain::mr::{GithubPullRequest, MergeRequest};
         let json_data = r#"{
             "number": 101,
             "title": "Fix a bug",
@@ -636,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_github_issue_list_filters_prs() {
-        use crate::gitlab::issues::GithubIssue;
+        use crate::domain::issues::GithubIssue;
         let json_data = r#"[
             {
                 "number": 1,
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_github_pull_request_comments() {
-        use crate::gitlab::mr::{DiscussionNote, GithubPullComment};
+        use crate::domain::mr::{DiscussionNote, GithubPullComment};
         let json_data = r#"[
             {
                 "id": 1,

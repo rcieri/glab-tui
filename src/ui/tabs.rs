@@ -1585,7 +1585,7 @@ pub(crate) fn render_tab_jobs(
         let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
             let (matrix_display, status_text_display, status_color_display, status_bg_display) =
                 if app.collapse_matrix_jobs {
-                    let variants: Vec<&crate::gitlab::pipelines::JobItem> = app
+                    let variants: Vec<&crate::domain::pipelines::JobItem> = app
                         .jobs
                         .items
                         .iter()

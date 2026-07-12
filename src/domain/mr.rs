@@ -1,5 +1,5 @@
-use super::client::GitlabClient;
-use super::issues::{GithubLabel, GithubMilestone, GithubUser};
+use crate::domain::client::GitlabClient;
+use crate::domain::issues::{GithubLabel, GithubMilestone, GithubUser};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -43,7 +43,7 @@ pub struct MergeRequest {
     pub draft: bool,
     pub description: Option<String>,
     #[serde(default)]
-    pub head_pipeline: Option<super::pipelines::PipelineItem>,
+    pub head_pipeline: Option<crate::domain::pipelines::PipelineItem>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -66,7 +66,7 @@ pub struct GitlabMergeRequest {
     pub draft: bool,
     pub description: Option<String>,
     #[serde(default)]
-    pub head_pipeline: Option<super::pipelines::GitlabPipeline>,
+    pub head_pipeline: Option<crate::domain::pipelines::GitlabPipeline>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -112,7 +112,7 @@ impl From<GitlabMergeRequest> for MergeRequest {
             description: gl.description,
             head_pipeline: gl
                 .head_pipeline
-                .map(super::pipelines::PipelineItem::from_gitlab),
+                .map(crate::domain::pipelines::PipelineItem::from_gitlab),
         }
     }
 }

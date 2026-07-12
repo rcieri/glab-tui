@@ -72,7 +72,7 @@ pub async fn apply_field_text_change(
                 iid
             )));
             tokio::spawn(async move {
-                let res = crate::gitlab::milestones::update_milestone(
+                let res = crate::domain::milestones::update_milestone(
                     &client,
                     &project_path,
                     iid,
@@ -117,7 +117,7 @@ pub async fn apply_field_text_change(
             let tx_spawn = tx.clone();
             let _ = tx.send(Event::CommandStarted(format!("Updating release {}", tag)));
             tokio::spawn(async move {
-                let res = crate::gitlab::releases::update_release(
+                let res = crate::domain::releases::update_release(
                     &client,
                     &project_path,
                     &tag,
@@ -338,7 +338,7 @@ pub async fn apply_selector_changes(
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.assignees = clean_values
                         .iter()
-                        .map(|username| crate::gitlab::issues::Assignee {
+                        .map(|username| crate::domain::issues::Assignee {
                             username: username.clone(),
                         })
                         .collect();
@@ -347,7 +347,7 @@ pub async fn apply_selector_changes(
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.assignees = clean_values
                         .iter()
-                        .map(|username| crate::gitlab::mr::Assignee {
+                        .map(|username| crate::domain::mr::Assignee {
                             username: username.clone(),
                         })
                         .collect();
@@ -397,7 +397,7 @@ pub async fn apply_selector_changes(
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.reviewers = clean_values
                         .iter()
-                        .map(|username| crate::gitlab::mr::Reviewer {
+                        .map(|username| crate::domain::mr::Reviewer {
                             username: username.clone(),
                         })
                         .collect();
@@ -411,14 +411,14 @@ pub async fn apply_selector_changes(
             crate::run_cli(program, &args, terminal, tx.clone(), tab).await;
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                    let m = crate::gitlab::issues::Milestone {
+                    let m = crate::domain::issues::Milestone {
                         title: first_val.clone(),
                     };
                     item.milestone = Some(m);
                 }
             } else if entity_type == "mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    let m = crate::gitlab::mr::Milestone {
+                    let m = crate::domain::mr::Milestone {
                         title: first_val.clone(),
                     };
                     item.milestone = Some(m);
@@ -518,7 +518,7 @@ pub async fn apply_selector_changes(
                     if let Some(client) = &app.gitlab_client {
                         if entity_type == "issue" {
                             if let Ok(updated) =
-                                crate::gitlab::issues::get_issue(client, &app.project_context, iid)
+                                crate::domain::issues::get_issue(client, &app.project_context, iid)
                                     .await
                             {
                                 if let Some(item) =
@@ -529,7 +529,7 @@ pub async fn apply_selector_changes(
                             }
                         } else if entity_type == "mr" {
                             if let Ok(updated) =
-                                crate::gitlab::mr::get_mr(client, &app.project_context, iid).await
+                                crate::domain::mr::get_mr(client, &app.project_context, iid).await
                             {
                                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid)
                                 {

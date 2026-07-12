@@ -29,7 +29,7 @@ impl GlabBackend {
     }
 
     async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
-        let label = format!("{:<24}", desc.to_uppercase());
+        let label = desc.to_uppercase();
         let cmd_str = format!("glab {}", args.join(" "));
 
         let output = Command::new("glab")
@@ -44,7 +44,7 @@ impl GlabBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{} {}", label, cmd_str),
+                    command: format!("{}: {}", label, cmd_str),
                     status: "Success".to_string(),
                 });
             }
@@ -54,7 +54,7 @@ impl GlabBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{} {}", label, cmd_str),
+                    command: format!("{}: {}", label, cmd_str),
                     status: format!("Failed: {}", err_msg),
                 });
             }
@@ -1398,7 +1398,7 @@ impl Backend for GlabBackend {
         }
         cmd_args.push(endpoint.into());
         let cmd_str = format!("glab {}", cmd_args.join(" "));
-        let label = format!("{:<24}", desc.to_uppercase());
+        let label = desc.to_uppercase();
 
         let mut cmd = Command::new("glab");
         cmd.arg("api");
@@ -1439,7 +1439,7 @@ impl Backend for GlabBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("{} {}", label, cmd_str),
+                            command: format!("{}: {}", label, cmd_str),
                             status: "Success".to_string(),
                         });
                     }
@@ -1449,7 +1449,7 @@ impl Backend for GlabBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("{} {}", label, cmd_str),
+                            command: format!("{}: {}", label, cmd_str),
                             status: format!("Failed: {}", err_msg),
                         });
                     }
@@ -1461,7 +1461,7 @@ impl Backend for GlabBackend {
                 if let Some(ref tx) = self.tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{} {}", label, cmd_str),
+                        command: format!("{}: {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }

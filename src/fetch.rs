@@ -9,7 +9,8 @@ pub fn spawn_refresh_active_tab(
     tab: app::Tab,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
-    let client = client.clone();
+    let mut client = client.clone();
+    client.tx = None; // suppress terminal log for background fetches
     let project_context = project_context.to_string();
     tokio::spawn(async move {
         match tab {

@@ -201,9 +201,9 @@ async fn run_cli(
         }
     } else {
         let desc = generate_cli_desc(&program, args);
-        let label = format!("{:<24}", desc);
+        let label = format!("{:<24}", desc.to_uppercase());
         let cmd_str = format!("{} {}", program, args.join(" "));
-        let status_msg = format!("{} {}", label, cmd_str);
+        let status_msg = format!("{}: {}", label, cmd_str);
         let _ = tx.send(Event::CommandStarted(status_msg.clone()));
 
         let tx_clone = tx.clone();
@@ -652,14 +652,14 @@ async fn main() -> Result<()> {
                             && app.selector.is_none()
                             && !app.loading_tabs.contains(&app.active_tab)
                         {
-                            if let Some(client) = app.gitlab_client.clone() {
-                                app.start_loading_tab(app.active_tab);
-                                spawn_refresh_active_tab(
-                                    &client,
-                                    &app.project_context,
-                                    app.active_tab,
-                                    events.sender(),
-                                );
+                        if let Some(client) = app.gitlab_client.clone() {
+                            app.start_loading_tab(app.active_tab);
+                            spawn_refresh_active_tab(
+                                &client.muted(),
+                                &app.project_context,
+                                app.active_tab,
+                                events.sender(),
+                            );
                             }
                         }
                         last_refresh = std::time::Instant::now();
@@ -1072,7 +1072,7 @@ async fn main() -> Result<()> {
                                     app.start_loading_tab(tab);
                                 }
                                 spawn_refresh_active_tab(
-                                    &client,
+                                    &client.muted(),
                                     &app.project_context,
                                     tab,
                                     events.sender(),

@@ -37,6 +37,11 @@ impl GitlabClient {
         self.backend.program()
     }
 
+    pub fn muted(mut self) -> Self {
+        self.tx = None;
+        self
+    }
+
     pub async fn retry_pipeline(&self, project_path: &str, pipeline_id: u64) -> Result<()> {
         self.backend.retry_pipeline(project_path, pipeline_id).await
     }
@@ -370,7 +375,7 @@ impl GitlabClient {
         args: &[&str],
         desc: &str,
     ) -> Result<String> {
-        let label = format!("{:<24}", desc.to_uppercase());
+        let label = desc.to_uppercase();
         let cmd_str = format!("{} {}", program, args.join(" "));
 
         let output = Command::new(program)
@@ -387,7 +392,7 @@ impl GitlabClient {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(crate::event::Event::TerminalCommandLogged {
                             timestamp: timestamp.clone(),
-                            command: format!("{} {}", label, cmd_str),
+                            command: format!("{}: {}", label, cmd_str),
                             status: "Success".to_string(),
                         });
                     }
@@ -397,7 +402,7 @@ impl GitlabClient {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(crate::event::Event::TerminalCommandLogged {
                             timestamp: timestamp.clone(),
-                            command: format!("{} {}", label, cmd_str),
+                            command: format!("{}: {}", label, cmd_str),
                             status: format!("Failed: {}", err_msg),
                         });
                     }
@@ -409,7 +414,7 @@ impl GitlabClient {
                 if let Some(ref tx) = self.tx {
                     let _ = tx.send(crate::event::Event::TerminalCommandLogged {
                         timestamp: timestamp.clone(),
-                        command: format!("{} {}", label, cmd_str),
+                        command: format!("{}: {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }

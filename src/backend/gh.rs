@@ -25,7 +25,7 @@ impl GhBackend {
     }
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
-        let label = format!("{:<24}", desc.to_uppercase());
+        let label = desc.to_uppercase();
         let cmd_str = format!("gh {}", args.join(" "));
 
         let output = Command::new("gh")
@@ -40,7 +40,7 @@ impl GhBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{} {}", label, cmd_str),
+                    command: format!("{}: {}", label, cmd_str),
                     status: "Success".to_string(),
                 });
             }
@@ -50,7 +50,7 @@ impl GhBackend {
             if let Some(ref tx) = self.tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{} {}", label, cmd_str),
+                    command: format!("{}: {}", label, cmd_str),
                     status: format!("Failed: {}", err_msg),
                 });
             }
@@ -1312,7 +1312,7 @@ impl Backend for GhBackend {
         }
         cmd_args.push(endpoint.into());
         let cmd_str = format!("gh {}", cmd_args.join(" "));
-        let label = format!("{:<24}", desc.to_uppercase());
+        let label = desc.to_uppercase();
 
         let mut cmd = Command::new("gh");
         cmd.arg("api");
@@ -1353,7 +1353,7 @@ impl Backend for GhBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("{} {}", label, cmd_str),
+                            command: format!("{}: {}", label, cmd_str),
                             status: "Success".to_string(),
                         });
                     }
@@ -1363,7 +1363,7 @@ impl Backend for GhBackend {
                     if let Some(ref tx) = self.tx {
                         let _ = tx.send(Event::TerminalCommandLogged {
                             timestamp,
-                            command: format!("{} {}", label, cmd_str),
+                            command: format!("{}: {}", label, cmd_str),
                             status: format!("Failed: {}", err_msg),
                         });
                     }
@@ -1375,7 +1375,7 @@ impl Backend for GhBackend {
                 if let Some(ref tx) = self.tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{} {}", label, cmd_str),
+                        command: format!("{}: {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }

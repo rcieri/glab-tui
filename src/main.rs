@@ -652,14 +652,14 @@ async fn main() -> Result<()> {
                             && app.selector.is_none()
                             && !app.loading_tabs.contains(&app.active_tab)
                         {
-                        if let Some(client) = app.gitlab_client.clone() {
-                            app.start_loading_tab(app.active_tab);
-                            spawn_refresh_active_tab(
-                                &client.muted(),
-                                &app.project_context,
-                                app.active_tab,
-                                events.sender(),
-                            );
+                            if let Some(client) = app.gitlab_client.clone() {
+                                app.start_loading_tab(app.active_tab);
+                                spawn_refresh_active_tab(
+                                    &client.muted(),
+                                    &app.project_context,
+                                    app.active_tab,
+                                    events.sender(),
+                                );
                             }
                         }
                         last_refresh = std::time::Instant::now();

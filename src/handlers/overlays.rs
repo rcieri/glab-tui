@@ -192,7 +192,9 @@ pub async fn handle_confirm_popup(
                             } else {
                                 let encoded_path = project_path.replace("/", "%2F");
                                 let endpoint = format!("/projects/{}/issues/{}", encoded_path, iid);
-                                client.raw_api(&endpoint, "DELETE", None, "Deleting Issue").await
+                                client
+                                    .raw_api(&endpoint, "DELETE", None, "Deleting Issue")
+                                    .await
                             };
                             match res {
                                 Ok(_) => {

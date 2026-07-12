@@ -484,7 +484,7 @@ impl Backend for GlabBackend {
                 display_title: String::new(),
                 event: String::new(),
                 head_sha: String::new(),
-                        actor_login: String::new(),
+                actor_login: String::new(),
             }),
         })
     }
@@ -624,7 +624,7 @@ impl Backend for GlabBackend {
                 display_title: String::new(),
                 event: String::new(),
                 head_sha: String::new(),
-                        actor_login: String::new(),
+                actor_login: String::new(),
             }));
             if len < 100 {
                 break;
@@ -645,7 +645,7 @@ impl Backend for GlabBackend {
             encoded, pipeline_id, page_size
         );
         let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Pipeline Jobs")
+            .raw_api(&endpoint, "GET", None, "Fetching Jobs")
             .await?;
         #[derive(Deserialize)]
         struct GiJob {
@@ -694,7 +694,8 @@ impl Backend for GlabBackend {
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/jobs/{}/retry", encoded, job_id);
-        self.raw_api(&endpoint, "POST", None, "Retrying Job").await?;
+        self.raw_api(&endpoint, "POST", None, "Retrying Job")
+            .await?;
         Ok(())
     }
 

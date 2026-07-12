@@ -182,7 +182,13 @@ impl Tab {
             Tab::Jobs => format!("{} Jobs", icons.tab_job),
             Tab::Runners => format!("{} Runners", icons.tab_runner),
             Tab::Releases => format!("{} Releases", icons.tab_release),
-            Tab::Todos => format!("{} Todos", icons.tab_todo),
+            Tab::Todos => {
+                if is_github {
+                    format!("{} Notifications", icons.tab_todo)
+                } else {
+                    format!("{} Todos", icons.tab_todo)
+                }
+            }
             Tab::Milestones => format!("{} Milestones", icons.tab_milestone),
             Tab::Branches => format!("{} Branches", icons.tab_branch),
             Tab::Environments => format!("{} Environments", icons.tab_environment),

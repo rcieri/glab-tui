@@ -461,7 +461,9 @@ impl Backend for GhBackend {
             "/repos/{}/pulls/{}/comments?per_page={}",
             project, mr_iid, page_size
         );
-        let raw = self.raw_api(&endpoint, "GET", None, "Fetching MR Notes").await?;
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching MR Notes")
+            .await?;
 
         #[derive(Deserialize)]
         struct GhComment {
@@ -541,7 +543,7 @@ impl Backend for GhBackend {
                     "--limit",
                     &total.to_string(),
                 ],
-                "Fetching Pipelines",
+                "Fetching Actions",
             )
             .await?;
 
@@ -572,7 +574,8 @@ impl Backend for GhBackend {
                     "completed" | "COMPLETED" => match r.conclusion.as_deref() {
                         Some("success") | Some("SUCCESS") => "success",
                         Some("failure") | Some("FAILURE") => "failed",
-                        Some("cancelled") | Some("CANCELLED") | Some("canceled") | Some("CANCELED") => "canceled",
+                        Some("cancelled") | Some("CANCELLED") | Some("canceled")
+                        | Some("CANCELED") => "canceled",
                         Some("skipped") | Some("SKIPPED") => "skipped",
                         _ => "failed",
                     },
@@ -615,7 +618,7 @@ impl Backend for GhBackend {
                     "-R",
                     project,
                 ],
-                "Fetching Pipeline Jobs",
+                "Fetching Jobs",
             )
             .await?;
 
@@ -636,7 +639,8 @@ impl Backend for GhBackend {
                     "completed" | "COMPLETED" => match j.conclusion.as_deref() {
                         Some("success") | Some("SUCCESS") => "success",
                         Some("failure") | Some("FAILURE") => "failed",
-                        Some("cancelled") | Some("CANCELLED") | Some("canceled") | Some("CANCELED") => "canceled",
+                        Some("cancelled") | Some("CANCELLED") | Some("canceled")
+                        | Some("CANCELED") => "canceled",
                         Some("skipped") | Some("SKIPPED") => "skipped",
                         _ => "failed",
                     },
@@ -676,7 +680,7 @@ impl Backend for GhBackend {
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         self.run_gh(
             &["run", "rerun", &pipeline_id.to_string(), "-R", project],
-            "Retrying Pipeline",
+            "Retrying Action",
         )
         .await?;
         Ok(())
@@ -685,7 +689,7 @@ impl Backend for GhBackend {
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         self.run_gh(
             &["run", "cancel", &pipeline_id.to_string(), "-R", project],
-            "Cancelling Pipeline",
+            "Cancelling Action",
         )
         .await?;
         Ok(())
@@ -693,7 +697,8 @@ impl Backend for GhBackend {
 
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
         let endpoint = format!("/repos/{}/actions/jobs/{}/rerun", project, job_id);
-        self.raw_api(&endpoint, "POST", Some(""), "Retrying Job").await?;
+        self.raw_api(&endpoint, "POST", Some(""), "Retrying Job")
+            .await?;
         Ok(())
     }
 

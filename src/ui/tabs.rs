@@ -2,11 +2,11 @@ use crate::app::{App, Tab};
 use crate::config::THEME;
 use crate::utils::format::{format_ref, render_markdown, time_ago, truncate};
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
-    Frame,
 };
 
 pub(crate) fn render_tab_issues(
@@ -1452,6 +1452,22 @@ pub(crate) fn render_tab_pipelines(
         if app.is_column_visible(Tab::Pipelines, "Stages") {
             header_cells.push(Cell::from("Stages"));
             widths.push(Constraint::Length(14));
+        }
+        if app.is_column_visible(Tab::Pipelines, "Name") {
+            header_cells.push(Cell::from("Name"));
+            widths.push(Constraint::Length(22));
+        }
+        if app.is_column_visible(Tab::Pipelines, "Event") {
+            header_cells.push(Cell::from("Event"));
+            widths.push(Constraint::Length(14));
+        }
+        if app.is_column_visible(Tab::Pipelines, "SHA") {
+            header_cells.push(Cell::from("SHA"));
+            widths.push(Constraint::Length(8));
+        }
+        if app.is_column_visible(Tab::Pipelines, "Actor") {
+            header_cells.push(Cell::from("Actor"));
+            widths.push(Constraint::Length(18));
         }
         if app.is_column_visible(Tab::Pipelines, "Ref") {
             header_cells.push(Cell::from("Ref"));

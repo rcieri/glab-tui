@@ -1518,6 +1518,12 @@ pub async fn handle_active_tab_key(
         }
 
         match key_event.code {
+            KeyCode::Char('J') if app.detail_visible => {
+                app.detail_scroll = app.detail_scroll.saturating_add(1);
+            }
+            KeyCode::Char('K') if app.detail_visible => {
+                app.detail_scroll = app.detail_scroll.saturating_sub(1);
+            }
             KeyCode::Char('?') | KeyCode::F(1) => {
                 app.show_help = true;
             }

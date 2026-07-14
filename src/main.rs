@@ -1041,6 +1041,14 @@ async fn main() -> Result<()> {
                         .rposition(|cmd| cmd.command == command && cmd.status == "Running")
                     {
                         app.terminal_commands[pos].status = status;
+                    } else if let Some(pos) = app
+                        .terminal_commands
+                        .iter()
+                        .rposition(|cmd| cmd.status == "Running")
+                    {
+                        // fallback: update most recent Running entry when
+                        // command strings differ (e.g. CommandStarted vs backend log)
+                        app.terminal_commands[pos].status = status;
                     } else {
                         app.terminal_commands.push(crate::app::TerminalCommand {
                             timestamp,
@@ -1073,7 +1081,13 @@ async fn main() -> Result<()> {
                             || cmd.command.contains("bulk"))
                             && cmd.status == "Running"
                     }) {
-                        app.terminal_commands[pos].status = status;
+                        app.terminal_commands[pos].status = status.clone();
+                    } else if let Some(pos) = app
+                        .terminal_commands
+                        .iter()
+                        .rposition(|cmd| cmd.status == "Running")
+                    {
+                        app.terminal_commands[pos].status = status.clone();
                     }
                     match res {
                         Ok(_) => {

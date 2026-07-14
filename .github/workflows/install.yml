@@ -36,9 +36,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull and test Docker image
+        env:
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          docker pull ghcr.io/rcieri/glab-tui:${{ github.event.workflow_run.head_branch }}
-          docker run --rm ghcr.io/rcieri/glab-tui:${{ github.event.workflow_run.head_branch }} --help
+          docker pull "ghcr.io/rcieri/glab-tui:$HEAD_BRANCH"
+          docker run --rm "ghcr.io/rcieri/glab-tui:$HEAD_BRANCH" --help
 
   test-install-sh:
     name: install.sh

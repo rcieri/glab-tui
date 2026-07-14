@@ -1,9 +1,8 @@
 name: Install
 
 on:
-  workflow_run:
-    workflows: ["Release"]
-    types: [completed]
+  release:
+    types: [published]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,7 +11,7 @@ jobs:
   test-cargo-install:
     name: cargo install
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions: {}
     steps:
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -26,7 +25,8 @@ jobs:
   test-docker:
     name: Docker
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      packages: read
     steps:
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -37,19 +37,20 @@ jobs:
 
       - name: Pull and test Docker image
         env:
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          docker pull "ghcr.io/rcieri/glab-tui:$HEAD_BRANCH"
-          docker run --rm "ghcr.io/rcieri/glab-tui:$HEAD_BRANCH" --help
+          docker pull "ghcr.io/rcieri/glab-tui:$TAG"
+          docker run --rm "ghcr.io/rcieri/glab-tui:$TAG" --help
 
   test-install-sh:
     name: install.sh
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Run install.sh
         env:
@@ -62,11 +63,12 @@ jobs:
   test-install-ps1:
     name: install.ps1
     runs-on: windows-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Run install.ps1
         shell: pwsh

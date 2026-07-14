@@ -37,7 +37,6 @@ impl GitlabClient {
 
     pub fn muted(mut self) -> Self {
         self.tx = None;
-        self.backend.clear_tx();
         self
     }
 

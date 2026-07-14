@@ -1050,7 +1050,13 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::CommandStarted(msg) => {
-                    app.status_message = Some(msg);
+                    app.status_message = Some(msg.clone());
+                    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+                    app.terminal_commands.push(crate::app::TerminalCommand {
+                        timestamp,
+                        command: msg,
+                        status: "Running".to_string(),
+                    });
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     terminal.draw(|f| ui::render(f, &mut app))?;
@@ -1112,6 +1118,12 @@ async fn main() -> Result<()> {
                                         sub.to_string(),
                                         mr_iid_str.clone(),
                                     ];
+                                    let status_msg = format!(
+                                        "Fetching Diff: {} {}",
+                                        program,
+                                        cmd_args.join(" ")
+                                    );
+                                    let _ = tx.send(Event::CommandStarted(status_msg));
 
                                     let mut cmd = tokio::process::Command::new(program);
                                     cmd.args(&cmd_args);

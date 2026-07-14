@@ -73,10 +73,6 @@ impl Backend for GlabBackend {
         self.tx = Some(tx);
     }
 
-    fn clear_tx(&mut self) {
-        self.tx = None;
-    }
-
     // ── Issues ──
 
     async fn list_issues(

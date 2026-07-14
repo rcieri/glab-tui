@@ -502,7 +502,6 @@ async fn main() -> Result<()> {
 
     if let Ok(mut client) = domain::client::GitlabClient::new().await {
         client.page_size = app.config.page_size;
-        client.page_limit = app.config.page_limit;
         client.tx = Some(events.sender());
         app.gitlab_client = Some(client.clone());
         let tx = events.sender();
@@ -2549,7 +2548,6 @@ async fn main() -> Result<()> {
                                                         domain::client::GitlabClient::new().await
                                                     {
                                                         client.page_size = app.config.page_size;
-                                                        client.page_limit = app.config.page_limit;
                                                         client.tx = Some(events.sender());
                                                         client.backend.set_tx(events.sender());
                                                         app.gitlab_client = Some(client.clone());

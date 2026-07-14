@@ -123,8 +123,6 @@ pub trait Backend: Send + Sync {
     // ── Labels / Members / Misc ──
     async fn fetch_labels(&self, project: &str) -> Result<Vec<String>>;
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>>;
-    async fn fetch_branch_names(&self, project: &str) -> Result<Vec<String>>;
-    async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>>;
 
     // ── Raw API fallback ──
     async fn raw_api(

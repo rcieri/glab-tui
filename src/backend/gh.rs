@@ -78,7 +78,7 @@ impl Backend for GhBackend {
         page_size: usize,
     ) -> Result<Vec<Issue>> {
         let state = if show_closed { "all" } else { "open" };
-        let total = page_size * 10; // page_size * default page_limit
+        let total = page_size * 10;
         let raw = self
             .run_gh(
                 &[
@@ -696,9 +696,11 @@ impl Backend for GhBackend {
     }
 
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
-        let endpoint = format!("/repos/{}/actions/jobs/{}/rerun", project, job_id);
-        self.raw_api(&endpoint, "POST", Some(""), "Retrying Job")
-            .await?;
+        self.run_gh(
+            &["run", "rerun", "--job", &job_id.to_string(), "-R", project],
+            "Retrying Job",
+        )
+        .await?;
         Ok(())
     }
 
@@ -1273,32 +1275,6 @@ impl Backend for GhBackend {
             .into_iter()
             .map(|a| format!("@{}", a.login))
             .collect())
-    }
-
-    async fn fetch_branch_names(&self, project: &str) -> Result<Vec<String>> {
-        let endpoint = format!("/repos/{}/branches?per_page=100", project);
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Branch Names")
-            .await?;
-        #[derive(Deserialize)]
-        struct GhBr {
-            name: String,
-        }
-        let branches: Vec<GhBr> = serde_json::from_str(&raw)?;
-        Ok(branches.into_iter().map(|b| b.name).collect())
-    }
-
-    async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>> {
-        let endpoint = format!("/repos/{}/milestones?state=open&per_page=100", project);
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Milestone Titles")
-            .await?;
-        #[derive(Deserialize)]
-        struct GhMs {
-            title: String,
-        }
-        let milestones: Vec<GhMs> = serde_json::from_str(&raw)?;
-        Ok(milestones.into_iter().map(|m| m.title).collect())
     }
 
     // ── Raw API ──

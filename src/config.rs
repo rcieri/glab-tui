@@ -862,7 +862,6 @@ pub struct Config {
     #[serde(default = "def_page_size")]
     pub page_size: usize,
     pub disabled_tabs: Option<Vec<String>>,
-    pub page_limit: Option<u32>,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -885,7 +884,6 @@ impl Default for Config {
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             disabled_tabs: None,
-            page_limit: Some(100),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),

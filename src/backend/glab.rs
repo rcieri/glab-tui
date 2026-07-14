@@ -685,25 +685,38 @@ impl Backend for GlabBackend {
 
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/pipelines/{}/cancel", encoded, pipeline_id);
-        self.raw_api(&endpoint, "POST", None, "Cancelling Pipeline")
-            .await?;
+        self.run_glab(
+            &[
+                "ci",
+                "cancel",
+                "pipeline",
+                &pipeline_id.to_string(),
+                "-R",
+                &encoded,
+            ],
+            "Cancelling Pipeline",
+        )
+        .await?;
         Ok(())
     }
 
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/jobs/{}/retry", encoded, job_id);
-        self.raw_api(&endpoint, "POST", None, "Retrying Job")
-            .await?;
+        self.run_glab(
+            &["ci", "retry", &job_id.to_string(), "-R", &encoded],
+            "Retrying Job",
+        )
+        .await?;
         Ok(())
     }
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/jobs/{}/cancel", encoded, job_id);
-        self.raw_api(&endpoint, "POST", None, "Cancelling Job")
-            .await?;
+        self.run_glab(
+            &["ci", "cancel", "job", &job_id.to_string(), "-R", &encoded],
+            "Cancelling Job",
+        )
+        .await?;
         Ok(())
     }
 
@@ -1121,8 +1134,7 @@ impl Backend for GlabBackend {
     }
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
-        let endpoint = format!("todos/{}/mark_as_done", id);
-        self.raw_api(&endpoint, "POST", None, "Marking Todo Done")
+        self.run_glab(&["todo", "done", id], "Marking Todo Done")
             .await?;
         Ok(())
     }
@@ -1353,34 +1365,6 @@ impl Backend for GlabBackend {
             .into_iter()
             .map(|m| format!("@{}", m.username))
             .collect())
-    }
-
-    async fn fetch_branch_names(&self, project: &str) -> Result<Vec<String>> {
-        let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/repository/branches?per_page=100", encoded);
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Branch Names")
-            .await?;
-        #[derive(Deserialize)]
-        struct GiBr {
-            name: String,
-        }
-        let branches: Vec<GiBr> = serde_json::from_str(&raw)?;
-        Ok(branches.into_iter().map(|b| b.name).collect())
-    }
-
-    async fn fetch_milestone_titles(&self, project: &str) -> Result<Vec<String>> {
-        let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/milestones?state=active&per_page=100", encoded);
-        let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Milestone Titles")
-            .await?;
-        #[derive(Deserialize)]
-        struct GiMs {
-            title: String,
-        }
-        let milestones: Vec<GiMs> = serde_json::from_str(&raw)?;
-        Ok(milestones.into_iter().map(|m| m.title).collect())
     }
 
     // ── Raw API ──

@@ -168,8 +168,6 @@ pub async fn handle_confirm_popup(
                     }
                     crate::app::ConfirmAction::DeleteIssue(iid) => {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
-                        let is_github = is_github;
                         let project_path = app.project_context.clone();
                         let client = app.gitlab_client.clone().unwrap();
                         let _ = tx.send(Event::CommandStarted(format!("Deleting issue #{}", iid)));
@@ -190,10 +188,12 @@ pub async fn handle_confirm_popup(
                                     )
                                     .await
                             } else {
-                                let encoded_path = project_path.replace("/", "%2F");
-                                let endpoint = format!("/projects/{}/issues/{}", encoded_path, iid);
                                 client
-                                    .raw_api(&endpoint, "DELETE", None, "Deleting Issue")
+                                    .execute_raw_command(
+                                        "glab",
+                                        &["issue", "delete", &iid.to_string(), "-R", &project_path],
+                                        "Deleting Issue",
+                                    )
                                     .await
                             };
                             match res {
@@ -229,11 +229,12 @@ pub async fn handle_confirm_popup(
                         let client = app.gitlab_client.clone().unwrap();
                         let _ = tx.send(Event::CommandStarted(format!("Deleting MR #{}", iid)));
                         tokio::spawn(async move {
-                            let encoded_path = project_path.replace("/", "%2F");
-                            let endpoint =
-                                format!("/projects/{}/merge_requests/{}", encoded_path, iid);
                             let res = client
-                                .raw_api(&endpoint, "DELETE", None, "Deleting MR")
+                                .execute_raw_command(
+                                    "glab",
+                                    &["mr", "delete", &iid.to_string(), "-R", &project_path],
+                                    "Deleting MR",
+                                )
                                 .await;
                             match res {
                                 Ok(_) => {

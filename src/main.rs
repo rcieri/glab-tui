@@ -4,14 +4,14 @@
 #![allow(unused_assignments)]
 
 mod app;
-mod cli;
+mod backend;
 mod config;
+mod domain;
 mod editor;
 mod entity_editor;
 mod event;
 mod fetch;
 mod git_helpers;
-mod gitlab;
 pub mod handlers;
 mod keybinding;
 mod templates;
@@ -31,23 +31,26 @@ use std::io;
 
 type AppTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
 
-pub use cli::*;
-
 fn generate_cli_desc(program: &str, args: &[String]) -> String {
     let action = if args.iter().any(|arg| arg == "create") {
         "CREATING"
-    } else if args.iter().any(|arg| {
-        arg == "update"
-            || arg == "edit"
-            || arg.starts_with("--")
-            || arg == "ready"
-            || arg == "ready-pr"
-    }) {
-        "UPDATING"
     } else if args.iter().any(|arg| arg == "delete") {
         "DELETING"
-    } else if args.iter().any(|arg| arg == "view" || arg == "list") {
+    } else if args.iter().any(|arg| {
+        arg == "view"
+            || arg == "list"
+            || arg == "show"
+            || arg == "get"
+            || arg == "fetch"
+            || arg == "clone"
+            || arg == "browse"
+    }) {
         "FETCHING"
+    } else if args
+        .iter()
+        .any(|arg| arg == "update" || arg == "edit" || arg == "ready" || arg == "ready-pr")
+    {
+        "UPDATING"
     } else {
         "RUNNING"
     };
@@ -85,14 +88,14 @@ fn generate_cli_desc(program: &str, args: &[String]) -> String {
 }
 
 async fn run_cli(
-    cli: &Cli,
+    program: &str,
     args: &[String],
     terminal: &mut AppTerminal,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
-    let program = cli.program();
-    let is_interactive = if cli.is_github {
+    let program = program.to_string();
+    let is_interactive = if program == "gh" {
         args.iter().any(|a| a == "-e")
     } else {
         args.windows(2)
@@ -110,7 +113,7 @@ async fn run_cli(
             let mut actual_args = args.to_vec();
             let mut cancel = false;
 
-            if cli.is_github && actual_args.iter().any(|arg| arg == "-e") {
+            if program == "gh" && actual_args.iter().any(|arg| arg == "-e") {
                 actual_args.retain(|arg| arg != "-e");
 
                 let is_pr = actual_args.iter().any(|arg| arg == "pr");
@@ -202,16 +205,11 @@ async fn run_cli(
             let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
         }
     } else {
-        let desc = generate_cli_desc(program, args);
-        let status_msg = format!("{}: {} {}", desc, program, args.join(" "));
+        let desc = generate_cli_desc(&program, args);
+        let label = format!("{:<24}", desc.to_uppercase());
+        let cmd_str = format!("{} {}", program, args.join(" "));
+        let status_msg = format!("{}: {}", label, cmd_str);
         let _ = tx.send(Event::CommandStarted(status_msg.clone()));
-
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        let _ = tx.send(Event::TerminalCommandLogged {
-            timestamp: timestamp.clone(),
-            command: status_msg.clone(),
-            status: "Running".to_string(),
-        });
 
         let tx_clone = tx.clone();
         let program = program.to_string();
@@ -258,6 +256,40 @@ async fn run_cli(
             }
         });
     }
+}
+
+fn build_update_args(
+    is_github: bool,
+    entity_type: &str,
+    iid: u64,
+    flags: &[(&str, Option<&str>)],
+) -> Vec<String> {
+    let entity = if is_github && entity_type == "mr" {
+        "pr"
+    } else {
+        entity_type
+    };
+    let sub = if is_github { "edit" } else { "update" };
+    let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
+    for (flag, value) in flags {
+        let (name, value) = match (is_github, *flag) {
+            (true, "-d" | "--description") => ("--body", *value),
+            (true, "--label") => ("--add-label", *value),
+            (true, "--unlabel") => ("--remove-label", *value),
+            (true, "--assignee") => ("--add-assignee", *value),
+            (true, "--unassign") => ("--remove-assignee", *value),
+            (true, "--reviewer") => ("--add-reviewer", *value),
+            (true, "--unreviewer") => ("--remove-reviewer", *value),
+            (true, "--target-branch") => ("--base", *value),
+            (true, "--milestone") if *value == Some("0") => ("--milestone", Some("")),
+            _ => (*flag, *value),
+        };
+        args.push(name.to_string());
+        if let Some(v) = value {
+            args.push(v.to_string());
+        }
+    }
+    args
 }
 
 pub use editor::*;
@@ -407,7 +439,7 @@ async fn main() -> Result<()> {
     // Initialize gitlab context
     if let Some(repo) = custom_repo {
         app.project_context = repo;
-    } else if let Ok(context) = gitlab::client::get_project_context().await {
+    } else if let Ok(context) = domain::client::get_project_context().await {
         app.project_context = context;
     }
 
@@ -473,9 +505,8 @@ async fn main() -> Result<()> {
     }
     app.update_filter_selection();
 
-    if let Ok(mut client) = gitlab::client::GitlabClient::new().await {
+    if let Ok(mut client) = domain::client::GitlabClient::new().await {
         client.page_size = app.config.page_size;
-        client.page_limit = app.config.page_limit;
         client.tx = Some(events.sender());
         app.gitlab_client = Some(client.clone());
         let tx = events.sender();
@@ -501,7 +532,7 @@ async fn main() -> Result<()> {
         if app.active_tab == app::Tab::Pipelines {
             if let Some(client) = &app.gitlab_client {
                 if let Some(idx) = app.pipelines.state.selected() {
-                    let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id);
+                    let pipe_id = app.filtered_pipelines().get(idx).map(|p| p.id());
                     if let Some(pipe_id) = pipe_id {
                         if !app.pipeline_jobs.contains_key(&pipe_id)
                             && !app.fetching_pipelines.contains(&pipe_id)
@@ -511,7 +542,7 @@ async fn main() -> Result<()> {
                             let project_context = app.project_context.clone();
                             let tx = events.sender();
                             tokio::spawn(async move {
-                                if let Ok(jobs) = gitlab::pipelines::list_pipeline_jobs(
+                                if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
                                     &client_clone,
                                     &project_context,
                                     pipe_id,
@@ -535,17 +566,18 @@ async fn main() -> Result<()> {
                     let m = app.filtered_mrs().get(idx).cloned();
                     if let Some(m) = m {
                         let is_github = client.is_github;
-                        let resolved_pipe = m.head_pipeline.as_ref().map(|p| p.id).or_else(|| {
-                            if is_github {
-                                app.pipelines
-                                    .items
-                                    .iter()
-                                    .find(|p| p.r#ref == m.source_branch)
-                                    .map(|p| p.id)
-                            } else {
-                                None
-                            }
-                        });
+                        let resolved_pipe =
+                            m.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
+                                if is_github {
+                                    app.pipelines
+                                        .items
+                                        .iter()
+                                        .find(|p| p.ref_branch() == m.source_branch)
+                                        .map(|p| p.id())
+                                } else {
+                                    None
+                                }
+                            });
                         if let Some(pipe_id) = resolved_pipe {
                             if !app.pipeline_jobs.contains_key(&pipe_id)
                                 && !app.fetching_pipelines.contains(&pipe_id)
@@ -555,7 +587,7 @@ async fn main() -> Result<()> {
                                 let project_context = app.project_context.clone();
                                 let tx = events.sender();
                                 tokio::spawn(async move {
-                                    if let Ok(jobs) = gitlab::pipelines::list_pipeline_jobs(
+                                    if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
                                         &client_clone,
                                         &project_context,
                                         pipe_id,
@@ -590,7 +622,7 @@ async fn main() -> Result<()> {
                                 let project_context = app.project_context.clone();
                                 let tx = events.sender();
                                 tokio::spawn(async move {
-                                    if let Ok(issues) = gitlab::milestones::list_milestone_issues(
+                                    if let Ok(issues) = domain::milestones::list_milestone_issues(
                                         &client_clone,
                                         &project_context,
                                         iid,
@@ -627,7 +659,7 @@ async fn main() -> Result<()> {
                             if let Some(client) = app.gitlab_client.clone() {
                                 app.start_loading_tab(app.active_tab);
                                 spawn_refresh_active_tab(
-                                    &client,
+                                    &client.muted(),
                                     &app.project_context,
                                     app.active_tab,
                                     events.sender(),
@@ -646,7 +678,7 @@ async fn main() -> Result<()> {
                         is_active = true;
                     } else if app.active_tab == app::Tab::Pipelines {
                         if let Some(idx) = app.pipelines.state.selected() {
-                            if app.filtered_pipelines().get(idx).map(|p| p.id) == Some(id) {
+                            if app.filtered_pipelines().get(idx).map(|p| p.id()) == Some(id) {
                                 is_active = true;
                             }
                         }
@@ -674,14 +706,14 @@ async fn main() -> Result<()> {
                     let current_selected_job_id = match app.active_tab {
                         app::Tab::Jobs => {
                             if let Some(idx) = app.jobs.state.selected() {
-                                app.filtered_jobs().get(idx).map(|j| j.id)
+                                app.filtered_jobs().get(idx).map(|j| j.id())
                             } else {
                                 None
                             }
                         }
                         app::Tab::Pipelines => {
                             if let Some(idx) = app.jobs.state.selected() {
-                                app.jobs.items.get(idx).map(|j| j.id)
+                                app.jobs.items.get(idx).map(|j| j.id())
                             } else {
                                 None
                             }
@@ -729,7 +761,7 @@ async fn main() -> Result<()> {
                     app.pipelines.items = pipelines;
                     app.update_filter_selection();
                     let new_ids: std::collections::HashSet<u64> =
-                        app.pipelines.items.iter().map(|p| p.id).collect();
+                        app.pipelines.items.iter().map(|p| p.id()).collect();
                     app.pipeline_jobs.retain(|id, _| new_ids.contains(id));
                     app.fetching_pipelines.clear();
                     app.project_cache.pipelines = app.pipelines.items.clone();
@@ -1009,6 +1041,14 @@ async fn main() -> Result<()> {
                         .rposition(|cmd| cmd.command == command && cmd.status == "Running")
                     {
                         app.terminal_commands[pos].status = status;
+                    } else if let Some(pos) = app
+                        .terminal_commands
+                        .iter()
+                        .rposition(|cmd| cmd.status == "Running")
+                    {
+                        // fallback: update most recent Running entry when
+                        // command strings differ (e.g. CommandStarted vs backend log)
+                        app.terminal_commands[pos].status = status;
                     } else {
                         app.terminal_commands.push(crate::app::TerminalCommand {
                             timestamp,
@@ -1018,7 +1058,13 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::CommandStarted(msg) => {
-                    app.status_message = Some(msg);
+                    app.status_message = Some(msg.clone());
+                    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+                    app.terminal_commands.push(crate::app::TerminalCommand {
+                        timestamp,
+                        command: msg,
+                        status: "Running".to_string(),
+                    });
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
                     terminal.draw(|f| ui::render(f, &mut app))?;
@@ -1035,7 +1081,13 @@ async fn main() -> Result<()> {
                             || cmd.command.contains("bulk"))
                             && cmd.status == "Running"
                     }) {
-                        app.terminal_commands[pos].status = status;
+                        app.terminal_commands[pos].status = status.clone();
+                    } else if let Some(pos) = app
+                        .terminal_commands
+                        .iter()
+                        .rposition(|cmd| cmd.status == "Running")
+                    {
+                        app.terminal_commands[pos].status = status.clone();
                     }
                     match res {
                         Ok(_) => {
@@ -1044,7 +1096,7 @@ async fn main() -> Result<()> {
                                     app.start_loading_tab(tab);
                                 }
                                 spawn_refresh_active_tab(
-                                    &client,
+                                    &client.muted(),
                                     &app.project_context,
                                     tab,
                                     events.sender(),
@@ -1080,6 +1132,12 @@ async fn main() -> Result<()> {
                                         sub.to_string(),
                                         mr_iid_str.clone(),
                                     ];
+                                    let status_msg = format!(
+                                        "Fetching Diff: {} {}",
+                                        program,
+                                        cmd_args.join(" ")
+                                    );
+                                    let _ = tx.send(Event::CommandStarted(status_msg));
 
                                     let mut cmd = tokio::process::Command::new(program);
                                     cmd.args(&cmd_args);
@@ -1087,7 +1145,7 @@ async fn main() -> Result<()> {
                                     let diff_res = cmd.output().await;
 
                                     let comments = if let Some(ref c) = client {
-                                        crate::gitlab::mr::list_mr_notes(
+                                        crate::domain::mr::list_mr_notes(
                                             c,
                                             &project_context,
                                             mr_iid,
@@ -1247,16 +1305,20 @@ async fn main() -> Result<()> {
                                     }
                                     crate::app::TextInputAction::CreateIssue => {
                                         if !value.trim().is_empty() {
-                                            let cli = app_cli(&app);
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map_or(false, |c| c.is_github);
+                                            let program = if is_github { "gh" } else { "glab" };
                                             let mut args: Vec<String> =
                                                 vec!["issue".into(), "create".into()];
-                                            if !cli.is_github {
+                                            if !is_github {
                                                 args.push("-y".into());
                                             }
                                             args.push("--title".into());
                                             args.push(value.clone());
                                             run_cli(
-                                                &cli,
+                                                program,
                                                 &args,
                                                 &mut terminal,
                                                 events.sender(),
@@ -1288,8 +1350,12 @@ async fn main() -> Result<()> {
                                                     app.draft_comments.len()
                                                 ));
                                             } else {
-                                                let cli = app_cli(&app);
-                                                let mut args = if cli.is_github {
+                                                let is_github = app
+                                                    .gitlab_client
+                                                    .as_ref()
+                                                    .map_or(false, |c| c.is_github);
+                                                let program = if is_github { "gh" } else { "glab" };
+                                                let mut args = if is_github {
                                                     vec![
                                                         "pr".to_string(),
                                                         "comment".to_string(),
@@ -1309,7 +1375,7 @@ async fn main() -> Result<()> {
                                                         value,
                                                     ]
                                                 };
-                                                if !cli.is_github {
+                                                if !is_github {
                                                     if let Some(line) = line_num {
                                                         args.push("--line".to_string());
                                                         args.push(line.to_string());
@@ -1319,7 +1385,7 @@ async fn main() -> Result<()> {
                                                     }
                                                 }
                                                 run_cli(
-                                                    &cli,
+                                                    program,
                                                     &args,
                                                     &mut terminal,
                                                     events.sender(),
@@ -1337,7 +1403,7 @@ async fn main() -> Result<()> {
                                                 let project_context = app.project_context.clone();
                                                 let tx = events.sender();
                                                 tokio::spawn(async move {
-                                                    match gitlab::pipelines::list_pipeline_jobs(
+                                                    match domain::pipelines::list_pipeline_jobs(
                                                         &client_clone,
                                                         &project_context,
                                                         pipeline_id,
@@ -1541,7 +1607,7 @@ async fn main() -> Result<()> {
                                             )));
                                             tokio::spawn(async move {
                                                 if let Some(client) = client {
-                                                    match crate::gitlab::branches::create_branch(
+                                                    match crate::domain::branches::create_branch(
                                                         &client,
                                                         &project_context,
                                                         &branch_name,
@@ -2505,16 +2571,16 @@ async fn main() -> Result<()> {
                                                     crate::config::reload_theme();
 
                                                     if let Ok(context) =
-                                                        gitlab::client::get_project_context().await
+                                                        domain::client::get_project_context().await
                                                     {
                                                         app.project_context = context;
                                                     }
                                                     if let Ok(mut client) =
-                                                        gitlab::client::GitlabClient::new().await
+                                                        domain::client::GitlabClient::new().await
                                                     {
                                                         client.page_size = app.config.page_size;
-                                                        client.page_limit = app.config.page_limit;
                                                         client.tx = Some(events.sender());
+                                                        client.backend.set_tx(events.sender());
                                                         app.gitlab_client = Some(client.clone());
                                                     } else {
                                                         app.gitlab_client = None;
@@ -2938,8 +3004,12 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         app.selector = None;
-                                        let cli = app_cli(&app);
-                                        let mut args = if cli.is_github {
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
+                                        let mut args = if is_github {
                                             vec![
                                                 "pr".to_string(),
                                                 "merge".to_string(),
@@ -2952,7 +3022,7 @@ async fn main() -> Result<()> {
                                                 mr_iid.to_string(),
                                             ]
                                         };
-                                        if cli.is_github {
+                                        if is_github {
                                             // GitHub scope only one strategy
                                             match merge_strategy {
                                                 Some("rebase") => args.push("--rebase".to_string()),
@@ -2978,7 +3048,7 @@ async fn main() -> Result<()> {
                                         }
                                         let active_tab = app.active_tab;
                                         crate::run_cli(
-                                            &cli,
+                                            program,
                                             &args,
                                             &mut terminal,
                                             events.sender(),
@@ -3018,7 +3088,7 @@ async fn main() -> Result<()> {
                                                             app.project_context.clone();
                                                         let tx = events.sender();
                                                         tokio::spawn(async move {
-                                                            match gitlab::pipelines::list_pipeline_jobs(
+                                                            match domain::pipelines::list_pipeline_jobs(
                                                                 &client_clone,
                                                                 &project_context,
                                                                 pipeline_id,
@@ -3603,16 +3673,20 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
-                                                        let cli = app_cli(&app);
-                                                        let args = UpdateCmd::new(
-                                                            cli.is_github,
+                                                        let is_github = app
+                                                            .gitlab_client
+                                                            .as_ref()
+                                                            .map_or(false, |c| c.is_github);
+                                                        let program =
+                                                            if is_github { "gh" } else { "glab" };
+                                                        let args = build_update_args(
+                                                            is_github,
                                                             &entity_type,
                                                             entity_iid,
-                                                        )
-                                                        .flag("-d", &new_desc)
-                                                        .build();
+                                                            &[("-d", Some(&new_desc))],
+                                                        );
                                                         run_cli(
-                                                            &cli,
+                                                            program,
                                                             &args,
                                                             &mut terminal,
                                                             events.sender(),
@@ -3629,16 +3703,20 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
-                                                        let cli = app_cli(&app);
-                                                        let args = UpdateCmd::new(
-                                                            cli.is_github,
+                                                        let is_github = app
+                                                            .gitlab_client
+                                                            .as_ref()
+                                                            .map_or(false, |c| c.is_github);
+                                                        let program =
+                                                            if is_github { "gh" } else { "glab" };
+                                                        let args = build_update_args(
+                                                            is_github,
                                                             &entity_type,
                                                             entity_iid,
-                                                        )
-                                                        .flag("-d", &new_desc)
-                                                        .build();
+                                                            &[("-d", Some(&new_desc))],
+                                                        );
                                                         run_cli(
-                                                            &cli,
+                                                            program,
                                                             &args,
                                                             &mut terminal,
                                                             events.sender(),
@@ -3667,7 +3745,7 @@ async fn main() -> Result<()> {
                                                             )),
                                                         );
                                                         tokio::spawn(async move {
-                                                            let res = crate::gitlab::milestones::update_milestone(
+                                                            let res = crate::domain::milestones::update_milestone(
                                                                 &client,
                                                                 &project_path,
                                                                 entity_iid,
@@ -3713,7 +3791,7 @@ async fn main() -> Result<()> {
                                                                 )),
                                                             );
                                                             tokio::spawn(async move {
-                                                                let res = crate::gitlab::releases::update_release(
+                                                                let res = crate::domain::releases::update_release(
                                                                     &client,
                                                                     &project_path,
                                                                     &tag,
@@ -3741,7 +3819,7 @@ async fn main() -> Result<()> {
                                                 if let Some(client) = &app.gitlab_client {
                                                     if entity_type == "issue" {
                                                         if let Ok(updated) =
-                                                            gitlab::issues::get_issue(
+                                                            domain::issues::get_issue(
                                                                 client,
                                                                 &app.project_context,
                                                                 entity_iid,
@@ -3758,7 +3836,7 @@ async fn main() -> Result<()> {
                                                             }
                                                         }
                                                     } else if entity_type == "mr" {
-                                                        if let Ok(updated) = gitlab::mr::get_mr(
+                                                        if let Ok(updated) = domain::mr::get_mr(
                                                             client,
                                                             &app.project_context,
                                                             entity_iid,
@@ -3915,7 +3993,11 @@ async fn main() -> Result<()> {
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {
-                                        let cli = app_cli(&app);
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let title = menu
                                             .fields
                                             .iter()
@@ -3972,7 +4054,10 @@ async fn main() -> Result<()> {
                                             cmd_args.push(title);
                                         }
                                         if !description.is_empty() {
-                                            cmd_args.push(cli.flag_description().to_string());
+                                            cmd_args.push(
+                                                if is_github { "--body" } else { "--description" }
+                                                    .to_string(),
+                                            );
                                             cmd_args.push(description);
                                         }
                                         if !labels.is_empty() {
@@ -4008,7 +4093,7 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         run_cli(
-                                            &cli,
+                                            program,
                                             &cmd_args,
                                             &mut terminal,
                                             events.sender(),
@@ -4026,7 +4111,11 @@ async fn main() -> Result<()> {
                                         }
                                         continue;
                                     } else if entity_type == "new_mr" {
-                                        let cli = app_cli(&app);
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let title = menu
                                             .fields
                                             .iter()
@@ -4105,13 +4194,15 @@ async fn main() -> Result<()> {
                                         }
 
                                         let entity_iid_str = menu.entity_iid.to_string();
-                                        let mut cmd_args: Vec<String> =
-                                            vec![cli.entity("mr").into(), "create".into()];
-                                        if !cli.is_github {
+                                        let mut cmd_args: Vec<String> = vec![
+                                            if is_github { "pr" } else { "mr" }.into(),
+                                            "create".into(),
+                                        ];
+                                        if !is_github {
                                             cmd_args.push("-y".into());
                                         }
                                         if menu.entity_iid > 0 {
-                                            if cli.is_github {
+                                            if is_github {
                                                 cmd_args.push("--body".into());
                                                 cmd_args
                                                     .push(format!("Resolves #{}", entity_iid_str));
@@ -4125,7 +4216,7 @@ async fn main() -> Result<()> {
                                             cmd_args.push(title);
                                         }
                                         if !source.is_empty() {
-                                            let flag = if cli.is_github {
+                                            let flag = if is_github {
                                                 "--head"
                                             } else {
                                                 "--source-branch"
@@ -4134,7 +4225,7 @@ async fn main() -> Result<()> {
                                             cmd_args.push(source);
                                         }
                                         if !target.is_empty() {
-                                            let flag = if cli.is_github {
+                                            let flag = if is_github {
                                                 "--base"
                                             } else {
                                                 "--target-branch"
@@ -4176,23 +4267,26 @@ async fn main() -> Result<()> {
                                             cmd_args.push("--draft".into());
                                         }
                                         if mr_pipeline.to_lowercase() == "yes" {
-                                            if cli.is_github {
+                                            if is_github {
                                                 // gh pr create doesn't have --create-pipeline
                                             } else {
                                                 cmd_args.push("--create-pipeline".into());
                                             }
                                         }
                                         if !description.is_empty() {
-                                            cmd_args.push(cli.flag_description().to_string());
+                                            cmd_args.push(
+                                                if is_github { "--body" } else { "--description" }
+                                                    .to_string(),
+                                            );
                                             cmd_args.push(description);
-                                        } else if cli.is_github {
+                                        } else if is_github {
                                             cmd_args.push("--body".into());
                                             cmd_args.push("".into());
                                         }
 
                                         app.edit_menu = None;
                                         run_cli(
-                                            &cli,
+                                            program,
                                             &cmd_args,
                                             &mut terminal,
                                             events.sender(),
@@ -4235,8 +4329,12 @@ async fn main() -> Result<()> {
                                             .map(|(_, v)| v.trim().to_string())
                                             .unwrap_or_default();
 
-                                        let cli = app_cli(&app);
-                                        let is_github = cli.is_github;
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
+                                        let is_github = is_github;
                                         let project_context = app.project_context.clone();
                                         let encoded_path = project_context.replace("/", "%2F");
                                         let tx = events.sender();
@@ -4357,7 +4455,11 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_pipeline" {
-                                        let cli = app_cli(&app);
+                                        let is_github = app
+                                            .gitlab_client
+                                            .as_ref()
+                                            .map_or(false, |c| c.is_github);
+                                        let program = if is_github { "gh" } else { "glab" };
                                         let branch = menu
                                             .fields
                                             .iter()
@@ -4395,7 +4497,7 @@ async fn main() -> Result<()> {
                                             var_strs.push(format!(
                                                 "{}{}{}",
                                                 k,
-                                                cli.input_separator(),
+                                                if is_github { "=" } else { ":" },
                                                 v
                                             ));
                                         }
@@ -4406,13 +4508,13 @@ async fn main() -> Result<()> {
                                             input_strs.push(format!(
                                                 "{}{}{}",
                                                 k,
-                                                cli.input_separator(),
+                                                if is_github { "=" } else { ":" },
                                                 v
                                             ));
                                         }
 
                                         let mut cmd_args: Vec<String> = vec![
-                                            if cli.is_github {
+                                            if is_github {
                                                 "workflow".into()
                                             } else {
                                                 "ci".into()
@@ -4423,19 +4525,21 @@ async fn main() -> Result<()> {
                                             cmd_args.push(workflow);
                                         }
                                         if !branch.is_empty() {
-                                            cmd_args.push(cli.flag_branch().to_string());
+                                            cmd_args.push(
+                                                if is_github { "-r" } else { "-b" }.to_string(),
+                                            );
                                             cmd_args.push(branch);
                                         }
-                                        if mr.to_lowercase() == "yes" && !cli.is_github {
+                                        if mr.to_lowercase() == "yes" && !is_github {
                                             cmd_args.push("--mr".into());
                                         }
 
-                                        let var_flag = cli.flag_variable();
+                                        let var_flag = if is_github { "-f" } else { "--variables" };
                                         for s in &var_strs {
                                             cmd_args.push(var_flag.to_string());
                                             cmd_args.push(s.clone());
                                         }
-                                        let input_flag = cli.flag_input();
+                                        let input_flag = if is_github { "-f" } else { "-i" };
                                         for s in &input_strs {
                                             cmd_args.push(input_flag.to_string());
                                             cmd_args.push(s.clone());
@@ -4443,7 +4547,7 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         run_cli(
-                                            &cli,
+                                            program,
                                             &cmd_args,
                                             &mut terminal,
                                             events.sender(),
@@ -4480,7 +4584,11 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         if !tag.is_empty() {
-                                            let cli = app_cli(&app);
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map_or(false, |c| c.is_github);
+                                            let program = if is_github { "gh" } else { "glab" };
                                             let mut cmd_args = vec![
                                                 "release".to_string(),
                                                 "create".to_string(),
@@ -4491,7 +4599,7 @@ async fn main() -> Result<()> {
                                                 cmd_args.push(name);
                                             }
                                             if !description.is_empty() {
-                                                if cli.is_github {
+                                                if is_github {
                                                     cmd_args.push("-n".to_string());
                                                     cmd_args.push(description);
                                                 } else {
@@ -4501,7 +4609,7 @@ async fn main() -> Result<()> {
                                             }
                                             app.edit_menu = None;
                                             run_cli(
-                                                &cli,
+                                                program,
                                                 &cmd_args,
                                                 &mut terminal,
                                                 events.sender(),
@@ -5534,8 +5642,12 @@ async fn main() -> Result<()> {
                                                     app.draft_comments.len()
                                                 ));
                                             } else {
-                                                let cli = app_cli(&app);
-                                                let mut args = if cli.is_github {
+                                                let is_github = app
+                                                    .gitlab_client
+                                                    .as_ref()
+                                                    .map_or(false, |c| c.is_github);
+                                                let program = if is_github { "gh" } else { "glab" };
+                                                let mut args = if is_github {
                                                     vec![
                                                         "pr".to_string(),
                                                         "comment".to_string(),
@@ -5555,7 +5667,7 @@ async fn main() -> Result<()> {
                                                         body,
                                                     ]
                                                 };
-                                                if !cli.is_github {
+                                                if !is_github {
                                                     if let Some(ln) = range.line_num {
                                                         args.push("--line".to_string());
                                                         args.push(ln.to_string());
@@ -5567,7 +5679,7 @@ async fn main() -> Result<()> {
                                                     }
                                                 }
                                                 run_cli(
-                                                    &cli,
+                                                    program,
                                                     &args,
                                                     &mut terminal,
                                                     events.sender(),
@@ -5661,8 +5773,12 @@ async fn main() -> Result<()> {
                                                 app.draft_comments.len()
                                             ));
                                         } else {
-                                            let cli = app_cli(&app);
-                                            let mut args = if cli.is_github {
+                                            let is_github = app
+                                                .gitlab_client
+                                                .as_ref()
+                                                .map_or(false, |c| c.is_github);
+                                            let program = if is_github { "gh" } else { "glab" };
+                                            let mut args = if is_github {
                                                 vec![
                                                     "pr".to_string(),
                                                     "comment".to_string(),
@@ -5682,7 +5798,7 @@ async fn main() -> Result<()> {
                                                     body,
                                                 ]
                                             };
-                                            if !cli.is_github {
+                                            if !is_github {
                                                 if let Some(ln) = range.line_num {
                                                     args.push("--line".to_string());
                                                     args.push(ln.to_string());
@@ -5692,7 +5808,7 @@ async fn main() -> Result<()> {
                                                 }
                                             }
                                             run_cli(
-                                                &cli,
+                                                program,
                                                 &args,
                                                 &mut terminal,
                                                 events.sender(),

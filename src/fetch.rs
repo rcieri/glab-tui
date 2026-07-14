@@ -1,20 +1,21 @@
 use crate::app;
+use crate::domain;
 use crate::event::Event;
 use crate::git_helpers::get_current_branch;
-use crate::gitlab;
 
 pub fn spawn_refresh_active_tab(
-    client: &gitlab::client::GitlabClient,
+    client: &domain::client::GitlabClient,
     project_context: &str,
     tab: app::Tab,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
-    let client = client.clone();
+    let mut client = client.clone();
+    client.tx = None; // suppress terminal log for background fetches
     let project_context = project_context.to_string();
     tokio::spawn(async move {
         match tab {
             app::Tab::Issues => {
-                match gitlab::issues::list_issues(&client, &project_context, true).await {
+                match domain::issues::list_issues(&client, &project_context, true).await {
                     Ok(issues) => {
                         let _ = tx.send(Event::IssuesFetched(issues));
                     }
@@ -30,12 +31,12 @@ pub fn spawn_refresh_active_tab(
                 let client_for_pipelines = client.clone();
                 let project_context_for_pipelines = project_context.clone();
                 let tx_for_pipelines = tx.clone();
-                match gitlab::mr::list_mrs(&client, &project_context, true).await {
+                match domain::mr::list_mrs(&client, &project_context, true).await {
                     Ok(mrs) => {
                         let _ = tx.send(Event::MrsFetched(mrs));
                         if client_for_pipelines.is_github {
                             tokio::spawn(async move {
-                                if let Ok(pipelines) = gitlab::pipelines::list_pipelines(
+                                if let Ok(pipelines) = domain::pipelines::list_pipelines(
                                     &client_for_pipelines,
                                     &project_context_for_pipelines,
                                 )
@@ -56,7 +57,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Pipelines => {
-                match gitlab::pipelines::list_pipelines(&client, &project_context).await {
+                match domain::pipelines::list_pipelines(&client, &project_context).await {
                     Ok(pipelines) => {
                         let _ = tx.send(Event::PipelinesFetched(pipelines));
                     }
@@ -69,7 +70,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Runners => {
-                match gitlab::runners::list_runners(&client, &project_context).await {
+                match domain::runners::list_runners(&client, &project_context).await {
                     Ok(runners) => {
                         let _ = tx.send(Event::RunnersFetched(runners));
                     }
@@ -82,7 +83,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Releases => {
-                match gitlab::releases::list_releases(&client, &project_context).await {
+                match domain::releases::list_releases(&client, &project_context).await {
                     Ok(releases) => {
                         let _ = tx.send(Event::ReleasesFetched(releases));
                     }
@@ -95,7 +96,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Todos => {
-                match gitlab::notifications::list_notifications(&client, true).await {
+                match domain::notifications::list_notifications(&client, true).await {
                     Ok(notifs) => {
                         let _ = tx.send(Event::TodosFetched(notifs));
                     }
@@ -112,7 +113,7 @@ pub fn spawn_refresh_active_tab(
                 let mut found_pipeline_id = None;
 
                 if let Some(branch) = &branch_name {
-                    let mr_iid = match gitlab::mr::list_mrs(&client, &project_context, false).await
+                    let mr_iid = match domain::mr::list_mrs(&client, &project_context, false).await
                     {
                         Ok(mrs) => mrs
                             .into_iter()
@@ -122,21 +123,21 @@ pub fn spawn_refresh_active_tab(
                     };
 
                     if let Ok(pipelines) =
-                        gitlab::pipelines::list_pipelines(&client, &project_context).await
+                        domain::pipelines::list_pipelines(&client, &project_context).await
                     {
                         let target_ref =
                             mr_iid.map(|iid| format!("refs/merge-requests/{}/head", iid));
                         if let Some(pipeline) = pipelines.into_iter().find(|p| {
-                            &p.r#ref == branch
-                                || target_ref.as_ref().map_or(false, |tr| &p.r#ref == tr)
+                            p.ref_branch() == branch
+                                || target_ref.as_ref().map_or(false, |tr| p.ref_branch() == tr)
                         }) {
-                            found_pipeline_id = Some(pipeline.id);
+                            found_pipeline_id = Some(pipeline.id());
                         }
                     }
                 }
 
                 if let Some(pipeline_id) = found_pipeline_id {
-                    match gitlab::pipelines::list_pipeline_jobs(
+                    match domain::pipelines::list_pipeline_jobs(
                         &client,
                         &project_context,
                         pipeline_id,
@@ -161,7 +162,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Milestones => {
-                match gitlab::milestones::list_milestones(&client, &project_context).await {
+                match domain::milestones::list_milestones(&client, &project_context).await {
                     Ok(milestones) => {
                         let _ = tx.send(Event::MilestonesFetched(milestones));
                     }
@@ -174,7 +175,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Branches => {
-                match gitlab::branches::list_branches(&client, &project_context).await {
+                match domain::branches::list_branches(&client, &project_context).await {
                     Ok(branches) => {
                         let _ = tx.send(Event::BranchesFetched(branches));
                     }
@@ -187,7 +188,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Environments => {
-                match gitlab::deployments::list_environments(&client, &project_context).await {
+                match domain::deployments::list_environments(&client, &project_context).await {
                     Ok(envs) => {
                         let _ = tx.send(Event::EnvironmentsFetched(envs));
                     }

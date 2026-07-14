@@ -5,18 +5,18 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct ProjectCache {
-    pub issues: Vec<crate::gitlab::issues::Issue>,
-    pub mrs: Vec<crate::gitlab::mr::MergeRequest>,
-    pub pipelines: Vec<crate::gitlab::pipelines::Pipeline>,
-    pub runners: Vec<crate::gitlab::runners::Runner>,
-    pub releases: Vec<crate::gitlab::releases::Release>,
-    pub todos: Vec<crate::gitlab::notifications::Notification>,
-    pub milestones: Vec<crate::gitlab::milestones::Milestone>,
-    pub pipeline_jobs: HashMap<u64, Vec<crate::gitlab::pipelines::Job>>,
-    pub branches: Vec<crate::gitlab::branches::Branch>,
-    pub environments: Vec<crate::gitlab::deployments::Environment>,
+    pub issues: Vec<crate::domain::issues::Issue>,
+    pub mrs: Vec<crate::domain::mr::MergeRequest>,
+    pub pipelines: Vec<crate::domain::pipelines::Pipeline>,
+    pub runners: Vec<crate::domain::runners::Runner>,
+    pub releases: Vec<crate::domain::releases::Release>,
+    pub todos: Vec<crate::domain::notifications::Notification>,
+    pub milestones: Vec<crate::domain::milestones::Milestone>,
+    pub pipeline_jobs: HashMap<u64, Vec<crate::domain::pipelines::Job>>,
+    pub branches: Vec<crate::domain::branches::Branch>,
+    pub environments: Vec<crate::domain::deployments::Environment>,
     #[serde(default)]
-    pub milestone_issues: HashMap<u64, Vec<crate::gitlab::issues::Issue>>,
+    pub milestone_issues: HashMap<u64, Vec<crate::domain::issues::Issue>>,
     #[serde(default)]
     pub selector_items: Option<Vec<String>>,
 }

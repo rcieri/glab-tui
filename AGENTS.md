@@ -15,32 +15,44 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Config/Themes:** `toml` crate; config at `~/.config/glab-tui/config.toml`
 
 ### Dual-Engine Architecture
-The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`). It translates GitLab-style API endpoints (`/projects/...`) to GitHub-style API endpoints (`/repos/...`) on the fly inside `GitlabClient` ([src/gitlab/client.rs](src/gitlab/client.rs)). 
+The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)).
 
-**Rule:** Always write domain logic assuming the GitLab API schema. `GitlabClient` will handle the translation to `gh api` output formatting automatically.
+**Rule:** Never use `glab api` or `gh api` when a native subcommand exists. Prefer native subcommands — they use built-in pagination, auth, and output formatting. Only fall back to raw API calls for endpoints with no native CLI equivalent.
 
 ## 2. Directory Structure
 
 * [src/main.rs](src/main.rs): Entry point. Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
-* [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic. `App` now holds a `config: Config` field loaded at startup.
-* [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs. Loads `~/.config/glab-tui/config.toml`, generates a default template on first run, and exposes `Theme::preset(name)` for built-in theme lookup. Icons are a separate global `RwLock` (`ICONS`) initialized at startup alongside `THEME`.
+* [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic.
+* [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
-* [src/ui.rs](src/ui.rs): The purely functional rendering layer. Translates `App` state into `ratatui` widgets. Reads theme colors from `app.config` (via the global `THEME` which is now initialized from config at startup).
-* [src/themes/](src/themes/): Bundled theme TOML files (`default`, `tokyo-night`, `gruvbox`, `nord`, `catppuccin-mocha`, `dracula`). Compiled into the binary via `include_str!`. Also written to `~/.config/glab-tui/themes/` on first run so users can copy/edit them.
-* [src/gitlab/](src/gitlab/): Domain modules interfacing with Git CLI wrapper.
-    * [client.rs](src/gitlab/client.rs): The core wrapper around `gh api` and `glab api`.
-    * [issues.rs](src/gitlab/issues.rs): Issue structures and API integration. `Issue` now includes `due_date: Option<String>`.
-    * [mr.rs](src/gitlab/mr.rs): Merge/Pull request structures and logic.
-    * [pipelines.rs](src/gitlab/pipelines.rs): Pipeline and Job data models.
-    * [runners.rs](src/gitlab/runners.rs): Runner configurations and actions.
-    * [releases.rs](src/gitlab/releases.rs): Release listings and metadata.
-    * [notifications.rs](src/gitlab/notifications.rs): GitLab todos and GitHub notifications.
-    * [milestones.rs](src/gitlab/milestones.rs): Milestone configurations.
+* [src/backend/](src/backend/): CLI backend layer.
+    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions.
+    * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
+    * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
+* [src/domain/](src/domain/): Domain models and top-level API functions.
+    * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, and event tx.
+    * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
+    * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
+    * [pipelines.rs](src/domain/pipelines.rs): Pipeline, Job structures and job deduplication logic.
+    * [runners.rs](src/domain/runners.rs): Runner structures.
+    * [releases.rs](src/domain/releases.rs): Release structures.
+    * [notifications.rs](src/domain/notifications.rs): Notification structures (GitLab todos + GitHub notifications).
+    * [milestones.rs](src/domain/milestones.rs): Milestone structures.
+    * [branches.rs](src/domain/branches.rs): Branch structures.
+    * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
+* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches.
+* [src/handlers/](src/handlers/): Keypress handlers split by concern.
+    * [mod.rs](src/handlers/mod.rs): Module declarations.
+    * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
+    * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (confirm popup, date picker, help, refresh, repo switcher).
 * [src/utils/](src/utils/):
-    * [cache.rs](src/utils/cache.rs): Offline caching logic for repository context and API payloads.
-    * [format.rs](src/utils/format.rs): Time parsing, markdown rendering, and string truncation.
+    * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json`.
+    * [format.rs](src/utils/format.rs): Time parsing, markdown rendering, string truncation.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
-    * [update.rs](src/utils/update.rs): GitHub releases self-updater logic.
+    * [update.rs](src/utils/update.rs): GitHub releases self-updater.
+* [src/templates.rs](src/templates.rs): Default issue/MR description templates.
+* [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`).
+* [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic.
 
 ## 3. Core Architectural Patterns
 
@@ -127,14 +139,141 @@ The application detects whether the current repository is hosted on GitHub or Gi
 
 If asked to add a new Tab (e.g., "Deployments"):
 1.  **Update State:** Add the tab to the `Tab` enum in [src/app.rs](src/app.rs) (include it in `ALL`, `title()`, `columns()`, and `default_columns()`). Add a `StatefulTable<Deployment>` to `App`.
-2.  **Define Domain Logic:** Create [src/gitlab/deployments.rs](src/gitlab/deployments.rs). Define the `Deployment` struct with `serde` traits. Write a `list_deployments` function that uses `GitlabClient::fetch_api`.
-3.  **Create Events:** Add `DeploymentsFetched(Vec<Deployment>)` to the `Event` enum in [src/event.rs](src/event.rs).
-4.  **Handle Data Fetching:** In [src/main.rs](src/main.rs), update `spawn_refresh_active_tab` to fetch data for the new tab.
-5.  **Handle UI Updates:** In [src/main.rs](src/main.rs), handle the `Event::DeploymentsFetched` to update `app.deployments.items` and trigger cache saving.
-6.  **Handle Navigation:** In [src/main.rs](src/main.rs), handle `KeyCode::Down`/`Up` to navigate the table state.
-7.  **Render:** In [src/ui.rs](src/ui.rs), add a branch to `match app.active_tab` to construct the rows, table, and details preview pane.
+2.  **Define Domain Logic:** Create [src/domain/deployments.rs](src/domain/deployments.rs). Define the `Deployment` struct with `serde` traits. Write a `list_deployments` function that delegates to the backend.
+3.  **Add Backend Methods:** Add the relevant method to the `Backend` trait in [src/backend/mod.rs](src/backend/mod.rs) and implement it in both [glab.rs](src/backend/glab.rs) and [gh.rs](src/backend/gh.rs). Use native subcommands where available; fall back to `raw_api()` only if no native command exists.
+4.  **Create Events:** Add `DeploymentsFetched(Vec<Deployment>)` to the `Event` enum in [src/event.rs](src/event.rs).
+5.  **Handle Data Fetching:** In [src/main.rs](src/main.rs), update `spawn_refresh_active_tab` (in [src/fetch.rs](src/fetch.rs)) to fetch data for the new tab.
+6.  **Handle UI Updates:** In [src/main.rs](src/main.rs), handle the `Event::DeploymentsFetched` to update `app.deployments.items` and trigger cache saving.
+7.  **Handle Navigation:** In [src/main.rs](src/main.rs), handle `KeyCode::Down`/`Up` to navigate the table state.
+8.  **Render:** In [src/ui/tabs.rs](src/ui/tabs.rs), add a branch to `match app.active_tab` to construct the rows, table, and details preview pane.
 
-## 6. Development & Quality Standards
+## 6. CLI Command Mapping
+
+Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This section documents every command used, organized by backend and operation.
+
+### GlabBackend (`src/backend/glab.rs`)
+
+#### Data Fetching — Native Subcommands
+
+| Operation | Command | Pagination |
+|---|---|---|
+| List issues | `glab issue list --output json -R <repo> --state <s> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| Get single issue | `glab issue view <iid> --output json -R <repo>` | N/A |
+| List MRs | `glab mr list --output json -R <repo> --state <s> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| Get single MR | `glab mr view <iid> --output json -R <repo>` | N/A |
+| Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
+| List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
+| List pipelines | `glab ci list --output json -R <repo> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
+| List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
+| List milestones | `glab milestone list --output json -R <repo> --per-page <N>` | Single call |
+| List milestone issues | `glab issue list --milestone <id> --all --output json -R <repo> --per-page <N>` | Single call |
+| List todos | `glab todo list --output=json` | Single call |
+| List labels | `glab label list --output json -R <repo> --per-page 100` | Single call |
+
+#### Mutations — Native Subcommands
+
+| Operation | Command |
+|---|---|
+| Update release | `glab release update <tag> -R <repo> -n <name> -N <desc>` |
+| Delete release | `glab release delete <tag> -R <repo> -y` |
+| Close/reopen milestone | `glab milestone close\|reopen <iid> -R <repo>` |
+| Update milestone | `glab milestone update <iid> -R <repo> --title ... --description ...` |
+| Delete milestone | `glab milestone delete <iid> -R <repo> -y` |
+| Cancel pipeline | `glab ci cancel pipeline <id> -R <repo>` |
+| Retry job | `glab ci retry <job_id> -R <repo>` |
+| Cancel job | `glab ci cancel job <id> -R <repo>` |
+| Mark todo done | `glab todo done <id>` |
+
+#### Data Fetching — Raw API (no native subcommand exists)
+
+| Operation | Endpoint | Why raw API |
+|---|---|---|
+| List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure |
+| Get job trace | `GET /projects/{}/jobs/{}/trace` | `glab ci trace` is interactive/streaming; we need programmatic text output |
+| List done todos | `GET todos?state=done` | `glab todo list` only shows pending |
+| List branches | `GET /projects/{}/repository/branches?per_page=<N>` | No `glab branch` command |
+| Create branch | `POST /projects/{}/repository/branches?branch=...&ref=...` | No `glab branch` command |
+| Delete branch | `DELETE /projects/{}/repository/branches/{}` | No `glab branch` command |
+| List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
+| List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
+| List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
+| Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
+
+### GhBackend (`src/backend/gh.rs`)
+
+#### Data Fetching — Native Subcommands
+
+| Operation | Command | Pagination |
+|---|---|---|
+| List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10) |
+| Get single issue | `gh issue view <iid> --json ... -R <repo>` | N/A |
+| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call |
+| Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
+| Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
+| List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
+| List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` | Single call |
+| Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
+| List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
+| List milestone issues | `gh issue list --milestone <id> --state all --json ... -R <repo> --limit <N>` | Single call |
+| List labels | `gh label list --json name -R <repo> --limit 100` | Single call |
+
+#### Mutations — Native Subcommands
+
+| Operation | Command |
+|---|---|
+| Retry run | `gh run rerun <id> -R <repo>` |
+| Cancel run | `gh run cancel <id> -R <repo>` |
+| Retry job | `gh run rerun --job <id> -R <repo>` |
+| Update release | `gh release edit <tag> -R <repo> -t <name> -n <desc>` |
+| Delete release | `gh release delete <tag> -R <repo> -y` |
+| Update milestone state | `gh api -X PATCH repos/{}/milestones/{} -f state=...` |
+
+#### Data Fetching — Raw API (no native subcommand exists)
+
+| Operation | Endpoint | Why raw API |
+|---|---|---|
+| List PR review comments | `GET /repos/{}/pulls/{}/comments?per_page=<N>` | `gh pr view --json comments` lacks inline line/position fields needed for diff review |
+| Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
+| List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
+| List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
+| List notifications | `GET notifications[?all=true]` | No `gh notification` command |
+| Mark notification read | `PATCH notifications/threads/{}` | No native command |
+| List branches | `GET /repos/{}/branches?per_page=<N>` | No native command |
+| Create branch | `POST /repos/{}/git/refs` | No native command |
+| Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |
+| List environments | `GET /repos/{}/environments?per_page=<N>` | No native command |
+| List deployments | `GET /repos/{}/deployments?per_page=<N>` | No native command |
+| List members | `GET /repos/{}/assignees?per_page=100` | No native command |
+| Update milestone | `PATCH repos/{}/milestones/{}` | No `gh milestone` command |
+| Delete milestone | `DELETE repos/{}/milestones/{}` | No `gh milestone` command |
+
+### Direct CLI Commands (`src/main.rs` — `run_cli()`)
+
+These are user-triggered mutations that shell out directly to the CLI without going through the backend:
+
+| Action | Command |
+|---|---|
+| Create issue | `gh issue create -e` / `glab issue create -y --title <t>` |
+| Edit issue/MR | `gh issue edit` / `glab issue update` (with field flags) |
+| Close issue/MR | `gh issue\|pr close <iid>` / `glab issue\|mr close <iid>` |
+| Reopen issue/MR | `gh issue\|pr reopen <iid>` / `glab issue\|mr reopen <iid>` |
+| Delete issue (Glab) | `glab issue delete <iid> -R <repo>` |
+| Delete MR (Glab) | `glab mr delete <iid> -R <repo>` |
+| Delete issue (GH) | `gh issue delete <iid> -R <repo> --yes` |
+| Approve MR | `gh pr review <iid> --approve` / `glab mr approve <iid>` |
+| Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --remove-source-branch --squash` |
+| Toggle draft | `gh pr ready <iid>` / `glab mr update <iid> --draft\|--ready` |
+| Create release | `gh release create <tag> -F <changelog>` / `glab release create <tag> -F <changelog>` |
+| Create milestone | `gh api POST repos/{}/milestones -f title=...` / `glab api POST projects/{}/milestones -f title=...` |
+| Create branch | `glab api POST ...repository/branches` / `gh api POST ...git/refs` |
+| Delete branch | `glab api DELETE ...repository/branches/{}` / `gh api DELETE ...git/refs/heads/{}` |
+| Run pipeline | `gh workflow run` / `glab ci run --mr` |
+| Open in browser | `gh issue\|pr\|run view --web` / `glab issue\|mr\|ci view -w` |
+| Reply to comment | `gh api POST repos/{}/pulls/{}/comments` / `glab api POST projects/{}/merge_requests/{}/discussions/{}/notes` |
+| Submit review | `gh api POST repos/{}/pulls/{}/reviews` / `glab api POST projects/{}/merge_requests/{}/...` |
+
+## 7. Development & Quality Standards
 
 * **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `app.error_message`. Do not `unwrap()` or `panic!()` in UI or event handling code.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.

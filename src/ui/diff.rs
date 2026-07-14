@@ -302,44 +302,30 @@ pub fn count_wrapped_lines(text: &str, width: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gitlab::pipelines::Job;
+    use crate::domain::pipelines::Job;
     use crate::ui::helpers::{
         floor_char_boundary, get_label_color, get_stages_summary, render_labels_cell,
     };
+
+    fn make_job(id: u64, stage: &str, name: &str, status: &str) -> Job {
+        Job {
+            id,
+            stage: stage.to_string(),
+            name: name.to_string(),
+            status: status.to_string(),
+            matrix: None,
+        }
+    }
 
     #[test]
     fn test_get_stages_summary() {
         // Test case 1: Stage with mixed success and skipped jobs
         // This stage should be reported as "success" status, and 100% success rate.
         let jobs = vec![
-            Job {
-                id: 1,
-                stage: "build".to_string(),
-                name: "compile".to_string(),
-                status: "success".to_string(),
-                matrix: None,
-            },
-            Job {
-                id: 2,
-                stage: "build".to_string(),
-                name: "cache".to_string(),
-                status: "skipped".to_string(),
-                matrix: None,
-            },
-            Job {
-                id: 3,
-                stage: "test".to_string(),
-                name: "unit".to_string(),
-                status: "failed".to_string(),
-                matrix: None,
-            },
-            Job {
-                id: 4,
-                stage: "test".to_string(),
-                name: "integration".to_string(),
-                status: "success".to_string(),
-                matrix: None,
-            },
+            make_job(1, "build", "compile", "success"),
+            make_job(2, "build", "cache", "skipped"),
+            make_job(3, "test", "unit", "failed"),
+            make_job(4, "test", "integration", "success"),
         ];
 
         let summaries = get_stages_summary(&jobs);

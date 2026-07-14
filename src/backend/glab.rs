@@ -915,12 +915,23 @@ impl Backend for GlabBackend {
         page_size: usize,
     ) -> Result<Vec<Issue>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/milestones/{}/issues?per_page={}",
-            encoded, milestone_iid, page_size
-        );
         let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Milestone Issues")
+            .run_glab(
+                &[
+                    "issue",
+                    "list",
+                    "--milestone",
+                    &milestone_iid.to_string(),
+                    "--all",
+                    "--output",
+                    "json",
+                    "-R",
+                    &encoded,
+                    "--per-page",
+                    &page_size.to_string(),
+                ],
+                "Fetching Milestone Issues",
+            )
             .await?;
         #[derive(Deserialize)]
         struct GiIssue {

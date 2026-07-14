@@ -880,12 +880,25 @@ impl Backend for GhBackend {
         milestone_iid: u64,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
-        let endpoint = format!(
-            "/repos/{}/issues?milestone={}&state=all&per_page={}",
-            project, milestone_iid, page_size
-        );
+        let total = page_size * 10;
         let raw = self
-            .raw_api(&endpoint, "GET", None, "Fetching Milestone Issues")
+            .run_gh(
+                &[
+                    "issue",
+                    "list",
+                    "--json",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees",
+                    "-R",
+                    project,
+                    "--milestone",
+                    &milestone_iid.to_string(),
+                    "--state",
+                    "all",
+                    "--limit",
+                    &total.to_string(),
+                ],
+                "Fetching Milestone Issues",
+            )
             .await?;
         #[derive(Deserialize)]
         struct GhIssue {
@@ -894,15 +907,17 @@ impl Backend for GhBackend {
             state: String,
             #[serde(default)]
             labels: Vec<serde_json::Value>,
-            user: Option<GhLogin>,
+            author: Option<GhLogin>,
             body: Option<String>,
+            #[serde(rename = "createdAt")]
             created_at: String,
+            #[serde(rename = "updatedAt")]
             updated_at: String,
+            #[serde(rename = "closedAt")]
             closed_at: Option<String>,
             milestone: Option<GhMs>,
             #[serde(default)]
             assignees: Vec<GhLogin>,
-            pull_request: Option<serde_json::Value>,
         }
         #[derive(Deserialize)]
         struct GhLogin {
@@ -915,9 +930,8 @@ impl Backend for GhBackend {
         let gh_issues: Vec<GhIssue> = serde_json::from_str(&raw)?;
         Ok(gh_issues
             .into_iter()
-            .filter(|i| i.pull_request.is_none())
             .map(|gi| {
-                let state = if gi.state == "open" {
+                let state = if gi.state == "OPEN" {
                     "opened"
                 } else {
                     "closed"
@@ -929,7 +943,7 @@ impl Backend for GhBackend {
                     .filter_map(|v| v.get("name")?.as_str().map(String::from))
                     .collect();
                 let author = crate::domain::issues::Author {
-                    username: gi.user.map(|u| u.login).unwrap_or_default(),
+                    username: gi.author.map(|a| a.login).unwrap_or_default(),
                 };
                 let milestone = gi
                     .milestone

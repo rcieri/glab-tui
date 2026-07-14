@@ -34,18 +34,23 @@ type AppTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
 fn generate_cli_desc(program: &str, args: &[String]) -> String {
     let action = if args.iter().any(|arg| arg == "create") {
         "CREATING"
-    } else if args.iter().any(|arg| {
-        arg == "update"
-            || arg == "edit"
-            || arg.starts_with("--")
-            || arg == "ready"
-            || arg == "ready-pr"
-    }) {
-        "UPDATING"
     } else if args.iter().any(|arg| arg == "delete") {
         "DELETING"
-    } else if args.iter().any(|arg| arg == "view" || arg == "list") {
+    } else if args.iter().any(|arg| {
+        arg == "view"
+            || arg == "list"
+            || arg == "show"
+            || arg == "get"
+            || arg == "fetch"
+            || arg == "clone"
+            || arg == "browse"
+    }) {
         "FETCHING"
+    } else if args
+        .iter()
+        .any(|arg| arg == "update" || arg == "edit" || arg == "ready" || arg == "ready-pr")
+    {
+        "UPDATING"
     } else {
         "RUNNING"
     };

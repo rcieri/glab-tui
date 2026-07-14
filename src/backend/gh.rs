@@ -1037,7 +1037,7 @@ impl Backend for GhBackend {
             "notifications"
         };
         let raw = self
-            .raw_api(endpoint, "GET", None, "Fetching Notifications")
+            .raw_api(endpoint, "GET", None, "Fetching Todos")
             .await?;
         #[derive(Deserialize)]
         struct GhNotif {
@@ -1093,7 +1093,7 @@ impl Backend for GhBackend {
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
         let endpoint = format!("notifications/threads/{}", id);
-        self.raw_api(&endpoint, "PATCH", None, "Marking Thread Read")
+        self.raw_api(&endpoint, "PATCH", None, "Marking Todo Done")
             .await?;
         Ok(())
     }

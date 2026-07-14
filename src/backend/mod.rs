@@ -20,6 +20,7 @@ pub trait Backend: Send + Sync {
     fn program(&self) -> &'static str;
 
     fn set_tx(&mut self, tx: UnboundedSender<Event>);
+    fn clear_tx(&mut self);
 
     // ── Issues ──
     async fn list_issues(

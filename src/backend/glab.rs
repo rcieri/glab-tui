@@ -34,7 +34,6 @@ impl GlabBackend {
 
         let output = Command::new("glab")
             .args(args)
-            .env("CLICOLOR_FORCE", "1")
             .output()
             .await
             .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
@@ -1398,7 +1397,6 @@ impl Backend for GlabBackend {
         let label = desc.to_uppercase();
 
         let mut cmd = Command::new("glab");
-        cmd.env("CLICOLOR_FORCE", "1");
         cmd.arg("api");
         if method != "GET" {
             cmd.arg("-X");

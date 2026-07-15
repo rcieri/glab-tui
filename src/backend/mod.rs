@@ -153,6 +153,9 @@ pub trait Backend: Send + Sync {
 
     // ── Browser ──
     async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()>;
+    async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()>;
+    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()>;
+    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()>;
 
     // ── Pipelines ──
     async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>>;

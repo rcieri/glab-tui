@@ -404,6 +404,16 @@ impl GitlabClient {
     pub async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
         self.backend.open_in_browser(project, entity, id).await
     }
+
+    pub async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        self.backend.open_pipeline_in_browser(project, id).await
+    }
+    pub async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        self.backend.open_job_in_browser(project, id).await
+    }
+    pub async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        self.backend.open_milestone_in_browser(project, id).await
+    }
 }
 
 impl Clone for GitlabClient {

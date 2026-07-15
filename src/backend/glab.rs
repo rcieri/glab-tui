@@ -2108,6 +2108,23 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
+    async fn open_pipeline_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_glab(&["ci", "view", id, "-w"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
+
+    async fn open_job_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_glab(&["job", "view", id, "-w"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
+
+    async fn open_milestone_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_glab(&["milestone", "view", id, "-w"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
     // ── Raw API ──
 
     async fn raw_api(

@@ -1970,6 +1970,26 @@ impl Backend for GhBackend {
         Ok(())
     }
 
+    async fn open_pipeline_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
+
+    async fn open_job_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
+
+    async fn open_milestone_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_gh(
+            &["browse", &format!("milestone/{}", id)],
+            "OPENING IN BROWSER",
+        )
+        .await?;
+        Ok(())
+    }
     // ── Raw API ──
 
     async fn raw_api(

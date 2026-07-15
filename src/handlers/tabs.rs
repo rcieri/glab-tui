@@ -634,26 +634,11 @@ pub async fn handle_active_tab_key(
                             let is_github =
                                 app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
                             let program = if is_github { "gh" } else { "glab" };
-                            let (entity, sub) = if is_github {
-                                ("run", "view")
-                            } else {
-                                ("ci", "view")
-                            };
-                            let args = vec![
-                                entity.to_string(),
-                                sub.to_string(),
-                                pipe_id.to_string(),
-                                if is_github { "--web" } else { "-w" }.to_string(),
-                            ];
-                            crate::run_cli(
-                                "OPENING IN BROWSER",
-                                program,
-                                &args,
-                                terminal,
-                                tx.clone(),
-                                app.active_tab,
-                            )
-                            .await;
+                            let client = app.gitlab_client.clone().unwrap();
+                            let project_path = app.project_context.clone();
+                            let _ = client
+                                .open_pipeline_in_browser(&project_path, &pipe_id.to_string())
+                                .await;
                         }
                         _ => handled = false,
                     }
@@ -876,42 +861,11 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
-                            let args = if is_github {
-                                if let Some(pipe_id) = app.active_pipeline_id {
-                                    vec![
-                                        "run".to_string(),
-                                        "view".to_string(),
-                                        pipe_id.to_string(),
-                                        if is_github { "--web" } else { "-w" }.to_string(),
-                                    ]
-                                } else {
-                                    vec![
-                                        "run".to_string(),
-                                        "view".to_string(),
-                                        job_id.to_string(),
-                                        if is_github { "--web" } else { "-w" }.to_string(),
-                                    ]
-                                }
-                            } else {
-                                vec![
-                                    "job".to_string(),
-                                    "view".to_string(),
-                                    job_id.to_string(),
-                                    if is_github { "--web" } else { "-w" }.to_string(),
-                                ]
-                            };
-                            crate::run_cli(
-                                "OPENING IN BROWSER",
-                                program,
-                                &args,
-                                terminal,
-                                tx.clone(),
-                                app.active_tab,
-                            )
-                            .await;
+                            let client = app.gitlab_client.clone().unwrap();
+                            let project_path = app.project_context.clone();
+                            let _ = client
+                                .open_job_in_browser(&project_path, &job_id.to_string())
+                                .await;
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace_editor,
@@ -1174,21 +1128,15 @@ pub async fn handle_active_tab_key(
                             } else {
                                 "issue"
                             };
-                            let args = vec![
-                                entity.to_string(),
-                                "view".to_string(),
-                                item.target_iid.to_string(),
-                                if is_github { "--web" } else { "-w" }.to_string(),
-                            ];
-                            crate::run_cli(
-                                "OPENING IN BROWSER",
-                                program,
-                                &args,
-                                terminal,
-                                tx.clone(),
-                                app.active_tab,
-                            )
-                            .await;
+                            let client = app.gitlab_client.clone().unwrap();
+                            let project_path = app.project_context.clone();
+                            let _ = client
+                                .open_in_browser(
+                                    &project_path,
+                                    &entity,
+                                    &item.target_iid.to_string(),
+                                )
+                                .await;
                         }
                         _ => handled = false,
                     }
@@ -1352,25 +1300,11 @@ pub async fn handle_active_tab_key(
                             .unwrap_or(false);
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
                         let program = if is_github { "gh" } else { "glab" };
-                        let args = if is_github {
-                            vec!["browse".to_string(), format!("milestone/{}", milestone.iid)]
-                        } else {
-                            vec![
-                                "milestone".to_string(),
-                                "view".to_string(),
-                                milestone.iid.to_string(),
-                                if is_github { "--web" } else { "-w" }.to_string(),
-                            ]
-                        };
-                        crate::run_cli(
-                            "OPENING IN BROWSER",
-                            program,
-                            &args,
-                            terminal,
-                            tx.clone(),
-                            app.active_tab,
-                        )
-                        .await;
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = client
+                            .open_milestone_in_browser(&project_path, &milestone.iid.to_string())
+                            .await;
                     }
                 }
             }

@@ -291,30 +291,364 @@ pub fn strip_ansi_escapes(s: &str) -> String {
     result
 }
 
-pub fn format_job_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'static>> {
-    let stripped = strip_ansi_escapes(trace);
-    stripped
+pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'static>> {
+    trace
         .lines()
-        .map(|line| {
-            let mut style = Style::default().fg(theme.text_normal);
-            let lower = line.to_lowercase();
-            if lower.contains("error") || lower.contains("failed") || lower.contains("panic") {
-                style = style.fg(theme.red).add_modifier(Modifier::BOLD);
-            } else if lower.contains("warning") || lower.contains("warn") {
-                style = style.fg(theme.yellow);
-            } else if lower.contains("success")
-                || lower.contains("successfully")
-                || lower.contains("completed")
-            {
-                style = style.fg(theme.green);
-            } else if line.trim_start().starts_with('$') {
-                style = style.fg(theme.purple).add_modifier(Modifier::BOLD);
-            } else if lower.contains("info") {
-                style = style.fg(theme.blue);
+        .map(|raw_line| {
+            if raw_line.contains('\x1b') {
+                let spans = parse_ansi_line(raw_line, theme);
+                Line::from(spans)
+            } else {
+                let spans = format_plain_line(raw_line, theme);
+                Line::from(spans)
             }
-            Line::from(Span::styled(line.to_string(), style))
         })
         .collect()
+}
+
+fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current_style = Style::default().fg(theme.text_normal);
+    let mut current_text = String::new();
+    let bytes: Vec<u8> = line.bytes().collect();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            if !current_text.is_empty() {
+                spans.push(Span::styled(
+                    std::mem::take(&mut current_text),
+                    current_style,
+                ));
+            }
+            i += 2;
+            let mut params = Vec::new();
+            let mut num_buf = String::new();
+            loop {
+                if i >= bytes.len() {
+                    break;
+                }
+                let c = bytes[i];
+                i += 1;
+                if (0x40..=0x7e).contains(&c) {
+                    if c == b'm' {
+                        if !num_buf.is_empty() {
+                            params.push(num_buf);
+                        }
+                        current_style = apply_sgr(&params, current_style, theme);
+                    }
+                    break;
+                }
+                match c {
+                    b';' => {
+                        if !num_buf.is_empty() {
+                            params.push(std::mem::take(&mut num_buf));
+                        } else {
+                            params.push("0".to_string());
+                        }
+                    }
+                    b'0'..=b'9' => {
+                        num_buf.push(c as char);
+                    }
+                    _ => {
+                        num_buf.push(c as char);
+                    }
+                }
+            }
+        } else {
+            current_text.push(b as char);
+            i += 1;
+        }
+    }
+    if !current_text.is_empty() {
+        spans.push(Span::styled(current_text, current_style));
+    }
+    spans
+}
+
+fn apply_sgr(params: &[String], current: Style, theme: &crate::config::Theme) -> Style {
+    let mut style = current;
+    let mut i = 0;
+    while i < params.len() {
+        let p: u8 = params[i].parse().unwrap_or(0);
+        match p {
+            0 => {
+                style = Style::default().fg(theme.text_normal);
+            }
+            1 => {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            3 => {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
+            4 => {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            7 => {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            22 => {
+                style = style.remove_modifier(Modifier::BOLD);
+            }
+            23 => {
+                style = style.remove_modifier(Modifier::ITALIC);
+            }
+            24 => {
+                style = style.remove_modifier(Modifier::UNDERLINED);
+            }
+            27 => {
+                style = style.remove_modifier(Modifier::REVERSED);
+            }
+            30..=37 => {
+                let c = match p {
+                    30 => Color::Black,
+                    31 => Color::Red,
+                    32 => Color::Green,
+                    33 => Color::Yellow,
+                    34 => Color::Blue,
+                    35 => Color::Magenta,
+                    36 => Color::Cyan,
+                    37 => Color::Gray,
+                    _ => Color::Reset,
+                };
+                style = style.fg(c);
+            }
+            38 => {
+                i += 1;
+                continue;
+            }
+            39 => {
+                style = style.fg(theme.text_normal);
+            }
+            40..=47 => {
+                let c = match p {
+                    40 => Color::Black,
+                    41 => Color::Red,
+                    42 => Color::Green,
+                    43 => Color::Yellow,
+                    44 => Color::Blue,
+                    45 => Color::Magenta,
+                    46 => Color::Cyan,
+                    47 => Color::Gray,
+                    _ => Color::Reset,
+                };
+                style = style.bg(c);
+            }
+            48 => {
+                i += 1;
+                continue;
+            }
+            49 => {
+                style = style.bg(Color::Reset);
+            }
+            90..=97 => {
+                let c = match p {
+                    90 => Color::DarkGray,
+                    91 => Color::LightRed,
+                    92 => Color::LightGreen,
+                    93 => Color::LightYellow,
+                    94 => Color::LightBlue,
+                    95 => Color::LightMagenta,
+                    96 => Color::LightCyan,
+                    97 => Color::White,
+                    _ => Color::Reset,
+                };
+                style = style.fg(c);
+            }
+            100..=107 => {
+                let c = match p {
+                    100 => Color::DarkGray,
+                    101 => Color::LightRed,
+                    102 => Color::LightGreen,
+                    103 => Color::LightYellow,
+                    104 => Color::LightBlue,
+                    105 => Color::LightMagenta,
+                    106 => Color::LightCyan,
+                    107 => Color::White,
+                    _ => Color::Reset,
+                };
+                style = style.bg(c);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    style
+}
+
+fn format_plain_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut pos = 0;
+    let chars: Vec<char> = line.chars().collect();
+
+    if let Some(end) = try_parse_timestamp(&chars) {
+        spans.push(Span::styled(
+            line[..end].to_string(),
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::ITALIC),
+        ));
+        pos = end;
+    }
+
+    if let Some((start, end)) = try_parse_log_level(&chars, pos) {
+        // push any gap text before the log level
+        if start > pos {
+            spans.push(Span::styled(
+                line[pos..start].to_string(),
+                Style::default().fg(theme.text_normal),
+            ));
+        }
+        let level_text = line[start..end].to_string();
+        let lower = level_text.trim().to_lowercase();
+        let level_upper = lower.trim_start_matches(|c: char| !c.is_alphanumeric());
+        let (lvl_style, offset) = {
+            let lvl = level_upper;
+            let style = if lvl.contains("error") || lvl.contains("fatal") || lvl.contains("panic") {
+                Style::default().fg(theme.red).add_modifier(Modifier::BOLD)
+            } else if lvl.contains("warn") {
+                Style::default().fg(theme.yellow)
+            } else if lvl.contains("info") {
+                Style::default().fg(theme.blue)
+            } else if lvl.contains("debug") {
+                Style::default().fg(theme.purple)
+            } else if lvl.contains("trace") {
+                Style::default().fg(theme.text_muted)
+            } else {
+                Style::default()
+            };
+            (style, 0)
+        };
+        if offset > 0 {
+            spans.push(Span::styled(
+                level_text[..offset].to_string(),
+                Style::default().fg(theme.text_normal),
+            ));
+        }
+        spans.push(Span::styled(level_text[offset..].to_string(), lvl_style));
+        pos = end;
+    }
+
+    let remaining = &line[pos..];
+    if !remaining.is_empty() {
+        spans.push(Span::styled(
+            remaining.to_string(),
+            keyword_style(remaining, theme),
+        ));
+    }
+    spans
+}
+
+fn try_parse_timestamp(chars: &[char]) -> Option<usize> {
+    // ISO 8601: YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS
+    if chars.len() >= 19
+        && chars[0].is_ascii_digit()
+        && chars[4] == '-'
+        && chars[7] == '-'
+        && (chars[10] == 'T' || chars[10] == ' ')
+        && chars[13] == ':'
+        && chars[16] == ':'
+    {
+        let mut end = 19;
+        // optional .fff milliseconds
+        if chars.len() > end && chars[end] == '.' {
+            end += 1;
+            while end < chars.len() && chars[end].is_ascii_digit() {
+                end += 1;
+            }
+        }
+        return Some(end);
+    }
+    // Time: HH:MM:SS
+    if chars.len() >= 8 && chars[2] == ':' && chars[5] == ':' {
+        let mut end = 8;
+        if chars.len() > end && chars[end] == '.' {
+            end += 1;
+            while end < chars.len() && chars[end].is_ascii_digit() {
+                end += 1;
+            }
+        }
+        return Some(end);
+    }
+    None
+}
+
+fn try_parse_log_level(chars: &[char], start: usize) -> Option<(usize, usize)> {
+    if start >= chars.len() {
+        return None;
+    }
+    let slice: String = chars[start..].iter().collect();
+    let lower = slice.to_lowercase();
+    let level_patterns: &[(&str, &str)] = &[
+        ("error", "ERROR"),
+        ("warn", "WARN"),
+        ("warning", "WARNING"),
+        ("info", "INFO"),
+        ("debug", "DEBUG"),
+        ("trace", "TRACE"),
+        ("fatal", "FATAL"),
+        ("panic", "PANIC"),
+    ];
+    for (pat, _display) in level_patterns {
+        // Match pattern with brackets like [ERROR] or (ERROR)
+        for bracket_open in &["[", "(", " "] {
+            let prefix = if *bracket_open == " " {
+                " "
+            } else {
+                *bracket_open
+            };
+            let prefix_len = prefix.len();
+            if chars.len() > start + prefix_len + pat.len() {
+                let check: String = chars[start + prefix_len..].iter().take(pat.len()).collect();
+                if check.to_lowercase() == *pat {
+                    let prefix_match: String = chars[start..start + prefix_len].iter().collect();
+                    if prefix_match == prefix || prefix_match == *bracket_open {
+                        let lvl_end = start + prefix_len + pat.len();
+                        let bracket_close = if *bracket_open == "[" {
+                            "]"
+                        } else if *bracket_open == "(" {
+                            ")"
+                        } else {
+                            ""
+                        };
+                        let mut end = lvl_end;
+                        if !bracket_close.is_empty()
+                            && chars.len() > end
+                            && chars[end].to_string() == bracket_close
+                        {
+                            end += 1;
+                        }
+                        if chars.len() > end && chars[end] == ':' {
+                            end += 1;
+                        }
+                        return Some((start, end));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn keyword_style(line: &str, theme: &crate::config::Theme) -> Style {
+    let mut style = Style::default().fg(theme.text_normal);
+    let lower = line.to_lowercase();
+    if lower.contains("error") || lower.contains("failed") || lower.contains("panic") {
+        style = style.fg(theme.red).add_modifier(Modifier::BOLD);
+    } else if lower.contains("warning") || lower.contains("warn") {
+        style = style.fg(theme.yellow);
+    } else if lower.contains("success")
+        || lower.contains("successfully")
+        || lower.contains("completed")
+    {
+        style = style.fg(theme.green);
+    } else if line.trim_start().starts_with('$') {
+        style = style.fg(theme.purple).add_modifier(Modifier::BOLD);
+    } else if lower.contains("info") {
+        style = style.fg(theme.blue);
+    }
+    style
 }
 
 #[cfg(test)]

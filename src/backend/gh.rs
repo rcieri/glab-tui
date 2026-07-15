@@ -2004,39 +2004,15 @@ impl Backend for GhBackend {
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
         let url = format!("https://github.com/{}/milestone/{}", project, id);
         let label = "OPENING IN BROWSER";
-
-        #[cfg(target_os = "linux")]
-        let (cmd_str, result) = {
-            let c = format!("xdg-open {}", url);
-            let r = tokio::process::Command::new("xdg-open")
-                .arg(&url)
-                .output()
-                .await;
-            (c, r)
-        };
-        #[cfg(target_os = "macos")]
-        let (cmd_str, result) = {
-            let c = format!("open {}", url);
-            let r = tokio::process::Command::new("open")
-                .arg(&url)
-                .output()
-                .await;
-            (c, r)
-        };
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let (cmd_str, result) = {
-            let c = format!("cmd /c start {}", url);
-            let r = tokio::process::Command::new("cmd")
-                .args(["/c", "start", "", &url])
-                .output()
-                .await;
-            (c, r)
-        };
-
+        let cmd_str = format!("git web--browse {}", url);
+        let output = tokio::process::Command::new("git")
+            .args(["web--browse", &url])
+            .output()
+            .await;
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        let status = match &result {
+        let status = match &output {
             Ok(out) if out.status.success() => "Success".to_string(),
-            _ => "Success".to_string(), // browser open is best-effort
+            _ => "Success".to_string(),
         };
         if let Some(ref tx) = self.tx {
             let _ = tx.send(crate::event::Event::TerminalCommandLogged {

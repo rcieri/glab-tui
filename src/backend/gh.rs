@@ -2004,24 +2004,33 @@ impl Backend for GhBackend {
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
         let url = format!("https://github.com/{}/milestone/{}", project, id);
         let label = "OPENING IN BROWSER";
-        let cmd_str = format!("browser {}", url);
 
         #[cfg(target_os = "linux")]
-        let result = tokio::process::Command::new("xdg-open")
-            .arg(&url)
-            .output()
-            .await;
+        let (cmd_str, result) = {
+            let c = format!("xdg-open {}", url);
+            let r = tokio::process::Command::new("xdg-open")
+                .arg(&url)
+                .output()
+                .await;
+            (c, r)
+        };
         #[cfg(target_os = "macos")]
-        let result = tokio::process::Command::new("open")
-            .arg(&url)
-            .output()
-            .await;
+        let (cmd_str, result) = {
+            let c = format!("open {}", url);
+            let r = tokio::process::Command::new("open")
+                .arg(&url)
+                .output()
+                .await;
+            (c, r)
+        };
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let result: std::io::Result<std::process::Output> = {
-            tokio::process::Command::new("cmd")
+        let (cmd_str, result) = {
+            let c = format!("cmd /c start {}", url);
+            let r = tokio::process::Command::new("cmd")
                 .args(["/c", "start", "", &url])
                 .output()
-                .await
+                .await;
+            (c, r)
         };
 
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();

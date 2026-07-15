@@ -295,15 +295,38 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
     trace
         .lines()
         .map(|raw_line| {
-            if raw_line.contains('\x1b') {
-                let spans = parse_ansi_line(raw_line, theme);
+            let (prefix, content) = split_gh_prefix(raw_line);
+
+            let content_spans = if content.contains('\x1b') {
+                parse_ansi_line(content, theme)
+            } else {
+                format_plain_line(content, theme)
+            };
+
+            if let Some(p) = prefix {
+                let mut spans = vec![Span::styled(
+                    p.to_string(),
+                    Style::default().fg(theme.text_muted),
+                )];
+                spans.extend(content_spans);
                 Line::from(spans)
             } else {
-                let spans = format_plain_line(raw_line, theme);
-                Line::from(spans)
+                Line::from(content_spans)
             }
         })
         .collect()
+}
+
+/// Strips the GitHub Actions log prefix `<job_name>\t<step_name>\t` if present.
+/// Returns `(Some(prefix), content)` or `(None, whole_line)`.
+fn split_gh_prefix(line: &str) -> (Option<&str>, &str) {
+    if let Some(first_tab) = line.find('\t') {
+        if let Some(second_tab) = line[first_tab + 1..].find('\t') {
+            let prefix_end = first_tab + 1 + second_tab + 1;
+            return (Some(&line[..prefix_end]), &line[prefix_end..]);
+        }
+    }
+    (None, line)
 }
 
 fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
@@ -478,58 +501,83 @@ fn apply_sgr(params: &[String], current: Style, theme: &crate::config::Theme) ->
 }
 
 fn format_plain_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
-    let lower = line.to_lowercase();
+    // Strip GitHub Actions timestamp if present: YYYY-MM-DDTHH:MM:SS.fffffffZ
+    let (ts, rest) = strip_gh_ts(line);
+    let body = rest.trim_start();
 
-    // Special handling for GitHub Actions section markers
-    if line.starts_with("##[group]") {
-        return vec![Span::styled(
-            line.to_string(),
-            Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
-        )];
-    }
-    if line.starts_with("##[endgroup]") {
-        return vec![Span::styled(
-            line.to_string(),
-            Style::default().fg(theme.text_muted),
-        )];
-    }
-    if line.starts_with("##[command]") {
-        return vec![Span::styled(
-            line.to_string(),
-            Style::default().fg(theme.purple),
-        )];
-    }
-    if line.starts_with("##[debug]") {
-        return vec![Span::styled(
-            line.to_string(),
-            Style::default().fg(theme.text_muted),
-        )];
-    }
-    if line.starts_with("##[warning]") {
-        return vec![Span::styled(
-            line.to_string(),
-            Style::default().fg(theme.yellow),
-        )];
-    }
-    if line.starts_with("##[error]") {
-        return vec![Span::styled(
-            line.to_string(),
-            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
-        )];
-    }
-    if line.starts_with("##[section]") {
-        return vec![Span::styled(
-            line.to_string(),
-            Style::default().fg(theme.blue),
-        )];
-    }
+    let body_style = classify_line(body, &body.to_lowercase(), theme);
 
-    // Whole-line keyword classification (these color the entire line)
-    let style = classify_line(line, lower.as_str(), theme);
-    vec![Span::styled(line.to_string(), style)]
+    let mut spans = Vec::new();
+    if let Some(timestamp) = ts {
+        spans.push(Span::styled(
+            timestamp.to_string(),
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::ITALIC),
+        ));
+        if rest.len() > body.len() {
+            // space between timestamp and body
+            let space_len = rest.len() - body.len();
+            spans.push(Span::styled(
+                rest[..space_len].to_string(),
+                Style::default().fg(theme.text_normal),
+            ));
+        }
+    }
+    spans.push(Span::styled(body.to_string(), body_style));
+    spans
+}
+
+/// Strips a GitHub Actions timestamp (`YYYY-MM-DDTHH:MM:SS.fffffffZ`) from
+/// the start of a line. Returns `(Some(ts), rest)` or `(None, original)`.
+fn strip_gh_ts(line: &str) -> (Option<&str>, &str) {
+    let bytes = line.as_bytes();
+    // Need at least: YYYY-MM-DDTHH:MM:SS (19) + .f (2 more) + Z (1) = 22 minimum
+    if bytes.len() >= 22
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'.'
+        && bytes[0].is_ascii_digit()
+    {
+        let mut end = 20;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end < bytes.len() && bytes[end] == b'Z' {
+            end += 1;
+            return (Some(&line[..end]), &line[end..]);
+        }
+    }
+    (None, line)
 }
 
 fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style {
+    // GitHub Actions section markers (checked first)
+    if lower.starts_with("##[group]") {
+        return Style::default().fg(theme.blue).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("##[endgroup]") {
+        return Style::default().fg(theme.text_muted);
+    }
+    if lower.starts_with("##[command]") {
+        return Style::default().fg(theme.purple);
+    }
+    if lower.starts_with("##[debug]") {
+        return Style::default().fg(theme.text_muted);
+    }
+    if lower.starts_with("##[warning]") {
+        return Style::default().fg(theme.yellow);
+    }
+    if lower.starts_with("##[error]") {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("##[section]") {
+        return Style::default().fg(theme.blue);
+    }
+
     // Error indicators (red bold)
     if lower.contains("error")
         || lower.contains("failed")

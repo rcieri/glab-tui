@@ -4,39 +4,6 @@ use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crate::templates::get_default_template;
 use crossterm::event::KeyCode;
-fn build_update_args(
-    is_github: bool,
-    entity_type: &str,
-    iid: u64,
-    flags: &[(&str, Option<&str>)],
-) -> Vec<String> {
-    let entity = if is_github && entity_type == "mr" {
-        "pr"
-    } else {
-        entity_type
-    };
-    let sub = if is_github { "edit" } else { "update" };
-    let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
-    for (flag, value) in flags {
-        let (name, value) = match (is_github, *flag) {
-            (true, "-d" | "--description") => ("--body", *value),
-            (true, "--label") => ("--add-label", *value),
-            (true, "--unlabel") => ("--remove-label", *value),
-            (true, "--assignee") => ("--add-assignee", *value),
-            (true, "--unassign") => ("--remove-assignee", *value),
-            (true, "--reviewer") => ("--add-reviewer", *value),
-            (true, "--unreviewer") => ("--remove-reviewer", *value),
-            (true, "--target-branch") => ("--base", *value),
-            (true, "--milestone") if *value == Some("0") => ("--milestone", Some("")),
-            _ => (*flag, *value),
-        };
-        args.push(name.to_string());
-        if let Some(v) = value {
-            args.push(v.to_string());
-        }
-    }
-    args
-}
 
 pub async fn apply_field_text_change(
     app: &mut App,
@@ -145,8 +112,6 @@ pub async fn apply_field_text_change(
         return;
     }
 
-    let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-    let program = if is_github { "gh" } else { "glab" };
     match field_type {
         "title" => {
             let client = app.gitlab_client.clone().unwrap();
@@ -255,14 +220,7 @@ pub async fn apply_selector_changes(
     let program = if is_github { "gh" } else { "glab" };
     let tx = app.tx.clone().unwrap();
     let tab = app.active_tab;
-    let desc = match (entity_type, is_github) {
-        ("issue", _) => "UPDATING ISSUE",
-        ("mr", true) => "UPDATING PR",
-        ("mr", false) => "UPDATING MR",
-        ("release", _) => "UPDATING RELEASE",
-        ("runner", _) => "UPDATING RUNNER",
-        _ => "UPDATING",
-    };
+
     match field_type {
         "labels" => {
             let current_labels: Vec<String> = if entity_type == "issue" {
@@ -762,14 +720,7 @@ pub async fn handle_entity_update(
 ) {
     let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
     let program = if is_github { "gh" } else { "glab" };
-    let desc = match (entity_type, is_github) {
-        ("issue", _) => "UPDATING ISSUE",
-        ("mr", true) => "UPDATING PR",
-        ("mr", false) => "UPDATING MR",
-        ("release", _) => "UPDATING RELEASE",
-        ("runner", _) => "UPDATING RUNNER",
-        _ => "UPDATING",
-    };
+
     match code {
         KeyCode::Char('t') => {
             let current_title = if entity_type == "issue" {

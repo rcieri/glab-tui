@@ -250,6 +250,228 @@ impl Backend for GhBackend {
         })
     }
 
+    async fn close_issue(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &["issue", "close", &iid.to_string(), "-R", project],
+            "CLOSING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &["issue", "reopen", &iid.to_string(), "-R", project],
+            "REOPENING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_issue(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &["issue", "delete", &iid.to_string(), "-R", project, "--yes"],
+            "DELETING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn create_issue(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        labels: &str,
+        assignees: &str,
+        milestone: &str,
+        due_date: &str,
+        weight: &str,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "create".into(),
+            "-R".into(),
+            project.into(),
+            "--title".into(),
+            title.into(),
+        ];
+        if !description.is_empty() {
+            args.push("--body".into());
+            args.push(description.into());
+        }
+        if !labels.is_empty() {
+            args.push("--label".into());
+            args.push(labels.into());
+        }
+        if !assignees.is_empty() {
+            args.push("--assignee".into());
+            args.push(assignees.into());
+        }
+        if !milestone.is_empty() {
+            args.push("--milestone".into());
+            args.push(milestone.into());
+        }
+        if !due_date.is_empty() {
+            args.push("--due-date".into());
+            args.push(due_date.into());
+        }
+        if !weight.is_empty() {
+            args.push("--weight".into());
+            args.push(weight.into());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "CREATING ISSUE").await?;
+        Ok(())
+    }
+
+    // ── Issue Field Updates ──
+
+    async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        self.run_gh(
+            &[
+                "issue",
+                "edit",
+                &iid.to_string(),
+                "--title",
+                title,
+                "-R",
+                project,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_description(
+        &self,
+        project: &str,
+        iid: u64,
+        description: &str,
+    ) -> Result<()> {
+        self.run_gh(
+            &[
+                "issue",
+                "edit",
+                &iid.to_string(),
+                "--body",
+                description,
+                "-R",
+                project,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_labels(
+        &self,
+        project: &str,
+        iid: u64,
+        add_labels: &[String],
+        remove_labels: &[String],
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "edit".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        for label in add_labels {
+            args.push("--add-label".into());
+            args.push(label.clone());
+        }
+        for label in remove_labels {
+            args.push("--remove-label".into());
+            args.push(label.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "UPDATING ISSUE").await?;
+        Ok(())
+    }
+
+    async fn update_issue_assignees(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "edit".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        for a in add {
+            args.push("--add-assignee".into());
+            args.push(a.clone());
+        }
+        for a in remove {
+            args.push("--remove-assignee".into());
+            args.push(a.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "UPDATING ISSUE").await?;
+        Ok(())
+    }
+
+    async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
+        let val = if milestone == "None" || milestone.is_empty() {
+            ""
+        } else {
+            milestone
+        };
+        self.run_gh(
+            &[
+                "issue",
+                "edit",
+                &iid.to_string(),
+                "--milestone",
+                val,
+                "-R",
+                project,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()> {
+        self.run_gh(
+            &[
+                "issue",
+                "edit",
+                &iid.to_string(),
+                "--due-date",
+                due_date,
+                "-R",
+                project,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_weight(&self, _project: &str, _iid: u64, _weight: &str) -> Result<()> {
+        Ok(())
+    }
+
+    async fn update_issue_confidential(
+        &self,
+        project: &str,
+        iid: u64,
+        confidential: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     // ── Merge Requests ──
 
     async fn list_mrs(
@@ -527,6 +749,325 @@ impl Backend for GhBackend {
             .collect())
     }
 
+    async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &["pr", "close", &iid.to_string(), "-R", project],
+            "CLOSING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &["pr", "reopen", &iid.to_string(), "-R", project],
+            "REOPENING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_mr(&self, _project: &str, _iid: u64) -> Result<()> {
+        anyhow::bail!("GitHub does not support deleting pull requests")
+    }
+
+    async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &["pr", "review", &iid.to_string(), "--approve", "-R", project],
+            "APPROVING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn merge_mr(
+        &self,
+        project: &str,
+        iid: u64,
+        squash: bool,
+        delete_branch: bool,
+        strategy: Option<&str>,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "pr".into(),
+            "merge".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        if squash {
+            args.push("--squash".into());
+        } else if let Some(s) = strategy {
+            match s {
+                "rebase" => args.push("--rebase".into()),
+                _ => args.push("--merge".into()),
+            }
+        }
+        if delete_branch {
+            args.push("--delete-branch".into());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "MERGING PR").await?;
+        Ok(())
+    }
+
+    async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
+        if is_draft {
+            self.run_gh(
+                &["pr", "edit", &iid.to_string(), "--draft", "-R", project],
+                "MARKING PR DRAFT",
+            )
+            .await?;
+        } else {
+            self.run_gh(
+                &["pr", "ready", &iid.to_string(), "-R", project],
+                "MARKING PR READY",
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn create_mr(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        source_branch: &str,
+        target_branch: &str,
+        labels: &str,
+        assignees: &str,
+        reviewers: &str,
+        milestone: &str,
+        _issue_iid: Option<u64>,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "pr".into(),
+            "create".into(),
+            "-R".into(),
+            project.into(),
+            "--title".into(),
+            title.into(),
+        ];
+        if !source_branch.is_empty() {
+            args.push("--head".into());
+            args.push(source_branch.into());
+        }
+        if !target_branch.is_empty() {
+            args.push("--base".into());
+            args.push(target_branch.into());
+        }
+        if !description.is_empty() {
+            args.push("--body".into());
+            args.push(description.into());
+        }
+        if !labels.is_empty() {
+            args.push("--label".into());
+            args.push(labels.into());
+        }
+        if !assignees.is_empty() {
+            args.push("--assignee".into());
+            args.push(assignees.into());
+        }
+        if !reviewers.is_empty() {
+            args.push("--reviewer".into());
+            args.push(reviewers.into());
+        }
+        if !milestone.is_empty() {
+            args.push("--milestone".into());
+            args.push(milestone.into());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "CREATING PR").await?;
+        Ok(())
+    }
+
+    async fn add_mr_comment(
+        &self,
+        project: &str,
+        iid: u64,
+        body: &str,
+        _file_path: Option<&str>,
+        _line: Option<u64>,
+        _old_line: Option<u64>,
+    ) -> Result<()> {
+        self.run_gh(
+            &[
+                "pr",
+                "comment",
+                &iid.to_string(),
+                "-R",
+                project,
+                "--body",
+                body,
+            ],
+            "ADDING PR COMMENT",
+        )
+        .await?;
+        Ok(())
+    }
+
+    // ── PR Field Updates ──
+
+    async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        self.run_gh(
+            &[
+                "pr",
+                "edit",
+                &iid.to_string(),
+                "--title",
+                title,
+                "-R",
+                project,
+            ],
+            "UPDATING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_mr_description(
+        &self,
+        project: &str,
+        iid: u64,
+        description: &str,
+    ) -> Result<()> {
+        self.run_gh(
+            &[
+                "pr",
+                "edit",
+                &iid.to_string(),
+                "--body",
+                description,
+                "-R",
+                project,
+            ],
+            "UPDATING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_mr_labels(
+        &self,
+        project: &str,
+        iid: u64,
+        add_labels: &[String],
+        remove_labels: &[String],
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "pr".into(),
+            "edit".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        for label in add_labels {
+            args.push("--add-label".into());
+            args.push(label.clone());
+        }
+        for label in remove_labels {
+            args.push("--remove-label".into());
+            args.push(label.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "UPDATING PR").await?;
+        Ok(())
+    }
+
+    async fn update_mr_assignees(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "pr".into(),
+            "edit".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        for a in add {
+            args.push("--add-assignee".into());
+            args.push(a.clone());
+        }
+        for a in remove {
+            args.push("--remove-assignee".into());
+            args.push(a.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "UPDATING PR").await?;
+        Ok(())
+    }
+
+    async fn update_mr_reviewers(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "pr".into(),
+            "edit".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        for r in add {
+            args.push("--add-reviewer".into());
+            args.push(r.clone());
+        }
+        for r in remove {
+            args.push("--remove-reviewer".into());
+            args.push(r.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "UPDATING PR").await?;
+        Ok(())
+    }
+
+    async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
+        let val = if milestone == "None" || milestone.is_empty() {
+            ""
+        } else {
+            milestone
+        };
+        self.run_gh(
+            &[
+                "pr",
+                "edit",
+                &iid.to_string(),
+                "--milestone",
+                val,
+                "-R",
+                project,
+            ],
+            "UPDATING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
+        self.run_gh(
+            &[
+                "pr",
+                "edit",
+                &iid.to_string(),
+                "--base",
+                branch,
+                "-R",
+                project,
+            ],
+            "UPDATING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
     // ── Pipelines ──
 
     async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
@@ -712,6 +1253,54 @@ impl Backend for GhBackend {
         Ok(())
     }
 
+    async fn run_pipeline(
+        &self,
+        project: &str,
+        branch: &str,
+        _mr: bool,
+        variables: &[(String, String)],
+        inputs: &[(String, String)],
+        workflow_file: &str,
+    ) -> Result<()> {
+        let mut args: Vec<String> = Vec::new();
+        if !workflow_file.is_empty() {
+            args.push(workflow_file.into());
+        }
+        args.push("-R".into());
+        args.push(project.into());
+        if !branch.is_empty() {
+            args.push("-r".into());
+            args.push(branch.into());
+        }
+        for (k, v) in variables {
+            args.push("-f".into());
+            args.push(format!("{}={}", k, v));
+        }
+        for (k, v) in inputs {
+            args.push("-f".into());
+            args.push(format!("{}={}", k, v));
+        }
+        let mut cmd: Vec<String> = vec!["workflow".into(), "run".into()];
+        cmd.extend(args);
+        let cmd_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&cmd_refs, "RUNNING WORKFLOW").await?;
+        Ok(())
+    }
+
+    async fn download_artifact(
+        &self,
+        project: &str,
+        _ref_name: &str,
+        job_name: &str,
+    ) -> Result<()> {
+        self.run_gh(
+            &["run", "download", "-R", project, "-n", job_name],
+            "DOWNLOADING ARTIFACT",
+        )
+        .await?;
+        Ok(())
+    }
+
     // ── Runners ──
 
     async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>> {
@@ -740,6 +1329,29 @@ impl Backend for GhBackend {
                 active: true,
             })
             .collect())
+    }
+
+    async fn pause_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
+        anyhow::bail!(
+            "GitHub runner management requires a repository path; trait method lacks project parameter"
+        )
+    }
+
+    async fn resume_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
+        anyhow::bail!(
+            "GitHub runner management requires a repository path; trait method lacks project parameter"
+        )
+    }
+
+    async fn update_runner_description(
+        &self,
+        _project: &str,
+        runner_id: u64,
+        description: &str,
+    ) -> Result<()> {
+        anyhow::bail!(
+            "GitHub runner management requires a repository path; trait method lacks project parameter"
+        )
     }
 
     // ── Releases ──
@@ -790,6 +1402,31 @@ impl Backend for GhBackend {
                 assets_link: None,
             })
             .collect())
+    }
+
+    async fn create_release(
+        &self,
+        project: &str,
+        tag: &str,
+        name: &str,
+        description: &str,
+    ) -> Result<()> {
+        self.run_gh(
+            &[
+                "release",
+                "create",
+                tag,
+                "-R",
+                project,
+                "-t",
+                name,
+                "-n",
+                description,
+            ],
+            "CREATING RELEASE",
+        )
+        .await?;
+        Ok(())
     }
 
     async fn update_release(
@@ -969,6 +1606,40 @@ impl Backend for GhBackend {
                 }
             })
             .collect())
+    }
+
+    async fn create_milestone(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        _start_date: Option<&str>,
+        due_date: Option<&str>,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "api".into(),
+            format!("repos/{}/milestones", project),
+            "-f".into(),
+            format!("title={}", title),
+        ];
+        if !description.is_empty() {
+            args.push("-f".into());
+            args.push(format!("description={}", description));
+        }
+        if let Some(due) = due_date {
+            if !due.is_empty() {
+                let iso_due = if due.contains('T') {
+                    due.to_string()
+                } else {
+                    format!("{}T00:00:00Z", due)
+                };
+                args.push("-f".into());
+                args.push(format!("due_on={}", iso_due));
+            }
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "CREATING MILESTONE").await?;
+        Ok(())
     }
 
     async fn update_milestone_state(
@@ -1289,6 +1960,14 @@ impl Backend for GhBackend {
             .into_iter()
             .map(|a| format!("@{}", a.login))
             .collect())
+    }
+
+    // ── Browser ──
+
+    async fn open_in_browser(&self, _project: &str, entity: &str, id: &str) -> Result<()> {
+        self.run_gh(&[entity, "view", id, "--web"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
     }
 
     // ── Raw API ──

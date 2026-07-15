@@ -96,7 +96,7 @@ pub async fn handle_active_tab_key(
                             issue.description.clone().unwrap_or_default(),
                         ));
                         app.edit_menu = Some(crate::app::EditMenu {
-                            title: format!("Edit Issue #{}", issue.iid),
+                            title: format!("Edit Issue #{}", &issue.iid.to_string()),
                             fields,
                             selected_idx: 0,
                             entity_iid: issue.iid,
@@ -132,14 +132,11 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
-                        let args = vec![
-                            "issue".to_string(),
-                            "view".to_string(),
-                            issue.iid.to_string(),
-                            if is_github { "--web" } else { "-w" }.to_string(),
-                        ];
-                        crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = client
+                            .open_in_browser(&project_path, "issue", &issue.iid.to_string())
+                            .await;
                     }
                 }
             }
@@ -148,14 +145,9 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
-                        let args = vec![
-                            "issue".to_string(),
-                            "reopen".to_string(),
-                            issue_iid.to_string(),
-                        ];
-                        crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                        if let Some(client) = &app.gitlab_client {
+                            let _ = client.reopen_issue(&app.project_context, issue_iid).await;
+                        }
                     }
                 }
             }
@@ -295,21 +287,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
-                            let args = if is_github {
-                                vec![
-                                    "pr".to_string(),
-                                    "review".to_string(),
-                                    mr_iid.to_string(),
-                                    "--approve".to_string(),
-                                ]
-                            } else {
-                                vec!["mr".to_string(), "approve".to_string(), mr_iid.to_string()]
-                            };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            if let Some(client) = &app.gitlab_client {
+                                let _ = client.approve_mr(&app.project_context, mr_iid).await;
+                            }
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.merge_mr,
@@ -435,17 +415,15 @@ pub async fn handle_active_tab_key(
                                 mr_iid.to_string(),
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            let client = app.gitlab_client.clone().unwrap();
+                            let project_path = app.project_context.clone();
+                            let _ = client.reopen_mr(&project_path, mr_iid).await;
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.toggle_draft,
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
                             let is_draft = app
                                 .mrs
                                 .items
@@ -455,23 +433,11 @@ pub async fn handle_active_tab_key(
                                 .unwrap_or_else(|| {
                                     mr_title.starts_with("Draft:") || mr_title.starts_with("WIP:")
                                 });
-                            // GitHub uses `gh pr ready <iid>` to mark ready;
-                            // `gh pr edit --ready` is not a valid flag.
-                            let args = if is_github && is_draft {
-                                vec!["pr".to_string(), "ready".to_string(), mr_iid.to_string()]
-                            } else {
-                                let action = if is_draft { "--ready" } else { "--draft" };
-                                let entity = if is_github { "pr" } else { "mr" };
-                                let sub = if is_github { "edit" } else { "update" };
-                                vec![
-                                    entity.to_string(),
-                                    sub.to_string(),
-                                    mr_iid.to_string(),
-                                    action.to_string(),
-                                ]
-                            };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            if let Some(client) = &app.gitlab_client {
+                                let _ = client
+                                    .toggle_mr_draft(&app.project_context, mr_iid, is_draft)
+                                    .await;
+                            }
                             if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
                                 item.draft = !is_draft;
                             }
@@ -507,16 +473,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
-                            let args = vec![
-                                if is_github { "pr" } else { "mr" }.to_string(),
-                                "reopen".to_string(),
-                                mr_iid.to_string(),
-                            ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            if let Some(client) = &app.gitlab_client {
+                                let _ = client.reopen_mr(&app.project_context, mr_iid).await;
+                            }
                         }
                         _ => handled = false,
                     }
@@ -556,14 +515,13 @@ pub async fn handle_active_tab_key(
                     &key_event,
                 )
             {
-                let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                let program = if is_github { "gh" } else { "glab" };
-                let args = if is_github {
-                    vec!["workflow".to_string(), "run".to_string()]
-                } else {
-                    vec!["ci".to_string(), "run".to_string(), "--mr".to_string()]
-                };
-                crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                if let Some(client) = &app.gitlab_client {
+                    let branch = crate::git_helpers::get_current_branch()
+                        .unwrap_or_else(|| "main".to_string());
+                    let _ = client
+                        .run_pipeline(&app.project_context, &branch, false, &vec![], &vec![], "")
+                        .await;
+                }
             } else if let Some(selected_idx) = app.pipelines.state.selected() {
                 if let Some(item) = app.filtered_pipelines().get(selected_idx) {
                     let pipe_id = item.id();
@@ -687,8 +645,15 @@ pub async fn handle_active_tab_key(
                                 pipe_id.to_string(),
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            crate::run_cli(
+                                "OPENING IN BROWSER",
+                                program,
+                                &args,
+                                terminal,
+                                tx.clone(),
+                                app.active_tab,
+                            )
+                            .await;
                         }
                         _ => handled = false,
                     }
@@ -890,17 +855,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
-                            let args = if is_github {
-                                vec![
-                                    "run".to_string(),
-                                    "download".to_string(),
-                                    "--pattern".to_string(),
-                                    job_name,
-                                ]
-                            } else {
+                            if let Some(client) = &app.gitlab_client {
                                 let ref_name = app
                                     .active_pipeline_id
                                     .and_then(|pipe_id| {
@@ -911,15 +866,10 @@ pub async fn handle_active_tab_key(
                                             .map(|p| p.ref_branch().to_string())
                                     })
                                     .unwrap_or_else(|| "master".to_string());
-                                vec![
-                                    "job".to_string(),
-                                    "artifact".to_string(),
-                                    ref_name,
-                                    job_name,
-                                ]
-                            };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                                let _ = client
+                                    .download_artifact(&app.project_context, &ref_name, &job_name)
+                                    .await;
+                            }
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.open_in_browser,
@@ -953,8 +903,15 @@ pub async fn handle_active_tab_key(
                                     if is_github { "--web" } else { "-w" }.to_string(),
                                 ]
                             };
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            crate::run_cli(
+                                "OPENING IN BROWSER",
+                                program,
+                                &args,
+                                terminal,
+                                tx.clone(),
+                                app.active_tab,
+                            )
+                            .await;
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace_editor,
@@ -1042,19 +999,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
-                            let args: Vec<String> = vec![
-                                "api".into(),
-                                "-X".into(),
-                                "PUT".into(),
-                                format!("runners/{}", runner_id),
-                                "-f".into(),
-                                "paused=true".into(),
-                            ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            if let Some(client) = &app.gitlab_client {
+                                let _ = client.pause_runner(&app.project_context, runner_id).await;
+                            }
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
@@ -1067,19 +1014,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
-                            let args: Vec<String> = vec![
-                                "api".into(),
-                                "-X".into(),
-                                "PUT".into(),
-                                format!("runners/{}", runner_id),
-                                "-f".into(),
-                                "paused=false".into(),
-                            ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            if let Some(client) = &app.gitlab_client {
+                                let _ = client.resume_runner(&app.project_context, runner_id).await;
+                            }
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
@@ -1169,14 +1106,11 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
-                        let args = vec![
-                            "release".to_string(),
-                            "view".to_string(),
-                            release.tag_name.clone(),
-                            if is_github { "--web" } else { "-w" }.to_string(),
-                        ];
-                        crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = client
+                            .open_in_browser(&project_path, "release", release.tag_name.as_str())
+                            .await;
                     }
                 }
             }
@@ -1246,8 +1180,15 @@ pub async fn handle_active_tab_key(
                                 item.target_iid.to_string(),
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ];
-                            crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab)
-                                .await;
+                            crate::run_cli(
+                                "OPENING IN BROWSER",
+                                program,
+                                &args,
+                                terminal,
+                                tx.clone(),
+                                app.active_tab,
+                            )
+                            .await;
                         }
                         _ => handled = false,
                     }
@@ -1421,7 +1362,15 @@ pub async fn handle_active_tab_key(
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ]
                         };
-                        crate::run_cli(program, &args, terminal, tx.clone(), app.active_tab).await;
+                        crate::run_cli(
+                            "OPENING IN BROWSER",
+                            program,
+                            &args,
+                            terminal,
+                            tx.clone(),
+                            app.active_tab,
+                        )
+                        .await;
                     }
                 }
             }

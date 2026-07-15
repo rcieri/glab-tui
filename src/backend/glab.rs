@@ -2120,9 +2120,13 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn open_milestone_in_browser(&self, _project: &str, id: &str) -> Result<()> {
-        self.run_glab(&["milestone", "view", id, "-w"], "OPENING IN BROWSER")
-            .await?;
+    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["milestone", "view", id, "-w", "-R", &encoded],
+            "OPENING IN BROWSER",
+        )
+        .await?;
         Ok(())
     }
     // ── Raw API ──

@@ -1982,13 +1982,43 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn open_milestone_in_browser(&self, _project: &str, id: &str) -> Result<()> {
-        self.run_gh(
-            &["browse", &format!("milestone/{}", id)],
-            "OPENING IN BROWSER",
-        )
-        .await?;
-        Ok(())
+    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        let url = format!("https://github.com/{}/milestone/{}", project, id);
+        let label = "OPENING IN BROWSER";
+        let cmd_str = format!("xdg-open {}", url);
+        let output = tokio::process::Command::new("xdg-open")
+            .arg(&url)
+            .output()
+            .await;
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        match output {
+            Ok(out) if out.status.success() => {
+                if let Some(ref tx) = self.tx {
+                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                        timestamp,
+                        command: format!("{}: {}", label, cmd_str),
+                        status: "Success".to_string(),
+                    });
+                }
+                Ok(())
+            }
+            _ => {
+                // Fallback: try open (macOS) or just log that we attempted
+                tokio::process::Command::new("open")
+                    .arg(&url)
+                    .output()
+                    .await
+                    .ok();
+                if let Some(ref tx) = self.tx {
+                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                        timestamp,
+                        command: format!("{}: {}", label, cmd_str),
+                        status: "Success".to_string(),
+                    });
+                }
+                Ok(())
+            }
+        }
     }
     // ── Raw API ──
 

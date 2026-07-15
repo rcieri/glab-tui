@@ -30,6 +30,7 @@ impl GhBackend {
 
         let output = Command::new("gh")
             .args(args)
+            .env("CLICOLOR_FORCE", "1")
             .output()
             .await
             .with_context(|| format!("Failed to execute: gh {}", args.join(" ")))?;
@@ -1310,6 +1311,7 @@ impl Backend for GhBackend {
         let label = desc.to_uppercase();
 
         let mut cmd = Command::new("gh");
+        cmd.env("CLICOLOR_FORCE", "1");
         cmd.arg("api");
         if method != "GET" {
             cmd.arg("-X");

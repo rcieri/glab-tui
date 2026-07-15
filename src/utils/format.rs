@@ -478,177 +478,178 @@ fn apply_sgr(params: &[String], current: Style, theme: &crate::config::Theme) ->
 }
 
 fn format_plain_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut pos = 0;
-    let chars: Vec<char> = line.chars().collect();
-
-    if let Some(end) = try_parse_timestamp(&chars) {
-        spans.push(Span::styled(
-            line[..end].to_string(),
-            Style::default()
-                .fg(theme.text_muted)
-                .add_modifier(Modifier::ITALIC),
-        ));
-        pos = end;
-    }
-
-    if let Some((start, end)) = try_parse_log_level(&chars, pos) {
-        // push any gap text before the log level
-        if start > pos {
-            spans.push(Span::styled(
-                line[pos..start].to_string(),
-                Style::default().fg(theme.text_normal),
-            ));
-        }
-        let level_text = line[start..end].to_string();
-        let lower = level_text.trim().to_lowercase();
-        let level_upper = lower.trim_start_matches(|c: char| !c.is_alphanumeric());
-        let (lvl_style, offset) = {
-            let lvl = level_upper;
-            let style = if lvl.contains("error") || lvl.contains("fatal") || lvl.contains("panic") {
-                Style::default().fg(theme.red).add_modifier(Modifier::BOLD)
-            } else if lvl.contains("warn") {
-                Style::default().fg(theme.yellow)
-            } else if lvl.contains("info") {
-                Style::default().fg(theme.blue)
-            } else if lvl.contains("debug") {
-                Style::default().fg(theme.purple)
-            } else if lvl.contains("trace") {
-                Style::default().fg(theme.text_muted)
-            } else {
-                Style::default()
-            };
-            (style, 0)
-        };
-        if offset > 0 {
-            spans.push(Span::styled(
-                level_text[..offset].to_string(),
-                Style::default().fg(theme.text_normal),
-            ));
-        }
-        spans.push(Span::styled(level_text[offset..].to_string(), lvl_style));
-        pos = end;
-    }
-
-    let remaining = &line[pos..];
-    if !remaining.is_empty() {
-        spans.push(Span::styled(
-            remaining.to_string(),
-            keyword_style(remaining, theme),
-        ));
-    }
-    spans
-}
-
-fn try_parse_timestamp(chars: &[char]) -> Option<usize> {
-    // ISO 8601: YYYY-MM-DDTHH:MM:SS or YYYY-MM-DD HH:MM:SS
-    if chars.len() >= 19
-        && chars[0].is_ascii_digit()
-        && chars[4] == '-'
-        && chars[7] == '-'
-        && (chars[10] == 'T' || chars[10] == ' ')
-        && chars[13] == ':'
-        && chars[16] == ':'
-    {
-        let mut end = 19;
-        // optional .fff milliseconds
-        if chars.len() > end && chars[end] == '.' {
-            end += 1;
-            while end < chars.len() && chars[end].is_ascii_digit() {
-                end += 1;
-            }
-        }
-        return Some(end);
-    }
-    // Time: HH:MM:SS
-    if chars.len() >= 8 && chars[2] == ':' && chars[5] == ':' {
-        let mut end = 8;
-        if chars.len() > end && chars[end] == '.' {
-            end += 1;
-            while end < chars.len() && chars[end].is_ascii_digit() {
-                end += 1;
-            }
-        }
-        return Some(end);
-    }
-    None
-}
-
-fn try_parse_log_level(chars: &[char], start: usize) -> Option<(usize, usize)> {
-    if start >= chars.len() {
-        return None;
-    }
-    let slice: String = chars[start..].iter().collect();
-    let lower = slice.to_lowercase();
-    let level_patterns: &[(&str, &str)] = &[
-        ("error", "ERROR"),
-        ("warn", "WARN"),
-        ("warning", "WARNING"),
-        ("info", "INFO"),
-        ("debug", "DEBUG"),
-        ("trace", "TRACE"),
-        ("fatal", "FATAL"),
-        ("panic", "PANIC"),
-    ];
-    for (pat, _display) in level_patterns {
-        // Match pattern with brackets like [ERROR] or (ERROR)
-        for bracket_open in &["[", "(", " "] {
-            let prefix = if *bracket_open == " " {
-                " "
-            } else {
-                *bracket_open
-            };
-            let prefix_len = prefix.len();
-            if chars.len() > start + prefix_len + pat.len() {
-                let check: String = chars[start + prefix_len..].iter().take(pat.len()).collect();
-                if check.to_lowercase() == *pat {
-                    let prefix_match: String = chars[start..start + prefix_len].iter().collect();
-                    if prefix_match == prefix || prefix_match == *bracket_open {
-                        let lvl_end = start + prefix_len + pat.len();
-                        let bracket_close = if *bracket_open == "[" {
-                            "]"
-                        } else if *bracket_open == "(" {
-                            ")"
-                        } else {
-                            ""
-                        };
-                        let mut end = lvl_end;
-                        if !bracket_close.is_empty()
-                            && chars.len() > end
-                            && chars[end].to_string() == bracket_close
-                        {
-                            end += 1;
-                        }
-                        if chars.len() > end && chars[end] == ':' {
-                            end += 1;
-                        }
-                        return Some((start, end));
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn keyword_style(line: &str, theme: &crate::config::Theme) -> Style {
-    let mut style = Style::default().fg(theme.text_normal);
     let lower = line.to_lowercase();
-    if lower.contains("error") || lower.contains("failed") || lower.contains("panic") {
-        style = style.fg(theme.red).add_modifier(Modifier::BOLD);
-    } else if lower.contains("warning") || lower.contains("warn") {
-        style = style.fg(theme.yellow);
-    } else if lower.contains("success")
+
+    // Special handling for GitHub Actions section markers
+    if line.starts_with("##[group]") {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
+        )];
+    }
+    if line.starts_with("##[endgroup]") {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.text_muted),
+        )];
+    }
+    if line.starts_with("##[command]") {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.purple),
+        )];
+    }
+    if line.starts_with("##[debug]") {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.text_muted),
+        )];
+    }
+    if line.starts_with("##[warning]") {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.yellow),
+        )];
+    }
+    if line.starts_with("##[error]") {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+        )];
+    }
+    if line.starts_with("##[section]") {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.blue),
+        )];
+    }
+
+    // Whole-line keyword classification (these color the entire line)
+    let style = classify_line(line, lower.as_str(), theme);
+    vec![Span::styled(line.to_string(), style)]
+}
+
+fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style {
+    // Error indicators (red bold)
+    if lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("panic")
+        || lower.contains("err!")
+        || lower.contains("fail")
+        || lower.contains("fatal")
+        || lower.contains("aborted")
+        || lower.contains("terminated")
+        || lower.contains("traceback")
+        || lower.contains("exception")
+        || lower.contains("unresolved")
+        || lower.contains("unstaged")
+        || lower.starts_with("error[")
+        || lower.starts_with("error:")
+        || lower.contains("error code")
+        || lower.contains("exit code")
+        || lower.contains("exit status")
+        || lower.contains("process completed with")
+    {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    // Rust compiler errors and backtraces
+    if lower.starts_with("thread '") && lower.contains("panicked") {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("error[") || lower.starts_with("  --> ") {
+        return Style::default().fg(theme.red);
+    }
+
+    // Warning indicators (yellow)
+    if lower.contains("warning")
+        || lower.contains("warn")
+        || lower.contains("deprecated")
+        || lower.contains("notice")
+        || lower.starts_with("warning[")
+        || lower.starts_with("warning:")
+    {
+        return Style::default().fg(theme.yellow);
+    }
+
+    // Success indicators (green)
+    if lower.contains("success")
         || lower.contains("successfully")
         || lower.contains("completed")
+        || lower.contains("finished")
+        || lower.starts_with("pass")
+        || lower.contains(" passed ")
+        || lower.starts_with("ok ")
+        || lower.starts_with("✓")
+        || lower.contains("built")
+        || lower.starts_with("--> using cache")
+        || lower.starts_with("dependency successfully")
     {
-        style = style.fg(theme.green);
-    } else if line.trim_start().starts_with('$') {
-        style = style.fg(theme.purple).add_modifier(Modifier::BOLD);
-    } else if lower.contains("info") {
-        style = style.fg(theme.blue);
+        return Style::default().fg(theme.green);
     }
-    style
+
+    // Shell commands (purple bold)
+    if line.trim_start().starts_with('$') || line.trim_start().starts_with('>') {
+        return Style::default()
+            .fg(theme.purple)
+            .add_modifier(Modifier::BOLD);
+    }
+    // GitLab CI section markers
+    if lower.contains("section_start") || lower.contains("section_end") {
+        return Style::default().fg(theme.blue);
+    }
+
+    // Info / informational (blue)
+    if lower.contains("info")
+        || lower.contains("running")
+        || lower.contains("starting")
+        || lower.contains("building")
+        || lower.contains("compiling")
+        || lower.contains("linking")
+        || lower.contains("installing")
+        || lower.contains("fetching")
+        || lower.contains("cloning")
+        || lower.contains("checking out")
+        || lower.contains("downloading")
+        || lower.contains("uploading")
+        || lower.contains("pushing")
+        || lower.contains("pulling")
+        || lower.contains("syncing")
+        || lower.contains("processing")
+        || lower.contains("generating")
+        || lower.contains("resolving")
+    {
+        return Style::default().fg(theme.blue);
+    }
+
+    // Debug / verbose (dim purple)
+    if lower.contains("debug")
+        || lower.contains("trace")
+        || lower.contains("verbose")
+        || lower.starts_with("+ ")
+        || lower.starts_with("++ ")
+    {
+        return Style::default().fg(theme.purple);
+    }
+
+    // Test output patterns
+    if lower.starts_with("not ok") {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("ok ") && !lower.contains("not ok") {
+        return Style::default().fg(theme.green);
+    }
+
+    // Docker patterns
+    if lower.starts_with("step ")
+        || lower.starts_with("--->")
+        || lower.starts_with("successfully tagged")
+        || lower.starts_with("successfully built")
+    {
+        return Style::default().fg(theme.blue);
+    }
+
+    // Default
+    Style::default().fg(theme.text_normal)
 }
 
 #[cfg(test)]

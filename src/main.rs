@@ -1,5 +1,4 @@
 #![allow(clippy::all)]
-#![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_assignments)]
 
@@ -1578,104 +1577,28 @@ async fn main() -> Result<()> {
                                     crate::app::TextInputAction::CreateMilestone => {
                                         if !value.trim().is_empty() {
                                             let title = value.trim().to_string();
-                                            let is_github = app
-                                                .gitlab_client
-                                                .as_ref()
-                                                .map(|c| c.is_github)
-                                                .unwrap_or(false);
-                                            let project_context = app.project_context.clone();
-                                            let encoded_path = project_context.replace("/", "%2F");
+                                            let client = app.gitlab_client.clone().unwrap();
+                                            let project = app.project_context.clone();
                                             let tx = events.sender();
-                                            let _ = tx.send(Event::CommandStarted(format!(
-                                                "Creating milestone: {}",
-                                                title
-                                            )));
+                                            let tab = app.active_tab;
                                             tokio::spawn(async move {
-                                                if is_github {
-                                                    let gh_repo = encoded_path.replace("%2F", "/");
-                                                    let cmd = tokio::process::Command::new("gh")
-                                                        .args([
-                                                            "api",
-                                                            &format!(
-                                                                "repos/{}/milestones",
-                                                                gh_repo
-                                                            ),
-                                                            "-f",
-                                                            &format!("title={}", title),
-                                                        ])
-                                                        .output()
-                                                        .await;
-                                                    match cmd {
-                                                        Ok(out) if out.status.success() => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::Milestones,
-                                                                    Ok(()),
-                                                                ));
-                                                        }
-                                                        Ok(out) => {
-                                                            let err = String::from_utf8_lossy(
-                                                                &out.stderr,
-                                                            )
-                                                            .trim()
-                                                            .to_string();
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::Milestones,
-                                                                    Err(format!("Failed: {}", err)),
-                                                                ));
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::Milestones,
-                                                                    Err(format!("Error: {}", e)),
-                                                                ));
-                                                        }
+                                                match client
+                                                    .create_milestone(
+                                                        &project, &title, "", None, None,
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(_) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            tab,
+                                                            Ok(()),
+                                                        ));
                                                     }
-                                                } else {
-                                                    let endpoint = format!(
-                                                        "/projects/{}/milestones",
-                                                        encoded_path
-                                                    );
-                                                    let cmd = tokio::process::Command::new("glab")
-                                                        .args([
-                                                            "api",
-                                                            "-X",
-                                                            "POST",
-                                                            &endpoint,
-                                                            "-f",
-                                                            &format!("title={}", title),
-                                                        ])
-                                                        .output()
-                                                        .await;
-                                                    match cmd {
-                                                        Ok(out) if out.status.success() => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::Milestones,
-                                                                    Ok(()),
-                                                                ));
-                                                        }
-                                                        Ok(out) => {
-                                                            let err = String::from_utf8_lossy(
-                                                                &out.stderr,
-                                                            )
-                                                            .trim()
-                                                            .to_string();
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::Milestones,
-                                                                    Err(format!("Failed: {}", err)),
-                                                                ));
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::Milestones,
-                                                                    Err(format!("Error: {}", e)),
-                                                                ));
-                                                        }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            tab,
+                                                            Err(e.to_string()),
+                                                        ));
                                                     }
                                                 }
                                             });
@@ -4094,127 +4017,46 @@ async fn main() -> Result<()> {
                                             .map(|(_, v)| v.trim().to_string())
                                             .unwrap_or_default();
 
-                                        let is_github = app
-                                            .gitlab_client
-                                            .as_ref()
-                                            .map_or(false, |c| c.is_github);
-                                        let program = if is_github { "gh" } else { "glab" };
-                                        let is_github = is_github;
-                                        let project_context = app.project_context.clone();
-                                        let encoded_path = project_context.replace("/", "%2F");
-                                        let tx = events.sender();
-                                        let _ = tx.send(Event::CommandStarted(format!(
-                                            "Creating milestone: {}",
-                                            title
-                                        )));
                                         app.edit_menu = None;
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let tab = app.active_tab;
                                         tokio::spawn(async move {
-                                            if is_github {
-                                                let gh_repo = encoded_path.replace("%2F", "/");
-                                                let due_on = if !due_date.is_empty()
-                                                    && due_date != "YYYY-MM-DD"
-                                                {
-                                                    format!("{}T00:00:00Z", due_date.trim())
-                                                } else {
-                                                    "".to_string()
-                                                };
-                                                let mut args = vec![
-                                                    "api".to_string(),
-                                                    format!("repos/{}/milestones", gh_repo),
-                                                    "-f".to_string(),
-                                                    format!("title={}", title),
-                                                ];
-                                                if !description.is_empty() {
-                                                    args.push("-f".to_string());
-                                                    args.push(format!(
-                                                        "description={}",
-                                                        description
-                                                    ));
-                                                }
-                                                if !due_on.is_empty() {
-                                                    args.push("-f".to_string());
-                                                    args.push(format!("due_on={}", due_on));
-                                                }
-                                                let cmd = tokio::process::Command::new("gh")
-                                                    .args(&args)
-                                                    .output()
-                                                    .await;
-                                                match cmd {
-                                                    Ok(out) if out.status.success() => {
-                                                        let _ = tx.send(Event::MilestoneUpdated);
-                                                    }
-                                                    Ok(out) => {
-                                                        let err =
-                                                            String::from_utf8_lossy(&out.stderr)
-                                                                .trim()
-                                                                .to_string();
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            app::Tab::Milestones,
-                                                            Err(format!("Failed: {}", err)),
-                                                        ));
-                                                    }
-                                                    Err(e) => {
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            app::Tab::Milestones,
-                                                            Err(format!("Error: {}", e)),
-                                                        ));
-                                                    }
-                                                }
+                                            let sd = if start_date.is_empty()
+                                                || start_date == "YYYY-MM-DD"
+                                            {
+                                                None
                                             } else {
-                                                let endpoint = format!(
-                                                    "/projects/{}/milestones",
-                                                    encoded_path
-                                                );
-                                                let mut args = vec![
-                                                    "api".to_string(),
-                                                    "-X".to_string(),
-                                                    "POST".to_string(),
-                                                    endpoint,
-                                                    "-f".to_string(),
-                                                    format!("title={}", title),
-                                                ];
-                                                if !description.is_empty() {
-                                                    args.push("-f".to_string());
-                                                    args.push(format!(
-                                                        "description={}",
-                                                        description
+                                                Some(start_date.as_str())
+                                            };
+                                            let dd = if due_date.is_empty()
+                                                || due_date == "YYYY-MM-DD"
+                                            {
+                                                None
+                                            } else {
+                                                Some(due_date.as_str())
+                                            };
+                                            match client
+                                                .create_milestone(
+                                                    &project,
+                                                    &title,
+                                                    &description,
+                                                    sd,
+                                                    dd,
+                                                )
+                                                .await
+                                            {
+                                                Ok(_) => {
+                                                    let _ = tx
+                                                        .send(Event::CommandCompleted(tab, Ok(())));
+                                                    let _ = tx.send(Event::MilestoneUpdated);
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
                                                     ));
-                                                }
-                                                if !start_date.is_empty()
-                                                    && start_date != "YYYY-MM-DD"
-                                                {
-                                                    args.push("-f".to_string());
-                                                    args.push(format!("start_date={}", start_date));
-                                                }
-                                                if !due_date.is_empty() && due_date != "YYYY-MM-DD"
-                                                {
-                                                    args.push("-f".to_string());
-                                                    args.push(format!("due_date={}", due_date));
-                                                }
-                                                let cmd = tokio::process::Command::new("glab")
-                                                    .args(&args)
-                                                    .output()
-                                                    .await;
-                                                match cmd {
-                                                    Ok(out) if out.status.success() => {
-                                                        let _ = tx.send(Event::MilestoneUpdated);
-                                                    }
-                                                    Ok(out) => {
-                                                        let err =
-                                                            String::from_utf8_lossy(&out.stderr)
-                                                                .trim()
-                                                                .to_string();
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            app::Tab::Milestones,
-                                                            Err(format!("Failed: {}", err)),
-                                                        ));
-                                                    }
-                                                    Err(e) => {
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            app::Tab::Milestones,
-                                                            Err(format!("Error: {}", e)),
-                                                        ));
-                                                    }
                                                 }
                                             }
                                         });

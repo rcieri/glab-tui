@@ -15,6 +15,19 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 
+fn strip_ats(s: &str) -> String {
+    if s.is_empty() {
+        return s.to_string();
+    }
+    s.split(',')
+        .map(|a| a.trim().trim_start_matches('@').to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+fn normalize_labels(s: &str) -> String {
+    s.replace(", ", ",")
+}
+
 pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -303,11 +316,11 @@ impl Backend for GlabBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(labels.into());
+            args.push(normalize_labels(labels).into());
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(assignees.into());
+            args.push(strip_ats(assignees).into());
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -955,15 +968,15 @@ impl Backend for GlabBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(labels.into());
+            args.push(normalize_labels(labels).into());
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(assignees.into());
+            args.push(strip_ats(assignees).into());
         }
         if !reviewers.is_empty() {
             args.push("--reviewer".into());
-            args.push(reviewers.into());
+            args.push(strip_ats(reviewers).into());
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());

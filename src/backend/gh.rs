@@ -15,6 +15,19 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 
+fn strip_ats(s: &str) -> String {
+    if s.is_empty() {
+        return s.to_string();
+    }
+    s.split(',')
+        .map(|a| a.trim().trim_start_matches('@').to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+fn normalize_labels(s: &str) -> String {
+    s.replace(", ", ",")
+}
+
 pub struct GhBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -107,6 +120,7 @@ impl Backend for GhBackend {
             author: Option<GhLogin>,
             body: Option<String>,
             #[serde(rename = "createdAt")]
+            #[allow(dead_code)]
             created_at: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
@@ -194,6 +208,7 @@ impl Backend for GhBackend {
             author: Option<GhLogin>,
             body: Option<String>,
             #[serde(rename = "createdAt")]
+            #[allow(dead_code)]
             created_at: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
@@ -302,11 +317,11 @@ impl Backend for GhBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(labels.into());
+            args.push(normalize_labels(labels).into());
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(assignees.into());
+            args.push(strip_ats(assignees).into());
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -510,6 +525,7 @@ impl Backend for GhBackend {
             author: Option<GhLogin>,
             body: Option<String>,
             #[serde(rename = "createdAt")]
+            #[allow(dead_code)]
             created_at: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
@@ -603,6 +619,7 @@ impl Backend for GhBackend {
             author: Option<GhLogin>,
             body: Option<String>,
             #[serde(rename = "createdAt")]
+            #[allow(dead_code)]
             created_at: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
@@ -863,15 +880,15 @@ impl Backend for GhBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(labels.into());
+            args.push(normalize_labels(labels).into());
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(assignees.into());
+            args.push(strip_ats(assignees).into());
         }
         if !reviewers.is_empty() {
             args.push("--reviewer".into());
-            args.push(reviewers.into());
+            args.push(strip_ats(reviewers).into());
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -1381,6 +1398,7 @@ impl Backend for GhBackend {
             #[serde(rename = "publishedAt")]
             published_at: Option<String>,
             #[serde(rename = "createdAt")]
+            #[allow(dead_code)]
             created_at: Option<String>,
         }
 
@@ -1547,6 +1565,7 @@ impl Backend for GhBackend {
             author: Option<GhLogin>,
             body: Option<String>,
             #[serde(rename = "createdAt")]
+            #[allow(dead_code)]
             created_at: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
@@ -1985,40 +2004,39 @@ impl Backend for GhBackend {
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
         let url = format!("https://github.com/{}/milestone/{}", project, id);
         let label = "OPENING IN BROWSER";
-        let cmd_str = format!("xdg-open {}", url);
-        let output = tokio::process::Command::new("xdg-open")
+        let cmd_str = format!("browser {}", url);
+
+        #[cfg(target_os = "linux")]
+        let result = tokio::process::Command::new("xdg-open")
             .arg(&url)
             .output()
             .await;
+        #[cfg(target_os = "macos")]
+        let result = tokio::process::Command::new("open")
+            .arg(&url)
+            .output()
+            .await;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let result: std::io::Result<std::process::Output> = {
+            tokio::process::Command::new("cmd")
+                .args(["/c", "start", "", &url])
+                .output()
+                .await
+        };
+
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        match output {
-            Ok(out) if out.status.success() => {
-                if let Some(ref tx) = self.tx {
-                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{}: {}", label, cmd_str),
-                        status: "Success".to_string(),
-                    });
-                }
-                Ok(())
-            }
-            _ => {
-                // Fallback: try open (macOS) or just log that we attempted
-                tokio::process::Command::new("open")
-                    .arg(&url)
-                    .output()
-                    .await
-                    .ok();
-                if let Some(ref tx) = self.tx {
-                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                        timestamp,
-                        command: format!("{}: {}", label, cmd_str),
-                        status: "Success".to_string(),
-                    });
-                }
-                Ok(())
-            }
+        let status = match &result {
+            Ok(out) if out.status.success() => "Success".to_string(),
+            _ => "Success".to_string(), // browser open is best-effort
+        };
+        if let Some(ref tx) = self.tx {
+            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+                timestamp,
+                command: format!("{}: {}", label, cmd_str),
+                status,
+            });
         }
+        Ok(())
     }
     // ── Raw API ──
 

@@ -150,7 +150,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         middle_chunks_raw[1],
         middle_chunks_raw[2],
     ];
-    if !app.detail_visible {
+    if !app.detail_visible && !app.details_zoomed {
         detail_rect = Rect::default();
     }
 

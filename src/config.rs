@@ -553,6 +553,8 @@ pub struct KeybindingJobs {
     pub view_trace_editor: String,
     #[serde(default)]
     pub view_trace: String,
+    #[serde(default)]
+    pub toggle_trace_wrap: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -665,6 +667,7 @@ keybind_defaults! {
     def_open_in_browser_job = "o",
     def_view_trace_editor = "e",
     def_view_trace = "Enter",
+    def_toggle_trace_wrap = "w",
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
@@ -768,6 +771,7 @@ impl Default for KeybindingJobs {
             open_in_browser: def_open_in_browser_job(),
             view_trace_editor: def_view_trace_editor(),
             view_trace: def_view_trace(),
+            toggle_trace_wrap: def_toggle_trace_wrap(),
         }
     }
 }
@@ -1004,6 +1008,7 @@ download_artifact = "d"
 open_in_browser = "o"
 view_trace_editor = "e"
 view_trace = "Enter"
+toggle_trace_wrap = "w"
 
 [keybindings.runners]
 pause = "p"

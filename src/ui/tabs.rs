@@ -1885,6 +1885,16 @@ pub(crate) fn render_tab_jobs(
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         let mut state = app.jobs.state.clone();
+        let filtered_count = filtered_jobs.len();
+        if filtered_count > 0 {
+            if let Some(sel) = state.selected() {
+                if sel >= filtered_count {
+                    state.select(Some(filtered_count.saturating_sub(1)));
+                }
+            }
+        } else {
+            state.select(None);
+        }
         f.render_stateful_widget(table, content_area, &mut state);
         app.jobs.state = state;
 
@@ -1909,8 +1919,17 @@ pub(crate) fn render_tab_jobs(
         } else if let Some(trace) = &app.job_trace {
             let width = detail_rect.width.saturating_sub(2) as usize;
             let height = detail_rect.height.saturating_sub(2) as usize;
-            let stripped_trace = crate::utils::format::strip_ansi_escapes(trace);
-            let total_lines = super::diff::count_wrapped_lines(&stripped_trace, width);
+
+            let formatted_lines =
+                crate::utils::format::parse_ansi_trace(trace, &THEME.read().unwrap());
+
+            let total_lines = if app.job_trace_wrap {
+                let stripped = crate::utils::format::strip_ansi_escapes(trace);
+                super::diff::count_wrapped_lines(&stripped, width)
+            } else {
+                formatted_lines.len()
+            };
+
             let max_scroll = total_lines.saturating_sub(height) as u16;
 
             if app.job_trace_needs_scroll_to_bottom {
@@ -1927,6 +1946,12 @@ pub(crate) fn render_tab_jobs(
                 String::new()
             };
 
+            let help_text = if app.job_trace_wrap {
+                " Esc: Back | Enter: Zoom | j/k: Scroll | w: No-wrap "
+            } else {
+                " Esc: Back | Enter: Zoom | j/k: Scroll | w: Wrap "
+            };
+
             let preview_block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!(" Details / Trace{} ", title_suffix))
@@ -1937,23 +1962,22 @@ pub(crate) fn render_tab_jobs(
                 )
                 .title_bottom(
                     ratatui::text::Line::from(vec![Span::styled(
-                        " Esc: Back | Enter: Zoom | j/k: Scroll ",
+                        help_text,
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     )])
                     .alignment(Alignment::Right),
                 )
                 .border_style(Style::default().fg(THEME.read().unwrap().border));
 
-            let formatted_lines =
-                crate::utils::format::format_job_trace(trace, &THEME.read().unwrap());
+            let mut paragraph = Paragraph::new(formatted_lines)
+                .block(preview_block)
+                .scroll((app.detail_scroll, 0));
 
-            f.render_widget(
-                Paragraph::new(formatted_lines)
-                    .block(preview_block)
-                    .wrap(ratatui::widgets::Wrap { trim: false })
-                    .scroll((app.detail_scroll, 0)),
-                detail_rect,
-            );
+            if app.job_trace_wrap {
+                paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
+            }
+
+            f.render_widget(paragraph, detail_rect);
         } else {
             let preview_block = Block::default()
                 .borders(Borders::ALL)

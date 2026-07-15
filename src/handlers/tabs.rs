@@ -934,6 +934,13 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.toggle_trace_wrap,
+                            key_event,
+                        ) =>
+                        {
+                            app.job_trace_wrap = !app.job_trace_wrap;
+                        }
                         _ => handled = false,
                     }
                 } else {

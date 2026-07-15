@@ -291,30 +291,413 @@ pub fn strip_ansi_escapes(s: &str) -> String {
     result
 }
 
-pub fn format_job_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'static>> {
-    let stripped = strip_ansi_escapes(trace);
-    stripped
+pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'static>> {
+    trace
         .lines()
-        .map(|line| {
-            let mut style = Style::default().fg(theme.text_normal);
-            let lower = line.to_lowercase();
-            if lower.contains("error") || lower.contains("failed") || lower.contains("panic") {
-                style = style.fg(theme.red).add_modifier(Modifier::BOLD);
-            } else if lower.contains("warning") || lower.contains("warn") {
-                style = style.fg(theme.yellow);
-            } else if lower.contains("success")
-                || lower.contains("successfully")
-                || lower.contains("completed")
-            {
-                style = style.fg(theme.green);
-            } else if line.trim_start().starts_with('$') {
-                style = style.fg(theme.purple).add_modifier(Modifier::BOLD);
-            } else if lower.contains("info") {
-                style = style.fg(theme.blue);
+        .map(|raw_line| {
+            let (prefix, content) = split_gh_prefix(raw_line);
+
+            let content_spans = if content.contains('\x1b') {
+                parse_ansi_line(content, theme)
+            } else {
+                format_plain_line(content, theme)
+            };
+
+            if let Some(p) = prefix {
+                let mut spans = vec![Span::styled(
+                    p.to_string(),
+                    Style::default().fg(theme.text_muted),
+                )];
+                spans.extend(content_spans);
+                Line::from(spans)
+            } else {
+                Line::from(content_spans)
             }
-            Line::from(Span::styled(line.to_string(), style))
         })
         .collect()
+}
+
+/// Strips the GitHub Actions log prefix `<job_name>\t<step_name>\t` if present.
+/// Returns `(Some(prefix), content)` or `(None, whole_line)`.
+fn split_gh_prefix(line: &str) -> (Option<&str>, &str) {
+    if let Some(first_tab) = line.find('\t') {
+        if let Some(second_tab) = line[first_tab + 1..].find('\t') {
+            let prefix_end = first_tab + 1 + second_tab + 1;
+            return (Some(&line[..prefix_end]), &line[prefix_end..]);
+        }
+    }
+    (None, line)
+}
+
+fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current_style = Style::default().fg(theme.text_normal);
+    let mut current_text = String::new();
+    let bytes: Vec<u8> = line.bytes().collect();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            if !current_text.is_empty() {
+                spans.push(Span::styled(
+                    std::mem::take(&mut current_text),
+                    current_style,
+                ));
+            }
+            i += 2;
+            let mut params = Vec::new();
+            let mut num_buf = String::new();
+            loop {
+                if i >= bytes.len() {
+                    break;
+                }
+                let c = bytes[i];
+                i += 1;
+                if (0x40..=0x7e).contains(&c) {
+                    if c == b'm' {
+                        if !num_buf.is_empty() {
+                            params.push(num_buf);
+                        }
+                        current_style = apply_sgr(&params, current_style, theme);
+                    }
+                    break;
+                }
+                match c {
+                    b';' => {
+                        if !num_buf.is_empty() {
+                            params.push(std::mem::take(&mut num_buf));
+                        } else {
+                            params.push("0".to_string());
+                        }
+                    }
+                    b'0'..=b'9' => {
+                        num_buf.push(c as char);
+                    }
+                    _ => {
+                        num_buf.push(c as char);
+                    }
+                }
+            }
+        } else {
+            current_text.push(b as char);
+            i += 1;
+        }
+    }
+    if !current_text.is_empty() {
+        spans.push(Span::styled(current_text, current_style));
+    }
+    spans
+}
+
+fn apply_sgr(params: &[String], current: Style, theme: &crate::config::Theme) -> Style {
+    let mut style = current;
+    let mut i = 0;
+    while i < params.len() {
+        let p: u8 = params[i].parse().unwrap_or(0);
+        match p {
+            0 => {
+                style = Style::default().fg(theme.text_normal);
+            }
+            1 => {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            3 => {
+                style = style.add_modifier(Modifier::ITALIC);
+            }
+            4 => {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            7 => {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            22 => {
+                style = style.remove_modifier(Modifier::BOLD);
+            }
+            23 => {
+                style = style.remove_modifier(Modifier::ITALIC);
+            }
+            24 => {
+                style = style.remove_modifier(Modifier::UNDERLINED);
+            }
+            27 => {
+                style = style.remove_modifier(Modifier::REVERSED);
+            }
+            30..=37 => {
+                let c = match p {
+                    30 => Color::Black,
+                    31 => Color::Red,
+                    32 => Color::Green,
+                    33 => Color::Yellow,
+                    34 => Color::Blue,
+                    35 => Color::Magenta,
+                    36 => Color::Cyan,
+                    37 => Color::Gray,
+                    _ => Color::Reset,
+                };
+                style = style.fg(c);
+            }
+            38 => {
+                i += 1;
+                continue;
+            }
+            39 => {
+                style = style.fg(theme.text_normal);
+            }
+            40..=47 => {
+                let c = match p {
+                    40 => Color::Black,
+                    41 => Color::Red,
+                    42 => Color::Green,
+                    43 => Color::Yellow,
+                    44 => Color::Blue,
+                    45 => Color::Magenta,
+                    46 => Color::Cyan,
+                    47 => Color::Gray,
+                    _ => Color::Reset,
+                };
+                style = style.bg(c);
+            }
+            48 => {
+                i += 1;
+                continue;
+            }
+            49 => {
+                style = style.bg(Color::Reset);
+            }
+            90..=97 => {
+                let c = match p {
+                    90 => Color::DarkGray,
+                    91 => Color::LightRed,
+                    92 => Color::LightGreen,
+                    93 => Color::LightYellow,
+                    94 => Color::LightBlue,
+                    95 => Color::LightMagenta,
+                    96 => Color::LightCyan,
+                    97 => Color::White,
+                    _ => Color::Reset,
+                };
+                style = style.fg(c);
+            }
+            100..=107 => {
+                let c = match p {
+                    100 => Color::DarkGray,
+                    101 => Color::LightRed,
+                    102 => Color::LightGreen,
+                    103 => Color::LightYellow,
+                    104 => Color::LightBlue,
+                    105 => Color::LightMagenta,
+                    106 => Color::LightCyan,
+                    107 => Color::White,
+                    _ => Color::Reset,
+                };
+                style = style.bg(c);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    style
+}
+
+fn format_plain_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
+    // Strip GitHub Actions timestamp if present: YYYY-MM-DDTHH:MM:SS.fffffffZ
+    let (ts, rest) = strip_gh_ts(line);
+    let body = rest.trim_start();
+
+    let body_style = classify_line(body, &body.to_lowercase(), theme);
+
+    let mut spans = Vec::new();
+    if let Some(timestamp) = ts {
+        spans.push(Span::styled(
+            timestamp.to_string(),
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::ITALIC),
+        ));
+        if rest.len() > body.len() {
+            // space between timestamp and body
+            let space_len = rest.len() - body.len();
+            spans.push(Span::styled(
+                rest[..space_len].to_string(),
+                Style::default().fg(theme.text_normal),
+            ));
+        }
+    }
+    spans.push(Span::styled(body.to_string(), body_style));
+    spans
+}
+
+/// Strips a GitHub Actions timestamp (`YYYY-MM-DDTHH:MM:SS.fffffffZ`) from
+/// the start of a line. Returns `(Some(ts), rest)` or `(None, original)`.
+fn strip_gh_ts(line: &str) -> (Option<&str>, &str) {
+    let bytes = line.as_bytes();
+    // Need at least: YYYY-MM-DDTHH:MM:SS (19) + .f (2 more) + Z (1) = 22 minimum
+    if bytes.len() >= 22
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'.'
+        && bytes[0].is_ascii_digit()
+    {
+        let mut end = 20;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end < bytes.len() && bytes[end] == b'Z' {
+            end += 1;
+            return (Some(&line[..end]), &line[end..]);
+        }
+    }
+    (None, line)
+}
+
+fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style {
+    // GitHub Actions section markers (checked first)
+    if lower.starts_with("##[group]") {
+        return Style::default().fg(theme.blue).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("##[endgroup]") {
+        return Style::default().fg(theme.text_muted);
+    }
+    if lower.starts_with("##[command]") {
+        return Style::default().fg(theme.purple);
+    }
+    if lower.starts_with("##[debug]") {
+        return Style::default().fg(theme.text_muted);
+    }
+    if lower.starts_with("##[warning]") {
+        return Style::default().fg(theme.yellow);
+    }
+    if lower.starts_with("##[error]") {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("##[section]") {
+        return Style::default().fg(theme.blue);
+    }
+
+    // Error indicators (red bold)
+    if lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("panic")
+        || lower.contains("err!")
+        || lower.contains("fail")
+        || lower.contains("fatal")
+        || lower.contains("aborted")
+        || lower.contains("terminated")
+        || lower.contains("traceback")
+        || lower.contains("exception")
+        || lower.contains("unresolved")
+        || lower.contains("unstaged")
+        || lower.starts_with("error[")
+        || lower.starts_with("error:")
+        || lower.contains("error code")
+        || lower.contains("exit code")
+        || lower.contains("exit status")
+        || lower.contains("process completed with")
+    {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    // Rust compiler errors and backtraces
+    if lower.starts_with("thread '") && lower.contains("panicked") {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("error[") || lower.starts_with("  --> ") {
+        return Style::default().fg(theme.red);
+    }
+
+    // Warning indicators (yellow)
+    if lower.contains("warning")
+        || lower.contains("warn")
+        || lower.contains("deprecated")
+        || lower.contains("notice")
+        || lower.starts_with("warning[")
+        || lower.starts_with("warning:")
+    {
+        return Style::default().fg(theme.yellow);
+    }
+
+    // Success indicators (green)
+    if lower.contains("success")
+        || lower.contains("successfully")
+        || lower.contains("completed")
+        || lower.contains("finished")
+        || lower.starts_with("pass")
+        || lower.contains(" passed ")
+        || lower.starts_with("ok ")
+        || lower.starts_with("✓")
+        || lower.contains("built")
+        || lower.starts_with("--> using cache")
+        || lower.starts_with("dependency successfully")
+    {
+        return Style::default().fg(theme.green);
+    }
+
+    // Shell commands (purple bold)
+    if line.trim_start().starts_with('$') || line.trim_start().starts_with('>') {
+        return Style::default()
+            .fg(theme.purple)
+            .add_modifier(Modifier::BOLD);
+    }
+    // GitLab CI section markers
+    if lower.contains("section_start") || lower.contains("section_end") {
+        return Style::default().fg(theme.blue);
+    }
+
+    // Info / informational (blue)
+    if lower.contains("info")
+        || lower.contains("running")
+        || lower.contains("starting")
+        || lower.contains("building")
+        || lower.contains("compiling")
+        || lower.contains("linking")
+        || lower.contains("installing")
+        || lower.contains("fetching")
+        || lower.contains("cloning")
+        || lower.contains("checking out")
+        || lower.contains("downloading")
+        || lower.contains("uploading")
+        || lower.contains("pushing")
+        || lower.contains("pulling")
+        || lower.contains("syncing")
+        || lower.contains("processing")
+        || lower.contains("generating")
+        || lower.contains("resolving")
+    {
+        return Style::default().fg(theme.blue);
+    }
+
+    // Debug / verbose (dim purple)
+    if lower.contains("debug")
+        || lower.contains("trace")
+        || lower.contains("verbose")
+        || lower.starts_with("+ ")
+        || lower.starts_with("++ ")
+    {
+        return Style::default().fg(theme.purple);
+    }
+
+    // Test output patterns
+    if lower.starts_with("not ok") {
+        return Style::default().fg(theme.red).add_modifier(Modifier::BOLD);
+    }
+    if lower.starts_with("ok ") && !lower.contains("not ok") {
+        return Style::default().fg(theme.green);
+    }
+
+    // Docker patterns
+    if lower.starts_with("step ")
+        || lower.starts_with("--->")
+        || lower.starts_with("successfully tagged")
+        || lower.starts_with("successfully built")
+    {
+        return Style::default().fg(theme.blue);
+    }
+
+    // Default
+    Style::default().fg(theme.text_normal)
 }
 
 #[cfg(test)]

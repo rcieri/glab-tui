@@ -669,6 +669,7 @@ async fn main() -> Result<()> {
                                 app.job_trace = Some(trace);
                                 app.job_trace_needs_scroll_to_bottom = true;
                                 app.details_zoomed = true;
+                                app.detail_visible = true;
                             }
                             Err(e) => {
                                 app.error_message = Some(e);

@@ -892,6 +892,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 action: "Open selected job in browser",
             },
             Shortcut {
+                category: "Jobs",
+                key: s("w"),
+                action: "Toggle trace word wrap / clipped view",
+            },
+            Shortcut {
                 category: "Milestones",
                 key: s("n"),
                 action: "Create new milestone",

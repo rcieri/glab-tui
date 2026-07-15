@@ -1254,9 +1254,6 @@ async fn main() -> Result<()> {
                                             let title = value.clone();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
-                                            let _ = tx.send(Event::CommandStarted(
-                                                "CREATING ISSUE".to_string(),
-                                            ));
                                             tokio::spawn(async move {
                                                 match client
                                                     .create_issue(
@@ -1308,9 +1305,6 @@ async fn main() -> Result<()> {
                                                 let body = value;
                                                 let tx = events.sender();
                                                 let tab = app.active_tab;
-                                                let _ = tx.send(Event::CommandStarted(
-                                                    "ADDING COMMENT".to_string(),
-                                                ));
                                                 tokio::spawn(async move {
                                                     match client
                                                         .add_mr_comment(
@@ -2937,8 +2931,6 @@ async fn main() -> Result<()> {
                                         let project = app.project_context.clone();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
-                                        let _ = tx
-                                            .send(Event::CommandStarted("MERGING MR".to_string()));
                                         tokio::spawn(async move {
                                             match client
                                                 .merge_mr(
@@ -3652,12 +3644,6 @@ async fn main() -> Result<()> {
                                                         let project_path =
                                                             app.project_context.clone();
                                                         let tx_spawn = events.sender();
-                                                        let _ = tx_spawn.send(
-                                                            Event::CommandStarted(format!(
-                                                                "Updating milestone #{}",
-                                                                entity_iid
-                                                            )),
-                                                        );
                                                         tokio::spawn(async move {
                                                             let res = crate::domain::milestones::update_milestone(
                                                                 &client,
@@ -3698,12 +3684,6 @@ async fn main() -> Result<()> {
                                                             let name = release.name.clone();
                                                             let desc = new_desc.clone();
                                                             let tx_spawn = events.sender();
-                                                            let _ = tx_spawn.send(
-                                                                Event::CommandStarted(format!(
-                                                                    "Updating release tag {}",
-                                                                    tag
-                                                                )),
-                                                            );
                                                             tokio::spawn(async move {
                                                                 let res = crate::domain::releases::update_release(
                                                                     &client,
@@ -3955,9 +3935,6 @@ async fn main() -> Result<()> {
                                         let project = app.project_context.clone();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
-                                        let _ = tx.send(Event::CommandStarted(
-                                            "CREATING ISSUE".to_string(),
-                                        ));
                                         tokio::spawn(async move {
                                             match client
                                                 .create_issue(
@@ -4062,8 +4039,6 @@ async fn main() -> Result<()> {
                                         let project = app.project_context.clone();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
-                                        let _ = tx
-                                            .send(Event::CommandStarted("CREATING MR".to_string()));
                                         tokio::spawn(async move {
                                             match client
                                                 .create_mr(
@@ -4285,9 +4260,6 @@ async fn main() -> Result<()> {
                                         let project = app.project_context.clone();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
-                                        let _ = tx.send(Event::CommandStarted(
-                                            "RUNNING PIPELINE".to_string(),
-                                        ));
                                         tokio::spawn(async move {
                                             match client
                                                 .run_pipeline(
@@ -4338,9 +4310,6 @@ async fn main() -> Result<()> {
                                             let project = app.project_context.clone();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
-                                            let _ = tx.send(Event::CommandStarted(
-                                                "CREATING RELEASE".to_string(),
-                                            ));
                                             tokio::spawn(async move {
                                                 match client
                                                     .create_release(
@@ -5390,9 +5359,6 @@ async fn main() -> Result<()> {
                                                 let old_line_num = range.old_line_num;
                                                 let tx = events.sender();
                                                 let tab = app.active_tab;
-                                                let _ = tx.send(Event::CommandStarted(
-                                                    "ADDING COMMENT".to_string(),
-                                                ));
                                                 tokio::spawn(async move {
                                                     match client
                                                         .add_mr_comment(
@@ -5516,9 +5482,6 @@ async fn main() -> Result<()> {
                                             let old_line_num = range.old_line_num;
                                             let tx = events.sender();
                                             let tab = app.active_tab;
-                                            let _ = tx.send(Event::CommandStarted(
-                                                "ADDING COMMENT".to_string(),
-                                            ));
                                             tokio::spawn(async move {
                                                 match client
                                                     .add_mr_comment(

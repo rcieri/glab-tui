@@ -441,6 +441,8 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
         ("glab", truncated_api[4..].to_string())
     } else if truncated_api.starts_with("gh") {
         ("gh", truncated_api[2..].to_string())
+    } else if truncated_api.starts_with("git") {
+        ("git", truncated_api[3..].to_string())
     } else {
         ("", truncated_api.clone())
     };

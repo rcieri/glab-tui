@@ -2,7 +2,6 @@ use crate::AppTerminal;
 use crate::app::App;
 use crate::editor::edit_in_editor;
 use crate::event::Event;
-use crate::templates::get_default_template;
 use crossterm::event::KeyCode;
 
 pub async fn apply_field_text_change(
@@ -40,7 +39,9 @@ pub async fn apply_field_text_change(
                 _ => {}
             }
 
-            let client = app.gitlab_client.clone().unwrap();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
             let project_path = app.project_context.clone();
             let tx_spawn = tx.clone();
             tokio::spawn(async move {
@@ -84,7 +85,9 @@ pub async fn apply_field_text_change(
                 _ => {}
             }
 
-            let client = app.gitlab_client.clone().unwrap();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
             let project_path = app.project_context.clone();
             let tx_spawn = tx.clone();
             tokio::spawn(async move {
@@ -114,12 +117,18 @@ pub async fn apply_field_text_change(
 
     match field_type {
         "title" => {
-            let client = app.gitlab_client.clone().unwrap();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
             let project_path = app.project_context.clone();
-            if entity_type == "issue" {
-                let _ = client.update_issue_title(&project_path, iid, &value).await;
+            let result = if entity_type == "issue" {
+                client.update_issue_title(&project_path, iid, &value).await
             } else {
-                let _ = client.update_mr_title(&project_path, iid, &value).await;
+                client.update_mr_title(&project_path, iid, &value).await
+            };
+            if let Err(e) = result {
+                app.error_message = Some(format!("Failed to update title: {}", e));
+                return;
             }
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
@@ -133,11 +142,17 @@ pub async fn apply_field_text_change(
         }
         "target_branch" => {
             if entity_type == "mr" {
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                let _ = client
+                if let Err(e) = client
                     .update_mr_target_branch(&project_path, iid, &value)
-                    .await;
+                    .await
+                {
+                    app.error_message = Some(format!("Failed to update target branch: {}", e));
+                    return;
+                }
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.target_branch = value;
                 }
@@ -150,11 +165,17 @@ pub async fn apply_field_text_change(
                 } else {
                     &value
                 };
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                let _ = client
+                if let Err(e) = client
                     .update_issue_due_date(&project_path, iid, flag_value)
-                    .await;
+                    .await
+                {
+                    app.error_message = Some(format!("Failed to update due date: {}", e));
+                    return;
+                }
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.due_date = if flag_value.is_empty() {
                         None
@@ -166,33 +187,49 @@ pub async fn apply_field_text_change(
         }
         "weight" => {
             if entity_type == "issue" {
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                let _ = client.update_issue_weight(&project_path, iid, &value).await;
+                if let Err(e) = client.update_issue_weight(&project_path, iid, &value).await {
+                    app.error_message = Some(format!("Failed to update weight: {}", e));
+                }
             }
         }
         "runner_description" => {
-            let client = app.gitlab_client.clone().unwrap();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
             let project_path = app.project_context.clone();
-            let _ = client
+            if let Err(e) = client
                 .backend
                 .update_runner_description(&project_path, iid, &value)
-                .await;
+                .await
+            {
+                app.error_message = Some(format!("Failed to update runner description: {}", e));
+                return;
+            }
             if let Some(runner) = app.runners.items.iter_mut().find(|r| r.id == iid) {
                 runner.description = Some(value);
             }
         }
         "description" => {
-            let client = app.gitlab_client.clone().unwrap();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
             let project_path = app.project_context.clone();
-            if entity_type == "issue" {
-                let _ = client
+            let result = if entity_type == "issue" {
+                client
                     .update_issue_description(&project_path, iid, &value)
-                    .await;
+                    .await
             } else {
-                let _ = client
+                client
                     .update_mr_description(&project_path, iid, &value)
-                    .await;
+                    .await
+            };
+            if let Err(e) = result {
+                app.error_message = Some(format!("Failed to update description: {}", e));
+                return;
             }
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
@@ -216,11 +253,6 @@ pub async fn apply_selector_changes(
     values: Vec<String>,
     terminal: &mut AppTerminal,
 ) {
-    let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-    let program = if is_github { "gh" } else { "glab" };
-    let tx = app.tx.clone().unwrap();
-    let tab = app.active_tab;
-
     match field_type {
         "labels" => {
             let current_labels: Vec<String> = if entity_type == "issue" {
@@ -250,16 +282,22 @@ pub async fn apply_selector_changes(
             if !to_add.is_empty() || !to_remove.is_empty() {
                 let to_add: Vec<String> = to_add.iter().map(|s| (*s).clone()).collect();
                 let to_remove: Vec<String> = to_remove.iter().map(|s| (*s).clone()).collect();
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                if entity_type == "issue" {
-                    let _ = client
+                let result = if entity_type == "issue" {
+                    client
                         .update_issue_labels(&project_path, iid, &to_add, &to_remove)
-                        .await;
+                        .await
                 } else {
-                    let _ = client
+                    client
                         .update_mr_labels(&project_path, iid, &to_add, &to_remove)
-                        .await;
+                        .await
+                };
+                if let Err(e) = result {
+                    app.error_message = Some(format!("Failed to update labels: {}", e));
+                    return;
                 }
             }
 
@@ -305,16 +343,22 @@ pub async fn apply_selector_changes(
             if !to_add.is_empty() || !to_remove.is_empty() {
                 let to_add: Vec<String> = to_add.iter().map(|s| (*s).clone()).collect();
                 let to_remove: Vec<String> = to_remove.iter().map(|s| (*s).clone()).collect();
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                if entity_type == "issue" {
-                    let _ = client
+                let result = if entity_type == "issue" {
+                    client
                         .update_issue_assignees(&project_path, iid, &to_add, &to_remove)
-                        .await;
+                        .await
                 } else {
-                    let _ = client
+                    client
                         .update_mr_assignees(&project_path, iid, &to_add, &to_remove)
-                        .await;
+                        .await
+                };
+                if let Err(e) = result {
+                    app.error_message = Some(format!("Failed to update assignees: {}", e));
+                    return;
                 }
             }
 
@@ -363,11 +407,17 @@ pub async fn apply_selector_changes(
                 if !to_add.is_empty() || !to_remove.is_empty() {
                     let to_add: Vec<String> = to_add.iter().map(|s| (*s).clone()).collect();
                     let to_remove: Vec<String> = to_remove.iter().map(|s| (*s).clone()).collect();
-                    let client = app.gitlab_client.clone().unwrap();
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return;
+                    };
                     let project_path = app.project_context.clone();
-                    let _ = client
+                    if let Err(e) = client
                         .update_mr_reviewers(&project_path, iid, &to_add, &to_remove)
-                        .await;
+                        .await
+                    {
+                        app.error_message = Some(format!("Failed to update reviewers: {}", e));
+                        return;
+                    }
                 }
 
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -383,16 +433,22 @@ pub async fn apply_selector_changes(
         "milestone" => {
             // For milestones, cli expects the title, not the id
             let first_val = values.first().cloned().unwrap_or_default();
-            let client = app.gitlab_client.clone().unwrap();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
             let project_path = app.project_context.clone();
-            if entity_type == "issue" {
-                let _ = client
+            let result = if entity_type == "issue" {
+                client
                     .update_issue_milestone(&project_path, iid, &first_val)
-                    .await;
+                    .await
             } else {
-                let _ = client
+                client
                     .update_mr_milestone(&project_path, iid, &first_val)
-                    .await;
+                    .await
+            };
+            if let Err(e) = result {
+                app.error_message = Some(format!("Failed to update milestone: {}", e));
+                return;
             }
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
@@ -413,123 +469,15 @@ pub async fn apply_selector_changes(
         "confidential" => {
             if entity_type == "issue" {
                 let is_confidential = values.iter().any(|v| v == "Yes" || v == "true");
-                let client = app.gitlab_client.clone().unwrap();
-                let project_path = app.project_context.clone();
-                let _ = client
-                    .update_issue_confidential(&project_path, iid, is_confidential)
-                    .await;
-            }
-        }
-        "description" => {
-            let choice = values.first().cloned().unwrap_or_default();
-
-            if iid == 0 {
-                if let Some(ref mut menu) = app.edit_menu {
-                    if let Some(f) = menu.fields.iter_mut().find(|f| f.0 == "Description") {
-                        if choice == "Edit (basic)" {
-                            app.text_input = Some(crate::app::TextInput {
-                                title: " Edit Description ".to_string(),
-                                value: f.1.clone(),
-                                cursor_idx: f.1.len(),
-                                action: crate::app::TextInputAction::EditNewField {
-                                    field_idx: menu
-                                        .fields
-                                        .iter()
-                                        .position(|f| f.0 == "Description")
-                                        .unwrap_or(0),
-                                },
-                            });
-                        } else {
-                            let current_val = if f.1.trim().is_empty() {
-                                let template_type = if entity_type == "new_mr" {
-                                    "mr"
-                                } else {
-                                    "issue"
-                                };
-                                get_default_template(template_type).unwrap_or_default()
-                            } else {
-                                f.1.clone()
-                            };
-                            if let Some(new_desc) = edit_in_editor(&current_val, terminal) {
-                                f.1 = new_desc;
-                            }
-                        }
-                    }
-                }
-            } else {
-                let current_desc = if entity_type == "issue" {
-                    app.issues
-                        .items
-                        .iter()
-                        .find(|i| i.iid == iid)
-                        .and_then(|i| i.description.clone())
-                        .unwrap_or_default()
-                } else {
-                    app.mrs
-                        .items
-                        .iter()
-                        .find(|m| m.iid == iid)
-                        .and_then(|m| m.description.clone())
-                        .unwrap_or_default()
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
                 };
-
-                if choice == "Edit (basic)" {
-                    app.text_input = Some(crate::app::TextInput {
-                        title: " Edit Description ".to_string(),
-                        value: current_desc.clone(),
-                        cursor_idx: current_desc.len(),
-                        action: crate::app::TextInputAction::EditField {
-                            entity_iid: iid,
-                            entity_type: entity_type.to_string(),
-                            field_type: "description".to_string(),
-                        },
-                    });
-                } else {
-                    if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
-                        if entity_type == "issue" {
-                            if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                                item.description = Some(new_desc.clone());
-                            }
-                        } else if entity_type == "mr" {
-                            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                                item.description = Some(new_desc.clone());
-                            }
-                        }
-                        let client = app.gitlab_client.clone().unwrap();
-                        let project_path = app.project_context.clone();
-                        if entity_type == "issue" {
-                            let _ = client
-                                .update_issue_description(&project_path, iid, &new_desc)
-                                .await;
-                        } else {
-                            let _ = client
-                                .update_mr_description(&project_path, iid, &new_desc)
-                                .await;
-                        }
-                    }
-                    if let Some(client) = &app.gitlab_client {
-                        if entity_type == "issue" {
-                            if let Ok(updated) =
-                                crate::domain::issues::get_issue(client, &app.project_context, iid)
-                                    .await
-                            {
-                                if let Some(item) =
-                                    app.issues.items.iter_mut().find(|i| i.iid == iid)
-                                {
-                                    *item = updated;
-                                }
-                            }
-                        } else if entity_type == "mr" {
-                            if let Ok(updated) =
-                                crate::domain::mr::get_mr(client, &app.project_context, iid).await
-                            {
-                                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid)
-                                {
-                                    *item = updated;
-                                }
-                            }
-                        }
-                    }
+                let project_path = app.project_context.clone();
+                if let Err(e) = client
+                    .update_issue_confidential(&project_path, iid, is_confidential)
+                    .await
+                {
+                    app.error_message = Some(format!("Failed to update confidentiality: {}", e));
                 }
             }
         }
@@ -718,9 +666,6 @@ pub async fn handle_entity_update(
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
-    let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-    let program = if is_github { "gh" } else { "glab" };
-
     match code {
         KeyCode::Char('t') => {
             let current_title = if entity_type == "issue" {
@@ -740,14 +685,20 @@ pub async fn handle_entity_update(
             };
 
             if let Some(new_title) = edit_in_editor(&current_title, terminal) {
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                if entity_type == "issue" {
-                    let _ = client
+                let result = if entity_type == "issue" {
+                    client
                         .update_issue_title(&project_path, iid, &new_title)
-                        .await;
+                        .await
                 } else {
-                    let _ = client.update_mr_title(&project_path, iid, &new_title).await;
+                    client.update_mr_title(&project_path, iid, &new_title).await
+                };
+                if let Err(e) = result {
+                    app.error_message = Some(format!("Failed to update title: {}", e));
+                    return;
                 }
                 if entity_type == "issue" {
                     if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
@@ -769,9 +720,14 @@ pub async fn handle_entity_update(
                     .find(|m| m.iid == iid)
                     .map(|m| m.draft)
                     .unwrap_or(false);
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                let _ = client.toggle_mr_draft(&project_path, iid, is_draft).await;
+                if let Err(e) = client.toggle_mr_draft(&project_path, iid, is_draft).await {
+                    app.error_message = Some(format!("Failed to toggle draft: {}", e));
+                    return;
+                }
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.draft = !is_draft;
                 }
@@ -787,11 +743,17 @@ pub async fn handle_entity_update(
                     .map(|m| m.target_branch.clone())
                     .unwrap_or_default();
                 if let Some(target) = edit_in_editor(&current_branch, terminal) {
-                    let client = app.gitlab_client.clone().unwrap();
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return;
+                    };
                     let project_path = app.project_context.clone();
-                    let _ = client
+                    if let Err(e) = client
                         .update_mr_target_branch(&project_path, iid, &target)
-                        .await;
+                        .await
+                    {
+                        app.error_message = Some(format!("Failed to update target branch: {}", e));
+                        return;
+                    }
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                         item.target_branch = target;
                     }
@@ -806,12 +768,18 @@ pub async fn handle_entity_update(
                     } else {
                         "--public"
                     };
-                    let client_c = app.gitlab_client.clone().unwrap();
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return;
+                    };
                     let ppc = app.project_context.clone();
                     let confidential_val = flag == "--confidential";
-                    let _ = client_c
+                    if let Err(e) = client
                         .update_issue_confidential(&ppc, iid, confidential_val)
-                        .await;
+                        .await
+                    {
+                        app.error_message =
+                            Some(format!("Failed to update confidentiality: {}", e));
+                    }
                 }
             }
         }
@@ -823,22 +791,32 @@ pub async fn handle_entity_update(
                     } else {
                         &due_date
                     };
-                    let client = app.gitlab_client.clone().unwrap();
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return;
+                    };
                     let project_path = app.project_context.clone();
-                    let _ = client
+                    if let Err(e) = client
                         .update_issue_due_date(&project_path, iid, flag_value)
-                        .await;
+                        .await
+                    {
+                        app.error_message = Some(format!("Failed to update due date: {}", e));
+                    }
                 }
             }
         }
         KeyCode::Char('w') => {
             if entity_type == "issue" {
                 if let Some(weight) = edit_in_editor("0", terminal) {
-                    let client = app.gitlab_client.clone().unwrap();
+                    let Some(client) = app.gitlab_client.clone() else {
+                        return;
+                    };
                     let project_path = app.project_context.clone();
-                    let _ = client
+                    if let Err(e) = client
                         .update_issue_weight(&project_path, iid, &weight)
-                        .await;
+                        .await
+                    {
+                        app.error_message = Some(format!("Failed to update weight: {}", e));
+                    }
                 }
             }
         }
@@ -895,16 +873,21 @@ pub async fn handle_entity_update(
                         item.description = Some(new_desc.clone());
                     }
                 }
-                let client = app.gitlab_client.clone().unwrap();
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
                 let project_path = app.project_context.clone();
-                if entity_type == "issue" {
-                    let _ = client
+                let result = if entity_type == "issue" {
+                    client
                         .update_issue_description(&project_path, iid, &new_desc)
-                        .await;
+                        .await
                 } else {
-                    let _ = client
+                    client
                         .update_mr_description(&project_path, iid, &new_desc)
-                        .await;
+                        .await
+                };
+                if let Err(e) = result {
+                    app.error_message = Some(format!("Failed to update description: {}", e));
                 }
             }
         }

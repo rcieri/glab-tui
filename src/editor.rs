@@ -51,16 +51,20 @@ pub fn edit_in_editor_with_suffix(
         }
     })();
 
-    let _ = crossterm::terminal::enable_raw_mode();
-    let _ = crossterm::execute!(
-        std::io::stdout(),
-        crossterm::terminal::EnterAlternateScreen,
-        crossterm::event::EnableMouseCapture,
-    );
-    while crossterm::event::poll(std::time::Duration::from_secs(0)).unwrap_or(false) {
-        let _ = crossterm::event::read();
+    let restored = crossterm::terminal::enable_raw_mode().is_ok()
+        && crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::EnterAlternateScreen,
+            crossterm::event::EnableMouseCapture,
+        )
+        .is_ok();
+
+    if restored {
+        while crossterm::event::poll(std::time::Duration::from_secs(0)).unwrap_or(false) {
+            let _ = crossterm::event::read();
+        }
+        let _ = terminal.clear();
     }
-    let _ = terminal.clear();
     crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
 
     result

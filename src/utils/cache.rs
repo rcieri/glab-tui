@@ -69,7 +69,10 @@ pub fn get_recent_repos() -> Vec<String> {
     let path = get_recent_repos_file_path();
     if let Ok(content) = fs::read_to_string(path) {
         if let Ok(repos) = serde_json::from_str::<Vec<String>>(&content) {
-            return repos;
+            return repos
+                .into_iter()
+                .filter(|r| std::path::Path::new(r).is_absolute())
+                .collect();
         }
     }
     Vec::new()
@@ -77,7 +80,11 @@ pub fn get_recent_repos() -> Vec<String> {
 
 pub fn add_recent_repo(repo_path: &str) {
     let mut repos = get_recent_repos();
-    let repo_path = repo_path.to_string();
+    // Store only absolute paths
+    let abs_path = std::path::PathBuf::from(repo_path)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(repo_path));
+    let repo_path = abs_path.to_string_lossy().into_owned();
     if let Some(pos) = repos.iter().position(|r| r == &repo_path) {
         repos.remove(pos);
     }
@@ -156,31 +163,19 @@ pub fn get_switchable_repos() -> Vec<String> {
     let recent_paths = get_recent_repos();
 
     let mut sorted_repos = Vec::new();
-    for path_str in recent_paths {
-        let path = std::path::PathBuf::from(&path_str);
-        if !is_git_repo(&path_str) {
-            continue;
-        }
-        let entry: String = if let Some(parent) = path.parent() {
-            if parent == repos_dir {
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| n.to_string())
-                    .unwrap_or(path_str)
-            } else {
-                path_str
-            }
-        } else {
-            path_str
-        };
-        if !sorted_repos.contains(&entry) {
-            sorted_repos.push(entry);
+
+    // Recent repos are always absolute paths — add any that still exist
+    for abs_path in recent_paths {
+        if !sorted_repos.contains(&abs_path) && is_git_repo(&abs_path) {
+            sorted_repos.push(abs_path);
         }
     }
 
-    for repo in available_repos {
-        if !sorted_repos.contains(&repo) {
-            sorted_repos.push(repo);
+    // Add repos found in repos_dir as absolute paths
+    for dirname in available_repos {
+        let abs = repos_dir.join(&dirname).to_string_lossy().into_owned();
+        if !sorted_repos.contains(&abs) && !sorted_repos.contains(&dirname) {
+            sorted_repos.push(abs);
         }
     }
 

@@ -74,10 +74,6 @@ pub async fn handle_confirm_popup(
                     crate::app::ConfirmAction::DeleteMilestone(iid) => {
                         let client = app.gitlab_client.clone().unwrap();
                         let project_path = app.project_context.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Deleting milestone #{}",
-                            iid
-                        )));
                         tokio::spawn(async move {
                             let res = crate::domain::milestones::delete_milestone(
                                 &client,
@@ -87,6 +83,10 @@ pub async fn handle_confirm_popup(
                             .await;
                             match res {
                                 Ok(_) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Milestones,
+                                        Ok(()),
+                                    ));
                                     let _ = tx.send(Event::MilestoneDeleted);
                                 }
                                 Err(e) => {
@@ -101,10 +101,6 @@ pub async fn handle_confirm_popup(
                     crate::app::ConfirmAction::DeleteRelease(tag_name) => {
                         let client = app.gitlab_client.clone().unwrap();
                         let project_path = app.project_context.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Deleting release {}",
-                            tag_name
-                        )));
                         tokio::spawn(async move {
                             let res = crate::domain::releases::delete_release(
                                 &client,
@@ -114,6 +110,10 @@ pub async fn handle_confirm_popup(
                             .await;
                             match res {
                                 Ok(_) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Releases,
+                                        Ok(()),
+                                    ));
                                     let _ = tx.send(Event::ReleaseDeleted);
                                 }
                                 Err(e) => {
@@ -128,10 +128,6 @@ pub async fn handle_confirm_popup(
                     crate::app::ConfirmAction::DeleteBranch(branch_name) => {
                         let client = app.gitlab_client.clone().unwrap();
                         let project_path = app.project_context.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Deleting branch: {}",
-                            branch_name
-                        )));
                         tokio::spawn(async move {
                             let res = crate::domain::branches::delete_branch(
                                 &client,
@@ -156,48 +152,25 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::CloseIssue(iid) => {
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
-                        let args = vec!["issue".to_string(), "close".to_string(), iid.to_string()];
-                        let active_tab = app.active_tab;
-                        crate::run_cli(program, &args, terminal, tx.clone(), active_tab).await;
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = client.close_issue(&project_path, iid).await;
                         if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
                             app.issues.items.remove(pos);
                         }
                         app.update_filter_selection();
                     }
                     crate::app::ConfirmAction::DeleteIssue(iid) => {
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
                         let project_path = app.project_context.clone();
                         let client = app.gitlab_client.clone().unwrap();
-                        let _ = tx.send(Event::CommandStarted(format!("Deleting issue #{}", iid)));
                         tokio::spawn(async move {
-                            let res = if is_github {
-                                client
-                                    .execute_raw_command(
-                                        "gh",
-                                        &[
-                                            "issue",
-                                            "delete",
-                                            &iid.to_string(),
-                                            "-R",
-                                            &project_path,
-                                            "--yes",
-                                        ],
-                                        "Deleting Issue",
-                                    )
-                                    .await
-                            } else {
-                                client
-                                    .execute_raw_command(
-                                        "glab",
-                                        &["issue", "delete", &iid.to_string(), "-R", &project_path],
-                                        "Deleting Issue",
-                                    )
-                                    .await
-                            };
+                            let res = client.delete_issue(&project_path, iid).await;
                             match res {
                                 Ok(_) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::Issues,
+                                        Ok(()),
+                                    ));
                                     let _ = tx.send(Event::IssueDeleted);
                                 }
                                 Err(e) => {
@@ -210,15 +183,9 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::CloseMr(iid) => {
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
-                        let args = vec![
-                            if is_github { "pr" } else { "mr" }.to_string(),
-                            "close".to_string(),
-                            iid.to_string(),
-                        ];
-                        let active_tab = app.active_tab;
-                        crate::run_cli(program, &args, terminal, tx.clone(), active_tab).await;
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = client.close_mr(&project_path, iid).await;
                         if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                             app.mrs.items.remove(pos);
                         }
@@ -227,17 +194,14 @@ pub async fn handle_confirm_popup(
                     crate::app::ConfirmAction::DeleteMr(iid) => {
                         let project_path = app.project_context.clone();
                         let client = app.gitlab_client.clone().unwrap();
-                        let _ = tx.send(Event::CommandStarted(format!("Deleting MR #{}", iid)));
                         tokio::spawn(async move {
-                            let res = client
-                                .execute_raw_command(
-                                    "glab",
-                                    &["mr", "delete", &iid.to_string(), "-R", &project_path],
-                                    "Deleting MR",
-                                )
-                                .await;
+                            let res = client.delete_mr(&project_path, iid).await;
                             match res {
                                 Ok(_) => {
+                                    let _ = tx.send(Event::CommandCompleted(
+                                        crate::app::Tab::MergeRequests,
+                                        Ok(()),
+                                    ));
                                     let _ = tx.send(Event::MrDeleted);
                                 }
                                 Err(e) => {
@@ -250,27 +214,9 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::MergeMr(iid) => {
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
-                        let args = if is_github {
-                            vec![
-                                "pr".to_string(),
-                                "merge".to_string(),
-                                iid.to_string(),
-                                "--delete-branch".to_string(),
-                                "--squash".to_string(),
-                            ]
-                        } else {
-                            vec![
-                                "mr".to_string(),
-                                "merge".to_string(),
-                                iid.to_string(),
-                                "--remove-source-branch".to_string(),
-                                "--squash".to_string(),
-                            ]
-                        };
-                        let active_tab = app.active_tab;
-                        crate::run_cli(program, &args, terminal, tx.clone(), active_tab).await;
+                        let client = app.gitlab_client.clone().unwrap();
+                        let project_path = app.project_context.clone();
+                        let _ = client.merge_mr(&project_path, iid, true, true, None).await;
                         if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                             app.mrs.items.remove(pos);
                         }

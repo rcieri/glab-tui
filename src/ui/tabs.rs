@@ -3672,7 +3672,6 @@ pub(crate) fn render_tab_terminal(
             log_lines.push(super::helpers::build_log_line(
                 cmd,
                 inner_rect.width as usize,
-                is_github,
             ));
         }
     }

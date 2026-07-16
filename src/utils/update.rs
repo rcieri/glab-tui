@@ -5,7 +5,14 @@ use tempfile::tempdir;
 
 pub async fn perform_self_update() -> Result<bool> {
     let output = tokio::process::Command::new("gh")
-        .args(["api", "repos/rcieri/glab-tui/releases/latest"])
+        .args([
+            "release",
+            "view",
+            "-R",
+            "rcieri/glab-tui",
+            "--json",
+            "tagName",
+        ])
         .output()
         .await?;
 
@@ -15,9 +22,9 @@ pub async fn perform_self_update() -> Result<bool> {
 
     let json: Value = serde_json::from_slice(&output.stdout)?;
     let latest_tag = json
-        .get("tag_name")
+        .get("tagName")
         .and_then(|v| v.as_str())
-        .context("No tag_name in release")?;
+        .context("No tagName in release")?;
 
     let current_version = env!("CARGO_PKG_VERSION");
     let current_tag = format!("v{}", current_version);

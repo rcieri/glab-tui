@@ -15,6 +15,19 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 
+fn strip_ats(s: &str) -> String {
+    if s.is_empty() {
+        return s.to_string();
+    }
+    s.split(',')
+        .map(|a| a.trim().trim_start_matches('@').to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+fn normalize_labels(s: &str) -> String {
+    s.replace(", ", ",")
+}
+
 pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -247,6 +260,259 @@ impl Backend for GlabBackend {
             description: i.description,
             due_date: i.due_date,
         })
+    }
+
+    async fn close_issue(&self, project: &str, iid: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["issue", "close", &iid.to_string(), "-R", &encoded],
+            "CLOSING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["issue", "reopen", &iid.to_string(), "-R", &encoded],
+            "REOPENING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_issue(&self, project: &str, iid: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["issue", "delete", &iid.to_string(), "-R", &encoded, "-y"],
+            "DELETING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn create_issue(
+        &self,
+        _project: &str,
+        title: &str,
+        description: &str,
+        labels: &str,
+        assignees: &str,
+        milestone: &str,
+        due_date: &str,
+        weight: &str,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "create".into(),
+            "-y".into(),
+            "--title".into(),
+            title.into(),
+        ];
+        if !description.is_empty() {
+            args.push("--description".into());
+            args.push(description.into());
+        }
+        if !labels.is_empty() {
+            args.push("--label".into());
+            args.push(normalize_labels(labels).into());
+        }
+        if !assignees.is_empty() {
+            args.push("--assignee".into());
+            args.push(strip_ats(assignees).into());
+        }
+        if !milestone.is_empty() {
+            args.push("--milestone".into());
+            args.push(milestone.into());
+        }
+        if !due_date.is_empty() {
+            args.push("--due-date".into());
+            args.push(due_date.into());
+        }
+        if !weight.is_empty() {
+            args.push("--weight".into());
+            args.push(weight.into());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "CREATING ISSUE").await?;
+        Ok(())
+    }
+
+    async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "issue",
+                "update",
+                &iid.to_string(),
+                "--title",
+                title,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_description(
+        &self,
+        project: &str,
+        iid: u64,
+        description: &str,
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "issue",
+                "update",
+                &iid.to_string(),
+                "-d",
+                description,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_labels(
+        &self,
+        project: &str,
+        iid: u64,
+        add_labels: &[String],
+        remove_labels: &[String],
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "update".into(),
+            iid.to_string(),
+            "-R".into(),
+            encoded,
+        ];
+        for label in add_labels {
+            args.push("--label".into());
+            args.push(label.clone());
+        }
+        for label in remove_labels {
+            args.push("--unlabel".into());
+            args.push(label.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "UPDATING ISSUE").await?;
+        Ok(())
+    }
+
+    async fn update_issue_assignees(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let mut args: Vec<String> = vec![
+            "issue".into(),
+            "update".into(),
+            iid.to_string(),
+            "-R".into(),
+            encoded,
+        ];
+        for a in add {
+            args.push("--assignee".into());
+            args.push(a.clone());
+        }
+        for a in remove {
+            args.push("--unassign".into());
+            args.push(a.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "UPDATING ISSUE").await?;
+        Ok(())
+    }
+
+    async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let val = if milestone == "None" || milestone.is_empty() {
+            "0"
+        } else {
+            milestone
+        };
+        self.run_glab(
+            &[
+                "issue",
+                "update",
+                &iid.to_string(),
+                "--milestone",
+                val,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "issue",
+                "update",
+                &iid.to_string(),
+                "--due-date",
+                due_date,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_weight(&self, project: &str, iid: u64, weight: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "issue",
+                "update",
+                &iid.to_string(),
+                "--weight",
+                weight,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_issue_confidential(
+        &self,
+        project: &str,
+        iid: u64,
+        confidential: bool,
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let flag = if confidential {
+            "--confidential"
+        } else {
+            "--public"
+        };
+        self.run_glab(
+            &["issue", "update", &iid.to_string(), flag, "-R", &encoded],
+            "UPDATING ISSUE",
+        )
+        .await?;
+        Ok(())
     }
 
     // ── Merge Requests ──
@@ -581,6 +847,346 @@ impl Backend for GlabBackend {
             .collect())
     }
 
+    async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["mr", "close", &iid.to_string(), "-R", &encoded],
+            "CLOSING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["mr", "reopen", &iid.to_string(), "-R", &encoded],
+            "REOPENING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_mr(&self, project: &str, iid: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["mr", "delete", &iid.to_string(), "-R", &encoded, "-y"],
+            "DELETING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["mr", "approve", &iid.to_string(), "-R", &encoded],
+            "APPROVING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn merge_mr(
+        &self,
+        project: &str,
+        iid: u64,
+        squash: bool,
+        delete_branch: bool,
+        strategy: Option<&str>,
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let mut args: Vec<String> = vec![
+            "mr".into(),
+            "merge".into(),
+            iid.to_string(),
+            "-R".into(),
+            encoded,
+        ];
+        if squash {
+            args.push("--squash".into());
+        }
+        if delete_branch {
+            args.push("--remove-source-branch".into());
+        }
+        if let Some(s) = strategy {
+            args.push(format!("--{}", s));
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "MERGING MR").await?;
+        Ok(())
+    }
+
+    async fn toggle_mr_draft(&self, _project: &str, iid: u64, is_draft: bool) -> Result<()> {
+        if is_draft {
+            self.run_glab(
+                &["mr", "update", &iid.to_string(), "--draft"],
+                "DRAFTING MR",
+            )
+            .await?;
+        } else {
+            self.run_glab(
+                &["mr", "update", &iid.to_string(), "--ready"],
+                "MARKING MR READY",
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn create_mr(
+        &self,
+        _project: &str,
+        title: &str,
+        description: &str,
+        source_branch: &str,
+        target_branch: &str,
+        labels: &str,
+        assignees: &str,
+        reviewers: &str,
+        milestone: &str,
+        issue_iid: Option<u64>,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "mr".into(),
+            "create".into(),
+            "-y".into(),
+            "--title".into(),
+            title.into(),
+        ];
+        if !source_branch.is_empty() {
+            args.push("--source-branch".into());
+            args.push(source_branch.into());
+        }
+        if !target_branch.is_empty() {
+            args.push("--target-branch".into());
+            args.push(target_branch.into());
+        }
+        if !description.is_empty() {
+            args.push("-d".into());
+            args.push(description.into());
+        }
+        if !labels.is_empty() {
+            args.push("--label".into());
+            args.push(normalize_labels(labels).into());
+        }
+        if !assignees.is_empty() {
+            args.push("--assignee".into());
+            args.push(strip_ats(assignees).into());
+        }
+        if !reviewers.is_empty() {
+            args.push("--reviewer".into());
+            args.push(strip_ats(reviewers).into());
+        }
+        if !milestone.is_empty() {
+            args.push("--milestone".into());
+            args.push(milestone.into());
+        }
+        if let Some(iid) = issue_iid {
+            args.push("--related-issue".into());
+            args.push(iid.to_string());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "CREATING MR").await?;
+        Ok(())
+    }
+
+    async fn add_mr_comment(
+        &self,
+        _project: &str,
+        iid: u64,
+        body: &str,
+        file_path: Option<&str>,
+        line: Option<u64>,
+        _old_line: Option<u64>,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec![
+            "mr".into(),
+            "note".into(),
+            "create".into(),
+            iid.to_string(),
+            "-m".into(),
+            body.into(),
+        ];
+        if let Some(path) = file_path {
+            args.push("--file-path".into());
+            args.push(path.into());
+        }
+        if let Some(l) = line {
+            args.push("--line".into());
+            args.push(l.to_string());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "ADDING MR COMMENT").await?;
+        Ok(())
+    }
+
+    async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "mr",
+                "update",
+                &iid.to_string(),
+                "--title",
+                title,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_mr_description(
+        &self,
+        project: &str,
+        iid: u64,
+        description: &str,
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "mr",
+                "update",
+                &iid.to_string(),
+                "-d",
+                description,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_mr_labels(
+        &self,
+        project: &str,
+        iid: u64,
+        add_labels: &[String],
+        remove_labels: &[String],
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let mut args: Vec<String> = vec![
+            "mr".into(),
+            "update".into(),
+            iid.to_string(),
+            "-R".into(),
+            encoded,
+        ];
+        for label in add_labels {
+            args.push("--label".into());
+            args.push(label.clone());
+        }
+        for label in remove_labels {
+            args.push("--unlabel".into());
+            args.push(label.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "UPDATING MR").await?;
+        Ok(())
+    }
+
+    async fn update_mr_assignees(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let mut args: Vec<String> = vec![
+            "mr".into(),
+            "update".into(),
+            iid.to_string(),
+            "-R".into(),
+            encoded,
+        ];
+        for a in add {
+            args.push("--assignee".into());
+            args.push(a.clone());
+        }
+        for a in remove {
+            args.push("--unassign".into());
+            args.push(a.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "UPDATING MR").await?;
+        Ok(())
+    }
+
+    async fn update_mr_reviewers(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let mut args: Vec<String> = vec![
+            "mr".into(),
+            "update".into(),
+            iid.to_string(),
+            "-R".into(),
+            encoded,
+        ];
+        for r in add {
+            args.push("--reviewer".into());
+            args.push(r.clone());
+        }
+        for r in remove {
+            args.push("--unreviewer".into());
+            args.push(r.clone());
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "UPDATING MR").await?;
+        Ok(())
+    }
+
+    async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let val = if milestone == "None" || milestone.is_empty() {
+            "0"
+        } else {
+            milestone
+        };
+        self.run_glab(
+            &[
+                "mr",
+                "update",
+                &iid.to_string(),
+                "--milestone",
+                val,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "mr",
+                "update",
+                &iid.to_string(),
+                "--target-branch",
+                branch,
+                "-R",
+                &encoded,
+            ],
+            "UPDATING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
     // ── Pipelines ──
 
     async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
@@ -720,6 +1326,50 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
+    async fn run_pipeline(
+        &self,
+        _project: &str,
+        branch: &str,
+        mr: bool,
+        variables: &[(String, String)],
+        inputs: &[(String, String)],
+        _workflow_file: &str,
+    ) -> Result<()> {
+        let mut args: Vec<String> = vec!["ci".into(), "run".into()];
+        if !branch.is_empty() {
+            args.push("--branch".into());
+            args.push(branch.into());
+        }
+        if mr {
+            args.push("--mr".into());
+        }
+        for (k, v) in variables {
+            args.push("--variable".into());
+            args.push(format!("{}:{}", k, v));
+        }
+        for (k, v) in inputs {
+            args.push("--input".into());
+            args.push(format!("{}:{}", k, v));
+        }
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_glab(&args_refs, "RUNNING PIPELINE").await?;
+        Ok(())
+    }
+
+    async fn download_artifact(
+        &self,
+        _project: &str,
+        ref_name: &str,
+        job_name: &str,
+    ) -> Result<()> {
+        self.run_glab(
+            &["job", "artifact", ref_name, job_name],
+            "DOWNLOADING ARTIFACT",
+        )
+        .await?;
+        Ok(())
+    }
+
     // ── Runners ──
 
     async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>> {
@@ -757,6 +1407,35 @@ impl Backend for GlabBackend {
                 active: r.active,
             })
             .collect())
+    }
+
+    async fn pause_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
+        let endpoint = format!("runners/{}", runner_id);
+        let body = r#"{"paused":true}"#;
+        self.raw_api(&endpoint, "PUT", Some(body), "PAUSING RUNNER")
+            .await?;
+        Ok(())
+    }
+
+    async fn resume_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
+        let endpoint = format!("runners/{}", runner_id);
+        let body = r#"{"paused":false}"#;
+        self.raw_api(&endpoint, "PUT", Some(body), "RESUMING RUNNER")
+            .await?;
+        Ok(())
+    }
+
+    async fn update_runner_description(
+        &self,
+        _project: &str,
+        runner_id: u64,
+        description: &str,
+    ) -> Result<()> {
+        let endpoint = format!("runners/{}", runner_id);
+        let body = serde_json::json!({ "description": description }).to_string();
+        self.raw_api(&endpoint, "PUT", Some(&body), "UPDATING RUNNER DESCRIPTION")
+            .await?;
+        Ok(())
     }
 
     // ── Releases ──
@@ -821,6 +1500,32 @@ impl Backend for GlabBackend {
                 }
             })
             .collect())
+    }
+
+    async fn create_release(
+        &self,
+        project: &str,
+        tag: &str,
+        name: &str,
+        description: &str,
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &[
+                "release",
+                "create",
+                tag,
+                "-R",
+                &encoded,
+                "-n",
+                name,
+                "-N",
+                description,
+            ],
+            "CREATING RELEASE",
+        )
+        .await?;
+        Ok(())
     }
 
     async fn update_release(
@@ -994,6 +1699,38 @@ impl Backend for GlabBackend {
                 due_date: i.due_date,
             })
             .collect())
+    }
+
+    async fn create_milestone(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        start_date: Option<&str>,
+        due_date: Option<&str>,
+    ) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!("projects/{}/milestones", encoded);
+        let mut body_val = serde_json::json!({
+            "title": title,
+        });
+        if !description.is_empty() {
+            body_val["description"] = serde_json::Value::String(description.to_string());
+        }
+        if let Some(sd) = start_date {
+            if !sd.is_empty() {
+                body_val["start_date"] = serde_json::Value::String(sd.to_string());
+            }
+        }
+        if let Some(dd) = due_date {
+            if !dd.is_empty() {
+                body_val["due_date"] = serde_json::Value::String(dd.to_string());
+            }
+        }
+        let body = body_val.to_string();
+        self.raw_api(&endpoint, "POST", Some(&body), "CREATING MILESTONE")
+            .await?;
+        Ok(())
     }
 
     async fn update_milestone_state(
@@ -1378,6 +2115,33 @@ impl Backend for GlabBackend {
             .collect())
     }
 
+    async fn open_in_browser(&self, _project: &str, entity: &str, id: &str) -> Result<()> {
+        self.run_glab(&[entity, "view", id, "-w"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
+
+    async fn open_pipeline_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_glab(&["ci", "view", id, "-w"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
+
+    async fn open_job_in_browser(&self, _project: &str, id: &str) -> Result<()> {
+        self.run_glab(&["job", "view", id, "-w"], "OPENING IN BROWSER")
+            .await?;
+        Ok(())
+    }
+
+    async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        self.run_glab(
+            &["milestone", "view", id, "-w", "-R", &encoded],
+            "OPENING IN BROWSER",
+        )
+        .await?;
+        Ok(())
+    }
     // ── Raw API ──
 
     async fn raw_api(
@@ -1464,5 +2228,27 @@ impl Backend for GlabBackend {
                 Err(e.into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_ats() {
+        assert_eq!(strip_ats(""), "");
+        assert_eq!(strip_ats("@user1"), "user1");
+        assert_eq!(strip_ats("@user1, @user2"), "user1,user2");
+        assert_eq!(strip_ats("user1, @user2, @user3"), "user1,user2,user3");
+        assert_eq!(strip_ats("user1"), "user1");
+    }
+
+    #[test]
+    fn test_normalize_labels() {
+        assert_eq!(normalize_labels(""), "");
+        assert_eq!(normalize_labels("bug, feature"), "bug,feature");
+        assert_eq!(normalize_labels("bug,feature"), "bug,feature");
+        assert_eq!(normalize_labels("bug"), "bug");
     }
 }

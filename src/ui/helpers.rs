@@ -370,11 +370,7 @@ fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
     ]));
 }
 
-pub(crate) fn build_log_line(
-    cmd: &crate::app::TerminalCommand,
-    width: usize,
-    is_github: bool,
-) -> Line<'static> {
+pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) -> Line<'static> {
     let time_str = if cmd.timestamp.len() >= 8 {
         let parts: Vec<&str> = cmd.timestamp.split('T').collect();
         if parts.len() > 1 {
@@ -419,88 +415,12 @@ pub(crate) fn build_log_line(
     let mut cmd_to_run = cmd_clean;
 
     if let Some(pos) = cmd_clean.find(": ") {
-        let prefix = &cmd_clean[..pos];
-        let remainder = &cmd_clean[pos + 2..];
-        if remainder.starts_with("glab") || remainder.starts_with("gh") {
-            desc = prefix;
-            cmd_to_run = remainder;
-        } else {
-            // Still treat prefix as desc, but keep full text as description
-            desc = prefix;
-            cmd_to_run = ""; // Don't split into CLI components
-        }
+        desc = &cmd_clean[..pos];
+        cmd_to_run = &cmd_clean[pos + 2..];
     }
 
     let desc_str = if desc.is_empty() {
-        let parts: Vec<&str> = cmd_clean.split_whitespace().collect();
-        if !parts.is_empty() {
-            let mut action = "RUNNING";
-            let mut target = "COMMAND";
-            let mut start_idx = 0;
-            if parts[0] == "gh" || parts[0] == "glab" || parts[0] == "git" {
-                start_idx = 1;
-            }
-            for part in &parts[start_idx..] {
-                let p = part.to_lowercase();
-                if p == "create" || p == "new" {
-                    action = "CREATING";
-                    break;
-                } else if p == "update" || p == "edit" || p == "ready" || p == "ready-pr" {
-                    action = "UPDATING";
-                    break;
-                } else if p == "delete" || p == "remove" {
-                    action = "DELETING";
-                    break;
-                } else if p == "view"
-                    || p == "list"
-                    || p == "get"
-                    || p == "show"
-                    || p == "fetch"
-                    || p == "clone"
-                {
-                    action = "FETCHING";
-                    break;
-                }
-            }
-            for part in &parts[start_idx..] {
-                let p = part.to_lowercase();
-                if p.contains("issue") {
-                    target = "ISSUE";
-                    break;
-                } else if p.contains("mr")
-                    || p.contains("pr")
-                    || p.contains("pull")
-                    || p.contains("merge")
-                {
-                    target = "MERGE REQUEST";
-                    break;
-                } else if p.contains("release") {
-                    target = "RELEASE";
-                    break;
-                } else if p.contains("milestone") {
-                    target = "MILESTONE";
-                    break;
-                } else if p.contains("branch") {
-                    target = "BRANCH";
-                    break;
-                } else if p.contains("runner") {
-                    target = "RUNNER";
-                    break;
-                } else if p.contains("job") {
-                    target = "JOB";
-                    break;
-                } else if p.contains("pipeline") || p.contains("actions/runs") {
-                    target = if is_github { "ACTIONS" } else { "PIPELINES" };
-                    break;
-                } else if p.contains("commit") {
-                    target = "COMMIT";
-                    break;
-                }
-            }
-            format!("{} {}", action, target)
-        } else {
-            "RUNNING COMMAND".to_string()
-        }
+        cmd_clean.to_uppercase()
     } else {
         desc.to_uppercase()
     };
@@ -521,6 +441,8 @@ pub(crate) fn build_log_line(
         ("glab", truncated_api[4..].to_string())
     } else if truncated_api.starts_with("gh") {
         ("gh", truncated_api[2..].to_string())
+    } else if truncated_api.starts_with("git") {
+        ("git", truncated_api[3..].to_string())
     } else {
         ("", truncated_api.clone())
     };

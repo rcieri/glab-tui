@@ -1,6 +1,5 @@
 use crate::backend::Backend;
 use anyhow::{Context, Result};
-use tokio::process::Command;
 
 pub struct GitlabClient {
     pub is_github: bool,
@@ -91,6 +90,329 @@ impl GitlabClient {
     ) -> Result<String> {
         self.backend.raw_api(endpoint, method, body, desc).await
     }
+
+    // ── Issue mutations ──
+    pub async fn close_issue(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.close_issue(project, iid).await
+    }
+
+    pub async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.reopen_issue(project, iid).await
+    }
+
+    pub async fn delete_issue(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.delete_issue(project, iid).await
+    }
+
+    pub async fn create_issue(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        labels: &str,
+        assignees: &str,
+        milestone: &str,
+        due_date: &str,
+        weight: &str,
+    ) -> Result<()> {
+        self.backend
+            .create_issue(
+                project,
+                title,
+                description,
+                labels,
+                assignees,
+                milestone,
+                due_date,
+                weight,
+            )
+            .await
+    }
+
+    // ── MR mutations ──
+    pub async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.close_mr(project, iid).await
+    }
+
+    pub async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.reopen_mr(project, iid).await
+    }
+
+    pub async fn delete_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.delete_mr(project, iid).await
+    }
+
+    pub async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.approve_mr(project, iid).await
+    }
+
+    pub async fn merge_mr(
+        &self,
+        project: &str,
+        iid: u64,
+        squash: bool,
+        delete_branch: bool,
+        strategy: Option<&str>,
+    ) -> Result<()> {
+        self.backend
+            .merge_mr(project, iid, squash, delete_branch, strategy)
+            .await
+    }
+
+    pub async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
+        self.backend.toggle_mr_draft(project, iid, is_draft).await
+    }
+
+    pub async fn create_mr(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        source_branch: &str,
+        target_branch: &str,
+        labels: &str,
+        assignees: &str,
+        reviewers: &str,
+        milestone: &str,
+        issue_iid: Option<u64>,
+    ) -> Result<()> {
+        self.backend
+            .create_mr(
+                project,
+                title,
+                description,
+                source_branch,
+                target_branch,
+                labels,
+                assignees,
+                reviewers,
+                milestone,
+                issue_iid,
+            )
+            .await
+    }
+
+    pub async fn add_mr_comment(
+        &self,
+        project: &str,
+        iid: u64,
+        body: &str,
+        file_path: Option<&str>,
+        line: Option<u64>,
+        old_line: Option<u64>,
+    ) -> Result<()> {
+        self.backend
+            .add_mr_comment(project, iid, body, file_path, line, old_line)
+            .await
+    }
+
+    // ── Pipeline mutations ──
+    pub async fn run_pipeline(
+        &self,
+        project: &str,
+        branch: &str,
+        mr: bool,
+        variables: &[(String, String)],
+        inputs: &[(String, String)],
+        workflow_file: &str,
+    ) -> Result<()> {
+        self.backend
+            .run_pipeline(project, branch, mr, variables, inputs, workflow_file)
+            .await
+    }
+
+    pub async fn download_artifact(
+        &self,
+        project: &str,
+        ref_name: &str,
+        job_name: &str,
+    ) -> Result<()> {
+        self.backend
+            .download_artifact(project, ref_name, job_name)
+            .await
+    }
+
+    // ── Runner mutations ──
+    pub async fn pause_runner(&self, project: &str, runner_id: u64) -> Result<()> {
+        self.backend.pause_runner(project, runner_id).await
+    }
+
+    pub async fn resume_runner(&self, project: &str, runner_id: u64) -> Result<()> {
+        self.backend.resume_runner(project, runner_id).await
+    }
+
+    // ── Release mutations ──
+    pub async fn create_release(
+        &self,
+        project: &str,
+        tag: &str,
+        name: &str,
+        description: &str,
+    ) -> Result<()> {
+        self.backend
+            .create_release(project, tag, name, description)
+            .await
+    }
+
+    pub async fn delete_release(&self, project: &str, tag: &str) -> Result<()> {
+        self.backend.delete_release(project, tag).await
+    }
+
+    // ── Milestone mutations ──
+    pub async fn create_milestone(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        start_date: Option<&str>,
+        due_date: Option<&str>,
+    ) -> Result<()> {
+        self.backend
+            .create_milestone(project, title, description, start_date, due_date)
+            .await
+    }
+
+    // ── Field updates ──
+    pub async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        self.backend.update_issue_title(project, iid, title).await
+    }
+    pub async fn update_issue_description(
+        &self,
+        project: &str,
+        iid: u64,
+        desc: &str,
+    ) -> Result<()> {
+        self.backend
+            .update_issue_description(project, iid, desc)
+            .await
+    }
+    pub async fn update_issue_labels(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        self.backend
+            .update_issue_labels(project, iid, add, remove)
+            .await
+    }
+    pub async fn update_issue_assignees(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        self.backend
+            .update_issue_assignees(project, iid, add, remove)
+            .await
+    }
+    pub async fn update_issue_milestone(
+        &self,
+        project: &str,
+        iid: u64,
+        milestone: &str,
+    ) -> Result<()> {
+        self.backend
+            .update_issue_milestone(project, iid, milestone)
+            .await
+    }
+    pub async fn update_issue_due_date(
+        &self,
+        project: &str,
+        iid: u64,
+        due_date: &str,
+    ) -> Result<()> {
+        self.backend
+            .update_issue_due_date(project, iid, due_date)
+            .await
+    }
+    pub async fn update_issue_weight(&self, project: &str, iid: u64, weight: &str) -> Result<()> {
+        self.backend.update_issue_weight(project, iid, weight).await
+    }
+    pub async fn update_issue_confidential(
+        &self,
+        project: &str,
+        iid: u64,
+        confidential: bool,
+    ) -> Result<()> {
+        self.backend
+            .update_issue_confidential(project, iid, confidential)
+            .await
+    }
+    pub async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        self.backend.update_mr_title(project, iid, title).await
+    }
+    pub async fn update_mr_description(&self, project: &str, iid: u64, desc: &str) -> Result<()> {
+        self.backend.update_mr_description(project, iid, desc).await
+    }
+    pub async fn update_mr_labels(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        self.backend
+            .update_mr_labels(project, iid, add, remove)
+            .await
+    }
+    pub async fn update_mr_assignees(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        self.backend
+            .update_mr_assignees(project, iid, add, remove)
+            .await
+    }
+    pub async fn update_mr_reviewers(
+        &self,
+        project: &str,
+        iid: u64,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()> {
+        self.backend
+            .update_mr_reviewers(project, iid, add, remove)
+            .await
+    }
+    pub async fn update_mr_milestone(
+        &self,
+        project: &str,
+        iid: u64,
+        milestone: &str,
+    ) -> Result<()> {
+        self.backend
+            .update_mr_milestone(project, iid, milestone)
+            .await
+    }
+    pub async fn update_mr_target_branch(
+        &self,
+        project: &str,
+        iid: u64,
+        branch: &str,
+    ) -> Result<()> {
+        self.backend
+            .update_mr_target_branch(project, iid, branch)
+            .await
+    }
+    pub async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
+        self.backend.open_in_browser(project, entity, id).await
+    }
+
+    pub async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        self.backend.open_pipeline_in_browser(project, id).await
+    }
+    pub async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        self.backend.open_job_in_browser(project, id).await
+    }
+    pub async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        self.backend.open_milestone_in_browser(project, id).await
+    }
 }
 
 impl Clone for GitlabClient {
@@ -114,62 +436,6 @@ impl std::fmt::Debug for GitlabClient {
             .field("is_github", &self.is_github)
             .field("page_size", &self.page_size)
             .finish()
-    }
-}
-
-impl GitlabClient {
-    pub async fn execute_raw_command(
-        &self,
-        program: &str,
-        args: &[&str],
-        desc: &str,
-    ) -> Result<String> {
-        let label = desc.to_uppercase();
-        let cmd_str = format!("{} {}", program, args.join(" "));
-
-        let output = Command::new(program)
-            .args(args)
-            .output()
-            .await
-            .context(format!("Failed to execute {} command", program));
-
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let s = String::from_utf8(out.stdout)?;
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                            timestamp: timestamp.clone(),
-                            command: format!("{}: {}", label, cmd_str),
-                            status: "Success".to_string(),
-                        });
-                    }
-                    Ok(s)
-                } else {
-                    let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                            timestamp: timestamp.clone(),
-                            command: format!("{}: {}", label, cmd_str),
-                            status: format!("Failed: {}", err_msg),
-                        });
-                    }
-                    anyhow::bail!("{} failed: {}", program, err_msg)
-                }
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                if let Some(ref tx) = self.tx {
-                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                        timestamp: timestamp.clone(),
-                        command: format!("{}: {}", label, cmd_str),
-                        status: format!("Failed: {}", err_msg),
-                    });
-                }
-                Err(e.into())
-            }
-        }
     }
 }
 

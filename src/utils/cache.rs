@@ -164,9 +164,9 @@ pub fn get_switchable_repos() -> Vec<String> {
 
     let mut sorted_repos = Vec::new();
 
-    // Recent repos are always absolute paths — add any that still exist
+    // Recent repos are always absolute paths — show all, filter on selection
     for abs_path in recent_paths {
-        if !sorted_repos.contains(&abs_path) && is_git_repo(&abs_path) {
+        if !sorted_repos.contains(&abs_path) {
             sorted_repos.push(abs_path);
         }
     }

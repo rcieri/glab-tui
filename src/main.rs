@@ -2234,7 +2234,7 @@ async fn main() -> Result<()> {
 
                                             let target_path_str =
                                                 target_path.to_string_lossy().into_owned();
-                                            if crate::utils::cache::is_git_repo(&target_path_str) {
+                                            if target_path.is_dir() {
                                                 if std::env::set_current_dir(&target_path).is_ok() {
                                                     crate::utils::cache::add_recent_repo(
                                                         &target_path_str,

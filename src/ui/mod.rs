@@ -702,14 +702,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     }
                 }
 
-                // Build stats string (right-aligned)
-                let mut stats = String::new();
-                if node.deletions > 0 {
-                    stats.push_str(&format!("  -{}", node.deletions));
-                }
-                if node.additions > 0 {
-                    stats.push_str(&format!(" +{}", node.additions));
-                }
+                // Build stats (right-aligned, colored): only for files, not directories
+                let stats_str = if !node.is_dir {
+                    let mut s = String::new();
+                    if node.additions > 0 {
+                        s.push_str(&format!(" +{}", node.additions));
+                    }
+                    if node.deletions > 0 {
+                        s.push_str(&format!(" -{}", node.deletions));
+                    }
+                    if !s.is_empty() { Some(s) } else { None }
+                } else {
+                    None
+                };
 
                 let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
                 let count_suffix = if unresolved_count > 0 {
@@ -721,23 +726,21 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 } else {
                     String::new()
                 };
-                if !count_suffix.is_empty() {
-                    stats.push_str(&count_suffix);
-                }
 
-                // Right-align: pad with spaces between name and stats
+                let stats_total_len =
+                    stats_str.as_ref().map_or(0, |s| s.len()) + count_suffix.len();
+
                 let prefix = format!(" {}{}", indent, indicator);
                 let name_avail = panel_inner_width
                     .saturating_sub(prefix.len())
-                    .saturating_sub(stats.len());
+                    .saturating_sub(stats_total_len);
                 name_display = truncate(&name_display, name_avail.max(8));
                 let padding = " ".repeat(
                     panel_inner_width
-                        .saturating_sub(prefix.len() + name_display.len() + stats.len()),
+                        .saturating_sub(prefix.len() + name_display.len() + stats_total_len),
                 );
 
-                let display_str = format!("{}{}{}{}", prefix, name_display, padding, stats);
-
+                // Determine per-item style
                 let item_style = if is_selected {
                     if diff_view.focus_on_files {
                         Style::default()
@@ -769,7 +772,47 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     Style::default().fg(THEME.read().unwrap().text_normal)
                 };
 
-                file_items.push(ListItem::new(display_str).style(item_style));
+                // Build colored line spans
+                let mut line_spans: Vec<Span> = Vec::new();
+                line_spans.push(Span::styled(prefix, item_style));
+                line_spans.push(Span::styled(name_display, item_style));
+                line_spans.push(Span::styled(padding, item_style));
+
+                // Render stats with separate colors
+                if let Some(ref s) = stats_str {
+                    // Parse the stats string into colored spans
+                    // Format: " +N -M" (additions first, then deletions, space-separated)
+                    let parts: Vec<&str> = s.split_whitespace().collect();
+                    let mut i = 0;
+                    while i < parts.len() {
+                        let part = parts[i];
+                        if part.starts_with('+') {
+                            line_spans.push(Span::styled(
+                                format!(" {}", part),
+                                Style::default()
+                                    .fg(Color::Rgb(80, 255, 80))
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                        } else if part.starts_with('-') {
+                            line_spans.push(Span::styled(
+                                format!(" {}", part),
+                                Style::default()
+                                    .fg(Color::Rgb(255, 100, 100))
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                        }
+                        i += 1;
+                    }
+                }
+
+                if !count_suffix.is_empty() {
+                    line_spans.push(Span::styled(
+                        count_suffix,
+                        Style::default().fg(THEME.read().unwrap().text_muted),
+                    ));
+                }
+
+                file_items.push(ListItem::new(Line::from(line_spans)));
             }
             List::new(file_items).block(files_block)
         } else {

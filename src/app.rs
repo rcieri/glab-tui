@@ -977,8 +977,8 @@ impl DiffView {
                 old_path.as_deref(),
                 *is_new,
                 *is_del,
-                counts.0,
                 counts.1,
+                counts.0,
                 *line_idx,
             );
         }

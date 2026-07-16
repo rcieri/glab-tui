@@ -1392,7 +1392,12 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Terminal => {
-            handled = false;
+            if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, &key_event) {
+                app.terminal_wrap = !app.terminal_wrap;
+                app.terminal_scroll = 0;
+            } else {
+                handled = false;
+            }
         }
     }
 

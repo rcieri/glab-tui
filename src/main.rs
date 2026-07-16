@@ -262,6 +262,37 @@ async fn main() -> Result<()> {
         app.error_message = Some("Failed to initialize GitLab client".to_string());
     }
 
+    // If we couldn't detect a valid project, prompt to select a cached repo
+    if app.project_context == "unknown/unknown" || app.project_context == "group/repository" {
+        let switchable = crate::utils::cache::get_switchable_repos();
+        if !switchable.is_empty() {
+            let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+            app.terminal_commands.push(crate::app::TerminalCommand {
+                timestamp,
+                command: "Startup: Not in a git repository".to_string(),
+                status: "Failed: No repo detected — select one below or press Esc".to_string(),
+            });
+            app.selector = Some(crate::app::Selector {
+                title: " No Repo Detected — Select a Repository ".to_string(),
+                all_items: switchable,
+                selected_items: std::collections::HashSet::new(),
+                cursor_idx: 0,
+                search_query: String::new(),
+                is_filtering: true,
+                is_loading: false,
+                entity_iid: 0,
+                entity_type: "app".to_string(),
+                field_type: "switch_repo".to_string(),
+                multi_select: false,
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(0));
+                    s
+                },
+            });
+        }
+    }
+
     let mut last_refresh = std::time::Instant::now();
     let mut last_active_tab = app.active_tab;
 

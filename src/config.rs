@@ -590,6 +590,12 @@ pub struct KeybindingEnvironments {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeybindingTerminal {
+    #[serde(default)]
+    pub toggle_wrap: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingConfig {
     #[serde(default)]
     pub global: KeybindingGlobal,
@@ -613,6 +619,8 @@ pub struct KeybindingConfig {
     pub branches: KeybindingBranches,
     #[serde(default)]
     pub environments: KeybindingEnvironments,
+    #[serde(default)]
+    pub terminal: KeybindingTerminal,
 }
 
 macro_rules! keybind_defaults {
@@ -676,6 +684,7 @@ keybind_defaults! {
     def_create_branch = "n",
     def_delete_branch = "d",
     def_view_deployments = "Enter",
+    def_toggle_terminal_wrap = "w",
 }
 
 impl Default for KeybindingGlobal {
@@ -812,6 +821,14 @@ impl Default for KeybindingEnvironments {
     }
 }
 
+impl Default for KeybindingTerminal {
+    fn default() -> Self {
+        Self {
+            toggle_wrap: def_toggle_terminal_wrap(),
+        }
+    }
+}
+
 impl Default for KeybindingConfig {
     fn default() -> Self {
         Self {
@@ -826,6 +843,7 @@ impl Default for KeybindingConfig {
             todos: KeybindingTodos::default(),
             branches: KeybindingBranches::default(),
             environments: KeybindingEnvironments::default(),
+            terminal: KeybindingTerminal::default(),
         }
     }
 }
@@ -1025,6 +1043,9 @@ delete_branch = "d"
 
 [keybindings.environments]
 view_deployments = "Enter"
+
+[keybindings.terminal]
+toggle_wrap = "w"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

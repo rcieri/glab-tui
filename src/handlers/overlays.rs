@@ -49,7 +49,7 @@ pub fn handle_submit_review_prompt(app: &mut App, key_event: &KeyEvent) -> bool 
     false
 }
 
-pub async fn handle_confirm_popup(
+pub fn handle_confirm_popup(
     app: &mut App,
     key_event: &KeyEvent,
     terminal: &mut AppTerminal,
@@ -152,13 +152,22 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::CloseIssue(iid) => {
-                        let client = app.gitlab_client.clone().unwrap();
-                        let project_path = app.project_context.clone();
-                        let _ = client.close_issue(&project_path, iid).await;
                         if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
                             app.issues.items.remove(pos);
                         }
                         app.update_filter_selection();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return true;
+                        };
+                        let project_path = app.project_context.clone();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client.close_issue(&project_path, iid).await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::Issues,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
                     }
                     crate::app::ConfirmAction::DeleteIssue(iid) => {
                         let project_path = app.project_context.clone();
@@ -183,13 +192,22 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::CloseMr(iid) => {
-                        let client = app.gitlab_client.clone().unwrap();
-                        let project_path = app.project_context.clone();
-                        let _ = client.close_mr(&project_path, iid).await;
                         if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                             app.mrs.items.remove(pos);
                         }
                         app.update_filter_selection();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return true;
+                        };
+                        let project_path = app.project_context.clone();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client.close_mr(&project_path, iid).await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
                     }
                     crate::app::ConfirmAction::DeleteMr(iid) => {
                         let project_path = app.project_context.clone();
@@ -214,13 +232,23 @@ pub async fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::MergeMr(iid) => {
-                        let client = app.gitlab_client.clone().unwrap();
-                        let project_path = app.project_context.clone();
-                        let _ = client.merge_mr(&project_path, iid, true, true, None).await;
                         if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                             app.mrs.items.remove(pos);
                         }
                         app.update_filter_selection();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return true;
+                        };
+                        let project_path = app.project_context.clone();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result =
+                                client.merge_mr(&project_path, iid, true, true, None).await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
                     }
                 }
             }
@@ -352,7 +380,7 @@ pub fn handle_refresh(
     false
 }
 
-pub async fn handle_date_picker(
+pub fn handle_date_picker(
     app: &mut App,
     key_event: &KeyEvent,
     terminal: &mut AppTerminal,
@@ -403,8 +431,7 @@ pub async fn handle_date_picker(
                             terminal,
                             tx,
                             active_tab,
-                        )
-                        .await;
+                        );
                         rebuild_edit_menu(app, &entity_type, entity_iid);
                     }
                     crate::app::DatePickerAction::EditNewField { field_idx } => {

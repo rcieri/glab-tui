@@ -972,13 +972,11 @@ async fn main() -> Result<()> {
                             &mut terminal,
                             events.sender(),
                         )
-                        .await
                         || handle_help_keybinding(&mut app, &key_event)
                         || handle_help_overlay(&mut app, &key_event)
                         || handle_switch_repo(&mut app, &key_event)
                         || handle_refresh(&mut app, &key_event, &mut last_refresh, events.sender())
                         || handle_date_picker(&mut app, &key_event, &mut terminal, events.sender())
-                            .await
                     {
                         continue;
                     }
@@ -1069,8 +1067,7 @@ async fn main() -> Result<()> {
                                             &mut terminal,
                                             events.sender(),
                                             active_tab,
-                                        )
-                                        .await;
+                                        );
                                         rebuild_edit_menu(&mut app, &entity_type, entity_iid);
                                     }
                                     crate::app::TextInputAction::CreateIssue => {
@@ -3249,6 +3246,7 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     } else {
+                                        let active_tab = app.active_tab;
                                         apply_selector_changes(
                                             &mut app,
                                             &entity_type,
@@ -3256,8 +3254,9 @@ async fn main() -> Result<()> {
                                             &field_type,
                                             selected_list,
                                             &mut terminal,
-                                        )
-                                        .await;
+                                            events.sender(),
+                                            active_tab,
+                                        );
 
                                         if let Some(client) = &app.gitlab_client {
                                             spawn_refresh_active_tab(

@@ -136,9 +136,17 @@ pub async fn handle_active_tab_key(
                             return;
                         };
                         let project_path = app.project_context.clone();
-                        let _ = client
-                            .open_in_browser(&project_path, "issue", &issue.iid.to_string())
-                            .await;
+                        let iid_str = issue.iid.to_string();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client
+                                .open_in_browser(&project_path, "issue", &iid_str)
+                                .await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::Issues,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
                     }
                 }
             }
@@ -147,8 +155,20 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        if let Some(client) = &app.gitlab_client {
-                            let _ = client.reopen_issue(&app.project_context, issue_iid).await;
+                        if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid)
+                        {
+                            item.state = "opened".to_string();
+                        }
+                        if let Some(client) = app.gitlab_client.clone() {
+                            let project_path = app.project_context.clone();
+                            let tx2 = tx.clone();
+                            tokio::spawn(async move {
+                                let result = client.reopen_issue(&project_path, issue_iid).await;
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::Issues,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
                         }
                     }
                 }
@@ -288,8 +308,16 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            if let Some(client) = &app.gitlab_client {
-                                let _ = client.approve_mr(&app.project_context, mr_iid).await;
+                            if let Some(client) = app.gitlab_client.clone() {
+                                let project_path = app.project_context.clone();
+                                let tx2 = tx.clone();
+                                tokio::spawn(async move {
+                                    let result = client.approve_mr(&project_path, mr_iid).await;
+                                    let _ = tx2.send(Event::CommandCompleted(
+                                        crate::app::Tab::MergeRequests,
+                                        result.map_err(|e| e.to_string()),
+                                    ));
+                                });
                             }
                         }
                         _ if keybinding_matches(
@@ -409,18 +437,24 @@ pub async fn handle_active_tab_key(
                         KeyCode::Char('o') => {
                             let is_github =
                                 app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
-                            let args = vec![
-                                if is_github { "pr" } else { "mr" }.to_string(),
-                                "view".to_string(),
-                                mr_iid.to_string(),
-                                if is_github { "--web" } else { "-w" }.to_string(),
-                            ];
+                            let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
                             };
                             let project_path = app.project_context.clone();
-                            let _ = client.reopen_mr(&project_path, mr_iid).await;
+                            let tx2 = tx.clone();
+                            let iid_str = mr_iid.to_string();
+                            let _ =
+
+                            tokio::spawn(async move {
+                                let result = client
+                                    .open_in_browser(&project_path, entity, &iid_str)
+                                    .await;
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::MergeRequests,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.toggle_draft,
@@ -436,13 +470,21 @@ pub async fn handle_active_tab_key(
                                 .unwrap_or_else(|| {
                                     mr_title.starts_with("Draft:") || mr_title.starts_with("WIP:")
                                 });
-                            if let Some(client) = &app.gitlab_client {
-                                let _ = client
-                                    .toggle_mr_draft(&app.project_context, mr_iid, is_draft)
-                                    .await;
-                            }
                             if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
                                 item.draft = !is_draft;
+                            }
+                            if let Some(client) = app.gitlab_client.clone() {
+                                let project_path = app.project_context.clone();
+                                let tx2 = tx.clone();
+                                tokio::spawn(async move {
+                                    let result = client
+                                        .toggle_mr_draft(&project_path, mr_iid, is_draft)
+                                        .await;
+                                    let _ = tx2.send(Event::CommandCompleted(
+                                        crate::app::Tab::MergeRequests,
+                                        result.map_err(|e| e.to_string()),
+                                    ));
+                                });
                             }
                         }
                         _ if keybinding_matches(
@@ -476,8 +518,19 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            if let Some(client) = &app.gitlab_client {
-                                let _ = client.reopen_mr(&app.project_context, mr_iid).await;
+                            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
+                                item.state = "opened".to_string();
+                            }
+                            if let Some(client) = app.gitlab_client.clone() {
+                                let project_path = app.project_context.clone();
+                                let tx2 = tx.clone();
+                                tokio::spawn(async move {
+                                    let result = client.reopen_mr(&project_path, mr_iid).await;
+                                    let _ = tx2.send(Event::CommandCompleted(
+                                        crate::app::Tab::MergeRequests,
+                                        result.map_err(|e| e.to_string()),
+                                    ));
+                                });
                             }
                         }
                         _ => handled = false,
@@ -518,12 +571,20 @@ pub async fn handle_active_tab_key(
                     &key_event,
                 )
             {
-                if let Some(client) = &app.gitlab_client {
+                if let Some(client) = app.gitlab_client.clone() {
                     let branch = crate::git_helpers::get_current_branch()
                         .unwrap_or_else(|| "main".to_string());
-                    let _ = client
-                        .run_pipeline(&app.project_context, &branch, false, &vec![], &vec![], "")
-                        .await;
+                    let project_path = app.project_context.clone();
+                    let tx2 = tx.clone();
+                    tokio::spawn(async move {
+                        let result = client
+                            .run_pipeline(&project_path, &branch, false, &vec![], &vec![], "")
+                            .await;
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Pipelines,
+                            result.map_err(|e| e.to_string()),
+                        ));
+                    });
                 }
             } else if let Some(selected_idx) = app.pipelines.state.selected() {
                 if let Some(item) = app.filtered_pipelines().get(selected_idx) {
@@ -636,14 +697,23 @@ pub async fn handle_active_tab_key(
                         KeyCode::Char('o') => {
                             let is_github =
                                 app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
                             };
                             let project_path = app.project_context.clone();
-                            let _ = client
-                                .open_pipeline_in_browser(&project_path, &pipe_id.to_string())
-                                .await;
+                            let pid_str = pipe_id.to_string();
+                            let tx2 = tx.clone();
+                            let _ =
+
+                            tokio::spawn(async move {
+                                let result = client
+                                    .open_pipeline_in_browser(&project_path, &pid_str)
+                                    .await;
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::Pipelines,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
                         }
                         _ => handled = false,
                     }
@@ -845,7 +915,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            if let Some(client) = &app.gitlab_client {
+                            if let Some(client) = app.gitlab_client.clone() {
                                 let ref_name = app
                                     .active_pipeline_id
                                     .and_then(|pipe_id| {
@@ -856,9 +926,17 @@ pub async fn handle_active_tab_key(
                                             .map(|p| p.ref_branch().to_string())
                                     })
                                     .unwrap_or_else(|| "master".to_string());
-                                let _ = client
-                                    .download_artifact(&app.project_context, &ref_name, &job_name)
-                                    .await;
+                                let project_path = app.project_context.clone();
+                                let tx2 = tx.clone();
+                                tokio::spawn(async move {
+                                    let result = client
+                                        .download_artifact(&project_path, &ref_name, &job_name)
+                                        .await;
+                                    let _ = tx2.send(Event::CommandCompleted(
+                                        crate::app::Tab::Jobs,
+                                        result.map_err(|e| e.to_string()),
+                                    ));
+                                });
                             }
                         }
                         _ if keybinding_matches(
@@ -870,9 +948,18 @@ pub async fn handle_active_tab_key(
                                 return;
                             };
                             let project_path = app.project_context.clone();
-                            let _ = client
-                                .open_job_in_browser(&project_path, &job_id.to_string())
-                                .await;
+                            let jid_str = job_id.to_string();
+                            let tx2 = tx.clone();
+                            let _ =
+
+                            tokio::spawn(async move {
+                                let result =
+                                    client.open_job_in_browser(&project_path, &jid_str).await;
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::Jobs,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.jobs.view_trace_editor,
@@ -965,14 +1052,23 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            if let Some(client) = &app.gitlab_client {
-                                let _ = client.pause_runner(&app.project_context, runner_id).await;
-                            }
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
                                 runner.status = "paused".to_string();
                                 runner.active = false;
+                            }
+                            if let Some(client) = app.gitlab_client.clone() {
+                                let project_path = app.project_context.clone();
+                                let tx2 = tx.clone();
+                                tokio::spawn(async move {
+                                    let result =
+                                        client.pause_runner(&project_path, runner_id).await;
+                                    let _ = tx2.send(Event::CommandCompleted(
+                                        crate::app::Tab::Runners,
+                                        result.map_err(|e| e.to_string()),
+                                    ));
+                                });
                             }
                         }
                         _ if keybinding_matches(
@@ -980,14 +1076,23 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            if let Some(client) = &app.gitlab_client {
-                                let _ = client.resume_runner(&app.project_context, runner_id).await;
-                            }
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
                                 runner.status = "online".to_string();
                                 runner.active = true;
+                            }
+                            if let Some(client) = app.gitlab_client.clone() {
+                                let project_path = app.project_context.clone();
+                                let tx2 = tx.clone();
+                                tokio::spawn(async move {
+                                    let result =
+                                        client.resume_runner(&project_path, runner_id).await;
+                                    let _ = tx2.send(Event::CommandCompleted(
+                                        crate::app::Tab::Runners,
+                                        result.map_err(|e| e.to_string()),
+                                    ));
+                                });
                             }
                         }
                         _ if keybinding_matches(
@@ -1076,9 +1181,18 @@ pub async fn handle_active_tab_key(
                             return;
                         };
                         let project_path = app.project_context.clone();
-                        let _ = client
-                            .open_in_browser(&project_path, "release", release.tag_name.as_str())
-                            .await;
+                        let tag_name = release.tag_name.clone();
+                        let tx2 = tx.clone();
+
+                        tokio::spawn(async move {
+                            let result = client
+                                .open_in_browser(&project_path, "release", tag_name.as_str())
+                                .await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::Releases,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
                     }
                 }
             }
@@ -1136,7 +1250,6 @@ pub async fn handle_active_tab_key(
                         {
                             let is_github =
                                 app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                            let program = if is_github { "gh" } else { "glab" };
                             let entity = if item.target_type.contains("MergeRequest") {
                                 if is_github { "pr" } else { "mr" }
                             } else {
@@ -1146,13 +1259,19 @@ pub async fn handle_active_tab_key(
                                 return;
                             };
                             let project_path = app.project_context.clone();
-                            let _ = client
-                                .open_in_browser(
-                                    &project_path,
-                                    &entity,
-                                    &item.target_iid.to_string(),
-                                )
-                                .await;
+                            let target_iid = item.target_iid.to_string();
+                            let tx2 = tx.clone();
+                            let _ =
+
+                            tokio::spawn(async move {
+                                let result = client
+                                    .open_in_browser(&project_path, &entity, &target_iid)
+                                    .await;
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::Todos,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
                         }
                         _ => handled = false,
                     }
@@ -1313,20 +1432,23 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let is_github = app
-                            .gitlab_client
-                            .as_ref()
-                            .map(|c| c.is_github)
-                            .unwrap_or(false);
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let program = if is_github { "gh" } else { "glab" };
                         let Some(client) = app.gitlab_client.clone() else {
                             return;
                         };
                         let project_path = app.project_context.clone();
-                        let _ = client
-                            .open_milestone_in_browser(&project_path, &milestone.iid.to_string())
-                            .await;
+                        let mid_str = milestone.iid.to_string();
+                        let tx2 = tx.clone();
+
+                        tokio::spawn(async move {
+                            let result = client
+                                .open_milestone_in_browser(&project_path, &mid_str)
+                                .await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::Milestones,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
                     }
                 }
             }

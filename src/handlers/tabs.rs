@@ -132,7 +132,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let client = app.gitlab_client.clone().unwrap();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return;
+                        };
                         let project_path = app.project_context.clone();
                         let _ = client
                             .open_in_browser(&project_path, "issue", &issue.iid.to_string())
@@ -207,17 +209,16 @@ pub async fn handle_active_tab_key(
                 }
             } else if let Some(selected_idx) = app.mrs.state.selected() {
                 let filtered = app.filtered_mrs();
-                let mr_info = filtered
-                    .get(selected_idx)
-                    .map(|item| (item.iid, item.title.clone()));
-                if let Some((mr_iid, mr_title)) = mr_info {
+                let mr_ref = filtered.get(selected_idx);
+                if let Some(mr) = mr_ref {
+                    let mr_iid = mr.iid;
+                    let mr_title = mr.title.clone();
                     match key_event.code {
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.edit_entity,
                             key_event,
                         ) =>
                         {
-                            let mr = filtered.get(selected_idx).unwrap();
                             let labels = if mr.labels.is_empty() {
                                 "None".to_string()
                             } else {
@@ -415,7 +416,9 @@ pub async fn handle_active_tab_key(
                                 mr_iid.to_string(),
                                 if is_github { "--web" } else { "-w" }.to_string(),
                             ];
-                            let client = app.gitlab_client.clone().unwrap();
+                            let Some(client) = app.gitlab_client.clone() else {
+                                return;
+                            };
                             let project_path = app.project_context.clone();
                             let _ = client.reopen_mr(&project_path, mr_iid).await;
                         }
@@ -634,7 +637,9 @@ pub async fn handle_active_tab_key(
                             let is_github =
                                 app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
                             let program = if is_github { "gh" } else { "glab" };
-                            let client = app.gitlab_client.clone().unwrap();
+                            let Some(client) = app.gitlab_client.clone() else {
+                                return;
+                            };
                             let project_path = app.project_context.clone();
                             let _ = client
                                 .open_pipeline_in_browser(&project_path, &pipe_id.to_string())
@@ -861,7 +866,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let client = app.gitlab_client.clone().unwrap();
+                            let Some(client) = app.gitlab_client.clone() else {
+                                return;
+                            };
                             let project_path = app.project_context.clone();
                             let _ = client
                                 .open_job_in_browser(&project_path, &job_id.to_string())
@@ -880,13 +887,12 @@ pub async fn handle_active_tab_key(
                                 let _ = std::fs::write(&temp_file, "Trace will be here");
                             }
                             crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
-                            crossterm::terminal::disable_raw_mode().unwrap();
-                            crossterm::execute!(
+                            let _ = crossterm::terminal::disable_raw_mode();
+                            let _ = crossterm::execute!(
                                 std::io::stdout(),
                                 crossterm::terminal::LeaveAlternateScreen,
                                 crossterm::event::DisableMouseCapture
-                            )
-                            .unwrap();
+                            );
                             let editor = std::env::var("EDITOR")
                                 .or_else(|_| std::env::var("VISUAL"))
                                 .unwrap_or_else(|_| "helix".to_string());
@@ -898,14 +904,13 @@ pub async fn handle_active_tab_key(
                             if let Ok(mut child) = cmd.spawn() {
                                 let _ = child.wait();
                             }
-                            crossterm::terminal::enable_raw_mode().unwrap();
-                            crossterm::execute!(
+                            let _ = crossterm::terminal::enable_raw_mode();
+                            let _ = crossterm::execute!(
                                 std::io::stdout(),
                                 crossterm::terminal::EnterAlternateScreen,
                                 crossterm::event::EnableMouseCapture
-                            )
-                            .unwrap();
-                            terminal.clear().unwrap();
+                            );
+                            let _ = terminal.clear();
                             crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
                         }
                         _ if keybinding_matches(
@@ -1067,7 +1072,9 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-                        let client = app.gitlab_client.clone().unwrap();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return;
+                        };
                         let project_path = app.project_context.clone();
                         let _ = client
                             .open_in_browser(&project_path, "release", release.tag_name.as_str())
@@ -1135,7 +1142,9 @@ pub async fn handle_active_tab_key(
                             } else {
                                 "issue"
                             };
-                            let client = app.gitlab_client.clone().unwrap();
+                            let Some(client) = app.gitlab_client.clone() else {
+                                return;
+                            };
                             let project_path = app.project_context.clone();
                             let _ = client
                                 .open_in_browser(
@@ -1209,7 +1218,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let client = app.gitlab_client.clone().unwrap();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return;
+                        };
                         let project_path = app.project_context.clone();
                         let milestone_iid = milestone.iid;
                         let tx = tx.clone();
@@ -1248,7 +1259,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let client = app.gitlab_client.clone().unwrap();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return;
+                        };
                         let project_path = app.project_context.clone();
                         let milestone_iid = milestone.iid;
                         let tx = tx.clone();
@@ -1307,7 +1320,9 @@ pub async fn handle_active_tab_key(
                             .unwrap_or(false);
                         let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
                         let program = if is_github { "gh" } else { "glab" };
-                        let client = app.gitlab_client.clone().unwrap();
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return;
+                        };
                         let project_path = app.project_context.clone();
                         let _ = client
                             .open_milestone_in_browser(&project_path, &milestone.iid.to_string())
@@ -1392,7 +1407,12 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Terminal => {
-            handled = false;
+            if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, &key_event) {
+                app.terminal_wrap = !app.terminal_wrap;
+                app.terminal_scroll = 0;
+            } else {
+                handled = false;
+            }
         }
     }
 

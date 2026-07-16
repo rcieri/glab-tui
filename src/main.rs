@@ -262,6 +262,37 @@ async fn main() -> Result<()> {
         app.error_message = Some("Failed to initialize GitLab client".to_string());
     }
 
+    // If we couldn't detect a valid project, prompt to select a cached repo
+    if app.project_context == "unknown/unknown" || app.project_context == "group/repository" {
+        let switchable = crate::utils::cache::get_switchable_repos();
+        if !switchable.is_empty() {
+            let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+            app.terminal_commands.push(crate::app::TerminalCommand {
+                timestamp,
+                command: "Startup: Not in a git repository".to_string(),
+                status: "Failed: No repo detected — select one below or press Esc".to_string(),
+            });
+            app.selector = Some(crate::app::Selector {
+                title: " No Repo Detected — Select a Repository ".to_string(),
+                all_items: switchable,
+                selected_items: std::collections::HashSet::new(),
+                cursor_idx: 0,
+                search_query: String::new(),
+                is_filtering: false,
+                is_loading: false,
+                entity_iid: 0,
+                entity_type: "app".to_string(),
+                field_type: "switch_repo".to_string(),
+                multi_select: false,
+                state: {
+                    let mut s = ListState::default();
+                    s.select(Some(0));
+                    s
+                },
+            });
+        }
+    }
+
     let mut last_refresh = std::time::Instant::now();
     let mut last_active_tab = app.active_tab;
 
@@ -2053,7 +2084,6 @@ async fn main() -> Result<()> {
                                 KeyCode::Char('f') | KeyCode::Char('/') | KeyCode::Char('i') => {
                                     let has_filter = selector.field_type != "comment_action_select"
                                         && selector.field_type != "review_submit_status"
-                                        && selector.field_type != "description_edit_choice"
                                         && selector.field_type != "merge_options";
                                     if has_filter {
                                         selector.is_filtering = true;
@@ -3168,277 +3198,6 @@ async fn main() -> Result<()> {
                                         {
                                             selected_list.push(item.clone());
                                         }
-                                    }
-
-                                    if field_type == "description_edit_choice" {
-                                        app.selector = None;
-                                        let choice =
-                                            selected_list.first().cloned().unwrap_or_default();
-
-                                        if entity_iid == 0 {
-                                            if let Some(ref mut menu) = app.edit_menu {
-                                                let field_idx = menu
-                                                    .fields
-                                                    .iter()
-                                                    .position(|f| f.0 == "Description")
-                                                    .unwrap_or(0);
-                                                if let Some(f) = menu
-                                                    .fields
-                                                    .iter_mut()
-                                                    .find(|f| f.0 == "Description")
-                                                {
-                                                    if choice == "Edit (basic)" {
-                                                        let tmpl_val = if f.1.trim().is_empty() {
-                                                            let template_type =
-                                                                if entity_type == "new_mr" {
-                                                                    "mr"
-                                                                } else {
-                                                                    "issue"
-                                                                };
-                                                            get_default_template(template_type)
-                                                                .unwrap_or_default()
-                                                        } else {
-                                                            f.1.clone()
-                                                        };
-                                                        app.text_input = Some(
-                                                            crate::app::TextInput {
-                                                                title:
-                                                                    " Edit Description "
-                                                                        .to_string(),
-                                                                value: tmpl_val.clone(),
-                                                                cursor_idx: tmpl_val.len(),
-                                                                action:
-                                                                    crate::app::TextInputAction::EditNewField {
-                                                                        field_idx,
-                                                                    },
-                                                            },
-                                                        );
-                                                    } else {
-                                                        let current_val = if f.1.trim().is_empty() {
-                                                            let template_type =
-                                                                if entity_type == "new_mr" {
-                                                                    "mr"
-                                                                } else {
-                                                                    "issue"
-                                                                };
-                                                            get_default_template(template_type)
-                                                                .unwrap_or_default()
-                                                        } else {
-                                                            f.1.clone()
-                                                        };
-                                                        if let Some(new_desc) = edit_in_editor(
-                                                            &current_val,
-                                                            &mut terminal,
-                                                        ) {
-                                                            f.1 = new_desc;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            let current_desc = if entity_type == "issue" {
-                                                app.issues
-                                                    .items
-                                                    .iter()
-                                                    .find(|i| i.iid == entity_iid)
-                                                    .and_then(|i| i.description.clone())
-                                                    .unwrap_or_default()
-                                            } else if entity_type == "release" {
-                                                app.releases
-                                                    .items
-                                                    .get(entity_iid as usize)
-                                                    .and_then(|r| r.description.clone())
-                                                    .unwrap_or_default()
-                                            } else if entity_type == "milestone" {
-                                                app.milestones
-                                                    .items
-                                                    .iter()
-                                                    .find(|m| m.iid == entity_iid)
-                                                    .and_then(|m| m.description.clone())
-                                                    .unwrap_or_default()
-                                            } else {
-                                                app.mrs
-                                                    .items
-                                                    .iter()
-                                                    .find(|m| m.iid == entity_iid)
-                                                    .and_then(|m| m.description.clone())
-                                                    .unwrap_or_default()
-                                            };
-
-                                            if choice == "Edit (basic)" {
-                                                app.text_input = Some(crate::app::TextInput {
-                                                    title: " Edit Description ".to_string(),
-                                                    value: current_desc.clone(),
-                                                    cursor_idx: current_desc.len(),
-                                                    action:
-                                                        crate::app::TextInputAction::EditField {
-                                                            entity_iid,
-                                                            entity_type: entity_type.clone(),
-                                                            field_type: "description".to_string(),
-                                                        },
-                                                });
-                                            } else {
-                                                if let Some(new_desc) =
-                                                    edit_in_editor(&current_desc, &mut terminal)
-                                                {
-                                                    if entity_type == "issue" {
-                                                        if let Some(item) = app
-                                                            .issues
-                                                            .items
-                                                            .iter_mut()
-                                                            .find(|i| i.iid == entity_iid)
-                                                        {
-                                                            item.description =
-                                                                Some(new_desc.clone());
-                                                        }
-                                                        let client =
-                                                            app.gitlab_client.clone().unwrap();
-                                                        let project = app.project_context.clone();
-                                                        let _ = client
-                                                            .update_issue_description(
-                                                                &project, entity_iid, &new_desc,
-                                                            )
-                                                            .await;
-                                                    } else if entity_type == "mr" {
-                                                        if let Some(item) = app
-                                                            .mrs
-                                                            .items
-                                                            .iter_mut()
-                                                            .find(|m| m.iid == entity_iid)
-                                                        {
-                                                            item.description =
-                                                                Some(new_desc.clone());
-                                                        }
-                                                        let client =
-                                                            app.gitlab_client.clone().unwrap();
-                                                        let project = app.project_context.clone();
-                                                        let _ = client
-                                                            .update_mr_description(
-                                                                &project, entity_iid, &new_desc,
-                                                            )
-                                                            .await;
-                                                    } else if entity_type == "milestone" {
-                                                        if let Some(item) = app
-                                                            .milestones
-                                                            .items
-                                                            .iter_mut()
-                                                            .find(|m| m.iid == entity_iid)
-                                                        {
-                                                            item.description =
-                                                                Some(new_desc.clone());
-                                                        }
-                                                        let client =
-                                                            app.gitlab_client.clone().unwrap();
-                                                        let project_path =
-                                                            app.project_context.clone();
-                                                        let tx_spawn = events.sender();
-                                                        tokio::spawn(async move {
-                                                            let res = crate::domain::milestones::update_milestone(
-                                                                &client,
-                                                                &project_path,
-                                                                entity_iid,
-                                                                "",
-                                                                &new_desc,
-                                                                None,
-                                                                None,
-                                                            )
-                                                            .await;
-                                                            match res {
-                                                                Ok(_) => {
-                                                                    let _ = tx_spawn.send(
-                                                                        Event::MilestoneUpdated,
-                                                                    );
-                                                                }
-                                                                Err(e) => {
-                                                                    let _ = tx_spawn.send(Event::CommandCompleted(
-                                                                        crate::app::Tab::Milestones,
-                                                                        Err(e.to_string()),
-                                                                    ));
-                                                                }
-                                                            }
-                                                        });
-                                                    } else if entity_type == "release" {
-                                                        let release_opt = app
-                                                            .releases
-                                                            .items
-                                                            .get(entity_iid as usize)
-                                                            .cloned();
-                                                        if let Some(release) = release_opt {
-                                                            let client =
-                                                                app.gitlab_client.clone().unwrap();
-                                                            let project_path =
-                                                                app.project_context.clone();
-                                                            let tag = release.tag_name.clone();
-                                                            let name = release.name.clone();
-                                                            let desc = new_desc.clone();
-                                                            let tx_spawn = events.sender();
-                                                            tokio::spawn(async move {
-                                                                let res = crate::domain::releases::update_release(
-                                                                    &client,
-                                                                    &project_path,
-                                                                    &tag,
-                                                                    &name,
-                                                                    &desc,
-                                                                )
-                                                                .await;
-                                                                match res {
-                                                                    Ok(_) => {
-                                                                        let _ = tx_spawn.send(
-                                                                            Event::ReleaseUpdated,
-                                                                        );
-                                                                    }
-                                                                    Err(e) => {
-                                                                        let _ = tx_spawn.send(Event::CommandCompleted(
-                                                                            crate::app::Tab::Releases,
-                                                                            Err(e.to_string()),
-                                                                        ));
-                                                                    }
-                                                                }
-                                                            });
-                                                        }
-                                                    }
-                                                }
-                                                if let Some(client) = &app.gitlab_client {
-                                                    if entity_type == "issue" {
-                                                        if let Ok(updated) =
-                                                            domain::issues::get_issue(
-                                                                client,
-                                                                &app.project_context,
-                                                                entity_iid,
-                                                            )
-                                                            .await
-                                                        {
-                                                            if let Some(item) = app
-                                                                .issues
-                                                                .items
-                                                                .iter_mut()
-                                                                .find(|i| i.iid == entity_iid)
-                                                            {
-                                                                *item = updated;
-                                                            }
-                                                        }
-                                                    } else if entity_type == "mr" {
-                                                        if let Ok(updated) = domain::mr::get_mr(
-                                                            client,
-                                                            &app.project_context,
-                                                            entity_iid,
-                                                        )
-                                                        .await
-                                                        {
-                                                            if let Some(item) = app
-                                                                .mrs
-                                                                .items
-                                                                .iter_mut()
-                                                                .find(|m| m.iid == entity_iid)
-                                                            {
-                                                                *item = updated;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        continue;
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
@@ -5462,7 +5221,7 @@ async fn main() -> Result<()> {
                             selected_items: std::collections::HashSet::new(),
                             cursor_idx: 0,
                             search_query: String::new(),
-                            is_filtering: true,
+                            is_filtering: false,
                             is_loading: false,
                             entity_iid: 0,
                             entity_type: "global_search".to_string(),

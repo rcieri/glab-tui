@@ -300,7 +300,7 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
             },
             cursor_idx: 0,
             search_query: String::new(),
-            is_filtering: true,
+            is_filtering: false,
             is_loading: false,
             entity_iid: 0,
             entity_type: "app".to_string(),

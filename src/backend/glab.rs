@@ -94,27 +94,40 @@ impl Backend for GlabBackend {
         show_closed: bool,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
-        let state = if show_closed { "all" } else { "opened" };
-        let encoded = Self::encode_path(project);
         let pages = page_size.div_ceil(100).max(1);
         let mut all: Vec<Issue> = Vec::new();
         for page in 1..=pages {
+            let page_str = page.to_string();
             let raw = self
                 .run_glab(
-                    &[
-                        "issue",
-                        "list",
-                        "--output",
-                        "json",
-                        "-R",
-                        &encoded,
-                        "--state",
-                        state,
-                        "--page",
-                        &page.to_string(),
-                        "--per-page",
-                        "100",
-                    ],
+                    &if show_closed {
+                        vec![
+                            "issue",
+                            "list",
+                            "--output",
+                            "json",
+                            "-R",
+                            project,
+                            "--all",
+                            "--page",
+                            &page_str,
+                            "--per-page",
+                            "100",
+                        ]
+                    } else {
+                        vec![
+                            "issue",
+                            "list",
+                            "--output",
+                            "json",
+                            "-R",
+                            project,
+                            "--page",
+                            &page_str,
+                            "--per-page",
+                            "100",
+                        ]
+                    },
                     "Fetching Issues",
                 )
                 .await?;
@@ -187,7 +200,6 @@ impl Backend for GlabBackend {
     }
 
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -197,7 +209,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                 ],
                 "Fetching Issue",
             )
@@ -523,27 +535,40 @@ impl Backend for GlabBackend {
         show_closed: bool,
         page_size: usize,
     ) -> Result<Vec<MergeRequest>> {
-        let state = if show_closed { "all" } else { "opened" };
-        let encoded = Self::encode_path(project);
         let pages = page_size.div_ceil(100).max(1);
         let mut all: Vec<MergeRequest> = Vec::new();
         for page in 1..=pages {
+            let page_str = page.to_string();
             let raw = self
                 .run_glab(
-                    &[
-                        "mr",
-                        "list",
-                        "--output",
-                        "json",
-                        "-R",
-                        &encoded,
-                        "--state",
-                        state,
-                        "--page",
-                        &page.to_string(),
-                        "--per-page",
-                        "100",
-                    ],
+                    &if show_closed {
+                        vec![
+                            "mr",
+                            "list",
+                            "--output",
+                            "json",
+                            "-R",
+                            project,
+                            "--all",
+                            "--page",
+                            &page_str,
+                            "--per-page",
+                            "100",
+                        ]
+                    } else {
+                        vec![
+                            "mr",
+                            "list",
+                            "--output",
+                            "json",
+                            "-R",
+                            project,
+                            "--page",
+                            &page_str,
+                            "--per-page",
+                            "100",
+                        ]
+                    },
                     "Fetching MRs",
                 )
                 .await?;
@@ -648,7 +673,6 @@ impl Backend for GlabBackend {
     }
 
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -658,7 +682,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                 ],
                 "Fetching MR",
             )
@@ -756,9 +780,8 @@ impl Backend for GlabBackend {
     }
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["mr", "diff", &iid.to_string(), "-R", &encoded],
+            &["mr", "diff", &iid.to_string(), "-R", project],
             "Fetching MR Diff",
         )
         .await
@@ -770,7 +793,6 @@ impl Backend for GlabBackend {
         mr_iid: u64,
         _page_size: usize,
     ) -> Result<Vec<DiscussionNote>> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -781,7 +803,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                 ],
                 "Fetching MR Notes",
             )
@@ -1190,7 +1212,6 @@ impl Backend for GlabBackend {
     // ── Pipelines ──
 
     async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
-        let encoded = Self::encode_path(project);
         let pages = page_size.div_ceil(100).max(1);
         let mut all: Vec<Pipeline> = Vec::new();
         for page in 1..=pages {
@@ -1202,7 +1223,7 @@ impl Backend for GlabBackend {
                         "--output",
                         "json",
                         "-R",
-                        &encoded,
+                        project,
                         "--page",
                         &page.to_string(),
                         "--per-page",
@@ -1290,7 +1311,6 @@ impl Backend for GlabBackend {
     }
 
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "ci",
@@ -1298,7 +1318,7 @@ impl Backend for GlabBackend {
                 "pipeline",
                 &pipeline_id.to_string(),
                 "-R",
-                &encoded,
+                project,
             ],
             "Cancelling Pipeline",
         )
@@ -1307,9 +1327,8 @@ impl Backend for GlabBackend {
     }
 
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["ci", "retry", &job_id.to_string(), "-R", &encoded],
+            &["ci", "retry", &job_id.to_string(), "-R", project],
             "Retrying Job",
         )
         .await?;
@@ -1317,9 +1336,8 @@ impl Backend for GlabBackend {
     }
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["ci", "cancel", "job", &job_id.to_string(), "-R", &encoded],
+            &["ci", "cancel", "job", &job_id.to_string(), "-R", project],
             "Cancelling Job",
         )
         .await?;
@@ -1373,7 +1391,6 @@ impl Backend for GlabBackend {
     // ── Runners ──
 
     async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -1382,7 +1399,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                     "--per-page",
                     &page_size.to_string(),
                 ],
@@ -1441,7 +1458,6 @@ impl Backend for GlabBackend {
     // ── Releases ──
 
     async fn list_releases(&self, project: &str, page_size: usize) -> Result<Vec<Release>> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -1450,7 +1466,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                     "--per-page",
                     &page_size.to_string(),
                 ],
@@ -1535,14 +1551,13 @@ impl Backend for GlabBackend {
         name: &str,
         description: &str,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "release",
                 "update",
                 tag_name,
                 "-R",
-                &encoded,
+                project,
                 "-n",
                 name,
                 "-N",
@@ -1555,9 +1570,8 @@ impl Backend for GlabBackend {
     }
 
     async fn delete_release(&self, project: &str, tag_name: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["release", "delete", tag_name, "-R", &encoded, "-y"],
+            &["release", "delete", tag_name, "-R", project, "-y"],
             "Deleting Release",
         )
         .await?;
@@ -1567,7 +1581,6 @@ impl Backend for GlabBackend {
     // ── Milestones ──
 
     async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -1576,7 +1589,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                     "--per-page",
                     &page_size.to_string(),
                 ],
@@ -1619,7 +1632,6 @@ impl Backend for GlabBackend {
         milestone_iid: u64,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -1631,7 +1643,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                     "--per-page",
                     &page_size.to_string(),
                 ],
@@ -1739,7 +1751,6 @@ impl Backend for GlabBackend {
         milestone_iid: u64,
         close: bool,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let action = if close { "close" } else { "reopen" };
         self.run_glab(
             &[
@@ -1747,7 +1758,7 @@ impl Backend for GlabBackend {
                 action,
                 &milestone_iid.to_string(),
                 "-R",
-                &encoded,
+                project,
             ],
             "Updating Milestone State",
         )
@@ -1764,13 +1775,12 @@ impl Backend for GlabBackend {
         start_date: Option<&str>,
         due_date: Option<&str>,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let mut args: Vec<String> = vec![
             "milestone".into(),
             "update".into(),
             milestone_iid.to_string(),
             "-R".into(),
-            encoded,
+            project.to_string(),
             "--title".into(),
             title.into(),
             "--description".into(),
@@ -1794,14 +1804,13 @@ impl Backend for GlabBackend {
     }
 
     async fn delete_milestone(&self, project: &str, milestone_iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "milestone",
                 "delete",
                 &milestone_iid.to_string(),
                 "-R",
-                &encoded,
+                project,
                 "-y",
             ],
             "Deleting Milestone",
@@ -2074,7 +2083,6 @@ impl Backend for GlabBackend {
     // ── Labels / Members / Misc ──
 
     async fn fetch_labels(&self, project: &str) -> Result<Vec<String>> {
-        let encoded = Self::encode_path(project);
         let raw = self
             .run_glab(
                 &[
@@ -2083,7 +2091,7 @@ impl Backend for GlabBackend {
                     "--output",
                     "json",
                     "-R",
-                    &encoded,
+                    project,
                     "--per-page",
                     "100",
                 ],

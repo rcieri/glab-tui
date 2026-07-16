@@ -3632,11 +3632,33 @@ pub(crate) fn render_tab_terminal(
         }));
     let inner_rect = base_block.inner(area);
     let log_height = inner_rect.height as usize;
+    let width = inner_rect.width as usize;
 
-    let max_scroll = num_cmds.saturating_sub(log_height);
+    let total_lines = if app.terminal_wrap {
+        let full_text: String = app
+            .terminal_commands
+            .iter()
+            .map(|cmd| {
+                let line = super::helpers::build_log_line(cmd, usize::MAX);
+                line.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<Vec<&str>>()
+                    .join("")
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+        super::diff::count_wrapped_lines(&full_text, width)
+    } else {
+        num_cmds
+    };
+
+    let max_scroll = total_lines.saturating_sub(log_height);
     app.terminal_scroll = app.terminal_scroll.min(max_scroll);
 
-    let block_title = if app.terminal_scroll > 0 {
+    let block_title = if app.terminal_wrap {
+        format!(" Terminal (Wrap) [{} lines] ", total_lines)
+    } else if app.terminal_scroll > 0 {
         format!(
             " Terminal (Scroll: {}/{}) ",
             app.terminal_scroll, max_scroll,
@@ -3650,31 +3672,40 @@ pub(crate) fn render_tab_terminal(
             .add_modifier(Modifier::BOLD),
     );
 
-    let end_idx = num_cmds.saturating_sub(app.terminal_scroll);
-    let start_idx = end_idx.saturating_sub(log_height);
+    if app.terminal_wrap {
+        let all_lines: Vec<Line> = app
+            .terminal_commands
+            .iter()
+            .map(|cmd| super::helpers::build_log_line(cmd, usize::MAX))
+            .collect();
 
-    let mut log_lines = Vec::new();
-    let visible_count = end_idx - start_idx;
-    if visible_count < log_height {
-        for _ in 0..(log_height - visible_count) {
-            log_lines.push(Line::from(""));
+        let paragraph = Paragraph::new(all_lines)
+            .block(custom_main_block)
+            .scroll((app.terminal_scroll as u16, 0))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+
+        f.render_widget(paragraph, area);
+    } else {
+        let end_idx = num_cmds.saturating_sub(app.terminal_scroll);
+        let start_idx = end_idx.saturating_sub(log_height);
+
+        let mut log_lines = Vec::new();
+        let visible_count = end_idx - start_idx;
+        if visible_count < log_height {
+            for _ in 0..(log_height - visible_count) {
+                log_lines.push(Line::from(""));
+            }
         }
-    }
 
-    let is_github = app
-        .gitlab_client
-        .as_ref()
-        .map(|c| c.is_github)
-        .unwrap_or(false);
-
-    for i in start_idx..end_idx {
-        if let Some(cmd) = app.terminal_commands.get(i) {
-            log_lines.push(super::helpers::build_log_line(
-                cmd,
-                inner_rect.width as usize,
-            ));
+        for i in start_idx..end_idx {
+            if let Some(cmd) = app.terminal_commands.get(i) {
+                log_lines.push(super::helpers::build_log_line(
+                    cmd,
+                    inner_rect.width as usize,
+                ));
+            }
         }
-    }
 
-    f.render_widget(Paragraph::new(log_lines).block(custom_main_block), area);
+        f.render_widget(Paragraph::new(log_lines).block(custom_main_block), area);
+    }
 }

@@ -1,6 +1,5 @@
 use crate::backend::Backend;
 use anyhow::{Context, Result};
-use tokio::process::Command;
 
 pub struct GitlabClient {
     pub is_github: bool,
@@ -437,62 +436,6 @@ impl std::fmt::Debug for GitlabClient {
             .field("is_github", &self.is_github)
             .field("page_size", &self.page_size)
             .finish()
-    }
-}
-
-impl GitlabClient {
-    pub async fn execute_raw_command(
-        &self,
-        program: &str,
-        args: &[&str],
-        desc: &str,
-    ) -> Result<String> {
-        let label = desc.to_uppercase();
-        let cmd_str = format!("{} {}", program, args.join(" "));
-
-        let output = Command::new(program)
-            .args(args)
-            .output()
-            .await
-            .context(format!("Failed to execute {} command", program));
-
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let s = String::from_utf8(out.stdout)?;
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                            timestamp: timestamp.clone(),
-                            command: format!("{}: {}", label, cmd_str),
-                            status: "Success".to_string(),
-                        });
-                    }
-                    Ok(s)
-                } else {
-                    let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                            timestamp: timestamp.clone(),
-                            command: format!("{}: {}", label, cmd_str),
-                            status: format!("Failed: {}", err_msg),
-                        });
-                    }
-                    anyhow::bail!("{} failed: {}", program, err_msg)
-                }
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                if let Some(ref tx) = self.tx {
-                    let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                        timestamp: timestamp.clone(),
-                        command: format!("{}: {}", label, cmd_str),
-                        status: format!("Failed: {}", err_msg),
-                    });
-                }
-                Err(e.into())
-            }
-        }
     }
 }
 

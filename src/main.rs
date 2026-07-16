@@ -30,210 +30,6 @@ use std::io;
 
 type AppTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
 
-async fn run_cli(
-    description: &str,
-    program: &str,
-    args: &[String],
-    terminal: &mut AppTerminal,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
-    tab: crate::app::Tab,
-) {
-    let program = program.to_string();
-    let is_interactive = if program == "gh" {
-        args.iter().any(|a| a == "-e")
-    } else {
-        args.windows(2)
-            .any(|w| (w[0] == "-d" || w[0] == "--description") && w[1] == "-")
-    };
-
-    if is_interactive {
-        crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        let cancelled = (|| -> Option<bool> {
-            disable_raw_mode().ok()?;
-            execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture).ok()?;
-
-            let mut actual_args = args.to_vec();
-            let mut cancel = false;
-
-            if program == "gh" && actual_args.iter().any(|arg| arg == "-e") {
-                actual_args.retain(|arg| arg != "-e");
-
-                let is_pr = actual_args.iter().any(|arg| arg == "pr");
-                let is_edit = actual_args.iter().any(|arg| arg == "edit");
-                let entity_type = if is_pr { "pr" } else { "issue" };
-                let mut initial_body = String::new();
-
-                if is_edit {
-                    if let Some(pos) = actual_args.iter().position(|arg| arg == "edit") {
-                        if pos + 1 < actual_args.len() {
-                            let id = &actual_args[pos + 1];
-                            let output = std::process::Command::new("gh")
-                                .args([entity_type, "view", id, "--json", "body", "--jq", ".body"])
-                                .output();
-                            if let Ok(out) = output {
-                                if out.status.success() {
-                                    initial_body =
-                                        String::from_utf8_lossy(&out.stdout).trim().to_string();
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if initial_body.is_empty() {
-                    let template_type = if is_pr { "mr" } else { "issue" };
-                    initial_body = get_default_template(template_type).unwrap_or_default();
-                }
-
-                let edited_body = (|| {
-                    let editor = std::env::var("EDITOR")
-                        .or_else(|_| std::env::var("VISUAL"))
-                        .unwrap_or_else(|_| "helix".to_string());
-                    let mut tmp = tempfile::Builder::new().suffix(".md").tempfile().ok()?;
-                    std::io::Write::write_all(&mut tmp, initial_body.as_bytes()).ok()?;
-                    let file_path = tmp.into_temp_path();
-
-                    let mut cmd = std::process::Command::new(&editor);
-                    cmd.arg(file_path.as_os_str());
-                    cmd.stdin(std::process::Stdio::inherit())
-                        .stdout(std::process::Stdio::inherit())
-                        .stderr(std::process::Stdio::inherit());
-                    if let Ok(mut child) = cmd.spawn() {
-                        child.wait().ok()?;
-                    }
-
-                    let content = std::fs::read_to_string(&file_path).ok()?;
-                    Some(content.trim().to_string())
-                })();
-
-                if let Some(body) = edited_body {
-                    actual_args.push("--body".to_string());
-                    actual_args.push(body);
-                } else {
-                    cancel = true;
-                }
-            }
-
-            if !cancel {
-                let mut cmd = std::process::Command::new(program);
-                cmd.args(&actual_args);
-                cmd.stdin(std::process::Stdio::inherit());
-                cmd.stdout(std::process::Stdio::inherit());
-                cmd.stderr(std::process::Stdio::inherit());
-
-                if let Ok(mut child) = cmd.spawn() {
-                    let _ = child.wait();
-                }
-            }
-
-            Some(cancel)
-        })();
-
-        // Always restore terminal and reset PAUSED
-        let _ = enable_raw_mode();
-        let _ = execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture);
-        while crossterm::event::poll(std::time::Duration::from_secs(0)).unwrap_or(false) {
-            let _ = crossterm::event::read();
-        }
-        let _ = terminal.clear();
-        crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
-
-        if cancelled.unwrap_or(true) {
-            let _ = tx.send(Event::CommandCompleted(
-                tab,
-                Err("Edit cancelled".to_string()),
-            ));
-        } else {
-            let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
-        }
-    } else {
-        let cmd_str = format!("{} {}", program, args.join(" "));
-        let status_msg = format!("{}: {}", description, cmd_str);
-        let _ = tx.send(Event::CommandStarted(status_msg.clone()));
-
-        let tx_clone = tx.clone();
-        let program = program.to_string();
-        let actual_args = args.to_vec();
-
-        tokio::spawn(async move {
-            let mut cmd = tokio::process::Command::new(&program);
-            cmd.args(&actual_args);
-
-            let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-            match cmd.output().await {
-                Ok(output) => {
-                    if output.status.success() {
-                        let _ = tx_clone.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: status_msg.clone(),
-                            status: "Success".to_string(),
-                        });
-                        let _ = tx_clone.send(Event::CommandCompleted(tab, Ok(())));
-                    } else {
-                        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                        let _ = tx_clone.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: status_msg.clone(),
-                            status: format!("Failed: {}", err_msg),
-                        });
-                        let _ = tx_clone.send(Event::CommandCompleted(
-                            tab,
-                            Err(format!("Command failed: {}", err_msg)),
-                        ));
-                    }
-                }
-                Err(e) => {
-                    let _ = tx_clone.send(Event::TerminalCommandLogged {
-                        timestamp,
-                        command: status_msg.clone(),
-                        status: format!("Failed: {}", e),
-                    });
-                    let _ = tx_clone.send(Event::CommandCompleted(
-                        tab,
-                        Err(format!("Failed to execute command: {}", e)),
-                    ));
-                }
-            }
-        });
-    }
-}
-
-fn build_update_args(
-    is_github: bool,
-    entity_type: &str,
-    iid: u64,
-    flags: &[(&str, Option<&str>)],
-) -> Vec<String> {
-    let entity = if is_github && entity_type == "mr" {
-        "pr"
-    } else {
-        entity_type
-    };
-    let sub = if is_github { "edit" } else { "update" };
-    let mut args = vec![entity.to_string(), sub.to_string(), iid.to_string()];
-    for (flag, value) in flags {
-        let (name, value) = match (is_github, *flag) {
-            (true, "-d" | "--description") => ("--body", *value),
-            (true, "--label") => ("--add-label", *value),
-            (true, "--unlabel") => ("--remove-label", *value),
-            (true, "--assignee") => ("--add-assignee", *value),
-            (true, "--unassign") => ("--remove-assignee", *value),
-            (true, "--reviewer") => ("--add-reviewer", *value),
-            (true, "--unreviewer") => ("--remove-reviewer", *value),
-            (true, "--target-branch") => ("--base", *value),
-            (true, "--milestone") if *value == Some("0") => ("--milestone", Some("")),
-            _ => (*flag, *value),
-        };
-        args.push(name.to_string());
-        if let Some(v) = value {
-            args.push(v.to_string());
-        }
-    }
-    args
-}
-
 pub use editor::*;
 pub use entity_editor::*;
 
@@ -3495,27 +3291,14 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
-                                                        let is_github = app
-                                                            .gitlab_client
-                                                            .as_ref()
-                                                            .map_or(false, |c| c.is_github);
-                                                        let program =
-                                                            if is_github { "gh" } else { "glab" };
-                                                        let args = build_update_args(
-                                                            is_github,
-                                                            &entity_type,
-                                                            entity_iid,
-                                                            &[("-d", Some(&new_desc))],
-                                                        );
-                                                        run_cli(
-                                                            "UPDATING ISSUE",
-                                                            program,
-                                                            &args,
-                                                            &mut terminal,
-                                                            events.sender(),
-                                                            app.active_tab,
-                                                        )
-                                                        .await;
+                                                        let client =
+                                                            app.gitlab_client.clone().unwrap();
+                                                        let project = app.project_context.clone();
+                                                        let _ = client
+                                                            .update_issue_description(
+                                                                &project, entity_iid, &new_desc,
+                                                            )
+                                                            .await;
                                                     } else if entity_type == "mr" {
                                                         if let Some(item) = app
                                                             .mrs
@@ -3526,32 +3309,14 @@ async fn main() -> Result<()> {
                                                             item.description =
                                                                 Some(new_desc.clone());
                                                         }
-                                                        let is_github = app
-                                                            .gitlab_client
-                                                            .as_ref()
-                                                            .map_or(false, |c| c.is_github);
-                                                        let program =
-                                                            if is_github { "gh" } else { "glab" };
-                                                        let args = build_update_args(
-                                                            is_github,
-                                                            &entity_type,
-                                                            entity_iid,
-                                                            &[("-d", Some(&new_desc))],
-                                                        );
-                                                        let mr_desc_label = if is_github {
-                                                            "UPDATING PR"
-                                                        } else {
-                                                            "UPDATING MR"
-                                                        };
-                                                        run_cli(
-                                                            mr_desc_label,
-                                                            program,
-                                                            &args,
-                                                            &mut terminal,
-                                                            events.sender(),
-                                                            app.active_tab,
-                                                        )
-                                                        .await;
+                                                        let client =
+                                                            app.gitlab_client.clone().unwrap();
+                                                        let project = app.project_context.clone();
+                                                        let _ = client
+                                                            .update_mr_description(
+                                                                &project, entity_iid, &new_desc,
+                                                            )
+                                                            .await;
                                                     } else if entity_type == "milestone" {
                                                         if let Some(item) = app
                                                             .milestones

@@ -360,7 +360,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             for i in start_idx..num_cmds {
                 if let Some(cmd) = app.terminal_commands.get(i) {
-                    log_lines.push(build_log_line(cmd, bottom_inner.width as usize, is_github));
+                    log_lines.push(build_log_line(cmd, bottom_inner.width as usize));
                 }
             }
 

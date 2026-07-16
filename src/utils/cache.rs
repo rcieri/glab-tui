@@ -69,27 +69,20 @@ pub fn get_recent_repos() -> Vec<String> {
     let path = get_recent_repos_file_path();
     if let Ok(content) = fs::read_to_string(&path) {
         if let Ok(repos) = serde_json::from_str::<Vec<String>>(&content) {
-            let valid: Vec<String> = repos
+            return repos
                 .into_iter()
-                .filter(|r| std::path::Path::new(r).is_absolute() && is_git_repo(r))
+                .filter(|r| std::path::Path::new(r).is_absolute())
                 .collect();
-            // Prune stale entries from the cache file
-            if valid.len()
-                != serde_json::from_str::<Vec<String>>(&content)
-                    .map(|v| v.len())
-                    .unwrap_or(0)
-            {
-                if let Ok(cleaned) = serde_json::to_string(&valid) {
-                    let _ = fs::write(&path, cleaned);
-                }
-            }
-            return valid;
         }
     }
     Vec::new()
 }
 
 pub fn add_recent_repo(repo_path: &str) {
+    // Only cache directories that are git repos
+    if !is_git_repo(repo_path) {
+        return;
+    }
     let mut repos = get_recent_repos();
     // Store only absolute paths
     let abs_path = std::path::PathBuf::from(repo_path)

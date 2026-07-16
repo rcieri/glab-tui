@@ -16,7 +16,7 @@ use ratatui::{
 use self::diff::{centered_rect_min, format_comment_with_suggestions};
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::overlays::render_overlays;
-use crate::app::{App, DiffLine, Tab, WordDiffToken};
+use crate::app::{App, DiffLine, Tab};
 use crate::config::{ICONS, THEME};
 use crate::utils::format::truncate;
 use std::collections::HashSet;
@@ -938,25 +938,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 content_base
                             };
 
-                            if let Some(ref tokens) = line.word_diff {
-                                for token in tokens {
-                                    let s = match token {
-                                        WordDiffToken::Same(_) => final_style,
-                                        WordDiffToken::Changed(_) => final_style
-                                            .fg(Color::Rgb(255, 100, 100))
-                                            .add_modifier(Modifier::CROSSED_OUT),
-                                    };
-                                    left_spans.push(Span::styled(token.text(), s));
-                                }
-                            } else {
-                                let mut content_spans = render_diff_line_content(
-                                    line,
-                                    final_style,
-                                    code_fg,
-                                    THEME.read().unwrap().yellow,
-                                );
-                                left_spans.append(&mut content_spans);
-                            }
+                            let mut content_spans = render_diff_line_content(
+                                line,
+                                final_style,
+                                code_fg,
+                                THEME.read().unwrap().yellow,
+                            );
+                            left_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
                             let actual_bg = sel_bg.unwrap_or(Color::Reset);
@@ -1115,25 +1103,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 content_base
                             };
 
-                            if let Some(ref tokens) = line.word_diff {
-                                for token in tokens {
-                                    let s = match token {
-                                        WordDiffToken::Same(_) => final_style,
-                                        WordDiffToken::Changed(_) => final_style
-                                            .fg(Color::Rgb(80, 255, 80))
-                                            .add_modifier(Modifier::UNDERLINED),
-                                    };
-                                    right_spans.push(Span::styled(token.text(), s));
-                                }
-                            } else {
-                                let mut content_spans = render_diff_line_content(
-                                    line,
-                                    final_style,
-                                    code_fg,
-                                    THEME.read().unwrap().yellow,
-                                );
-                                right_spans.append(&mut content_spans);
-                            }
+                            let mut content_spans = render_diff_line_content(
+                                line,
+                                final_style,
+                                code_fg,
+                                THEME.read().unwrap().yellow,
+                            );
+                            right_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
                             let actual_bg = sel_bg.unwrap_or(Color::Reset);
@@ -1515,35 +1491,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             content_base
                         };
 
-                        if let Some(ref tokens) = line.word_diff {
-                            for token in tokens {
-                                let s = match token {
-                                    WordDiffToken::Same(_) => final_style,
-                                    WordDiffToken::Changed(_) => {
-                                        let mut s = final_style;
-                                        if is_add {
-                                            s = s
-                                                .fg(Color::Rgb(80, 255, 80))
-                                                .add_modifier(Modifier::UNDERLINED);
-                                        } else {
-                                            s = s
-                                                .fg(Color::Rgb(255, 100, 100))
-                                                .add_modifier(Modifier::CROSSED_OUT);
-                                        }
-                                        s
-                                    }
-                                };
-                                line_spans.push(Span::styled(token.text(), s));
-                            }
-                        } else {
-                            let mut content_spans = render_diff_line_content(
-                                line,
-                                final_style,
-                                code_fg,
-                                THEME.read().unwrap().yellow,
-                            );
-                            line_spans.append(&mut content_spans);
-                        }
+                        let mut content_spans = render_diff_line_content(
+                            line,
+                            final_style,
+                            code_fg,
+                            THEME.read().unwrap().yellow,
+                        );
+                        line_spans.append(&mut content_spans);
                     }
                     crate::app::DiffLineType::Normal => {
                         let actual_bg = sel_bg.unwrap_or(Color::Reset);

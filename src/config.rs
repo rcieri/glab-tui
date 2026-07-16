@@ -110,6 +110,8 @@ pub struct Icons {
     pub action_create: String,
     pub action_reply: String,
     pub action_review: String,
+    pub folder_expanded: String,
+    pub folder_collapsed: String,
 }
 
 impl Icons {
@@ -195,6 +197,8 @@ impl Icons {
             action_create: "\u{f501}".to_string(),
             action_reply: "\u{f4a8}".to_string(),
             action_review: "\u{f4a1}".to_string(),
+            folder_expanded: "\u{f07c}".to_string(),
+            folder_collapsed: "\u{f07b}".to_string(),
         }
     }
 }

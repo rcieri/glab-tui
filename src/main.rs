@@ -20,7 +20,7 @@ pub mod utils;
 use anyhow::Result;
 use app::{App, SaveMenu};
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode},
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -4271,11 +4271,18 @@ async fn main() -> Result<()> {
                         let in_selection = diff_view.selection_start.is_some();
                         match key_event.code {
                             KeyCode::Esc => {
-                                if in_selection {
+                                if diff_view.search_active {
+                                    diff_view.search_active = false;
+                                    diff_view.clear_search();
+                                } else if in_selection {
                                     diff_view.selection_start = None;
                                     diff_view.selection_end = None;
+                                } else if !diff_view.search_query.is_empty() {
+                                    diff_view.clear_search();
                                 } else if !diff_view.focus_on_files {
                                     diff_view.focus_on_files = true;
+                                } else if !diff_view.file_tree_visible {
+                                    diff_view.file_tree_visible = true;
                                 } else {
                                     if !app.draft_comments.is_empty() {
                                         app.show_submit_review_prompt = Some(diff_view.mr_iid);
@@ -4286,11 +4293,58 @@ async fn main() -> Result<()> {
                                 }
                                 app.diff_view = Some(diff_view);
                             }
+                            KeyCode::Char('n')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                if !diff_view.focus_on_files && !diff_view.search_query.is_empty() {
+                                    diff_view.search_next();
+                                    diff_view.update_selected_file_from_cursor();
+                                }
+                                app.diff_view = Some(diff_view);
+                                continue;
+                            }
+                            KeyCode::Char('N') => {
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                                    && !diff_view.focus_on_files
+                                    && !diff_view.search_query.is_empty()
+                                {
+                                    diff_view.search_prev();
+                                    diff_view.update_selected_file_from_cursor();
+                                }
+                                app.diff_view = Some(diff_view);
+                                continue;
+                            }
+                            // --- Search input mode (real-time) ---
+                            _ if diff_view.search_active => {
+                                match key_event.code {
+                                    KeyCode::Enter => {
+                                        diff_view.search_active = false;
+                                    }
+                                    KeyCode::Backspace => {
+                                        diff_view.search_query.pop();
+                                        if diff_view.search_query.is_empty() {
+                                            diff_view.clear_search();
+                                        } else {
+                                            diff_view.search(&diff_view.search_query.clone());
+                                        }
+                                    }
+                                    KeyCode::Char(c) => {
+                                        diff_view.search_query.push(c);
+                                        diff_view.search(&diff_view.search_query.clone());
+                                    }
+                                    _ => {}
+                                }
+                                app.diff_view = Some(diff_view);
+                                continue;
+                            }
                             KeyCode::Char('q') => {
                                 if in_selection {
                                     diff_view.selection_start = None;
                                     diff_view.selection_end = None;
                                 } else {
+                                    if diff_view.search_active {
+                                        diff_view.search_active = false;
+                                    }
                                     if !app.draft_comments.is_empty() {
                                         app.show_submit_review_prompt = Some(diff_view.mr_iid);
                                     } else {
@@ -4312,12 +4366,7 @@ async fn main() -> Result<()> {
                                         if node.is_dir && node.is_expanded {
                                             let path_id = node.path_id.clone();
                                             diff_view.root_node.toggle_expanded(&path_id, "");
-                                            let mut visible = Vec::new();
-                                            diff_view.root_node.flatten(0, "", &mut visible);
-                                            diff_view.visible_nodes = visible;
-                                            diff_view.cursor_idx = 0;
-                                            diff_view.scroll_offset = 0;
-                                            diff_view.update_active_lines();
+                                            diff_view.rebuild_visible_nodes();
                                         }
                                     }
                                 } else {
@@ -4331,14 +4380,8 @@ async fn main() -> Result<()> {
                                         let node = &diff_view.visible_nodes
                                             [diff_view.selected_visible_idx];
                                         if node.is_dir && !node.is_expanded {
-                                            let path_id = node.path_id.clone();
-                                            diff_view.root_node.toggle_expanded(&path_id, "");
-                                            let mut visible = Vec::new();
-                                            diff_view.root_node.flatten(0, "", &mut visible);
-                                            diff_view.visible_nodes = visible;
-                                            diff_view.cursor_idx = 0;
-                                            diff_view.scroll_offset = 0;
-                                            diff_view.update_active_lines();
+                                            diff_view.root_node.toggle_expanded(&node.path_id, "");
+                                            diff_view.rebuild_visible_nodes();
                                         } else {
                                             diff_view.focus_on_files = false;
                                         }
@@ -4348,24 +4391,64 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Enter | KeyCode::Char(' ') => {
                                 if diff_view.focus_on_files {
+                                    // On a file in the tree → open it, switch to diff
                                     if !diff_view.visible_nodes.is_empty() {
                                         let node = &diff_view.visible_nodes
                                             [diff_view.selected_visible_idx];
                                         if node.is_dir {
-                                            let path_id = node.path_id.clone();
-                                            diff_view.root_node.toggle_expanded(&path_id, "");
-                                            let mut visible = Vec::new();
-                                            diff_view.root_node.flatten(0, "", &mut visible);
-                                            diff_view.visible_nodes = visible;
-                                            diff_view.cursor_idx = 0;
-                                            diff_view.scroll_offset = 0;
-                                            diff_view.update_active_lines();
+                                            diff_view.root_node.toggle_expanded(&node.path_id, "");
+                                            diff_view.rebuild_visible_nodes();
                                         } else {
                                             diff_view.focus_on_files = false;
                                         }
                                     }
+                                } else if diff_view.file_tree_visible {
+                                    // Diff focused, tree visible → zoom (hide tree)
+                                    diff_view.file_tree_visible = false;
                                 } else {
+                                    // Diff zoomed, tree hidden → show tree and focus it
+                                    diff_view.file_tree_visible = true;
                                     diff_view.focus_on_files = true;
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('z') => {
+                                if diff_view.focus_on_files {
+                                    diff_view.collapse_all();
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('Z') => {
+                                if diff_view.focus_on_files {
+                                    diff_view.expand_all();
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('[') => {
+                                if !diff_view.focus_on_files {
+                                    let current = diff_view.cursor_idx;
+                                    if let Some(&prev_hunk) =
+                                        diff_view.hunks.iter().rev().find(|&&h| h < current)
+                                    {
+                                        diff_view.cursor_idx = prev_hunk;
+                                        diff_view.scroll_offset =
+                                            diff_view.cursor_idx.saturating_sub(5);
+                                        diff_view.update_selected_file_from_cursor();
+                                    }
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char(']') => {
+                                if !diff_view.focus_on_files {
+                                    let current = diff_view.cursor_idx;
+                                    if let Some(&next_hunk) =
+                                        diff_view.hunks.iter().find(|&&h| h > current)
+                                    {
+                                        diff_view.cursor_idx = next_hunk;
+                                        diff_view.scroll_offset =
+                                            diff_view.cursor_idx.saturating_sub(5);
+                                        diff_view.update_selected_file_from_cursor();
+                                    }
                                 }
                                 app.diff_view = Some(diff_view);
                             }
@@ -4443,6 +4526,7 @@ async fn main() -> Result<()> {
                                         if diff_view.selected_visible_idx != old_idx {
                                             diff_view.cursor_idx = 0;
                                             diff_view.scroll_offset = 0;
+                                            diff_view.file_tree_scroll_offset = 0;
                                             diff_view.update_active_lines();
                                         }
                                     }
@@ -4472,6 +4556,7 @@ async fn main() -> Result<()> {
                                         if diff_view.selected_visible_idx != old_idx {
                                             diff_view.cursor_idx = 0;
                                             diff_view.scroll_offset = 0;
+                                            diff_view.file_tree_scroll_offset = 0;
                                             diff_view.update_active_lines();
                                         }
                                     }
@@ -4488,15 +4573,58 @@ async fn main() -> Result<()> {
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('J') => {
-                                let active_len = if diff_view.side_by_side {
-                                    diff_view.side_by_side_lines.len()
+                                if diff_view.focus_on_files {
+                                    if !diff_view.visible_nodes.is_empty() {
+                                        let scroll_amount = 10;
+                                        let old_idx = diff_view.selected_visible_idx;
+                                        diff_view.selected_visible_idx =
+                                            (diff_view.selected_visible_idx + scroll_amount)
+                                                .min(diff_view.visible_nodes.len() - 1);
+                                        if diff_view.selected_visible_idx != old_idx {
+                                            diff_view.cursor_idx = 0;
+                                            diff_view.scroll_offset = 0;
+                                            diff_view.file_tree_scroll_offset = 0;
+                                            diff_view.update_active_lines();
+                                        }
+                                    }
                                 } else {
-                                    diff_view.lines.len()
-                                };
-                                if active_len > 0 {
+                                    let active_len = if diff_view.side_by_side {
+                                        diff_view.side_by_side_lines.len()
+                                    } else {
+                                        diff_view.lines.len()
+                                    };
+                                    if active_len > 0 {
+                                        let scroll_amount = 10;
+                                        let new_idx = (diff_view.cursor_idx + scroll_amount)
+                                            .min(active_len - 1);
+                                        if in_selection && !diff_view.focus_on_files {
+                                            diff_view.selection_end = Some(new_idx);
+                                        }
+                                        diff_view.cursor_idx = new_idx;
+                                        if !diff_view.focus_on_files {
+                                            diff_view.update_selected_file_from_cursor();
+                                        }
+                                    }
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('K') => {
+                                if diff_view.focus_on_files {
+                                    let scroll_amount = 10;
+                                    let old_idx = diff_view.selected_visible_idx;
+                                    diff_view.selected_visible_idx = diff_view
+                                        .selected_visible_idx
+                                        .saturating_sub(scroll_amount);
+                                    if diff_view.selected_visible_idx != old_idx {
+                                        diff_view.cursor_idx = 0;
+                                        diff_view.scroll_offset = 0;
+                                        diff_view.file_tree_scroll_offset = 0;
+                                        diff_view.update_active_lines();
+                                    }
+                                } else {
                                     let scroll_amount = 10;
                                     let new_idx =
-                                        (diff_view.cursor_idx + scroll_amount).min(active_len - 1);
+                                        diff_view.cursor_idx.saturating_sub(scroll_amount);
                                     if in_selection && !diff_view.focus_on_files {
                                         diff_view.selection_end = Some(new_idx);
                                     }
@@ -4507,15 +4635,10 @@ async fn main() -> Result<()> {
                                 }
                                 app.diff_view = Some(diff_view);
                             }
-                            KeyCode::Char('K') => {
-                                let scroll_amount = 10;
-                                let new_idx = diff_view.cursor_idx.saturating_sub(scroll_amount);
-                                if in_selection && !diff_view.focus_on_files {
-                                    diff_view.selection_end = Some(new_idx);
-                                }
-                                diff_view.cursor_idx = new_idx;
-                                if !diff_view.focus_on_files {
-                                    diff_view.update_selected_file_from_cursor();
+                            KeyCode::Char('/') | KeyCode::Char('f') => {
+                                if !diff_view.focus_on_files && !diff_view.search_active {
+                                    diff_view.clear_search();
+                                    diff_view.search_active = true;
                                 }
                                 app.diff_view = Some(diff_view);
                             }

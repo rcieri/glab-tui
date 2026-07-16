@@ -51,6 +51,8 @@ pub fn edit_in_editor_with_suffix(
         }
     })();
 
+    // Restore terminal for the TUI. Each operation is best-effort: even if one
+    // fails we attempt the next — all three are independent raw-mode gates.
     let _ = crossterm::terminal::enable_raw_mode();
     let _ = crossterm::execute!(
         std::io::stdout(),

@@ -47,6 +47,7 @@ pub async fn list_issues(
         .await
 }
 
+#[allow(dead_code)]
 pub async fn get_issue(client: &GitlabClient, project_path: &str, iid: u64) -> Result<Issue> {
     client.backend.get_issue(project_path, iid).await
 }

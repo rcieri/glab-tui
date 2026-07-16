@@ -127,6 +127,7 @@ pub async fn list_mrs(
         .await
 }
 
+#[allow(dead_code)]
 pub async fn get_mr(client: &GitlabClient, project_path: &str, iid: u64) -> Result<MergeRequest> {
     client.backend.get_mr(project_path, iid).await
 }

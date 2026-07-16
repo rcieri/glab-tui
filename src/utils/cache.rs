@@ -157,16 +157,24 @@ pub fn get_switchable_repos() -> Vec<String> {
 
     let mut sorted_repos = Vec::new();
     for path_str in recent_paths {
-        let path = std::path::PathBuf::from(path_str);
-        if let Some(parent) = path.parent() {
+        let path = std::path::PathBuf::from(&path_str);
+        if !is_git_repo(&path_str) {
+            continue;
+        }
+        let entry: String = if let Some(parent) = path.parent() {
             if parent == repos_dir {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    let name_str = name.to_string();
-                    if available_repos.contains(&name_str) && !sorted_repos.contains(&name_str) {
-                        sorted_repos.push(name_str);
-                    }
-                }
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.to_string())
+                    .unwrap_or(path_str)
+            } else {
+                path_str
             }
+        } else {
+            path_str
+        };
+        if !sorted_repos.contains(&entry) {
+            sorted_repos.push(entry);
         }
     }
 

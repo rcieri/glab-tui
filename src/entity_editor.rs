@@ -4,7 +4,7 @@ use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crossterm::event::KeyCode;
 
-pub async fn apply_field_text_change(
+pub fn apply_field_text_change(
     app: &mut App,
     entity_type: &str,
     iid: u64,
@@ -117,72 +117,82 @@ pub async fn apply_field_text_change(
 
     match field_type {
         "title" => {
+            if entity_type == "issue" {
+                if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
+                    item.title = value.clone();
+                }
+            } else if entity_type == "mr" {
+                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                    item.title = value.clone();
+                }
+            }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
             let project_path = app.project_context.clone();
-            let result = if entity_type == "issue" {
-                client.update_issue_title(&project_path, iid, &value).await
-            } else {
-                client.update_mr_title(&project_path, iid, &value).await
-            };
-            if let Err(e) = result {
-                app.error_message = Some(format!("Failed to update title: {}", e));
-                return;
-            }
-            if entity_type == "issue" {
-                if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                    item.title = value;
-                }
-            } else if entity_type == "mr" {
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.title = value;
-                }
-            }
+            let et = entity_type.to_string();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let result = if et == "issue" {
+                    client.update_issue_title(&project_path, iid, &value).await
+                } else {
+                    client.update_mr_title(&project_path, iid, &value).await
+                };
+                let _ = tx2.send(Event::CommandCompleted(
+                    tab,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
         }
         "target_branch" => {
             if entity_type == "mr" {
+                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                    item.target_branch = value.clone();
+                }
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
                 let project_path = app.project_context.clone();
-                if let Err(e) = client
-                    .update_mr_target_branch(&project_path, iid, &value)
-                    .await
-                {
-                    app.error_message = Some(format!("Failed to update target branch: {}", e));
-                    return;
-                }
-                if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.target_branch = value;
-                }
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_mr_target_branch(&project_path, iid, &value)
+                        .await;
+                    let _ = tx2.send(Event::CommandCompleted(
+                        tab,
+                        result.map_err(|e| e.to_string()),
+                    ));
+                });
             }
         }
         "due_date" => {
             if entity_type == "issue" {
                 let flag_value = if value == "YYYY-MM-DD" || value.trim().is_empty() {
-                    ""
+                    String::new()
                 } else {
-                    &value
+                    value.clone()
                 };
-                let Some(client) = app.gitlab_client.clone() else {
-                    return;
-                };
-                let project_path = app.project_context.clone();
-                if let Err(e) = client
-                    .update_issue_due_date(&project_path, iid, flag_value)
-                    .await
-                {
-                    app.error_message = Some(format!("Failed to update due date: {}", e));
-                    return;
-                }
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.due_date = if flag_value.is_empty() {
                         None
                     } else {
-                        Some(flag_value.to_string())
+                        Some(flag_value.clone())
                     };
                 }
+                let Some(client) = app.gitlab_client.clone() else {
+                    return;
+                };
+                let project_path = app.project_context.clone();
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_issue_due_date(&project_path, iid, &flag_value)
+                        .await;
+                    let _ = tx2.send(Event::CommandCompleted(
+                        tab,
+                        result.map_err(|e| e.to_string()),
+                    ));
+                });
             }
         }
         "weight" => {
@@ -191,67 +201,81 @@ pub async fn apply_field_text_change(
                     return;
                 };
                 let project_path = app.project_context.clone();
-                if let Err(e) = client.update_issue_weight(&project_path, iid, &value).await {
-                    app.error_message = Some(format!("Failed to update weight: {}", e));
-                }
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let result = client.update_issue_weight(&project_path, iid, &value).await;
+                    let _ = tx2.send(Event::CommandCompleted(
+                        tab,
+                        result.map_err(|e| e.to_string()),
+                    ));
+                });
             }
         }
         "runner_description" => {
+            if let Some(runner) = app.runners.items.iter_mut().find(|r| r.id == iid) {
+                runner.description = Some(value.clone());
+            }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
             let project_path = app.project_context.clone();
-            if let Err(e) = client
-                .backend
-                .update_runner_description(&project_path, iid, &value)
-                .await
-            {
-                app.error_message = Some(format!("Failed to update runner description: {}", e));
-                return;
-            }
-            if let Some(runner) = app.runners.items.iter_mut().find(|r| r.id == iid) {
-                runner.description = Some(value);
-            }
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let result = client
+                    .backend
+                    .update_runner_description(&project_path, iid, &value)
+                    .await;
+                let _ = tx2.send(Event::CommandCompleted(
+                    tab,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
         }
         "description" => {
-            let Some(client) = app.gitlab_client.clone() else {
-                return;
-            };
-            let project_path = app.project_context.clone();
-            let result = if entity_type == "issue" {
-                client
-                    .update_issue_description(&project_path, iid, &value)
-                    .await
-            } else {
-                client
-                    .update_mr_description(&project_path, iid, &value)
-                    .await
-            };
-            if let Err(e) = result {
-                app.error_message = Some(format!("Failed to update description: {}", e));
-                return;
-            }
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                    item.description = Some(value);
+                    item.description = Some(value.clone());
                 }
             } else if entity_type == "mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    item.description = Some(value);
+                    item.description = Some(value.clone());
                 }
             }
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let project_path = app.project_context.clone();
+            let et = entity_type.to_string();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let result = if et == "issue" {
+                    client
+                        .update_issue_description(&project_path, iid, &value)
+                        .await
+                } else {
+                    client
+                        .update_mr_description(&project_path, iid, &value)
+                        .await
+                };
+                let _ = tx2.send(Event::CommandCompleted(
+                    tab,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
         }
         _ => {}
     }
 }
 
-pub async fn apply_selector_changes(
+pub fn apply_selector_changes(
     app: &mut App,
     entity_type: &str,
     iid: u64,
     field_type: &str,
     values: Vec<String>,
     terminal: &mut AppTerminal,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tab: crate::app::Tab,
 ) {
     match field_type {
         "labels" => {
@@ -286,19 +310,23 @@ pub async fn apply_selector_changes(
                     return;
                 };
                 let project_path = app.project_context.clone();
-                let result = if entity_type == "issue" {
-                    client
-                        .update_issue_labels(&project_path, iid, &to_add, &to_remove)
-                        .await
-                } else {
-                    client
-                        .update_mr_labels(&project_path, iid, &to_add, &to_remove)
-                        .await
-                };
-                if let Err(e) = result {
-                    app.error_message = Some(format!("Failed to update labels: {}", e));
-                    return;
-                }
+                let et = entity_type.to_string();
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let result = if et == "issue" {
+                        client
+                            .update_issue_labels(&project_path, iid, &to_add, &to_remove)
+                            .await
+                    } else {
+                        client
+                            .update_mr_labels(&project_path, iid, &to_add, &to_remove)
+                            .await
+                    };
+                    let _ = tx2.send(Event::CommandCompleted(
+                        tab,
+                        result.map_err(|e| e.to_string()),
+                    ));
+                });
             }
 
             if entity_type == "issue" {
@@ -347,19 +375,23 @@ pub async fn apply_selector_changes(
                     return;
                 };
                 let project_path = app.project_context.clone();
-                let result = if entity_type == "issue" {
-                    client
-                        .update_issue_assignees(&project_path, iid, &to_add, &to_remove)
-                        .await
-                } else {
-                    client
-                        .update_mr_assignees(&project_path, iid, &to_add, &to_remove)
-                        .await
-                };
-                if let Err(e) = result {
-                    app.error_message = Some(format!("Failed to update assignees: {}", e));
-                    return;
-                }
+                let et = entity_type.to_string();
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let result = if et == "issue" {
+                        client
+                            .update_issue_assignees(&project_path, iid, &to_add, &to_remove)
+                            .await
+                    } else {
+                        client
+                            .update_mr_assignees(&project_path, iid, &to_add, &to_remove)
+                            .await
+                    };
+                    let _ = tx2.send(Event::CommandCompleted(
+                        tab,
+                        result.map_err(|e| e.to_string()),
+                    ));
+                });
             }
 
             if entity_type == "issue" {
@@ -411,13 +443,16 @@ pub async fn apply_selector_changes(
                         return;
                     };
                     let project_path = app.project_context.clone();
-                    if let Err(e) = client
-                        .update_mr_reviewers(&project_path, iid, &to_add, &to_remove)
-                        .await
-                    {
-                        app.error_message = Some(format!("Failed to update reviewers: {}", e));
-                        return;
-                    }
+                    let tx2 = tx.clone();
+                    tokio::spawn(async move {
+                        let result = client
+                            .update_mr_reviewers(&project_path, iid, &to_add, &to_remove)
+                            .await;
+                        let _ = tx2.send(Event::CommandCompleted(
+                            tab,
+                            result.map_err(|e| e.to_string()),
+                        ));
+                    });
                 }
 
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -431,25 +466,7 @@ pub async fn apply_selector_changes(
             }
         }
         "milestone" => {
-            // For milestones, cli expects the title, not the id
             let first_val = values.first().cloned().unwrap_or_default();
-            let Some(client) = app.gitlab_client.clone() else {
-                return;
-            };
-            let project_path = app.project_context.clone();
-            let result = if entity_type == "issue" {
-                client
-                    .update_issue_milestone(&project_path, iid, &first_val)
-                    .await
-            } else {
-                client
-                    .update_mr_milestone(&project_path, iid, &first_val)
-                    .await
-            };
-            if let Err(e) = result {
-                app.error_message = Some(format!("Failed to update milestone: {}", e));
-                return;
-            }
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     let m = crate::domain::issues::Milestone {
@@ -465,6 +482,27 @@ pub async fn apply_selector_changes(
                     item.milestone = Some(m);
                 }
             }
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let project_path = app.project_context.clone();
+            let et = entity_type.to_string();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let result = if et == "issue" {
+                    client
+                        .update_issue_milestone(&project_path, iid, &first_val)
+                        .await
+                } else {
+                    client
+                        .update_mr_milestone(&project_path, iid, &first_val)
+                        .await
+                };
+                let _ = tx2.send(Event::CommandCompleted(
+                    tab,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
         }
         "confidential" => {
             if entity_type == "issue" {
@@ -473,12 +511,16 @@ pub async fn apply_selector_changes(
                     return;
                 };
                 let project_path = app.project_context.clone();
-                if let Err(e) = client
-                    .update_issue_confidential(&project_path, iid, is_confidential)
-                    .await
-                {
-                    app.error_message = Some(format!("Failed to update confidentiality: {}", e));
-                }
+                let tx2 = tx.clone();
+                tokio::spawn(async move {
+                    let result = client
+                        .update_issue_confidential(&project_path, iid, is_confidential)
+                        .await;
+                    let _ = tx2.send(Event::CommandCompleted(
+                        tab,
+                        result.map_err(|e| e.to_string()),
+                    ));
+                });
             }
         }
         _ => {}

@@ -2230,3 +2230,25 @@ impl Backend for GlabBackend {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_ats() {
+        assert_eq!(strip_ats(""), "");
+        assert_eq!(strip_ats("@user1"), "user1");
+        assert_eq!(strip_ats("@user1, @user2"), "user1,user2");
+        assert_eq!(strip_ats("user1, @user2, @user3"), "user1,user2,user3");
+        assert_eq!(strip_ats("user1"), "user1");
+    }
+
+    #[test]
+    fn test_normalize_labels() {
+        assert_eq!(normalize_labels(""), "");
+        assert_eq!(normalize_labels("bug, feature"), "bug,feature");
+        assert_eq!(normalize_labels("bug,feature"), "bug,feature");
+        assert_eq!(normalize_labels("bug"), "bug");
+    }
+}

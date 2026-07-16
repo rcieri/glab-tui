@@ -409,12 +409,27 @@ pub enum DiffTreeNode {
     File {
         name: String,
         file_path: String,
+        old_file_path: Option<String>,
+        is_new_file: bool,
+        is_deleted_file: bool,
         line_idx: usize,
+        additions: u32,
+        deletions: u32,
     },
 }
 
 impl DiffTreeNode {
-    pub fn insert(&mut self, path_parts: &[&str], full_path: &str, line_idx: usize) {
+    pub fn insert(
+        &mut self,
+        path_parts: &[&str],
+        full_path: &str,
+        old_path: Option<&str>,
+        is_new_file: bool,
+        is_deleted_file: bool,
+        additions: u32,
+        deletions: u32,
+        line_idx: usize,
+    ) {
         if path_parts.is_empty() {
             return;
         }
@@ -430,7 +445,12 @@ impl DiffTreeNode {
                         children.push(DiffTreeNode::File {
                             name,
                             file_path: full_path.to_string(),
+                            old_file_path: old_path.map(|s| s.to_string()),
+                            is_new_file,
+                            is_deleted_file,
                             line_idx,
+                            additions,
+                            deletions,
                         });
                     }
                 }
@@ -443,14 +463,32 @@ impl DiffTreeNode {
                         DiffTreeNode::Directory { name: n, .. } => n == &name,
                         _ => false,
                     }) {
-                        children[pos].insert(&path_parts[1..], full_path, line_idx);
+                        children[pos].insert(
+                            &path_parts[1..],
+                            full_path,
+                            old_path,
+                            is_new_file,
+                            is_deleted_file,
+                            additions,
+                            deletions,
+                            line_idx,
+                        );
                     } else {
                         let mut new_dir = DiffTreeNode::Directory {
                             name,
                             is_expanded: true,
                             children: Vec::new(),
                         };
-                        new_dir.insert(&path_parts[1..], full_path, line_idx);
+                        new_dir.insert(
+                            &path_parts[1..],
+                            full_path,
+                            old_path,
+                            is_new_file,
+                            is_deleted_file,
+                            additions,
+                            deletions,
+                            line_idx,
+                        );
                         children.push(new_dir);
                     }
                 }
@@ -478,8 +516,13 @@ impl DiffTreeNode {
                         is_dir: true,
                         is_expanded: *is_expanded,
                         file_path: None,
+                        old_file_path: None,
+                        is_new_file: false,
+                        is_deleted_file: false,
                         line_idx: None,
                         path_id: path_id.clone(),
+                        additions: 0,
+                        deletions: 0,
                     });
                 }
                 if name == "root" || *is_expanded {
@@ -503,7 +546,12 @@ impl DiffTreeNode {
             DiffTreeNode::File {
                 name,
                 file_path,
+                old_file_path,
+                is_new_file,
+                is_deleted_file,
                 line_idx,
+                additions,
+                deletions,
             } => {
                 let path_id = if prefix.is_empty() {
                     name.clone()
@@ -516,8 +564,13 @@ impl DiffTreeNode {
                     is_dir: false,
                     is_expanded: false,
                     file_path: Some(file_path.clone()),
+                    old_file_path: old_file_path.clone(),
+                    is_new_file: *is_new_file,
+                    is_deleted_file: *is_deleted_file,
                     line_idx: Some(*line_idx),
                     path_id,
+                    additions: *additions,
+                    deletions: *deletions,
                 });
             }
         }
@@ -565,8 +618,13 @@ pub struct FlatDiffTreeNode {
     pub is_dir: bool,
     pub is_expanded: bool,
     pub file_path: Option<String>,
+    pub old_file_path: Option<String>,
+    pub is_new_file: bool,
+    pub is_deleted_file: bool,
     pub line_idx: Option<usize>,
     pub path_id: String,
+    pub additions: u32,
+    pub deletions: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -586,6 +644,7 @@ pub struct DiffView {
     pub cursor_idx: usize,
     pub hunks: Vec<usize>,
     pub scroll_offset: usize,
+    pub file_tree_scroll_offset: usize,
     pub root_node: DiffTreeNode,
     pub visible_nodes: Vec<FlatDiffTreeNode>,
     pub selected_visible_idx: usize,
@@ -595,6 +654,11 @@ pub struct DiffView {
     pub side_by_side: bool,
     pub side_by_side_lines: Vec<SideBySideLine>,
     pub viewport_height: usize,
+    pub search_query: String,
+    pub search_matches: Vec<usize>,
+    pub search_cursor: usize,
+    pub search_active: bool,
+    pub file_tree_visible: bool,
 }
 
 fn strip_ansi_escapes(input: &str) -> String {
@@ -621,29 +685,100 @@ fn strip_ansi_escapes(input: &str) -> String {
 }
 
 impl DiffView {
+    #[allow(clippy::too_many_lines)]
     pub fn new(mr_iid: u64, raw_diff: String) -> Self {
         let cleaned_diff = strip_ansi_escapes(&raw_diff);
         let mut all_lines = Vec::new();
         let mut current_file = String::new();
         let mut old_line_num = None;
         let mut new_line_num = None;
-        let mut files = Vec::new();
+        let mut files: Vec<(String, Option<String>, bool, bool, usize)> = Vec::new();
+        let mut change_counts: std::collections::HashMap<String, (u32, u32)> =
+            std::collections::HashMap::new();
+
+        // State tracking for renames
+        let mut rename_from: Option<String> = None;
+        let mut rename_to: Option<String> = None;
+
+        struct DiffChunkMeta {
+            new_path: Option<String>,
+            old_path: Option<String>,
+            is_new_file: bool,
+            is_deleted_file: bool,
+        }
+        let mut chunk_meta: Option<DiffChunkMeta> = None;
 
         for line in cleaned_diff.lines() {
-            let mut detected_file = None;
+            // --- File header detection ---
+            let mut detected_file: Option<String> = None;
+
             if line.starts_with("diff --git") {
+                // Finish any previous chunk meta
+                chunk_meta = None;
+                rename_from = None;
+                rename_to = None;
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 4 {
-                    detected_file =
-                        Some(parts[3].strip_prefix("b/").unwrap_or(parts[3]).to_string());
+                    let a_path = parts[2].strip_prefix("a/").unwrap_or(parts[2]);
+                    let b_path = parts[3].strip_prefix("b/").unwrap_or(parts[3]);
+                    if a_path != b_path {
+                        rename_from = Some(a_path.to_string());
+                        rename_to = Some(b_path.to_string());
+                    }
+                    detected_file = Some(b_path.to_string());
                 }
+            } else if line.starts_with("rename from ") {
+                rename_from = Some(line[12..].trim().to_string());
+                chunk_meta = Some(DiffChunkMeta {
+                    new_path: chunk_meta
+                        .as_ref()
+                        .and_then(|m| m.new_path.clone())
+                        .or_else(|| rename_to.clone()),
+                    old_path: rename_from.clone(),
+                    is_new_file: false,
+                    is_deleted_file: false,
+                });
+            } else if line.starts_with("rename to ") {
+                rename_to = Some(line[10..].trim().to_string());
+                let new_path = rename_to.clone();
+                let old_path = rename_from.clone();
+                if let Some(ref new) = new_path {
+                    current_file = new.clone();
+                    let already_exists = files.iter().any(|(f, _, _, _, _)| f == new);
+                    if !already_exists {
+                        files.push((new.clone(), old_path.clone(), false, false, all_lines.len()));
+                    }
+                }
+                chunk_meta = Some(DiffChunkMeta {
+                    new_path,
+                    old_path,
+                    is_new_file: false,
+                    is_deleted_file: false,
+                });
+            } else if line.starts_with("new file mode ") {
+                chunk_meta = Some(DiffChunkMeta {
+                    new_path: rename_to.clone(),
+                    old_path: None,
+                    is_new_file: true,
+                    is_deleted_file: false,
+                });
+            } else if line.starts_with("deleted file mode ") {
+                chunk_meta = Some(DiffChunkMeta {
+                    new_path: None,
+                    old_path: rename_from.clone(),
+                    is_new_file: false,
+                    is_deleted_file: true,
+                });
             } else if line.starts_with("--- ") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 {
                     let path = parts[1];
                     if path != "/dev/null" && !path.is_empty() {
                         let cleaned_path = path.strip_prefix("a/").unwrap_or(path).to_string();
-                        detected_file = Some(cleaned_path);
+                        // Don't override current_file with old path during renames
+                        if rename_from.is_none() || rename_from.as_deref() != Some(&cleaned_path) {
+                            detected_file = Some(cleaned_path);
+                        }
                     }
                 }
             } else if line.starts_with("+++ ") {
@@ -652,19 +787,47 @@ impl DiffView {
                     let path = parts[1];
                     if path != "/dev/null" && !path.is_empty() {
                         let cleaned_path = path.strip_prefix("b/").unwrap_or(path).to_string();
-                        detected_file = Some(cleaned_path);
+                        detected_file = Some(cleaned_path.clone());
+                        // Grow chunk_meta new_path if we don't have it yet
+                        if chunk_meta.as_ref().map_or(true, |m| m.new_path.is_none()) {
+                            chunk_meta = Some(DiffChunkMeta {
+                                new_path: Some(cleaned_path.clone()),
+                                old_path: rename_from.clone(),
+                                is_new_file: chunk_meta.as_ref().map_or(false, |m| m.is_new_file),
+                                is_deleted_file: chunk_meta
+                                    .as_ref()
+                                    .map_or(false, |m| m.is_deleted_file),
+                            });
+                        }
                     }
                 }
             }
 
-            if let Some(file_path) = detected_file {
-                current_file = file_path;
-                let already_exists = files.iter().any(|(f, _)| f == &current_file);
-                if !already_exists {
-                    files.push((current_file.clone(), all_lines.len()));
+            if let Some(ref fp) = detected_file {
+                current_file = fp.clone();
+                let is_new = chunk_meta.as_ref().map_or(false, |m| m.is_new_file);
+                let is_del = chunk_meta.as_ref().map_or(false, |m| m.is_deleted_file);
+                let old_path = if rename_from.is_some() {
+                    rename_from.clone()
+                } else {
+                    None
+                };
+                if let Some(existing) = files.iter_mut().find(|(f, _, _, _, _)| f == fp) {
+                    if old_path.is_some() {
+                        existing.1 = old_path;
+                    }
+                    if is_new {
+                        existing.2 = true;
+                    }
+                    if is_del {
+                        existing.3 = true;
+                    }
+                } else {
+                    files.push((fp.clone(), old_path, is_new, is_del, all_lines.len()));
                 }
             }
 
+            // --- Line classification ---
             if line.starts_with("diff --git") {
                 all_lines.push(DiffLine {
                     content: line.to_string(),
@@ -679,6 +842,17 @@ impl DiffView {
             } else if line.starts_with("--- ")
                 || line.starts_with("+++ ")
                 || line.starts_with("index ")
+                || line.starts_with("similarity index ")
+                || line.starts_with("rename from ")
+                || line.starts_with("rename to ")
+                || line.starts_with("new file mode ")
+                || line.starts_with("deleted file mode ")
+                || line.starts_with("Binary files ")
+                || line.starts_with("old mode ")
+                || line.starts_with("new mode ")
+                || line.starts_with("copy from ")
+                || line.starts_with("copy to ")
+                || line.starts_with("Subproject commit ")
             {
                 all_lines.push(DiffLine {
                     content: line.to_string(),
@@ -711,33 +885,41 @@ impl DiffView {
                     line_type: DiffLineType::Addition,
                     file_path: current_file.clone(),
                     old_line_num: None,
-                    new_line_num: new_line_num,
+                    new_line_num,
                     syntax_highlighted: highlighted,
                 });
                 if let Some(ref mut n) = new_line_num {
                     *n += 1;
                 }
+                change_counts
+                    .entry(current_file.clone())
+                    .or_insert((0, 0))
+                    .1 += 1;
             } else if line.starts_with('-') {
                 let highlighted = highlight_line_syntax(&current_file, line, None);
                 all_lines.push(DiffLine {
                     content: line.to_string(),
                     line_type: DiffLineType::Deletion,
                     file_path: current_file.clone(),
-                    old_line_num: old_line_num,
+                    old_line_num,
                     new_line_num: None,
                     syntax_highlighted: highlighted,
                 });
                 if let Some(ref mut n) = old_line_num {
                     *n += 1;
                 }
+                change_counts
+                    .entry(current_file.clone())
+                    .or_insert((0, 0))
+                    .0 += 1;
             } else {
                 let highlighted = highlight_line_syntax(&current_file, line, None);
                 all_lines.push(DiffLine {
                     content: line.to_string(),
                     line_type: DiffLineType::Normal,
                     file_path: current_file.clone(),
-                    old_line_num: old_line_num,
-                    new_line_num: new_line_num,
+                    old_line_num,
+                    new_line_num,
                     syntax_highlighted: highlighted,
                 });
                 if let Some(ref mut o) = old_line_num {
@@ -755,13 +937,29 @@ impl DiffView {
             children: Vec::new(),
         };
 
-        for (file_path, line_idx) in &files {
+        for (file_path, old_path, is_new, is_del, line_idx) in &files {
             let parts: Vec<&str> = file_path.split(|c| c == '/' || c == '\\').collect();
-            root_node.insert(&parts, file_path, *line_idx);
+            let counts = change_counts.get(file_path).copied().unwrap_or((0, 0));
+            root_node.insert(
+                &parts,
+                file_path,
+                old_path.as_deref(),
+                *is_new,
+                *is_del,
+                counts.0,
+                counts.1,
+                *line_idx,
+            );
         }
+
+        // Propagate counts up to directory nodes
+        Self::compute_dir_counts(&mut root_node);
 
         let mut visible_nodes = Vec::new();
         root_node.flatten(0, "", &mut visible_nodes);
+
+        // Copy directory counts to flat dir nodes
+        Self::copy_dir_counts_to_flat(&root_node, &mut visible_nodes);
 
         let mut view = Self {
             mr_iid,
@@ -771,6 +969,7 @@ impl DiffView {
             cursor_idx: 0,
             hunks: Vec::new(),
             scroll_offset: 0,
+            file_tree_scroll_offset: 0,
             root_node,
             visible_nodes,
             selected_visible_idx: 0,
@@ -780,6 +979,11 @@ impl DiffView {
             side_by_side: false,
             side_by_side_lines: Vec::new(),
             viewport_height: 15,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_cursor: 0,
+            search_active: false,
+            file_tree_visible: true,
         };
 
         view.update_active_lines();
@@ -857,6 +1061,12 @@ impl DiffView {
                 .map(|(i, _)| i)
                 .collect()
         };
+
+        // Rebuild search matches for the new active lines
+        if !self.search_query.is_empty() {
+            let query = self.search_query.clone();
+            self.search(&query);
+        }
     }
 
     pub fn update_selected_file_from_cursor(&mut self) {
@@ -883,6 +1093,189 @@ impl DiffView {
                 self.selected_visible_idx = pos;
             }
         }
+    }
+
+    fn compute_dir_counts(node: &mut DiffTreeNode) -> (u32, u32) {
+        match node {
+            DiffTreeNode::Directory { children, .. } => {
+                let mut total_adds = 0u32;
+                let mut total_dels = 0u32;
+                for child in children.iter_mut() {
+                    let (a, d) = Self::compute_dir_counts(child);
+                    total_adds += a;
+                    total_dels += d;
+                }
+                (total_adds, total_dels)
+            }
+            DiffTreeNode::File {
+                additions,
+                deletions,
+                ..
+            } => (*additions, *deletions),
+        }
+    }
+
+    fn compute_dir_counts_raw(node: &DiffTreeNode) -> (u32, u32) {
+        match node {
+            DiffTreeNode::Directory { children, .. } => {
+                let mut total_adds = 0u32;
+                let mut total_dels = 0u32;
+                for child in children {
+                    let (a, d) = Self::compute_dir_counts_raw(child);
+                    total_adds += a;
+                    total_dels += d;
+                }
+                (total_adds, total_dels)
+            }
+            DiffTreeNode::File {
+                additions,
+                deletions,
+                ..
+            } => (*additions, *deletions),
+        }
+    }
+
+    fn copy_dir_counts_to_flat(root: &DiffTreeNode, flat: &mut [FlatDiffTreeNode]) {
+        let mut stack: Vec<(&DiffTreeNode, String)> = vec![(root, String::new())];
+        while let Some((node, prefix)) = stack.pop() {
+            if let DiffTreeNode::Directory { name, children, .. } = node {
+                let path_id = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
+                let (adds, dels) = Self::compute_dir_counts_raw(node);
+                if let Some(fnode) = flat.iter_mut().find(|n| n.is_dir && n.path_id == path_id) {
+                    fnode.additions = adds;
+                    fnode.deletions = dels;
+                }
+                for child in children.iter().rev() {
+                    stack.push((child, path_id.clone()));
+                }
+            }
+        }
+    }
+
+    pub fn rebuild_visible_nodes(&mut self) {
+        // Preserve selected file path so cursor doesn't jump on dir expand/collapse
+        let old_file_path = self
+            .visible_nodes
+            .get(self.selected_visible_idx)
+            .and_then(|n| n.file_path.clone().or_else(|| Some(n.path_id.clone())));
+
+        let mut visible = Vec::new();
+        self.root_node.flatten(0, "", &mut visible);
+        self.visible_nodes = visible;
+
+        if let Some(ref old_path) = old_file_path {
+            if let Some(pos) = self.visible_nodes.iter().position(|n| {
+                n.file_path.as_deref() == Some(old_path.as_str()) || n.path_id == *old_path
+            }) {
+                // Same file/dir still selected — keep scroll offset, try keep cursor
+                self.selected_visible_idx = pos;
+                self.update_active_lines();
+                return;
+            }
+        }
+        // Selected node disappeared (e.g. collapsed directory) — reset
+        self.selected_visible_idx = 0;
+        self.file_tree_scroll_offset = 0;
+        self.cursor_idx = 0;
+        self.scroll_offset = 0;
+        self.update_active_lines();
+    }
+
+    pub fn collapse_all(&mut self) {
+        fn collapse_recursive(node: &mut DiffTreeNode) {
+            if let DiffTreeNode::Directory {
+                is_expanded,
+                children,
+                ..
+            } = node
+            {
+                if *is_expanded {
+                    *is_expanded = false;
+                    for child in children {
+                        collapse_recursive(child);
+                    }
+                }
+            }
+        }
+        collapse_recursive(&mut self.root_node);
+        self.rebuild_visible_nodes();
+    }
+
+    pub fn expand_all(&mut self) {
+        fn expand_recursive(node: &mut DiffTreeNode) {
+            if let DiffTreeNode::Directory {
+                is_expanded,
+                children,
+                ..
+            } = node
+            {
+                *is_expanded = true;
+                for child in children {
+                    expand_recursive(child);
+                }
+            }
+        }
+        expand_recursive(&mut self.root_node);
+        self.rebuild_visible_nodes();
+    }
+
+    pub fn search(&mut self, query: &str) {
+        self.search_query = query.to_string();
+        self.search_matches.clear();
+
+        let matcher = SkimMatcherV2::default();
+        let mut scored: Vec<(i64, usize)> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| {
+                matcher
+                    .fuzzy_match(&line.content, query)
+                    .map(|score| (score, i))
+            })
+            .collect();
+        scored.sort_by_key(|(score, _)| -(*score));
+        self.search_matches = scored.into_iter().map(|(_, i)| i).collect();
+        self.search_cursor = 0;
+        if let Some(&first_match) = self.search_matches.first() {
+            self.cursor_idx = first_match;
+            self.scroll_offset = self.cursor_idx.saturating_sub(5);
+        }
+    }
+
+    pub fn search_next(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.search_cursor = (self.search_cursor + 1) % self.search_matches.len();
+        if let Some(&pos) = self.search_matches.get(self.search_cursor) {
+            self.cursor_idx = pos;
+            self.scroll_offset = self.cursor_idx.saturating_sub(5);
+        }
+    }
+
+    pub fn search_prev(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.search_cursor = self
+            .search_cursor
+            .checked_sub(1)
+            .unwrap_or(self.search_matches.len() - 1);
+        if let Some(&pos) = self.search_matches.get(self.search_cursor) {
+            self.cursor_idx = pos;
+            self.scroll_offset = self.cursor_idx.saturating_sub(5);
+        }
+    }
+
+    pub fn clear_search(&mut self) {
+        self.search_query.clear();
+        self.search_matches.clear();
+        self.search_cursor = 0;
     }
 
     pub fn get_comment_range(&self) -> Option<CommentRange> {
@@ -4282,5 +4675,141 @@ help = "h"
                 std::env::remove_var("GLAB_TUI_CONFIG");
             }
         }
+    }
+
+    #[test]
+    fn test_diff_view_rename_detection() {
+        let diff = "\
+diff --git a/src/old_name.rs b/src/new_name.rs
+similarity index 85%
+rename from src/old_name.rs
+rename to src/new_name.rs
+--- a/src/old_name.rs
++++ b/src/new_name.rs
+@@ -10,6 +10,7 @@
+  some content
++new line 1
+";
+        let view = DiffView::new(42, diff.to_string());
+        let files: Vec<&str> = view
+            .visible_nodes
+            .iter()
+            .filter(|n| !n.is_dir)
+            .map(|n| n.name.as_str())
+            .collect();
+        assert_eq!(files, vec!["new_name.rs"]);
+
+        let file_node = view
+            .visible_nodes
+            .iter()
+            .find(|n| n.name == "new_name.rs")
+            .unwrap();
+        assert_eq!(file_node.old_file_path.as_deref(), Some("src/old_name.rs"));
+        assert!(!file_node.is_new_file);
+        assert!(!file_node.is_deleted_file);
+    }
+
+    #[test]
+    fn test_diff_view_new_file_mode() {
+        let diff = "\
+diff --git a/src/new_module.rs b/src/new_module.rs
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/src/new_module.rs
+@@ -0,0 +1,3 @@
++// New file
++fn main() {}
++
+";
+        let view = DiffView::new(42, diff.to_string());
+        let file_node = view
+            .visible_nodes
+            .iter()
+            .find(|n| n.name == "new_module.rs")
+            .unwrap();
+        assert!(file_node.is_new_file);
+        assert!(!file_node.is_deleted_file);
+        assert_eq!(file_node.old_file_path, None);
+    }
+
+    #[test]
+    fn test_diff_view_deleted_file_mode() {
+        let diff = "\
+diff --git a/src/old_module.rs b/src/old_module.rs
+deleted file mode 100644
+index e69de29..0000000
+--- a/src/old_module.rs
++++ /dev/null
+@@ -1,3 +0,0 @@
+-// Old file
+-fn main() {}
+-
+";
+        let view = DiffView::new(42, diff.to_string());
+        let file_node = view
+            .visible_nodes
+            .iter()
+            .find(|n| n.name == "old_module.rs")
+            .unwrap();
+        assert!(file_node.is_deleted_file);
+        assert!(!file_node.is_new_file);
+    }
+
+    #[test]
+    fn test_diff_view_binary_file_meta() {
+        let diff = "\
+diff --git a/bin/app b/bin/app
+index abcdef..ffffff 100644
+Binary files a/bin/app and b/bin/app differ
+";
+        let view = DiffView::new(42, diff.to_string());
+        let meta_line = view
+            .all_lines
+            .iter()
+            .find(|l| l.content.contains("Binary files"));
+        assert!(meta_line.is_some());
+        assert_eq!(meta_line.unwrap().line_type, DiffLineType::Meta);
+    }
+
+    #[test]
+    fn test_diff_view_metadata_lines_are_meta() {
+        let diff = "\
+diff --git a/file.rs b/file.rs
+index abcdef..ffffff 100644
+old mode 100644
+new mode 100755
+--- a/file.rs
++++ b/file.rs
+@@ -1,3 +1,4 @@
+  line1
++line2
+";
+        let view = DiffView::new(42, diff.to_string());
+        let old_mode = view
+            .all_lines
+            .iter()
+            .find(|l| l.content.starts_with("old mode "));
+        assert_eq!(old_mode.unwrap().line_type, DiffLineType::Meta);
+        let new_mode = view
+            .all_lines
+            .iter()
+            .find(|l| l.content.starts_with("new mode "));
+        assert_eq!(new_mode.unwrap().line_type, DiffLineType::Meta);
+    }
+
+    #[test]
+    fn test_diff_view_file_tree_scroll_offset_default() {
+        let diff = "\
+diff --git a/foo.txt b/foo.txt
+index 123456..789012 100644
+--- a/foo.txt
++++ b/foo.txt
+@@ -1,1 +1,1 @@
+- old
++ new
+";
+        let view = DiffView::new(42, diff.to_string());
+        assert_eq!(view.file_tree_scroll_offset, 0);
     }
 }

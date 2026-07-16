@@ -18,6 +18,7 @@ use self::helpers::build_log_line;
 use self::overlays::render_overlays;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
+use crate::utils::format::truncate;
 
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
@@ -408,7 +409,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         f.render_widget(paragraph, area);
     }
 
-    if let Some(diff_view) = app.diff_view.take() {
+    if let Some(mut diff_view) = app.diff_view.take() {
         let area = centered_rect_min(95, 95, 30, 6, size);
 
         let unresolved_count = app.unresolved_threads_count();
@@ -433,16 +434,60 @@ pub fn render(f: &mut Frame, app: &mut App) {
         } else {
             "Merge Request"
         };
-        let outer_block = Block::default()
-            .title(format!(
-                " {pr_label} Diff #{}{}{} ",
-                diff_view.mr_iid, unresolved_suffix, title_suffix
-            ))
-            .title_style(
+
+        let mut title_spans = vec![
+            Span::styled(
+                format!(" {} Diff #{} ", pr_label, diff_view.mr_iid),
                 Style::default()
                     .fg(THEME.read().unwrap().header_fg)
                     .add_modifier(Modifier::BOLD),
-            )
+            ),
+            Span::styled(
+                unresolved_suffix,
+                Style::default().fg(THEME.read().unwrap().header_fg),
+            ),
+            Span::styled(
+                title_suffix,
+                Style::default().fg(THEME.read().unwrap().header_fg),
+            ),
+        ];
+        if diff_view.search_active {
+            title_spans.push(Span::styled(
+                format!(" {} SEARCHING ", &ICONS.read().unwrap().label_searching),
+                Style::default()
+                    .bg(THEME.read().unwrap().yellow)
+                    .fg(THEME.read().unwrap().bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            title_spans.push(Span::styled(
+                format!(" {}_ ", diff_view.search_query),
+                Style::default().fg(THEME.read().unwrap().yellow),
+            ));
+        } else if !diff_view.search_query.is_empty() {
+            let match_info = format!(
+                " ({}/{})",
+                if diff_view.search_matches.is_empty() {
+                    0
+                } else {
+                    diff_view.search_cursor + 1
+                },
+                diff_view.search_matches.len()
+            );
+            title_spans.push(Span::styled(
+                format!(" {} FILTERED ", &ICONS.read().unwrap().label_filtered),
+                Style::default()
+                    .bg(THEME.read().unwrap().yellow)
+                    .fg(THEME.read().unwrap().bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            title_spans.push(Span::styled(
+                format!(" {}{} ", diff_view.search_query, match_info),
+                Style::default().fg(THEME.read().unwrap().yellow),
+            ));
+        }
+
+        let outer_block = Block::default()
+            .title(Line::from(title_spans))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
             .style(Style::default().bg(Color::Reset));
@@ -460,73 +505,166 @@ pub fn render(f: &mut Frame, app: &mut App) {
             )
             .split(inner_area);
 
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(
-                [
-                    Constraint::Percentage(25), // Files list
-                    Constraint::Percentage(75), // Diff content
-                ]
-                .as_ref(),
-            )
-            .split(chunks[0]);
-
-        // 1. Render Files list on the left
-        let files_block = Block::default()
-            .title(format!(" {} ", icons.label_files))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(if diff_view.focus_on_files {
-                THEME.read().unwrap().border_focused
+        let main_chunks = {
+            let file_tree_constraint = if diff_view.file_tree_visible {
+                Constraint::Percentage(25)
             } else {
-                THEME.read().unwrap().border
-            }));
-
-        let mut file_items = Vec::new();
-        for (i, node) in diff_view.visible_nodes.iter().enumerate() {
-            let is_selected = i == diff_view.selected_visible_idx;
-
-            let indent = "  ".repeat(node.depth);
-            let indicator = if node.is_dir {
-                if node.is_expanded { "- " } else { "+ " }
-            } else {
-                "  "
+                Constraint::Length(0)
             };
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([file_tree_constraint, Constraint::Percentage(100)].as_ref())
+                .split(chunks[0])
+        };
 
-            let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
-            let count_suffix = if unresolved_count > 0 {
-                format!(
-                    " ({} {})",
-                    &ICONS.read().unwrap().thread_unresolved,
-                    unresolved_count
-                )
-            } else {
-                String::new()
-            };
+        // 1. Render Files list on the left (only if visible)
+        let files_rect = main_chunks[0];
+        let files_list_height = (files_rect.height as usize).saturating_sub(2);
+        let file_tree_visible = diff_view.file_tree_visible;
 
-            let display_str = format!(" {}{}{}{}", indent, indicator, node.name, count_suffix);
-
-            let item_style = if is_selected {
-                if diff_view.focus_on_files {
-                    Style::default()
-                        .bg(THEME.read().unwrap().highlight_bg)
-                        .fg(THEME.read().unwrap().bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .bg(THEME.read().unwrap().border)
-                        .fg(THEME.read().unwrap().text_normal)
-                }
-            } else if node.is_dir {
-                Style::default()
-                    .fg(THEME.read().unwrap().blue)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(THEME.read().unwrap().text_normal)
-            };
-
-            file_items.push(ListItem::new(display_str).style(item_style));
+        // Adjust file tree scroll offset
+        if file_tree_visible {
+            if diff_view.selected_visible_idx < diff_view.file_tree_scroll_offset {
+                diff_view.file_tree_scroll_offset = diff_view.selected_visible_idx;
+            } else if diff_view.selected_visible_idx
+                >= diff_view.file_tree_scroll_offset + files_list_height
+            {
+                diff_view.file_tree_scroll_offset =
+                    (diff_view.selected_visible_idx + 1).saturating_sub(files_list_height);
+            }
         }
-        let files_list = List::new(file_items).block(files_block);
+
+        let panel_inner_width = if file_tree_visible {
+            (files_rect.width as usize).saturating_sub(2)
+        } else {
+            80
+        };
+
+        let files_list = if file_tree_visible {
+            let files_block = Block::default()
+                .title(format!(" {} ", icons.label_files))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(if diff_view.focus_on_files {
+                    THEME.read().unwrap().border_focused
+                } else {
+                    THEME.read().unwrap().border
+                }));
+
+            let mut file_items = Vec::new();
+            let scroll_start = diff_view.file_tree_scroll_offset;
+            let scroll_end = (scroll_start + files_list_height).min(diff_view.visible_nodes.len());
+            for i in scroll_start..scroll_end {
+                let node = &diff_view.visible_nodes[i];
+                let is_selected = i == diff_view.selected_visible_idx;
+
+                let indent = "  ".repeat(node.depth);
+                let indicator = if node.is_dir {
+                    if node.is_expanded {
+                        format!("{} ", &ICONS.read().unwrap().folder_expanded)
+                    } else {
+                        format!("{} ", &ICONS.read().unwrap().folder_collapsed)
+                    }
+                } else {
+                    "  ".to_string()
+                };
+
+                let mut name_display = node.name.clone();
+                if node.is_dir {
+                    name_display.push('/');
+                }
+
+                // Rename indicator: show old → new
+                if let Some(ref old_path) = node.old_file_path {
+                    if let Some(ref new_path) = node.file_path {
+                        let full = format!("{} → {}", old_path, new_path);
+                        name_display = if full.chars().count() > panel_inner_width / 2 {
+                            let old_base = old_path
+                                .rsplit_once('/')
+                                .map_or(old_path.as_str(), |(_, n)| n);
+                            let new_base = new_path
+                                .rsplit_once('/')
+                                .map_or(new_path.as_str(), |(_, n)| n);
+                            format!("{} → {}", old_base, new_base)
+                        } else {
+                            full
+                        };
+                    }
+                }
+
+                // Build stats string (right-aligned)
+                let mut stats = String::new();
+                if node.deletions > 0 {
+                    stats.push_str(&format!("  -{}", node.deletions));
+                }
+                if node.additions > 0 {
+                    stats.push_str(&format!(" +{}", node.additions));
+                }
+
+                let unresolved_count = app.unresolved_threads_count_for_path(&node.path_id);
+                let count_suffix = if unresolved_count > 0 {
+                    format!(
+                        " ({} {})",
+                        &ICONS.read().unwrap().thread_unresolved,
+                        unresolved_count
+                    )
+                } else {
+                    String::new()
+                };
+                if !count_suffix.is_empty() {
+                    stats.push_str(&count_suffix);
+                }
+
+                // Right-align: pad with spaces between name and stats
+                let prefix = format!(" {}{}", indent, indicator);
+                let name_avail = panel_inner_width
+                    .saturating_sub(prefix.len())
+                    .saturating_sub(stats.len());
+                name_display = truncate(&name_display, name_avail.max(8));
+                let padding = " ".repeat(
+                    panel_inner_width
+                        .saturating_sub(prefix.len() + name_display.len() + stats.len()),
+                );
+
+                let display_str = format!("{}{}{}{}", prefix, name_display, padding, stats);
+
+                let item_style = if is_selected {
+                    if diff_view.focus_on_files {
+                        Style::default()
+                            .bg(THEME.read().unwrap().highlight_bg)
+                            .fg(THEME.read().unwrap().bg)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .bg(THEME.read().unwrap().border)
+                            .fg(THEME.read().unwrap().text_normal)
+                    }
+                } else if node.is_dir {
+                    Style::default()
+                        .fg(THEME.read().unwrap().blue)
+                        .add_modifier(Modifier::BOLD)
+                } else if node.is_new_file {
+                    Style::default()
+                        .fg(THEME.read().unwrap().green)
+                        .add_modifier(Modifier::BOLD)
+                } else if node.is_deleted_file {
+                    Style::default()
+                        .fg(THEME.read().unwrap().red)
+                        .add_modifier(Modifier::BOLD)
+                } else if node.old_file_path.is_some() {
+                    Style::default()
+                        .fg(THEME.read().unwrap().yellow)
+                        .add_modifier(Modifier::ITALIC)
+                } else {
+                    Style::default().fg(THEME.read().unwrap().text_normal)
+                };
+
+                file_items.push(ListItem::new(display_str).style(item_style));
+            }
+            List::new(file_items).block(files_block)
+        } else {
+            // Dummy empty list when tree is hidden
+            List::new(Vec::<ListItem>::new())
+        };
 
         // 2. Render Diff content on the right
         let diff_block = Block::default()
@@ -541,6 +679,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let list_height = (main_chunks[1].height as usize).saturating_sub(2);
 
         let mut updated_diff_view = diff_view;
+        // When tree is hidden, force focus to diff content
+        if !file_tree_visible {
+            updated_diff_view.focus_on_files = false;
+        }
         updated_diff_view.viewport_height = list_height;
         let total_lines = if updated_diff_view.side_by_side {
             updated_diff_view.side_by_side_lines.len()
@@ -583,6 +725,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 let sel_bg = if in_selection {
                     Some(Color::Rgb(30, 50, 80))
+                } else if updated_diff_view.search_matches.contains(&idx) {
+                    Some(Color::Rgb(45, 45, 18))
                 } else {
                     None
                 };
@@ -1180,6 +1324,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
                 let sel_bg = if in_selection {
                     Some(Color::Rgb(30, 50, 80))
+                } else if updated_diff_view.search_matches.contains(&idx) {
+                    Some(Color::Rgb(45, 45, 18))
                 } else {
                     None
                 };
@@ -1478,14 +1624,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
             }
         }
 
-        let footer_p = Paragraph::new(" Esc/q: Exit • d: Toggle Diff Layout • Tab: Toggle Focus • h/l/Left/Right: Switch Panels • j/k/↑/↓: Navigate • J/K: Scroll Down/Up • v: Select Lines • c: Comment • e: Suggest Code • a: Comment Actions • r: Submit Review ")
+        let footer_p = Paragraph::new(" Esc/q: Exit • d: Toggle Diff Layout • Enter/Space: Select File / Toggle Zoom • h/l: Collapse/Expand Dir • j/k/↑/↓: Navigate • J/K: Scroll 10 • [/]: Prev/Next Hunk • z/Z: Collapse/Expand All • v: Select Lines • c: Comment • e: Suggest Code • a: Comment Actions • r: Submit Review • / or f: Search • Ctrl+n/Ctrl+N: Next/Prev Match ")
             .alignment(Alignment::Center)
             .style(Style::default().fg(THEME.read().unwrap().text_muted).add_modifier(Modifier::ITALIC))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(Clear, area);
         f.render_widget(outer_block, area);
-        f.render_widget(files_list, main_chunks[0]);
+        if file_tree_visible {
+            f.render_widget(files_list, main_chunks[0]);
+        }
         f.render_widget(footer_p, chunks[1]);
 
         if updated_diff_view.side_by_side {

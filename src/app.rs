@@ -390,6 +390,20 @@ pub enum DiffLineType {
 }
 
 #[derive(Clone, Debug)]
+pub enum WordDiffToken {
+    Same(String),
+    Changed(String),
+}
+
+impl WordDiffToken {
+    pub fn text(&self) -> &str {
+        match self {
+            WordDiffToken::Same(s) | WordDiffToken::Changed(s) => s,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct DiffLine {
     pub content: String,
     pub line_type: DiffLineType,
@@ -397,6 +411,8 @@ pub struct DiffLine {
     pub old_line_num: Option<u32>,
     pub new_line_num: Option<u32>,
     pub syntax_highlighted: Option<Vec<(ratatui::style::Style, String)>>,
+    pub fuzzy_indices: Option<Vec<usize>>,
+    pub word_diff: Option<Vec<WordDiffToken>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -836,6 +852,8 @@ impl DiffView {
                     old_line_num: None,
                     new_line_num: None,
                     syntax_highlighted: None,
+                    fuzzy_indices: None,
+                    word_diff: None,
                 });
                 old_line_num = None;
                 new_line_num = None;
@@ -861,6 +879,8 @@ impl DiffView {
                     old_line_num: None,
                     new_line_num: None,
                     syntax_highlighted: None,
+                    fuzzy_indices: None,
+                    word_diff: None,
                 });
             } else if line.starts_with("@@ ") {
                 if let Some(caps) = parse_hunk_header(line) {
@@ -877,6 +897,8 @@ impl DiffView {
                     old_line_num: None,
                     new_line_num: None,
                     syntax_highlighted: None,
+                    fuzzy_indices: None,
+                    word_diff: None,
                 });
             } else if line.starts_with('+') {
                 let highlighted = highlight_line_syntax(&current_file, line, None);
@@ -887,6 +909,8 @@ impl DiffView {
                     old_line_num: None,
                     new_line_num,
                     syntax_highlighted: highlighted,
+                    fuzzy_indices: None,
+                    word_diff: None,
                 });
                 if let Some(ref mut n) = new_line_num {
                     *n += 1;
@@ -904,6 +928,8 @@ impl DiffView {
                     old_line_num,
                     new_line_num: None,
                     syntax_highlighted: highlighted,
+                    fuzzy_indices: None,
+                    word_diff: None,
                 });
                 if let Some(ref mut n) = old_line_num {
                     *n += 1;
@@ -921,6 +947,8 @@ impl DiffView {
                     old_line_num,
                     new_line_num,
                     syntax_highlighted: highlighted,
+                    fuzzy_indices: None,
+                    word_diff: None,
                 });
                 if let Some(ref mut o) = old_line_num {
                     *o += 1;
@@ -930,6 +958,9 @@ impl DiffView {
                 }
             }
         }
+
+        // Compute word-level diffs for adjacent -/+ pairs
+        compute_word_diffs(&mut all_lines);
 
         let mut root_node = DiffTreeNode::Directory {
             name: "root".to_string(),
@@ -1227,15 +1258,20 @@ impl DiffView {
         self.search_query = query.to_string();
         self.search_matches.clear();
 
+        // Clear previous fuzzy indices on all lines
+        for line in &mut self.lines {
+            line.fuzzy_indices = None;
+        }
+
         let matcher = SkimMatcherV2::default();
         let mut scored: Vec<(i64, usize)> = self
             .lines
-            .iter()
+            .iter_mut()
             .enumerate()
             .filter_map(|(i, line)| {
-                matcher
-                    .fuzzy_match(&line.content, query)
-                    .map(|score| (score, i))
+                let (score, indices) = matcher.fuzzy_indices(&line.content, query)?;
+                line.fuzzy_indices = Some(indices);
+                Some((score, i))
             })
             .collect();
         scored.sort_by_key(|(score, _)| -(*score));
@@ -1276,6 +1312,10 @@ impl DiffView {
         self.search_query.clear();
         self.search_matches.clear();
         self.search_cursor = 0;
+        self.search_active = false;
+        for line in &mut self.lines {
+            line.fuzzy_indices = None;
+        }
     }
 
     pub fn get_comment_range(&self) -> Option<CommentRange> {
@@ -1481,6 +1521,96 @@ pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
         }
     }
     side_lines
+}
+
+fn compute_word_diffs(all_lines: &mut [DiffLine]) {
+    let len = all_lines.len();
+    let mut i = 0;
+    while i + 1 < len {
+        if all_lines[i].line_type == DiffLineType::Deletion
+            && all_lines[i + 1].line_type == DiffLineType::Addition
+            && !all_lines[i].content.is_empty()
+            && !all_lines[i + 1].content.is_empty()
+        {
+            let old_content = if all_lines[i].content.len() > 1 {
+                &all_lines[i].content[1..]
+            } else {
+                ""
+            };
+            let new_content = if all_lines[i + 1].content.len() > 1 {
+                &all_lines[i + 1].content[1..]
+            } else {
+                ""
+            };
+
+            if !old_content.is_empty() || !new_content.is_empty() {
+                let diff = similar::TextDiff::from_words(old_content, new_content);
+                let mut del_tokens = Vec::new();
+                let mut add_tokens = Vec::new();
+
+                for &op in diff.ops() {
+                    match op {
+                        similar::DiffOp::Equal {
+                            old_index,
+                            new_index,
+                            len,
+                            ..
+                        } => {
+                            del_tokens.push(WordDiffToken::Same(
+                                old_content[old_index..old_index + len].to_string(),
+                            ));
+                            add_tokens.push(WordDiffToken::Same(
+                                new_content[new_index..new_index + len].to_string(),
+                            ));
+                        }
+                        similar::DiffOp::Delete {
+                            old_index, old_len, ..
+                        } => {
+                            del_tokens.push(WordDiffToken::Changed(
+                                old_content[old_index..old_index + old_len].to_string(),
+                            ));
+                        }
+                        similar::DiffOp::Insert {
+                            new_index, new_len, ..
+                        } => {
+                            add_tokens.push(WordDiffToken::Changed(
+                                new_content[new_index..new_index + new_len].to_string(),
+                            ));
+                        }
+                        similar::DiffOp::Replace {
+                            old_index,
+                            old_len,
+                            new_index,
+                            new_len,
+                            ..
+                        } => {
+                            del_tokens.push(WordDiffToken::Changed(
+                                old_content[old_index..old_index + old_len].to_string(),
+                            ));
+                            add_tokens.push(WordDiffToken::Changed(
+                                new_content[new_index..new_index + new_len].to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                // Only set word_diff if there are actual token-level differences
+                let has_changes = del_tokens
+                    .iter()
+                    .any(|t| matches!(t, WordDiffToken::Changed(_)))
+                    || add_tokens
+                        .iter()
+                        .any(|t| matches!(t, WordDiffToken::Changed(_)));
+                if has_changes {
+                    all_lines[i].word_diff = Some(del_tokens);
+                    all_lines[i + 1].word_diff = Some(add_tokens);
+                }
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
 }
 
 fn parse_hunk_header(header: &str) -> Option<(u32, u32)> {
@@ -4278,6 +4408,8 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: None,
                 syntax_highlighted: None,
+                fuzzy_indices: None,
+                word_diff: None,
             },
             DiffLine {
                 content: "-deleted line".to_string(),
@@ -4286,6 +4418,8 @@ index abcdef..ffffff 100644
                 old_line_num: Some(1),
                 new_line_num: None,
                 syntax_highlighted: None,
+                fuzzy_indices: None,
+                word_diff: None,
             },
             DiffLine {
                 content: "+added line 1".to_string(),
@@ -4294,6 +4428,8 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(1),
                 syntax_highlighted: None,
+                fuzzy_indices: None,
+                word_diff: None,
             },
             DiffLine {
                 content: "+added line 2".to_string(),
@@ -4302,6 +4438,8 @@ index abcdef..ffffff 100644
                 old_line_num: None,
                 new_line_num: Some(2),
                 syntax_highlighted: None,
+                fuzzy_indices: None,
+                word_diff: None,
             },
             DiffLine {
                 content: " normal line".to_string(),
@@ -4310,6 +4448,8 @@ index abcdef..ffffff 100644
                 old_line_num: Some(2),
                 new_line_num: Some(3),
                 syntax_highlighted: None,
+                fuzzy_indices: None,
+                word_diff: None,
             },
         ];
 

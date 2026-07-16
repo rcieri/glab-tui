@@ -635,6 +635,8 @@ mod tests {
             old_line_num: Some(1),
             new_line_num: None,
             syntax_highlighted: None,
+            fuzzy_indices: None,
+            word_diff: None,
         }];
         let prefix = "prefix";
         let prefix_style = Style::default();

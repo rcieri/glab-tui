@@ -67,12 +67,23 @@ fn get_recent_repos_file_path() -> PathBuf {
 
 pub fn get_recent_repos() -> Vec<String> {
     let path = get_recent_repos_file_path();
-    if let Ok(content) = fs::read_to_string(path) {
+    if let Ok(content) = fs::read_to_string(&path) {
         if let Ok(repos) = serde_json::from_str::<Vec<String>>(&content) {
-            return repos
+            let valid: Vec<String> = repos
                 .into_iter()
-                .filter(|r| std::path::Path::new(r).is_absolute())
+                .filter(|r| std::path::Path::new(r).is_absolute() && is_git_repo(r))
                 .collect();
+            // Prune stale entries from the cache file
+            if valid.len()
+                != serde_json::from_str::<Vec<String>>(&content)
+                    .map(|v| v.len())
+                    .unwrap_or(0)
+            {
+                if let Ok(cleaned) = serde_json::to_string(&valid) {
+                    let _ = fs::write(&path, cleaned);
+                }
+            }
+            return valid;
         }
     }
     Vec::new()
@@ -164,9 +175,9 @@ pub fn get_switchable_repos() -> Vec<String> {
 
     let mut sorted_repos = Vec::new();
 
-    // Recent repos are always absolute paths — show all, filter on selection
+    // Recent repos are always absolute paths — show only valid git repos
     for abs_path in recent_paths {
-        if !sorted_repos.contains(&abs_path) {
+        if !sorted_repos.contains(&abs_path) && is_git_repo(&abs_path) {
             sorted_repos.push(abs_path);
         }
     }

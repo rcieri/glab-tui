@@ -478,7 +478,7 @@ pub async fn handle_active_tab_key(
                                 let tx2 = tx.clone();
                                 tokio::spawn(async move {
                                     let result = client
-                                        .toggle_mr_draft(&project_path, mr_iid, is_draft)
+                                        .toggle_mr_draft(&project_path, mr_iid, !is_draft)
                                         .await;
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::MergeRequests,

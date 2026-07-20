@@ -374,11 +374,12 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 |---|---|---|
 | [`ratatui`](https://crates.io/crates/ratatui) | 0.30.2 | TUI rendering framework |
 | [`crossterm`](https://crates.io/crates/crossterm) | 0.29.0 | Cross-platform terminal I/O and event streaming |
-| [`tokio`](https://crates.io/crates/tokio) | 1.38 (full) | Async runtime for concurrent data fetching |
+| [`tokio`](https://crates.io/crates/tokio) | 1.53 (full) | Async runtime for concurrent data fetching |
 | [`serde`](https://crates.io/crates/serde) | 1.0 (derive) | Serialization / deserialization |
 | [`serde_json`](https://crates.io/crates/serde_json) | 1.0 | Parsing JSON responses from `glab api` |
-| [`toml`](https://crates.io/crates/toml) | 0.8 | Parsing `config.toml` and theme files |
+| [`toml`](https://crates.io/crates/toml) | 1.1 | Parsing `config.toml` and theme files |
 | [`anyhow`](https://crates.io/crates/anyhow) | 1.0 | Ergonomic error handling |
+| [`async-trait`](https://crates.io/crates/async-trait) | 0.1 | Async trait support for Backend trait |
 | [`chrono`](https://crates.io/crates/chrono) | 0.4 | Timestamp formatting ("2 hours ago") |
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
@@ -396,22 +397,41 @@ src/
 ├── app.rs           # App state, Tab enum, DiffView, DatePicker, filtering logic
 ├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
 ├── event.rs         # Async event handler (keyboard, tick, async data events)
-├── ui.rs            # Ratatui render functions for every tab and overlay
-├── themes/          # Bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula)
-├── gitlab/
+├── fetch.rs         # Per-tab data-fetching dispatch
+├── editor.rs        # External editor integration ($EDITOR)
+├── entity_editor.rs # Edit-menu field change logic
+├── templates.rs     # Default issue/MR/PR description templates
+├── themes/          # Bundled theme TOML files
+├── backend/         # CLI backend layer
+│   ├── mod.rs       # Backend trait (~40 methods)
+│   ├── glab.rs      # GlabBackend — shells out to glab CLI
+│   └── gh.rs        # GhBackend — shells out to gh CLI
+├── domain/          # Domain models + API logic
 │   ├── mod.rs       # Module declarations
-│   ├── client.rs    # GitlabClient (wraps `gh api` / `glab api`), endpoint translation
-│   ├── issues.rs    # Issue type + list/get/edit API calls
-│   ├── mr.rs        # MergeRequest/PR type + list/get/edit API calls
-│   ├── pipelines.rs # Pipeline + Job types, list/fetch/retry logic, unit tests
-│   ├── runners.rs   # Runner type + list/edit API calls
-│   ├── releases.rs  # Release type + list API call
-│   ├── milestones.rs# Milestone type + list/issue API calls
-│   └── notifications.rs # Todo/notification type + list API calls
+│   ├── client.rs    # GitlabClient wrapper (backend + page_size + event tx)
+│   ├── issues.rs    # Issue struct + list/get/create/edit
+│   ├── mr.rs        # MergeRequest/PR, DiscussionNote, NotePosition
+│   ├── pipelines.rs # Pipeline + Job types, dedup, retry logic, unit tests
+│   ├── runners.rs   # Runner type + list/edit logic
+│   ├── releases.rs  # Release type + list/create/edit
+│   ├── milestones.rs# Milestone type + list/edit
+│   ├── notifications.rs # Todo/notification type + list
+│   ├── branches.rs  # Branch type + list/create/delete
+│   └── deployments.rs # Environment + Deployment types
+├── handlers/        # Keypress handlers
+│   ├── mod.rs
+│   ├── tabs.rs      # Per-tab keybinding handlers
+│   └── overlays.rs  # Overlay keybinding handlers
+├── ui/              # Ratatui render functions
+│   ├── mod.rs       # Re-exports
+│   ├── tabs.rs      # Tab-specific render functions
+│   ├── overlays.rs  # Overlay render functions
+│   ├── helpers.rs   # Shared UI helpers
+│   └── diff.rs      # Diff view render functions
 └── utils/
-    ├── mod.rs       # Module declarations
-    ├── cache.rs     # Offline caching for repo context and API payloads
-    ├── format.rs    # Time formatting, markdown rendering, string truncation
+    ├── mod.rs
+    ├── cache.rs     # Offline caching
+    ├── format.rs    # Time formatting, markdown, truncation
     ├── ui.rs        # StatefulTable generic helper
     └── update.rs    # GitHub releases self-updater
 ```
@@ -425,8 +445,8 @@ cargo test
 ```
 
 Unit tests live in several modules:
-- [`src/gitlab/pipelines.rs`](src/gitlab/pipelines.rs) — pipeline job deduplication and stage-ordering logic.
-- [`src/gitlab/client.rs`](src/gitlab/client.rs) — GitHub-to-GitLab endpoint translation and JSON schema translation.
+- [`src/domain/pipelines.rs`](src/domain/pipelines.rs) — pipeline job deduplication and stage-ordering logic.
+- [`src/domain/mr.rs`](src/domain/mr.rs) — discussion note and review comment logic.
 - [`src/app.rs`](src/app.rs) — selector fuzzy-matching and filter logic.
 
 ---

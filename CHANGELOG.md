@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-07-20
+
+### Added
+- **Backend trait system** — Extracted a unified `Backend` trait (`src/backend/mod.rs`) with dedicated `GlabBackend` (`src/backend/glab.rs`) and `GhBackend` (`src/backend/gh.rs`) implementations, replacing the old `src/gitlab/` translation layer. The trait provides ~40 methods covering all API interactions with proper async dispatch (#165).
+- **Domain model layer** — Consolidated domain types into `src/domain/` with clean modules for `branches`, `deployments` (Environment & Deployment), `issues`, `milestones`, `mr`, `notifications`, `pipelines`, `releases`, and `runners`, each with serde-powered structs and dedicated list/get helpers.
+- **crates.io publishing** — Package renamed to `glab-tui-crate` (binary stays `glab-tui`) for publishing on crates.io; `cargo install glab-tui-crate` now works.
+- **Homebrew & Scoop distribution** — Added `.gitmodules` for `homebrew-glab-tui` and `scoop-glab-tui` manifest repos, with CI automation to update formulas on release.
+- **`async-trait` dependency** — Added `async-trait = "0.1.89"` to support the new async `Backend` trait.
+
+### Fixed
+- **is_draft detection** — Fixed draft status not being correctly parsed from GitLab MR responses.
+- **GitLab nerd font icons** — Replaced custom nerd font GitLab icon with standard FontAwesome icon for better cross-terminal compatibility.
+- **Repository argument encoding** — Removed spurious URL encoding from `glab` native subcommand `-R` arguments, fixing entity fetch failures when project paths contain special characters (#181).
+- **Non-blocking CLI commands** — Reverted to non-blocking subprocess spawning to prevent UI freeze during CLI calls (#183).
+- **Diff rename handling** — Fixed diff parsing when files are renamed, ensuring renamed file diffs are displayed correctly (#184).
+- **Terminal output corruption** — Resolved extraneous printouts corrupting the terminal display (#173).
+- **Trace view regression** — Fixed the job trace viewer that was not displaying output (#172).
+- **Code injection mitigation** — Applied escaping fixes for CodeQL security alert #25 (shell argument injection) (#168).
+- **macOS CI hangs** — Prevented `cargo test` from hanging on macOS runners by fixing PTY lifecycle.
+- **Duplicate release notes** — CI now generates release notes only once in the matrix build.
+
+### Changed
+- **Architecture overhaul** — Removed the entire `src/gitlab/` module tree (client.rs, issues.rs, mr.rs, pipelines.rs, runners.rs, releases.rs, milestones.rs, notifications.rs, branches.rs, deployments.rs). Replaced with `src/backend/` (trait + per-host impls) and `src/domain/` (data types + logic). The `GitlabClient` now lives in `src/domain/client.rs` and delegates to the backend trait.
+- **Package identity** — Cargo package renamed from `glab-tui` to `glab-tui-crate` to free the `glab-tui` name for the binary. The install command changes to `cargo install glab-tui-crate`.
+- **Release automation** — CI `release.yml` now triggers manifest updates on Homebrew and Scoop submodules after a release publish.
+
+### Dependencies
+- Bump `toml` from `0.8` to `1.1.3+spec-1.1.0`
+- Bump `tokio` from `1.52.3` to `1.53.0` (minor-updates group)
+- Add `async-trait` `0.1.89`
+- Bump `the patch-updates group` with 4 dependency updates
+- Bump `docker/login-action`, `docker/build-push-action`, `actions/checkout` (CI)
+
+---
+
 ## [0.6.0] - 2026-07-11
 
 ### Added

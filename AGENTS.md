@@ -10,9 +10,11 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Primary Language:** Rust (Edition 2024)
 * **TUI Framework:** `ratatui` (v0.30.2)
 * **Syntax Highlighting:** `syntect` (v5, `default-fancy` features)
-* **Async Runtime:** `tokio`
+* **Async Runtime:** `tokio` (v1.53)
+* **Async Traits:** `async-trait` (v0.1)
 * **Terminal Handling:** `crossterm`
-* **Config/Themes:** `toml` crate; config at `~/.config/glab-tui/config.toml`
+* **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
+* **Package:** `glab-tui-crate` (binary: `glab-tui`)
 
 ### Dual-Engine Architecture
 The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)).
@@ -81,7 +83,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 
 ### Code Review System
 * **Diff view** supports inline comments, code suggestions, and draft reviews:
-  - `DiscussionNote` / `NotePosition` structs in [src/gitlab/mr.rs](src/gitlab/mr.rs).
+  - `DiscussionNote` / `NotePosition` structs in [src/domain/mr.rs](src/domain/mr.rs).
   - `list_mr_notes()` fetches notes for an MR via the API.
   - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` and submitted atomically.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.

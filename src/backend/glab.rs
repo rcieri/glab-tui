@@ -275,9 +275,8 @@ impl Backend for GlabBackend {
     }
 
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["issue", "close", &iid.to_string(), "-R", &encoded],
+            &["issue", "close", &iid.to_string(), "-R", project],
             "CLOSING ISSUE",
         )
         .await?;
@@ -285,9 +284,8 @@ impl Backend for GlabBackend {
     }
 
     async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["issue", "reopen", &iid.to_string(), "-R", &encoded],
+            &["issue", "reopen", &iid.to_string(), "-R", project],
             "REOPENING ISSUE",
         )
         .await?;
@@ -295,9 +293,8 @@ impl Backend for GlabBackend {
     }
 
     async fn delete_issue(&self, project: &str, iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["issue", "delete", &iid.to_string(), "-R", &encoded, "-y"],
+            &["issue", "delete", &iid.to_string(), "-R", project, "-y"],
             "DELETING ISSUE",
         )
         .await?;
@@ -352,7 +349,6 @@ impl Backend for GlabBackend {
     }
 
     async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "issue",
@@ -361,7 +357,7 @@ impl Backend for GlabBackend {
                 "--title",
                 title,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING ISSUE",
         )
@@ -375,7 +371,6 @@ impl Backend for GlabBackend {
         iid: u64,
         description: &str,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "issue",
@@ -384,7 +379,7 @@ impl Backend for GlabBackend {
                 "-d",
                 description,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING ISSUE",
         )
@@ -399,13 +394,12 @@ impl Backend for GlabBackend {
         add_labels: &[String],
         remove_labels: &[String],
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let mut args: Vec<String> = vec![
             "issue".into(),
             "update".into(),
             iid.to_string(),
             "-R".into(),
-            encoded,
+            project.into(),
         ];
         for label in add_labels {
             args.push("--label".into());
@@ -427,13 +421,12 @@ impl Backend for GlabBackend {
         add: &[String],
         remove: &[String],
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let mut args: Vec<String> = vec![
             "issue".into(),
             "update".into(),
             iid.to_string(),
             "-R".into(),
-            encoded,
+            project.into(),
         ];
         for a in add {
             args.push("--assignee".into());
@@ -449,7 +442,6 @@ impl Backend for GlabBackend {
     }
 
     async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let val = if milestone == "None" || milestone.is_empty() {
             "0"
         } else {
@@ -463,7 +455,7 @@ impl Backend for GlabBackend {
                 "--milestone",
                 val,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING ISSUE",
         )
@@ -472,7 +464,6 @@ impl Backend for GlabBackend {
     }
 
     async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "issue",
@@ -481,7 +472,7 @@ impl Backend for GlabBackend {
                 "--due-date",
                 due_date,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING ISSUE",
         )
@@ -490,7 +481,6 @@ impl Backend for GlabBackend {
     }
 
     async fn update_issue_weight(&self, project: &str, iid: u64, weight: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "issue",
@@ -499,7 +489,7 @@ impl Backend for GlabBackend {
                 "--weight",
                 weight,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING ISSUE",
         )
@@ -513,14 +503,13 @@ impl Backend for GlabBackend {
         iid: u64,
         confidential: bool,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let flag = if confidential {
             "--confidential"
         } else {
             "--public"
         };
         self.run_glab(
-            &["issue", "update", &iid.to_string(), flag, "-R", &encoded],
+            &["issue", "update", &iid.to_string(), flag, "-R", project],
             "UPDATING ISSUE",
         )
         .await?;
@@ -878,9 +867,8 @@ impl Backend for GlabBackend {
     }
 
     async fn close_mr(&self, project: &str, iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["mr", "close", &iid.to_string(), "-R", &encoded],
+            &["mr", "close", &iid.to_string(), "-R", project],
             "CLOSING MR",
         )
         .await?;
@@ -888,9 +876,8 @@ impl Backend for GlabBackend {
     }
 
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["mr", "reopen", &iid.to_string(), "-R", &encoded],
+            &["mr", "reopen", &iid.to_string(), "-R", project],
             "REOPENING MR",
         )
         .await?;
@@ -898,9 +885,8 @@ impl Backend for GlabBackend {
     }
 
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["mr", "delete", &iid.to_string(), "-R", &encoded, "-y"],
+            &["mr", "delete", &iid.to_string(), "-R", project, "-y"],
             "DELETING MR",
         )
         .await?;
@@ -908,9 +894,8 @@ impl Backend for GlabBackend {
     }
 
     async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["mr", "approve", &iid.to_string(), "-R", &encoded],
+            &["mr", "approve", &iid.to_string(), "-R", project],
             "APPROVING MR",
         )
         .await?;
@@ -925,13 +910,12 @@ impl Backend for GlabBackend {
         delete_branch: bool,
         strategy: Option<&str>,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let mut args: Vec<String> = vec![
             "mr".into(),
             "merge".into(),
             iid.to_string(),
             "-R".into(),
-            encoded,
+            project.into(),
         ];
         if squash {
             args.push("--squash".into());
@@ -1052,7 +1036,6 @@ impl Backend for GlabBackend {
     }
 
     async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "mr",
@@ -1061,7 +1044,7 @@ impl Backend for GlabBackend {
                 "--title",
                 title,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING MR",
         )
@@ -1075,7 +1058,6 @@ impl Backend for GlabBackend {
         iid: u64,
         description: &str,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "mr",
@@ -1084,7 +1066,7 @@ impl Backend for GlabBackend {
                 "-d",
                 description,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING MR",
         )
@@ -1099,13 +1081,12 @@ impl Backend for GlabBackend {
         add_labels: &[String],
         remove_labels: &[String],
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let mut args: Vec<String> = vec![
             "mr".into(),
             "update".into(),
             iid.to_string(),
             "-R".into(),
-            encoded,
+            project.into(),
         ];
         for label in add_labels {
             args.push("--label".into());
@@ -1127,13 +1108,12 @@ impl Backend for GlabBackend {
         add: &[String],
         remove: &[String],
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let mut args: Vec<String> = vec![
             "mr".into(),
             "update".into(),
             iid.to_string(),
             "-R".into(),
-            encoded,
+            project.into(),
         ];
         for a in add {
             args.push("--assignee".into());
@@ -1155,13 +1135,12 @@ impl Backend for GlabBackend {
         add: &[String],
         remove: &[String],
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let mut args: Vec<String> = vec![
             "mr".into(),
             "update".into(),
             iid.to_string(),
             "-R".into(),
-            encoded,
+            project.into(),
         ];
         for r in add {
             args.push("--reviewer".into());
@@ -1177,7 +1156,6 @@ impl Backend for GlabBackend {
     }
 
     async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         let val = if milestone == "None" || milestone.is_empty() {
             "0"
         } else {
@@ -1191,7 +1169,7 @@ impl Backend for GlabBackend {
                 "--milestone",
                 val,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING MR",
         )
@@ -1200,7 +1178,6 @@ impl Backend for GlabBackend {
     }
 
     async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "mr",
@@ -1209,7 +1186,7 @@ impl Backend for GlabBackend {
                 "--target-branch",
                 branch,
                 "-R",
-                &encoded,
+                project,
             ],
             "UPDATING MR",
         )
@@ -1544,14 +1521,13 @@ impl Backend for GlabBackend {
         name: &str,
         description: &str,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
             &[
                 "release",
                 "create",
                 tag,
                 "-R",
-                &encoded,
+                project,
                 "-n",
                 name,
                 "-N",
@@ -2161,9 +2137,8 @@ impl Backend for GlabBackend {
     }
 
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
-        let encoded = Self::encode_path(project);
         self.run_glab(
-            &["milestone", "view", id, "-w", "-R", &encoded],
+            &["milestone", "view", id, "-w", "-R", project],
             "OPENING IN BROWSER",
         )
         .await?;

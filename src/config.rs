@@ -137,7 +137,7 @@ impl Icons {
             status_manual: "\u{f425}".to_string(),
             status_unknown: "\u{f420}".to_string(),
             header_github: "\u{e709}".to_string(),
-            header_gitlab: "\u{e7eb}".to_string(),
+            header_gitlab: "\u{f296}".to_string(),
             label_navigation: "\u{f44e}".to_string(),
             label_terminal: "\u{f489}".to_string(),
             label_fetching: "\u{f46a}".to_string(),

@@ -18,7 +18,6 @@ All notable changes to this project will be documented in this file.
 - **`JobStep` struct** — Represents individual steps within a GitHub Actions job with `name`, `number`, `status`, `conclusion`, `started_at`, `completed_at` (#167)
 - **`normalize_github_status()` public function** — Converts GitHub status/conclusion pairs to GitLab-compatible status strings for unified rendering; handles both lowercase and uppercase inputs (#167)
 - **`format_duration()` utility** — Formats `Option<u64>` seconds into human-readable strings like `"1h 30m 45s"` (#167)
-- **URL encoding for raw API endpoints** — `GhBackend` now encodes project paths in all raw API URLs; `GlabBackend` encodes path segments and query values to prevent injection (#167)
 
 ### Fixed
 - Column order mismatch in Pipelines table: `Ref` column now correctly positioned at the end of the row (#167)

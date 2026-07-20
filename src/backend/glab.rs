@@ -38,25 +38,7 @@ impl GlabBackend {
     }
 
     fn encode_path(project: &str) -> String {
-        project
-            .replace('%', "%25")
-            .replace('?', "%3F")
-            .replace('#', "%23")
-            .replace('&', "%26")
-            .replace('=', "%3D")
-            .replace(' ', "%20")
-            .replace('/', "%2F")
-    }
-
-    fn encode_query_value(value: &str) -> String {
-        value
-            .replace('%', "%25")
-            .replace('&', "%26")
-            .replace('=', "%3D")
-            .replace('?', "%3F")
-            .replace('#', "%23")
-            .replace(' ', "%20")
-            .replace('/', "%2F")
+        project.replace('/', "%2F")
     }
 
     async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
@@ -1966,11 +1948,9 @@ impl Backend for GlabBackend {
         ref_branch: &str,
     ) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let branch_enc = Self::encode_query_value(branch_name);
-        let ref_enc = Self::encode_query_value(ref_branch);
         let endpoint = format!(
             "/projects/{}/repository/branches?branch={}&ref={}",
-            encoded, branch_enc, ref_enc
+            encoded, branch_name, ref_branch
         );
         self.raw_api(&endpoint, "POST", None, "Creating Branch")
             .await?;

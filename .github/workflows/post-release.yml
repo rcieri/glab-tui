@@ -1,0 +1,63 @@
+name: Post-Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g., v0.7.0)"
+        required: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  post-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag }}
+
+      - name: Get previous tag
+        id: prev
+        run: echo "tag=$(git describe --tags --abbrev=0 HEAD^)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes via OpenCode
+        uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag }}
+          PREV_TAG: ${{ steps.prev.outputs.tag }}
+        with:
+          model: opencode-go/deepseek-v4-flash
+          use_github_token: true
+          prompt: |
+            Read CHANGELOG.md and extract the section for version $TAG.
+
+            Also read the existing release notes for the previous tag $PREV_TAG (use \`gh release view $PREV_TAG --json body --jq .body\`) to match their formatting style.
+
+            Write the file RELEASE_NOTES.md matching the same format:
+            - Title "## What's Changed"
+            - Sections: ### Added / ### Fixed / ### Changed / ### Dependencies
+            - Entries start with bolded headline: \`- **Name** — Description with references (#123).\`
+            - End with: \`**Full Changelog**: https://github.com/rcieri/glab-tui/compare/$PREV_TAG...$TAG\`
+
+            Use the content from CHANGELOG.md for the current version as the source material.
+
+      - name: Update release body
+        run: gh release edit ${{ github.event.inputs.tag }} --notes-file RELEASE_NOTES.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Homebrew formula update
+        run: gh workflow run update-formula.yml --repo rcieri/homebrew-glab-tui
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
+
+      - name: Trigger Scoop manifest update
+        run: gh workflow run excavator.yml --repo rcieri/scoop-glab-tui
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}

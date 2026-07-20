@@ -25,6 +25,7 @@ jobs:
               uses: actions/checkout@v7
               with:
                   fetch-depth: 0
+                  submodules: true
 
             - name: Configure Git
               run: |
@@ -87,10 +88,12 @@ jobs:
             - name: Generate demo GIFs
               run: ./assets/generate-demos.sh
 
-            - name: Update package manifests
-              run: bash scripts/update-manifests.sh ${{ env.NEW_TAG }}
+            - name: Update submodule refs to latest
+              run: |
+                git submodule update --remote --merge
+                git add Formula/ scoop/
 
-            - name: Commit manifest updates and push to release branch
+            - name: Commit changes and push to release branch
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
@@ -102,9 +105,9 @@ jobs:
                       exit 0
                   fi
                   BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
-                  git add Formula/ scoop/ assets/demo-*.gif
-                  git diff --cached --quiet && echo "No manifest changes" && exit 0
-                  git commit -m "chore: bump package manifests and demo GIFs to ${{ env.NEW_TAG }}"
+                  git add assets/demo-*.gif Formula/ scoop/
+                  git diff --cached --quiet && echo "No changes to commit" && exit 0
+                  git commit -m "chore: update demo GIFs and submodule refs to ${{ env.NEW_TAG }}"
                   git push origin "$BRANCH"
 
             - name: Standardize Pull Request Title

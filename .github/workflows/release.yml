@@ -150,3 +150,23 @@ jobs:
           env:
               CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+  trigger-homebrew:
+    name: Trigger Homebrew formula update
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    steps:
+      - name: Run homebrew update workflow
+        run: gh workflow run update-formula.yml --repo rcieri/homebrew-glab-tui
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
+
+  trigger-scoop:
+    name: Trigger Scoop manifest update
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    steps:
+      - name: Run scoop excavator workflow
+        run: gh workflow run excavator.yml --repo rcieri/scoop-glab-tui
+        env:
+          GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
+

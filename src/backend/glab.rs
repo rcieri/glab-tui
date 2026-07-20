@@ -662,6 +662,10 @@ impl Backend for GlabBackend {
                         event: String::new(),
                         head_sha: String::new(),
                         actor_login: String::new(),
+                        created_at: None,
+                        duration_seconds: None,
+                        source: None,
+                        started_at: None,
                     }),
                 }
             }));
@@ -775,6 +779,10 @@ impl Backend for GlabBackend {
                 event: String::new(),
                 head_sha: String::new(),
                 actor_login: String::new(),
+                created_at: None,
+                duration_seconds: None,
+                source: None,
+                started_at: None,
             }),
         })
     }
@@ -1215,22 +1223,10 @@ impl Backend for GlabBackend {
         let pages = page_size.div_ceil(100).max(1);
         let mut all: Vec<Pipeline> = Vec::new();
         for page in 1..=pages {
+            let encoded = Self::encode_path(project);
+            let endpoint = format!("/projects/{}/pipelines?per_page=100&page={}", encoded, page);
             let raw = self
-                .run_glab(
-                    &[
-                        "ci",
-                        "list",
-                        "--output",
-                        "json",
-                        "-R",
-                        project,
-                        "--page",
-                        &page.to_string(),
-                        "--per-page",
-                        "100",
-                    ],
-                    "Fetching Pipelines",
-                )
+                .raw_api(&endpoint, "GET", None, "Fetching Pipelines")
                 .await?;
             #[derive(Deserialize)]
             struct GiPipe {
@@ -1238,6 +1234,9 @@ impl Backend for GlabBackend {
                 status: String,
                 #[serde(rename = "ref")]
                 pipe_ref: String,
+                source: Option<String>,
+                sha: Option<String>,
+                created_at: Option<String>,
                 updated_at: String,
             }
             let pipes: Vec<GiPipe> = serde_json::from_str(&raw).unwrap_or_default();
@@ -1250,8 +1249,12 @@ impl Backend for GlabBackend {
                 name: String::new(),
                 display_title: String::new(),
                 event: String::new(),
-                head_sha: String::new(),
+                head_sha: p.sha.unwrap_or_default(),
                 actor_login: String::new(),
+                created_at: p.created_at,
+                duration_seconds: None,
+                source: p.source,
+                started_at: None,
             }));
             if len < 100 {
                 break;
@@ -1275,11 +1278,22 @@ impl Backend for GlabBackend {
             .raw_api(&endpoint, "GET", None, "Fetching Jobs")
             .await?;
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct GiJob {
             id: u64,
             status: String,
             stage: String,
             name: String,
+            duration: Option<f64>,
+            started_at: Option<String>,
+            finished_at: Option<String>,
+            #[serde(default)]
+            tag_list: Vec<String>,
+            runner: Option<GiRunner>,
+        }
+        #[derive(Deserialize)]
+        struct GiRunner {
+            description: Option<String>,
         }
         let jobs: Vec<GiJob> = serde_json::from_str(&raw)?;
         let all_jobs: Vec<Job> = jobs
@@ -1290,6 +1304,11 @@ impl Backend for GlabBackend {
                 stage: j.stage,
                 name: j.name,
                 matrix: None,
+                duration_seconds: j.duration.map(|d| d as u64),
+                runner: j.runner.and_then(|r| r.description),
+                needs: None,
+                steps: None,
+                tags: Some(j.tag_list).filter(|v| !v.is_empty()),
             })
             .collect();
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))

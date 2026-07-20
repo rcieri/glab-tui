@@ -18,6 +18,14 @@ pub struct Pipeline {
     pub head_sha: String,
     #[serde(default)]
     pub actor_login: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub duration_seconds: Option<u64>,
+    #[serde(default)]
+    pub started_at: Option<String>,
 }
 
 impl Pipeline {
@@ -48,6 +56,18 @@ impl Pipeline {
     pub fn actor_login(&self) -> &str {
         &self.actor_login
     }
+    pub fn created_at(&self) -> Option<&str> {
+        self.created_at.as_deref()
+    }
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+    pub fn duration_seconds(&self) -> Option<u64> {
+        self.duration_seconds
+    }
+    pub fn started_at(&self) -> Option<&str> {
+        self.started_at.as_deref()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -58,6 +78,26 @@ pub struct Job {
     pub name: String,
     #[serde(skip)]
     pub matrix: Option<String>,
+    #[serde(skip)]
+    pub duration_seconds: Option<u64>,
+    #[serde(skip)]
+    pub runner: Option<String>,
+    #[serde(skip)]
+    pub needs: Option<Vec<String>>,
+    #[serde(skip)]
+    pub steps: Option<Vec<JobStep>>,
+    #[serde(skip)]
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct JobStep {
+    pub name: String,
+    pub number: u64,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
 }
 
 impl Job {
@@ -75,6 +115,21 @@ impl Job {
     }
     pub fn matrix(&self) -> Option<&str> {
         self.matrix.as_deref()
+    }
+    pub fn duration_seconds(&self) -> Option<u64> {
+        self.duration_seconds
+    }
+    pub fn runner(&self) -> Option<&str> {
+        self.runner.as_deref()
+    }
+    pub fn needs(&self) -> Option<&[String]> {
+        self.needs.as_deref()
+    }
+    pub fn steps(&self) -> Option<&[JobStep]> {
+        self.steps.as_deref()
+    }
+    pub fn tags(&self) -> Option<&[String]> {
+        self.tags.as_deref()
     }
     pub fn set_name(&mut self, name: String) {
         self.name = name;
@@ -162,6 +217,25 @@ pub async fn list_pipeline_jobs(
         .await
 }
 
+pub fn normalize_github_status(status: &str, conclusion: Option<&str>) -> String {
+    if status == "completed" {
+        match conclusion {
+            Some("success") => "success",
+            Some("failure") => "failed",
+            Some("cancelled") | Some("canceled") => "canceled",
+            Some("skipped") => "skipped",
+            _ => "failed",
+        }
+    } else if status == "in_progress" {
+        "running"
+    } else if status == "queued" || status == "waiting" || status == "pending" {
+        "pending"
+    } else {
+        "pending"
+    }
+    .to_string()
+}
+
 pub async fn get_job_trace(
     client: &GitlabClient,
     project_path: &str,
@@ -173,25 +247,6 @@ pub async fn get_job_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn normalize_github_status(status: &str, conclusion: Option<&str>) -> String {
-        if status == "completed" {
-            match conclusion {
-                Some("success") => "success",
-                Some("failure") => "failed",
-                Some("cancelled") => "canceled",
-                Some("skipped") => "skipped",
-                _ => "failed",
-            }
-        } else if status == "in_progress" {
-            "running"
-        } else if status == "queued" || status == "waiting" {
-            "pending"
-        } else {
-            "pending"
-        }
-        .to_string()
-    }
 
     #[test]
     fn test_normalize_github_status() {
@@ -205,6 +260,10 @@ mod tests {
         );
         assert_eq!(
             normalize_github_status("completed", Some("cancelled")),
+            "canceled"
+        );
+        assert_eq!(
+            normalize_github_status("completed", Some("canceled")),
             "canceled"
         );
         assert_eq!(
@@ -225,6 +284,11 @@ mod tests {
                 stage: "build".into(),
                 name: "compile-code".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
             Job {
                 id: 102,
@@ -232,6 +296,11 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
             Job {
                 id: 103,
@@ -239,6 +308,11 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
             Job {
                 id: 104,
@@ -246,6 +320,11 @@ mod tests {
                 stage: "build".into(),
                 name: "compile-code".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
         ];
 
@@ -273,6 +352,11 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests [ubuntu, unit]".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
             Job {
                 id: 202,
@@ -280,6 +364,11 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests [windows, integration]".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
             Job {
                 id: 203,
@@ -287,6 +376,11 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests [ubuntu, unit]".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
             Job {
                 id: 204,
@@ -294,6 +388,11 @@ mod tests {
                 stage: "test".into(),
                 name: "lint".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: None,
+                steps: None,
+                tags: None,
             },
         ];
 
@@ -319,14 +418,20 @@ mod tests {
     fn test_process_pipeline_jobs_github_matrix_parsing() {
         let input_jobs = vec![Job {
             id: 301,
-            status: "completed".into(),
-            stage: "build".into(),
+            status: "success".into(),
+            stage: String::new(),
             name: "test-matrix (ubuntu-latest, 20)".into(),
             matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: None,
+            steps: None,
+            tags: None,
         }];
         let processed = process_pipeline_jobs(input_jobs);
         assert_eq!(processed.len(), 1);
         assert_eq!(processed[0].name, "test-matrix");
         assert_eq!(processed[0].matrix.as_deref(), Some("ubuntu-latest, 20"));
+        assert_eq!(processed[0].stage, "");
     }
 }

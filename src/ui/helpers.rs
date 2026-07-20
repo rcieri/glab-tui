@@ -245,6 +245,9 @@ pub(crate) struct StageSummary {
 }
 
 pub(crate) fn get_stages_summary(jobs: &[crate::domain::pipelines::Job]) -> Vec<StageSummary> {
+    if jobs.iter().all(|j| j.stage().is_empty()) {
+        return Vec::new();
+    }
     let mut stage_names = Vec::new();
     let mut stage_jobs = std::collections::HashMap::new();
     for j in jobs {
@@ -553,6 +556,11 @@ mod tests {
             name: name.to_string(),
             status: status.to_string(),
             matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: None,
+            steps: None,
+            tags: None,
         }
     }
 

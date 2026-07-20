@@ -314,6 +314,11 @@ mod tests {
             name: name.to_string(),
             status: status.to_string(),
             matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: None,
+            steps: None,
+            tags: None,
         }
     }
 

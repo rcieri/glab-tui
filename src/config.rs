@@ -499,8 +499,8 @@ pub struct KeybindingMrs {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingPipelines {
-    #[serde(default)]
-    pub trigger_pipeline: String,
+    #[serde(default, alias = "trigger_pipeline")]
+    pub trigger_run: String,
     #[serde(default)]
     pub retry: String,
     #[serde(default)]
@@ -657,7 +657,7 @@ keybind_defaults! {
     def_merge_mr = "m",
     def_toggle_draft = "s",
     def_view_diff = "v",
-    def_trigger_pipeline = "p",
+    def_trigger_run = "p",
     def_retry = "r",
     def_cancel = "d",
     def_download_artifact = "d",
@@ -740,7 +740,7 @@ impl Default for KeybindingMrs {
 impl Default for KeybindingPipelines {
     fn default() -> Self {
         Self {
-            trigger_pipeline: def_trigger_pipeline(),
+            trigger_run: def_trigger_run(),
             retry: def_retry(),
             cancel: def_cancel(),
             download_artifact: def_download_artifact(),
@@ -1001,7 +1001,7 @@ reopen_entity = "r"
 delete_entity = "d"
 
 [keybindings.pipelines]
-trigger_pipeline = "p"
+trigger_run = "p"
 retry = "r"
 cancel = "d"
 download_artifact = "d"

@@ -174,7 +174,7 @@ impl Tab {
             }
             Tab::Pipelines => {
                 if is_github {
-                    format!("{} Actions", icons.tab_pipeline)
+                    format!("{} Workflows", icons.tab_pipeline)
                 } else {
                     format!("{} Pipelines", icons.tab_pipeline)
                 }
@@ -226,25 +226,22 @@ impl Tab {
                 cols
             }
             Tab::Pipelines => {
-                let mut cols = vec!["ID", "Status", "Ref"];
                 if is_github {
-                    cols.push("Name");
-                    cols.push("Event");
-                    cols.push("SHA");
-                    cols.push("Actor");
+                    vec![
+                        "Workflow", "Title", "Status", "Event", "Branch", "Actor", "SHA", "Created",
+                    ]
                 } else {
-                    cols.push("Stages");
+                    vec!["ID", "Status", "Ref", "Stages", "Source", "Created"]
                 }
-                cols
             }
             Tab::Jobs => {
-                let mut cols = vec!["ID", "Status", "Name", "Matrix"];
                 if is_github {
-                    cols.push("Runner");
+                    vec!["Name", "Status", "Runner", "Matrix", "Duration", "Needs"]
                 } else {
-                    cols.push("Stage");
+                    vec![
+                        "ID", "Stage", "Status", "Name", "Matrix", "Duration", "Tags",
+                    ]
                 }
-                cols
             }
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec![
@@ -275,14 +272,14 @@ impl Tab {
             Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
             Tab::Pipelines => {
                 if is_github {
-                    vec!["Name", "Status", "Event", "Ref"]
+                    vec!["Workflow", "Title", "Status", "Event", "Branch"]
                 } else {
                     vec!["ID", "Status", "Stages", "Ref"]
                 }
             }
             Tab::Jobs => {
                 if is_github {
-                    vec!["Name", "Status", "Ref"]
+                    vec!["Name", "Status", "Runner", "Duration"]
                 } else {
                     vec!["ID", "Stage", "Status", "Name", "Matrix"]
                 }
@@ -2495,6 +2492,30 @@ impl App {
                     }
                 }
             }
+            if enabled_cols.contains("Name") {
+                check_match(item.name());
+            }
+            if enabled_cols.contains("Workflow") {
+                check_match(item.name());
+            }
+            if enabled_cols.contains("Event") {
+                check_match(item.event());
+            }
+            if enabled_cols.contains("SHA") {
+                check_match(item.head_sha());
+            }
+            if enabled_cols.contains("Actor") {
+                check_match(item.actor_login());
+            }
+            if enabled_cols.contains("Title") {
+                check_match(item.display_title());
+            }
+            if enabled_cols.contains("Source") {
+                check_match(item.source().unwrap_or(""));
+            }
+            if enabled_cols.contains("Branch") {
+                check_match(item.ref_branch());
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2521,13 +2542,19 @@ impl App {
                 let val_a = match col.as_str() {
                     "Status" => a.status().to_string(),
                     "Ref" => a.ref_branch().to_string(),
+                    "Branch" => a.ref_branch().to_string(),
                     "ID" => a.id().to_string(),
+                    "Source" => a.source().unwrap_or("").to_string(),
+                    "Created" => a.created_at().unwrap_or("").to_string(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
                     "Status" => b.status().to_string(),
                     "Ref" => b.ref_branch().to_string(),
+                    "Branch" => b.ref_branch().to_string(),
                     "ID" => b.id().to_string(),
+                    "Source" => b.source().unwrap_or("").to_string(),
+                    "Created" => b.created_at().unwrap_or("").to_string(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2560,6 +2587,15 @@ impl App {
                 "ID" => vec![item.id().to_string()],
                 "Status" => vec![item.status().to_string()],
                 "Ref" => vec![item.ref_branch().to_string()],
+                "Branch" => vec![item.ref_branch().to_string()],
+                "Name" => vec![item.name().to_string()],
+                "Event" => vec![item.event().to_string()],
+                "SHA" => vec![item.head_sha().to_string()],
+                "Actor" => vec![item.actor_login().to_string()],
+                "Source" => vec![item.source().unwrap_or_default().to_string()],
+                "Created" => vec![item.created_at().unwrap_or_default().to_string()],
+                "Workflow" => vec![item.name().to_string()],
+                "Title" => vec![item.display_title().to_string()],
                 _ => vec![],
             },
         );
@@ -2605,6 +2641,23 @@ impl App {
                     check_match(matrix);
                 }
             }
+            if enabled_cols.contains("Duration") {
+                check_match(
+                    &item
+                        .duration_seconds()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
+                );
+            }
+            if enabled_cols.contains("Runner") {
+                check_match(item.runner().unwrap_or(""));
+            }
+            if enabled_cols.contains("Tags") {
+                check_match(&item.tags().map(|t| t.join(", ")).unwrap_or_default());
+            }
+            if enabled_cols.contains("Needs") {
+                check_match(&item.needs().map(|n| n.join(", ")).unwrap_or_default());
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2632,6 +2685,13 @@ impl App {
                     "Stage" => a.stage().to_string(),
                     "Name" => a.name().to_string(),
                     "ID" => a.id().to_string(),
+                    "Duration" => a
+                        .duration_seconds()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
+                    "Runner" => a.runner().unwrap_or("").to_string(),
+                    "Tags" => a.tags().map(|t| t.join(",")).unwrap_or_default(),
+                    "Needs" => a.needs().map(|n| n.join(",")).unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2639,6 +2699,13 @@ impl App {
                     "Stage" => b.stage().to_string(),
                     "Name" => b.name().to_string(),
                     "ID" => b.id().to_string(),
+                    "Duration" => b
+                        .duration_seconds()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
+                    "Runner" => b.runner().unwrap_or("").to_string(),
+                    "Tags" => b.tags().map(|t| t.join(",")).unwrap_or_default(),
+                    "Needs" => b.needs().map(|n| n.join(",")).unwrap_or_default(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2671,6 +2738,16 @@ impl App {
                 "Stage" => vec![item.stage().to_string()],
                 "Status" => vec![item.status().to_string()],
                 "Name" => vec![item.name().to_string()],
+                "Duration" => {
+                    vec![
+                        item.duration_seconds()
+                            .map(|d| d.to_string())
+                            .unwrap_or_default(),
+                    ]
+                }
+                "Runner" => vec![item.runner().unwrap_or_default().to_string()],
+                "Tags" => vec![item.tags().map(|t| t.join(",")).unwrap_or_default()],
+                "Needs" => vec![item.needs().map(|n| n.join(",")).unwrap_or_default()],
                 _ => vec![],
             },
         );

@@ -28,6 +28,18 @@ fn normalize_labels(s: &str) -> String {
     s.replace(", ", ",")
 }
 
+fn compute_duration(start: Option<&str>, end: Option<&str>) -> Option<u64> {
+    match (start, end) {
+        (Some(s), Some(e)) => {
+            let start_time = chrono::DateTime::parse_from_rfc3339(s).ok()?;
+            let end_time = chrono::DateTime::parse_from_rfc3339(e).ok()?;
+            let dur = end_time - start_time;
+            Some(dur.num_seconds().max(0) as u64)
+        }
+        _ => None,
+    }
+}
+
 pub struct GhBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -35,6 +47,21 @@ pub struct GhBackend {
 impl GhBackend {
     pub fn new() -> Self {
         Self { tx: None }
+    }
+
+    #[allow(dead_code)]
+    async fn get_workflow_file_url(&self, project: &str, workflow_id: u64) -> Result<String> {
+        let endpoint = format!("/repos/{}/actions/workflows/{}", project, workflow_id);
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Workflow")
+            .await?;
+        #[derive(Deserialize)]
+        struct GhWf {
+            path: String,
+            html_url: String,
+        }
+        let wf: GhWf = serde_json::from_str(&raw)?;
+        Ok(wf.html_url)
     }
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
@@ -1088,135 +1115,167 @@ impl Backend for GhBackend {
     // ── Pipelines ──
 
     async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
-        let total = page_size * 10;
-        let raw = self
-            .run_gh(
-                &[
-                    "run",
-                    "list",
-                    "--json",
-                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event",
-                    "-R",
-                    project,
-                    "--limit",
-                    &total.to_string(),
-                ],
-                "Fetching Actions",
-            )
-            .await?;
+        let pages = page_size.div_ceil(100).max(1);
+        let mut all: Vec<Pipeline> = Vec::new();
+        for page in 1..=pages {
+            let endpoint = format!("/repos/{}/actions/runs?per_page=100&page={}", project, page);
+            let raw = self
+                .raw_api(&endpoint, "GET", None, "Fetching Workflows")
+                .await?;
 
-        #[derive(Deserialize)]
-        struct GhRun {
-            #[serde(rename = "databaseId")]
-            database_id: u64,
-            status: String,
-            conclusion: Option<String>,
-            #[serde(rename = "headBranch")]
-            head_branch: String,
-            #[serde(rename = "updatedAt")]
-            updated_at: String,
-            #[serde(rename = "workflowName")]
-            workflow_name: Option<String>,
-            #[serde(rename = "displayTitle")]
-            display_title: Option<String>,
-            #[serde(rename = "headSha")]
-            head_sha: Option<String>,
-            event: Option<String>,
-        }
+            #[derive(Deserialize)]
+            struct GhRunsResponse {
+                workflow_runs: Vec<GhRun>,
+            }
+            #[derive(Deserialize)]
+            struct GhRun {
+                id: u64,
+                name: Option<String>,
+                display_title: Option<String>,
+                status: String,
+                conclusion: Option<String>,
+                event: Option<String>,
+                #[serde(rename = "head_branch")]
+                head_branch: Option<String>,
+                #[serde(rename = "head_sha")]
+                head_sha: Option<String>,
+                #[serde(rename = "run_started_at")]
+                run_started_at: Option<String>,
+                created_at: Option<String>,
+                updated_at: Option<String>,
+                actor: Option<GhActor>,
+                #[serde(rename = "triggering_actor")]
+                triggering_actor: Option<GhActor>,
+            }
+            #[derive(Deserialize)]
+            struct GhActor {
+                login: String,
+            }
 
-        let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
-        Ok(runs
-            .into_iter()
-            .map(|r| {
-                let status = match r.status.as_str() {
-                    "completed" | "COMPLETED" => match r.conclusion.as_deref() {
-                        Some("success") | Some("SUCCESS") => "success",
-                        Some("failure") | Some("FAILURE") => "failed",
-                        Some("cancelled") | Some("CANCELLED") | Some("canceled")
-                        | Some("CANCELED") => "canceled",
-                        Some("skipped") | Some("SKIPPED") => "skipped",
-                        _ => "failed",
-                    },
-                    "in_progress" | "IN_PROGRESS" => "running",
-                    "queued" | "QUEUED" | "waiting" | "WAITING" => "pending",
-                    _ => "pending",
-                }
-                .to_string();
-                Pipeline {
-                    id: r.database_id,
+            let resp: GhRunsResponse = serde_json::from_str(&raw)?;
+            let len = resp.workflow_runs.len();
+            for r in resp.workflow_runs {
+                let status = crate::domain::pipelines::normalize_github_status(
+                    &r.status,
+                    r.conclusion.as_deref(),
+                );
+                let login = r
+                    .actor
+                    .unwrap_or(r.triggering_actor.unwrap_or(GhActor {
+                        login: String::new(),
+                    }))
+                    .login;
+                let duration_seconds =
+                    compute_duration(r.run_started_at.as_deref(), r.updated_at.as_deref());
+                all.push(Pipeline {
+                    id: r.id,
                     status,
-                    r#ref: r.head_branch,
-                    updated_at: r.updated_at,
-                    name: r.workflow_name.unwrap_or_default(),
+                    r#ref: r.head_branch.unwrap_or_default(),
+                    updated_at: r.updated_at.unwrap_or_default(),
+                    name: r.name.unwrap_or_default(),
                     display_title: r.display_title.unwrap_or_default(),
                     event: r.event.unwrap_or_default(),
                     head_sha: r.head_sha.unwrap_or_default(),
-                    actor_login: String::new(),
-                }
-            })
-            .collect())
+                    actor_login: login,
+                    created_at: r.created_at,
+                    duration_seconds,
+                    source: None,
+                    started_at: r.run_started_at,
+                });
+            }
+            if len < 100 {
+                break;
+            }
+        }
+        Ok(all)
     }
 
     async fn list_pipeline_jobs(
         &self,
         project: &str,
         pipeline_id: u64,
-        _page_size: usize,
+        page_size: usize,
     ) -> Result<Vec<Job>> {
-        let raw = self
-            .run_gh(
-                &[
-                    "run",
-                    "view",
-                    &pipeline_id.to_string(),
-                    "--json",
-                    "jobs",
-                    "--jq",
-                    ".jobs",
-                    "-R",
-                    project,
-                ],
-                "Fetching Jobs",
-            )
-            .await?;
+        let pages = page_size.div_ceil(100).max(1);
+        let mut all: Vec<Job> = Vec::new();
+        for page in 1..=pages {
+            let endpoint = format!(
+                "/repos/{}/actions/runs/{}/jobs?per_page=100&page={}",
+                project, pipeline_id, page
+            );
+            let raw = self
+                .raw_api(&endpoint, "GET", None, "Fetching Jobs")
+                .await?;
 
-        #[derive(Deserialize)]
-        struct GhJob {
-            #[serde(rename = "databaseId")]
-            id: u64,
-            name: String,
-            status: String,
-            conclusion: Option<String>,
-        }
+            #[derive(Deserialize)]
+            struct GhJobsResponse {
+                jobs: Vec<GhJob>,
+            }
+            #[derive(Deserialize)]
+            struct GhJob {
+                id: u64,
+                name: String,
+                status: String,
+                conclusion: Option<String>,
+                started_at: Option<String>,
+                completed_at: Option<String>,
+                labels: Option<Vec<String>>,
+                runner_name: Option<String>,
+                needs: Option<Vec<GhNeed>>,
+                steps: Option<Vec<GhStep>>,
+            }
+            #[derive(Deserialize)]
+            struct GhNeed {
+                name: String,
+            }
+            #[derive(Deserialize)]
+            struct GhStep {
+                name: String,
+                number: u64,
+                status: String,
+                conclusion: Option<String>,
+                started_at: Option<String>,
+                completed_at: Option<String>,
+            }
 
-        let jobs: Vec<GhJob> = serde_json::from_str(&raw)?;
-        let all_jobs: Vec<Job> = jobs
-            .into_iter()
-            .map(|j| {
-                let status = match j.status.as_str() {
-                    "completed" | "COMPLETED" => match j.conclusion.as_deref() {
-                        Some("success") | Some("SUCCESS") => "success",
-                        Some("failure") | Some("FAILURE") => "failed",
-                        Some("cancelled") | Some("CANCELLED") | Some("canceled")
-                        | Some("CANCELED") => "canceled",
-                        Some("skipped") | Some("SKIPPED") => "skipped",
-                        _ => "failed",
-                    },
-                    "in_progress" | "IN_PROGRESS" => "running",
-                    "queued" | "QUEUED" | "waiting" | "WAITING" => "pending",
-                    _ => "pending",
-                }
-                .to_string();
-                Job {
+            let resp: GhJobsResponse = serde_json::from_str(&raw)?;
+            let len = resp.jobs.len();
+            for j in resp.jobs {
+                let status = crate::domain::pipelines::normalize_github_status(
+                    &j.status,
+                    j.conclusion.as_deref(),
+                );
+                let duration_seconds =
+                    compute_duration(j.started_at.as_deref(), j.completed_at.as_deref());
+                all.push(Job {
                     id: j.id,
                     status,
-                    stage: "build".to_string(),
+                    stage: String::new(),
                     name: j.name,
                     matrix: None,
-                }
-            })
-            .collect();
-        Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
+                    duration_seconds,
+                    runner: j.runner_name,
+                    needs: j.needs.map(|v| v.into_iter().map(|n| n.name).collect()),
+                    steps: j.steps.map(|v| {
+                        v.into_iter()
+                            .map(|s| crate::domain::pipelines::JobStep {
+                                name: s.name,
+                                number: s.number,
+                                status: s.status,
+                                conclusion: s.conclusion,
+                                started_at: s.started_at,
+                                completed_at: s.completed_at,
+                            })
+                            .collect()
+                    }),
+                    tags: j.labels.clone(),
+                });
+            }
+            if len < 100 {
+                break;
+            }
+        }
+        Ok(crate::domain::pipelines::process_pipeline_jobs(all))
     }
 
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {

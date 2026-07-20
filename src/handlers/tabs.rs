@@ -444,9 +444,7 @@ pub async fn handle_active_tab_key(
                             let project_path = app.project_context.clone();
                             let tx2 = tx.clone();
                             let iid_str = mr_iid.to_string();
-                            let _ =
-
-                            tokio::spawn(async move {
+                            let _ = tokio::spawn(async move {
                                 let result = client
                                     .open_in_browser(&project_path, entity, &iid_str)
                                     .await;
@@ -566,10 +564,7 @@ pub async fn handle_active_tab_key(
                     },
                 });
             } else if key_event.code == KeyCode::Char('p')
-                || keybinding_matches(
-                    &app.config.keybindings.pipelines.trigger_pipeline,
-                    &key_event,
-                )
+                || keybinding_matches(&app.config.keybindings.pipelines.trigger_run, &key_event)
             {
                 if let Some(client) = app.gitlab_client.clone() {
                     let branch = crate::git_helpers::get_current_branch()
@@ -703,9 +698,7 @@ pub async fn handle_active_tab_key(
                             let project_path = app.project_context.clone();
                             let pid_str = pipe_id.to_string();
                             let tx2 = tx.clone();
-                            let _ =
-
-                            tokio::spawn(async move {
+                            let _ = tokio::spawn(async move {
                                 let result = client
                                     .open_pipeline_in_browser(&project_path, &pid_str)
                                     .await;
@@ -950,9 +943,7 @@ pub async fn handle_active_tab_key(
                             let project_path = app.project_context.clone();
                             let jid_str = job_id.to_string();
                             let tx2 = tx.clone();
-                            let _ =
-
-                            tokio::spawn(async move {
+                            let _ = tokio::spawn(async move {
                                 let result =
                                     client.open_job_in_browser(&project_path, &jid_str).await;
                                 let _ = tx2.send(Event::CommandCompleted(
@@ -1261,9 +1252,7 @@ pub async fn handle_active_tab_key(
                             let project_path = app.project_context.clone();
                             let target_iid = item.target_iid.to_string();
                             let tx2 = tx.clone();
-                            let _ =
-
-                            tokio::spawn(async move {
+                            let _ = tokio::spawn(async move {
                                 let result = client
                                     .open_in_browser(&project_path, &entity, &target_iid)
                                     .await;

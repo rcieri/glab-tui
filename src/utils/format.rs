@@ -138,6 +138,29 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
     (String::new(), extract_quotes(title_trimmed))
 }
 
+pub fn format_duration(seconds: Option<u64>) -> String {
+    match seconds {
+        None => "\u{2014}".to_string(),
+        Some(0) => "0s".to_string(),
+        Some(secs) => {
+            let hours = secs / 3600;
+            let mins = (secs % 3600) / 60;
+            let secs = secs % 60;
+            let mut parts = Vec::new();
+            if hours > 0 {
+                parts.push(format!("{}h", hours));
+            }
+            if mins > 0 {
+                parts.push(format!("{}m", mins));
+            }
+            if secs > 0 || parts.is_empty() {
+                parts.push(format!("{}s", secs));
+            }
+            parts.join(" ")
+        }
+    }
+}
+
 pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for line in markdown.lines() {

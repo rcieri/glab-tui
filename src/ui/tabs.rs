@@ -1567,54 +1567,44 @@ pub(crate) fn render_tab_pipelines(
             .border_style(Style::default().fg(THEME.read().unwrap().border));
         if let Some(selected) = app.pipelines.state.selected() {
             if let Some(p) = filtered_pipelines.get(selected) {
+                let pipeline_jobs = app.pipeline_jobs.get(&p.id());
+                let theme = THEME.read().unwrap();
                 let mut text = Vec::new();
 
                 if is_github {
                     text.push(Line::from(vec![
+                        Span::styled("Workflow: ", Style::default().fg(theme.text_muted)),
                         Span::styled(
-                            "Workflow:    ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            p.name().to_string(),
+                            p.name().to_owned(),
                             Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
+                                .fg(theme.text_normal)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ]));
                     text.push(Line::from(vec![
+                        Span::styled("Title:    ", Style::default().fg(theme.text_muted)),
                         Span::styled(
-                            "Title:       ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            p.display_title().to_string(),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
+                            p.display_title().to_owned(),
+                            Style::default().fg(theme.text_normal),
                         ),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Run ID:      ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Run ID:   ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             format!("#{}", p.id()),
-                            Style::default().fg(THEME.read().unwrap().text_muted),
+                            Style::default().fg(theme.text_muted),
                         ),
                     ]));
                     let (status_text, status_color) = match p.status() {
-                        "success" => ("success", THEME.read().unwrap().green),
-                        "failed" => ("failed", THEME.read().unwrap().red),
-                        "running" => ("running", THEME.read().unwrap().blue),
-                        "canceled" => ("canceled", THEME.read().unwrap().text_muted),
-                        "pending" => ("pending", THEME.read().unwrap().yellow),
-                        _ => ("unknown", THEME.read().unwrap().text_muted),
+                        "success" => ("success", theme.green),
+                        "failed" => ("failed", theme.red),
+                        "running" => ("running", theme.blue),
+                        "canceled" => ("canceled", theme.text_muted),
+                        "pending" => ("pending", theme.yellow),
+                        _ => ("unknown", theme.text_muted),
                     };
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Status:      ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Status:   ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             status_text,
                             Style::default()
@@ -1623,103 +1613,85 @@ pub(crate) fn render_tab_pipelines(
                         ),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Event:       ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            p.event().to_string(),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        ),
+                        Span::styled("Event:    ", Style::default().fg(theme.text_muted)),
+                        Span::styled(p.event().to_owned(), Style::default().fg(theme.text_normal)),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Branch:      ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Branch:   ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             format_ref(p.ref_branch()),
-                            Style::default().fg(THEME.read().unwrap().purple),
+                            Style::default().fg(theme.purple),
                         ),
                     ]));
                     text.push(Line::from(vec![
+                        Span::styled("SHA:      ", Style::default().fg(theme.text_muted)),
                         Span::styled(
-                            "SHA:         ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            p.head_sha().to_string(),
-                            Style::default().fg(THEME.read().unwrap().text_muted),
+                            p.head_sha().to_owned(),
+                            Style::default().fg(theme.text_muted),
                         ),
                     ]));
                     text.push(Line::from(vec![
+                        Span::styled("Actor:    ", Style::default().fg(theme.text_muted)),
                         Span::styled(
-                            "Actor:       ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            p.actor_login().to_string(),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
+                            p.actor_login().to_owned(),
+                            Style::default().fg(theme.text_normal),
                         ),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Created:     ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Created:  ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             time_ago(p.created_at().unwrap_or("")),
-                            Style::default().fg(THEME.read().unwrap().yellow),
+                            Style::default().fg(theme.yellow),
                         ),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Duration:    ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             format_duration(p.duration_seconds()),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
+                            Style::default().fg(theme.text_normal),
                         ),
                     ]));
+                    if let Some(jobs) = pipeline_jobs {
+                        let passed = jobs.iter().filter(|j| j.status() == "success").count();
+                        let failed = jobs.iter().filter(|j| j.status() == "failed").count();
+                        let running = jobs.iter().filter(|j| j.status() == "running").count();
+                        let total = jobs.len();
+                        text.push(Line::from(""));
+                        text.push(Line::from(vec![Span::styled(
+                            format!(
+                                "Jobs: {} total, {} passed, {} failed, {} running",
+                                total, passed, failed, running
+                            ),
+                            Style::default()
+                                .fg(theme.header_fg)
+                                .add_modifier(Modifier::BOLD),
+                        )]));
+                    }
                 } else {
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Pipeline ID: ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Pipeline ID: ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             format!("#{}", p.id()),
-                            Style::default()
-                                .fg(THEME.read().unwrap().blue)
-                                .add_modifier(Modifier::BOLD),
+                            Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
                         ),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Ref:         ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Ref:         ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             format_ref(p.ref_branch()),
-                            Style::default().fg(THEME.read().unwrap().purple),
+                            Style::default().fg(theme.purple),
                         ),
                     ]));
-
                     let (status_text, status_color) = match p.status() {
-                        "success" => ("success", THEME.read().unwrap().green),
-                        "failed" => ("failed", THEME.read().unwrap().red),
-                        "running" => ("running", THEME.read().unwrap().blue),
-                        "canceled" => ("canceled", THEME.read().unwrap().text_muted),
-                        "pending" => ("pending", THEME.read().unwrap().yellow),
-                        _ => ("unknown", THEME.read().unwrap().text_muted),
+                        "success" => ("success", theme.green),
+                        "failed" => ("failed", theme.red),
+                        "running" => ("running", theme.blue),
+                        "canceled" => ("canceled", theme.text_muted),
+                        "pending" => ("pending", theme.yellow),
+                        _ => ("unknown", theme.text_muted),
                     };
-
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Status:      ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Status:      ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             status_text,
                             Style::default()
@@ -1728,42 +1700,15 @@ pub(crate) fn render_tab_pipelines(
                         ),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Source:      ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            p.source().unwrap_or("\u{2014}").to_string(),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        ),
-                    ]));
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Created:     ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            time_ago(p.created_at().unwrap_or("")),
-                            Style::default().fg(THEME.read().unwrap().yellow),
-                        ),
-                    ]));
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Updated:     ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            time_ago(p.updated_at()),
-                            Style::default().fg(THEME.read().unwrap().yellow),
-                        ),
+                        Span::styled("Updated:     ", Style::default().fg(theme.text_muted)),
+                        Span::styled(time_ago(p.updated_at()), Style::default().fg(theme.yellow)),
                     ]));
                     text.push(Line::from(""));
-
-                    if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
+                    if let Some(jobs) = pipeline_jobs {
                         text.push(Line::from(vec![Span::styled(
                             format!("{} Stages Success Rate:", icons.label_stages),
                             Style::default()
-                                .fg(THEME.read().unwrap().header_fg)
+                                .fg(theme.header_fg)
                                 .add_modifier(Modifier::BOLD),
                         )]));
                         text.push(Line::from(""));
@@ -1772,7 +1717,7 @@ pub(crate) fn render_tab_pipelines(
                         text.push(Line::from(vec![Span::styled(
                             "Loading stages...",
                             Style::default()
-                                .fg(THEME.read().unwrap().text_muted)
+                                .fg(theme.text_muted)
                                 .add_modifier(Modifier::ITALIC),
                         )]));
                     }
@@ -2260,24 +2205,22 @@ pub(crate) fn render_tab_jobs(
                         .add_modifier(Modifier::BOLD),
                 )
                 .border_style(Style::default().fg(THEME.read().unwrap().border));
+            let theme = THEME.read().unwrap();
             let mut text = Vec::new();
             if is_github {
                 if let Some(selected) = app.jobs.state.selected() {
                     if let Some(j) = filtered_jobs.get(selected) {
                         let (status_text, status_color) = match j.status() {
-                            "success" => ("SUCCESS", THEME.read().unwrap().green),
-                            "failed" => ("FAILED", THEME.read().unwrap().red),
-                            "running" => ("RUNNING", THEME.read().unwrap().blue),
-                            "canceled" => ("CANCELED", THEME.read().unwrap().text_muted),
-                            "pending" => ("PENDING", THEME.read().unwrap().yellow),
-                            "skipped" => ("SKIPPED", THEME.read().unwrap().text_muted),
-                            _ => ("UNKNOWN", THEME.read().unwrap().text_muted),
+                            "success" => ("SUCCESS", theme.green),
+                            "failed" => ("FAILED", theme.red),
+                            "running" => ("RUNNING", theme.blue),
+                            "canceled" => ("CANCELED", theme.text_muted),
+                            "pending" => ("PENDING", theme.yellow),
+                            "skipped" => ("SKIPPED", theme.text_muted),
+                            _ => ("UNKNOWN", theme.text_muted),
                         };
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Status:   ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
+                            Span::styled("Status:   ", Style::default().fg(theme.text_muted)),
                             Span::styled(
                                 status_text,
                                 Style::default()
@@ -2286,23 +2229,17 @@ pub(crate) fn render_tab_jobs(
                             ),
                         ]));
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Duration: ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
+                            Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
                             Span::styled(
                                 format_duration(j.duration_seconds()),
-                                Style::default().fg(THEME.read().unwrap().text_normal),
+                                Style::default().fg(theme.text_normal),
                             ),
                         ]));
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Runner:   ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
+                            Span::styled("Runner:   ", Style::default().fg(theme.text_muted)),
                             Span::styled(
                                 j.runner().unwrap_or("\u{2014}").to_string(),
-                                Style::default().fg(THEME.read().unwrap().text_normal),
+                                Style::default().fg(theme.text_normal),
                             ),
                         ]));
                         if let Some(needs) = j.needs() {
@@ -2311,13 +2248,13 @@ pub(crate) fn render_tab_jobs(
                                 text.push(Line::from(vec![Span::styled(
                                     "Needs:",
                                     Style::default()
-                                        .fg(THEME.read().unwrap().header_fg)
+                                        .fg(theme.header_fg)
                                         .add_modifier(Modifier::BOLD),
                                 )]));
                                 for dependency in needs {
                                     text.push(Line::from(vec![Span::styled(
                                         format!("  {}", dependency),
-                                        Style::default().fg(THEME.read().unwrap().text_normal),
+                                        Style::default().fg(theme.text_normal),
                                     )]));
                                 }
                             }
@@ -2328,7 +2265,7 @@ pub(crate) fn render_tab_jobs(
                                 text.push(Line::from(vec![Span::styled(
                                     "Steps:",
                                     Style::default()
-                                        .fg(THEME.read().unwrap().header_fg)
+                                        .fg(theme.header_fg)
                                         .add_modifier(Modifier::BOLD),
                                 )]));
                                 for step in steps {
@@ -2340,19 +2277,17 @@ pub(crate) fn render_tab_jobs(
                                         step.status.clone()
                                     };
                                     let step_color = match step_status.as_str() {
-                                        "success" => THEME.read().unwrap().green,
-                                        "failure" => THEME.read().unwrap().red,
-                                        "cancelled" | "canceled" => {
-                                            THEME.read().unwrap().text_muted
-                                        }
-                                        "skipped" => THEME.read().unwrap().text_muted,
-                                        "in_progress" => THEME.read().unwrap().blue,
-                                        _ => THEME.read().unwrap().text_muted,
+                                        "success" => theme.green,
+                                        "failure" => theme.red,
+                                        "cancelled" | "canceled" => theme.text_muted,
+                                        "skipped" => theme.text_muted,
+                                        "in_progress" => theme.blue,
+                                        _ => theme.text_muted,
                                     };
                                     text.push(Line::from(vec![
                                         Span::styled(
                                             format!("  {}. {}  ", step.number, step.name),
-                                            Style::default().fg(THEME.read().unwrap().text_normal),
+                                            Style::default().fg(theme.text_normal),
                                         ),
                                         Span::styled(
                                             format!("{:>10}", step_status.to_uppercase()),
@@ -2368,7 +2303,7 @@ pub(crate) fn render_tab_jobs(
                 text.push(Line::from(vec![Span::styled(
                     "Stages Success Rate:",
                     Style::default()
-                        .fg(THEME.read().unwrap().header_fg)
+                        .fg(theme.header_fg)
                         .add_modifier(Modifier::BOLD),
                 )]));
                 text.push(Line::from(""));

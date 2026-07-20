@@ -38,7 +38,25 @@ impl GlabBackend {
     }
 
     fn encode_path(project: &str) -> String {
-        project.replace('/', "%2F")
+        project
+            .replace('%', "%25")
+            .replace('?', "%3F")
+            .replace('#', "%23")
+            .replace('&', "%26")
+            .replace('=', "%3D")
+            .replace(' ', "%20")
+            .replace('/', "%2F")
+    }
+
+    fn encode_query_value(value: &str) -> String {
+        value
+            .replace('%', "%25")
+            .replace('&', "%26")
+            .replace('=', "%3D")
+            .replace('?', "%3F")
+            .replace('#', "%23")
+            .replace(' ', "%20")
+            .replace('/', "%2F")
     }
 
     async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
@@ -1216,7 +1234,7 @@ impl Backend for GlabBackend {
                 created_at: Option<String>,
                 updated_at: String,
             }
-            let pipes: Vec<GiPipe> = serde_json::from_str(&raw).unwrap_or_default();
+            let pipes: Vec<GiPipe> = serde_json::from_str(&raw)?;
             let len = pipes.len();
             all.extend(pipes.into_iter().map(|p| Pipeline {
                 id: p.id,
@@ -1255,7 +1273,6 @@ impl Backend for GlabBackend {
             .raw_api(&endpoint, "GET", None, "Fetching Jobs")
             .await?;
         #[derive(Deserialize)]
-        #[allow(dead_code)]
         struct GiJob {
             id: u64,
             status: String,
@@ -1281,7 +1298,16 @@ impl Backend for GlabBackend {
                 stage: j.stage,
                 name: j.name,
                 matrix: None,
-                duration_seconds: j.duration.map(|d| d as u64),
+                duration_seconds: j.duration.map(|d| d as u64).or_else(|| {
+                    match (&j.started_at, &j.finished_at) {
+                        (Some(s), Some(f)) => {
+                            let start = chrono::DateTime::parse_from_rfc3339(s).ok()?;
+                            let end = chrono::DateTime::parse_from_rfc3339(f).ok()?;
+                            Some((end - start).num_seconds().max(0) as u64)
+                        }
+                        _ => None,
+                    }
+                }),
                 runner: j.runner.and_then(|r| r.description),
                 needs: None,
                 steps: None,
@@ -1940,9 +1966,11 @@ impl Backend for GlabBackend {
         ref_branch: &str,
     ) -> Result<()> {
         let encoded = Self::encode_path(project);
+        let branch_enc = Self::encode_query_value(branch_name);
+        let ref_enc = Self::encode_query_value(ref_branch);
         let endpoint = format!(
             "/projects/{}/repository/branches?branch={}&ref={}",
-            encoded, branch_name, ref_branch
+            encoded, branch_enc, ref_enc
         );
         self.raw_api(&endpoint, "POST", None, "Creating Branch")
             .await?;

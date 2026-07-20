@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - Unreleased
+
+### Changed
+- **Pipeline listing uses raw API** — Both `GlabBackend` (was `glab ci list`) and `GhBackend` (was `gh run list`) now use raw API endpoints (`GET /projects/{}/pipelines`, `GET /repos/{}/actions/runs`) to access richer fields: `source`, `sha`, `actor.login`, `display_title`, `event`, `head_sha`, `run_started_at` (#167)
+- **Pipeline job listing uses raw API (GitHub)** — `GhBackend` switched from `gh run view --json jobs` to `GET /repos/{}/actions/runs/{}/jobs` to fetch `runner_name`, `needs`, `steps`, `labels` for enriched job display (#167)
+- **Enriched `Pipeline` struct** — Added fields: `name`, `display_title`, `event`, `head_sha`, `actor_login`, `created_at`, `source`, `duration_seconds`, `started_at` with accessor methods (#167)
+- **Enriched `Job` struct** — Added fields: `runner`, `needs`, `steps` (`Vec<JobStep>`), `tags`, `duration_seconds` with accessor methods; `stage` no longer hardcoded to `"build"` for GitHub (#167)
+- **Pipelines tab columns** — New table columns: `Workflow`, `Title`, `Branch`, `Source`, `Created` (GitHub); `Source`, `Created` (GitLab). Default columns updated per-platform (#167)
+- **Jobs tab columns** — New table columns: `Duration`, `Runner`, `Needs` (GitHub), `Tags` (GitLab). Default columns updated per-platform (#167)
+- **Detail pane redesign** — Pipeline detail split into separate GitHub (workflow metadata + job summary) and GitLab (minimal pipeline fields + stages) layouts. GitHub job detail now shows status, duration, runner, needs dependencies, and steps (#167)
+- **`trigger_pipeline` keybinding renamed** to `trigger_run` with `alias = "trigger_pipeline"` for backwards compatibility (#167)
+
+### Added
+- **`JobStep` struct** — Represents individual steps within a GitHub Actions job with `name`, `number`, `status`, `conclusion`, `started_at`, `completed_at` (#167)
+- **`normalize_github_status()` public function** — Converts GitHub status/conclusion pairs to GitLab-compatible status strings for unified rendering; handles both lowercase and uppercase inputs (#167)
+- **`format_duration()` utility** — Formats `Option<u64>` seconds into human-readable strings like `"1h 30m 45s"` (#167)
+- **URL encoding for raw API endpoints** — `GhBackend` now encodes project paths in all raw API URLs; `GlabBackend` encodes path segments and query values to prevent injection (#167)
+
+### Fixed
+- Column order mismatch in Pipelines table: `Ref` column now correctly positioned at the end of the row (#167)
+- Duration column filter values now display as raw seconds instead of `"Some(42)"` format (#167)
+
 ## [0.6.0] - 2026-07-11
 
 ### Added

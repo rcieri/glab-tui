@@ -49,9 +49,23 @@ impl GhBackend {
         Self { tx: None }
     }
 
+    fn url_encode_project(project: &str) -> String {
+        project
+            .replace('%', "%25")
+            .replace('?', "%3F")
+            .replace('#', "%23")
+            .replace('&', "%26")
+            .replace(' ', "%20")
+            .replace('/', "%2F")
+    }
+
     #[allow(dead_code)]
     async fn get_workflow_file_url(&self, project: &str, workflow_id: u64) -> Result<String> {
-        let endpoint = format!("/repos/{}/actions/workflows/{}", project, workflow_id);
+        let endpoint = format!(
+            "/repos/{}/actions/workflows/{}",
+            Self::url_encode_project(project),
+            workflow_id
+        );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Workflow")
             .await?;
@@ -1118,7 +1132,11 @@ impl Backend for GhBackend {
         let pages = page_size.div_ceil(100).max(1);
         let mut all: Vec<Pipeline> = Vec::new();
         for page in 1..=pages {
-            let endpoint = format!("/repos/{}/actions/runs?per_page=100&page={}", project, page);
+            let endpoint = format!(
+                "/repos/{}/actions/runs?per_page=100&page={}",
+                Self::url_encode_project(project),
+                page
+            );
             let raw = self
                 .raw_api(&endpoint, "GET", None, "Fetching Workflows")
                 .await?;
@@ -1161,10 +1179,9 @@ impl Backend for GhBackend {
                 );
                 let login = r
                     .actor
-                    .unwrap_or(r.triggering_actor.unwrap_or(GhActor {
-                        login: String::new(),
-                    }))
-                    .login;
+                    .or(r.triggering_actor)
+                    .map(|a| a.login)
+                    .unwrap_or_default();
                 let duration_seconds =
                     compute_duration(r.run_started_at.as_deref(), r.updated_at.as_deref());
                 all.push(Pipeline {
@@ -1201,7 +1218,9 @@ impl Backend for GhBackend {
         for page in 1..=pages {
             let endpoint = format!(
                 "/repos/{}/actions/runs/{}/jobs?per_page=100&page={}",
-                project, pipeline_id, page
+                Self::url_encode_project(project),
+                pipeline_id,
+                page
             );
             let raw = self
                 .raw_api(&endpoint, "GET", None, "Fetching Jobs")
@@ -1323,7 +1342,11 @@ impl Backend for GhBackend {
 
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()> {
         // GitHub cancels at the run level, but for individual jobs we use raw API
-        let endpoint = format!("/repos/{}/actions/jobs/{}/cancel", project, job_id);
+        let endpoint = format!(
+            "/repos/{}/actions/jobs/{}/cancel",
+            Self::url_encode_project(project),
+            job_id
+        );
         self.raw_api(&endpoint, "POST", Some(""), "Cancelling Job")
             .await?;
         Ok(())
@@ -1380,7 +1403,11 @@ impl Backend for GhBackend {
     // ── Runners ──
 
     async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>> {
-        let endpoint = format!("/repos/{}/actions/runners?per_page={}", project, page_size);
+        let endpoint = format!(
+            "/repos/{}/actions/runners?per_page={}",
+            Self::url_encode_project(project),
+            page_size
+        );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Runners")
             .await?;
@@ -1864,7 +1891,11 @@ impl Backend for GhBackend {
     // ── Branches ──
 
     async fn list_branches(&self, project: &str, page_size: usize) -> Result<Vec<Branch>> {
-        let endpoint = format!("/repos/{}/branches?per_page={}", project, page_size);
+        let endpoint = format!(
+            "/repos/{}/branches?per_page={}",
+            Self::url_encode_project(project),
+            page_size
+        );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Branches")
             .await?;
@@ -1903,7 +1934,7 @@ impl Backend for GhBackend {
         branch_name: &str,
         ref_branch: &str,
     ) -> Result<()> {
-        let endpoint = format!("/repos/{}/git/refs", project);
+        let endpoint = format!("/repos/{}/git/refs", Self::url_encode_project(project));
         let payload = serde_json::json!({
             "ref": format!("refs/heads/{}", branch_name),
             "sha": ref_branch,
@@ -1915,7 +1946,11 @@ impl Backend for GhBackend {
     }
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
-        let endpoint = format!("/repos/{}/git/refs/heads/{}", project, branch_name);
+        let endpoint = format!(
+            "/repos/{}/git/refs/heads/{}",
+            Self::url_encode_project(project),
+            branch_name
+        );
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
@@ -1924,7 +1959,11 @@ impl Backend for GhBackend {
     // ── Environments / Deployments ──
 
     async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>> {
-        let endpoint = format!("/repos/{}/environments?per_page={}", project, page_size);
+        let endpoint = format!(
+            "/repos/{}/environments?per_page={}",
+            Self::url_encode_project(project),
+            page_size
+        );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Environments")
             .await?;
@@ -1959,7 +1998,11 @@ impl Backend for GhBackend {
         page_size: usize,
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>> {
-        let mut endpoint = format!("/repos/{}/deployments?per_page={}", project, page_size);
+        let mut endpoint = format!(
+            "/repos/{}/deployments?per_page={}",
+            Self::url_encode_project(project),
+            page_size
+        );
         if let Some(env) = environment {
             endpoint.push_str(&format!("&environment={}", env));
         }
@@ -2025,7 +2068,10 @@ impl Backend for GhBackend {
     }
 
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>> {
-        let endpoint = format!("/repos/{}/assignees?per_page=100", project);
+        let endpoint = format!(
+            "/repos/{}/assignees?per_page=100",
+            Self::url_encode_project(project)
+        );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Members")
             .await?;

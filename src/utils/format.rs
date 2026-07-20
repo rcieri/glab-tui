@@ -138,6 +138,9 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
     (String::new(), extract_quotes(title_trimmed))
 }
 
+/// Formats an `Option<u64>` of seconds into a human-readable duration string.
+/// Returns `—` for `None`, `"0s"` for zero, and compound format like `"2h 30m 15s"`
+/// for larger values. Omits leading zero components (e.g., `"45s"` not `"0h 0m 45s"`).
 pub fn format_duration(seconds: Option<u64>) -> String {
     match seconds {
         None => "\u{2014}".to_string(),

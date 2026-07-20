@@ -163,7 +163,6 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get single MR | `glab mr view <iid> --output json -R <repo>` | N/A |
 | Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
 | List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
-| List pipelines | `glab ci list --output json -R <repo> --page N --per-page 100` | Loops up to `page_size/100` pages |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
 | List milestones | `glab milestone list --output json -R <repo> --per-page <N>` | Single call |
@@ -189,7 +188,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Endpoint | Why raw API |
 |---|---|---|
-| List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure |
+| List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure. Also fetches richer fields (`runner`, `tag_list`, `duration`) for enriched Job display |
 | Get job trace | `GET /projects/{}/jobs/{}/trace` | `glab ci trace` is interactive/streaming; we need programmatic text output |
 | List done todos | `GET todos?state=done` | `glab todo list` only shows pending |
 | List branches | `GET /projects/{}/repository/branches?per_page=<N>` | No `glab branch` command |
@@ -199,6 +198,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
+| List pipelines | `GET /projects/{}/pipelines?per_page=100&page=N` | `glab ci list` output lacks `source`, `sha`, `created_at`, and `user` fields needed for enriched Pipeline display |
 
 ### GhBackend (`src/backend/gh.rs`)
 
@@ -211,8 +211,6 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
-| List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
-| List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` | Single call |
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
 | List milestone issues | `gh issue list --milestone <id> --state all --json ... -R <repo> --limit <N>` | Single call |
@@ -247,6 +245,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List members | `GET /repos/{}/assignees?per_page=100` | No native command |
 | Update milestone | `PATCH repos/{}/milestones/{}` | No `gh milestone` command |
 | Delete milestone | `DELETE repos/{}/milestones/{}` | No `gh milestone` command |
+| List actions/runs (pipelines) | `GET /repos/{}/actions/runs?per_page=100&page=N` | `gh run list` lacks `display_title`, `event`, `head_sha`, `actor`, `run_started_at` for enriched Pipeline struct with duration, actor, and source |
+| List pipeline jobs | `GET /repos/{}/actions/runs/{}/jobs?per_page=100&page=N` | `gh run view --json jobs` lacks `runner_name`, `needs`, `steps`, `labels` for enriched Job/JobStep |
 
 ### Direct CLI Commands (`src/main.rs` — `run_cli()`)
 

@@ -90,6 +90,7 @@ pub struct Job {
     pub tags: Option<Vec<String>>,
 }
 
+/// An individual step within a GitHub Actions job.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct JobStep {
     pub name: String,
@@ -217,18 +218,21 @@ pub async fn list_pipeline_jobs(
         .await
 }
 
+/// Normalizes a GitHub Actions status/conclusion pair into a GitLab-compatible
+/// status string. Handles both lowercase (GitHub REST API) and uppercase inputs.
 pub fn normalize_github_status(status: &str, conclusion: Option<&str>) -> String {
-    if status == "completed" {
-        match conclusion {
+    let status_lower = status.to_lowercase();
+    if status_lower == "completed" {
+        match conclusion.map(|c| c.to_lowercase()).as_deref() {
             Some("success") => "success",
             Some("failure") => "failed",
             Some("cancelled") | Some("canceled") => "canceled",
             Some("skipped") => "skipped",
             _ => "failed",
         }
-    } else if status == "in_progress" {
+    } else if status_lower == "in_progress" {
         "running"
-    } else if status == "queued" || status == "waiting" || status == "pending" {
+    } else if matches!(status_lower.as_str(), "queued" | "waiting" | "pending") {
         "pending"
     } else {
         "pending"
@@ -273,6 +277,17 @@ mod tests {
         assert_eq!(normalize_github_status("in_progress", None), "running");
         assert_eq!(normalize_github_status("queued", None), "pending");
         assert_eq!(normalize_github_status("waiting", None), "pending");
+        assert_eq!(normalize_github_status("pending", None), "pending");
+        assert_eq!(
+            normalize_github_status("COMPLETED", Some("SUCCESS")),
+            "success"
+        );
+        assert_eq!(
+            normalize_github_status("COMPLETED", Some("CANCELLED")),
+            "canceled"
+        );
+        assert_eq!(normalize_github_status("IN_PROGRESS", None), "running");
+        assert_eq!(normalize_github_status("QUEUED", None), "pending");
     }
 
     #[test]

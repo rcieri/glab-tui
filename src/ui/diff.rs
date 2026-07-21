@@ -1,7 +1,7 @@
 use crate::config::THEME;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
 };
 
 pub(crate) fn format_comment_with_suggestions(
@@ -83,9 +83,10 @@ pub(crate) fn format_comment_with_suggestions(
 
             // Print original code as DELETIONS (red)
             for orig in &original_lines {
-                let code_fg = Color::Rgb(220, 140, 140);
-                let code_bg = Color::Rgb(55, 22, 28);
-                let prefix_fg = Color::Rgb(255, 100, 100);
+                let theme = THEME.read().unwrap();
+                let code_fg = theme.diff_deletion_fg;
+                let code_bg = theme.diff_deletion_bg;
+                let prefix_fg = theme.red;
 
                 let mut spans = vec![(
                     Style::default()
@@ -134,9 +135,10 @@ pub(crate) fn format_comment_with_suggestions(
             ));
         } else if in_suggestion {
             // Print suggested code as ADDITIONS (green)
-            let code_fg = Color::Rgb(140, 220, 140);
-            let code_bg = Color::Rgb(22, 48, 28);
-            let prefix_fg = Color::Rgb(80, 220, 80);
+            let theme = THEME.read().unwrap();
+            let code_fg = theme.diff_addition_fg;
+            let code_bg = theme.diff_addition_bg;
+            let prefix_fg = theme.green;
 
             let mut spans = vec![(
                 Style::default()
@@ -367,7 +369,7 @@ mod tests {
 
         assert_eq!(color1, color3);
         match color1 {
-            Color::Rgb(_, _, _) => {}
+            ratatui::style::Color::Rgb(_, _, _) => {}
             _ => panic!("Expected Rgb color"),
         }
     }

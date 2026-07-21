@@ -1491,14 +1491,19 @@ impl Backend for GhBackend {
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Milestones")
             .await?;
-        #[derive(Deserialize)]
+        #[derive(Deserialize, Default)]
         struct GhMs {
+            #[serde(default)]
             id: u64,
+            #[serde(default)]
             number: u64,
+            #[serde(default)]
             title: String,
             description: Option<String>,
+            #[serde(default)]
             state: String,
             due_on: Option<String>,
+            #[serde(default)]
             created_at: String,
         }
         let milestones: Vec<GhMs> = serde_json::from_str(&raw)?;

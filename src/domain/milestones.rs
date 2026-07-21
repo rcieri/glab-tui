@@ -3,15 +3,20 @@ use crate::domain::issues::Issue;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Milestone {
+    #[serde(default)]
     pub id: u64,
+    #[serde(default)]
     pub iid: u64,
+    #[serde(default)]
     pub title: String,
     pub description: Option<String>,
+    #[serde(default)]
     pub state: String,
     pub start_date: Option<String>,
     pub due_date: Option<String>,
+    #[serde(default)]
     pub created_at: String,
 }
 

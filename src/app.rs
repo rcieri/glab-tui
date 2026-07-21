@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::backend::BackendKind;
 use crate::config::Config;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
@@ -161,19 +162,19 @@ impl Tab {
         }
     }
 
-    pub fn title(&self, is_github: bool) -> String {
+    pub fn title(&self, kind: BackendKind) -> String {
         let icons = crate::config::ICONS.read().unwrap();
         match self {
             Tab::Issues => format!("{} Issues", icons.tab_issue),
             Tab::MergeRequests => {
-                if is_github {
+                if kind.is_github() {
                     format!("{} PRs", icons.tab_pr)
                 } else {
                     format!("{} MRs", icons.tab_pr)
                 }
             }
             Tab::Pipelines => {
-                if is_github {
+                if kind.is_github() {
                     format!("{} Actions", icons.tab_pipeline)
                 } else {
                     format!("{} Pipelines", icons.tab_pipeline)
@@ -183,7 +184,7 @@ impl Tab {
             Tab::Runners => format!("{} Runners", icons.tab_runner),
             Tab::Releases => format!("{} Releases", icons.tab_release),
             Tab::Todos => {
-                if is_github {
+                if kind.is_github() {
                     format!("{} Notifications", icons.tab_todo)
                 } else {
                     format!("{} Todos", icons.tab_todo)
@@ -196,11 +197,11 @@ impl Tab {
         }
     }
 
-    pub fn columns(&self, is_github: bool) -> Vec<&'static str> {
+    pub fn columns(&self, kind: BackendKind) -> Vec<&'static str> {
         match self {
             Tab::Issues => {
                 let mut cols = vec!["ID", "State", "Title", "Assignees", "Labels", "Milestone"];
-                if !is_github {
+                if !kind.is_github() {
                     cols.push("Due Date");
                 }
                 cols.push("Author");
@@ -216,7 +217,7 @@ impl Tab {
                     "Reviewers",
                     "Labels",
                 ];
-                if is_github {
+                if kind.is_github() {
                     cols.push("Action");
                 } else {
                     cols.push("Pipeline");
@@ -227,7 +228,7 @@ impl Tab {
             }
             Tab::Pipelines => {
                 let mut cols = vec!["ID", "Status", "Ref"];
-                if is_github {
+                if kind.is_github() {
                     cols.push("Name");
                     cols.push("Event");
                     cols.push("SHA");
@@ -239,7 +240,7 @@ impl Tab {
             }
             Tab::Jobs => {
                 let mut cols = vec!["ID", "Status", "Name", "Matrix"];
-                if is_github {
+                if kind.is_github() {
                     cols.push("Runner");
                 } else {
                     cols.push("Stage");
@@ -263,25 +264,25 @@ impl Tab {
         }
     }
 
-    pub fn default_columns(&self, is_github: bool) -> Vec<&'static str> {
+    pub fn default_columns(&self, kind: BackendKind) -> Vec<&'static str> {
         match self {
             Tab::Issues => {
                 let mut cols = vec!["ID", "State", "Title", "Labels"];
-                if !is_github {
+                if !kind.is_github() {
                     cols.push("Due Date");
                 }
                 cols
             }
             Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
             Tab::Pipelines => {
-                if is_github {
+                if kind.is_github() {
                     vec!["Name", "Status", "Event", "Ref"]
                 } else {
                     vec!["ID", "Status", "Stages", "Ref"]
                 }
             }
             Tab::Jobs => {
-                if is_github {
+                if kind.is_github() {
                     vec!["Name", "Status", "Ref"]
                 } else {
                     vec!["ID", "Stage", "Status", "Name", "Matrix"]
@@ -297,7 +298,7 @@ impl Tab {
         }
     }
 
-    pub fn available_on_platform(&self, _is_github: bool) -> bool {
+    pub fn available_on_platform(&self, _kind: BackendKind) -> bool {
         true
     }
 }
@@ -1835,7 +1836,7 @@ impl Default for App {
                 let mut ec = std::collections::HashMap::new();
                 for tab in Tab::ALL {
                     let set: std::collections::HashSet<String> = tab
-                        .default_columns(false)
+                        .default_columns(BackendKind::GitLab)
                         .iter()
                         .map(|s| s.to_string())
                         .collect();
@@ -1869,6 +1870,17 @@ impl Default for App {
 }
 
 impl App {
+    pub fn kind(&self) -> BackendKind {
+        self.gitlab_client
+            .as_ref()
+            .map(|c| c.backend.kind())
+            .unwrap_or(BackendKind::GitLab)
+    }
+
+    pub fn is_github(&self) -> bool {
+        self.kind().is_github()
+    }
+
     pub fn start_loading_tab(&mut self, tab: Tab) {
         if !self.loading_tabs.contains(&tab) {
             self.loading_tabs.insert(tab);
@@ -1882,12 +1894,7 @@ impl App {
     }
 
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
-        let is_github = self
-            .gitlab_client
-            .as_ref()
-            .map(|c| c.is_github)
-            .unwrap_or(false);
-        if is_github {
+        if self.is_github() {
             if tab == Tab::Issues && col == "Due Date" {
                 return false;
             }
@@ -1903,18 +1910,14 @@ impl App {
     }
 
     pub fn available_tabs(&self) -> Vec<Tab> {
-        let is_github = self
-            .gitlab_client
-            .as_ref()
-            .map(|c| c.is_github)
-            .unwrap_or(false);
+        let kind = self.kind();
         let mut tabs: Vec<Tab> = Tab::ALL
             .iter()
-            .filter(|t| t.available_on_platform(is_github))
+            .filter(|t| t.available_on_platform(kind))
             .copied()
             .collect();
         if let Some(disabled) = &self.config.disabled_tabs {
-            tabs.retain(|t| !disabled.iter().any(|d| d == &t.title(is_github)));
+            tabs.retain(|t| !disabled.iter().any(|d| d == &t.title(kind)));
         }
         tabs
     }
@@ -4146,7 +4149,7 @@ mod tests {
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
         let enabled_cols: std::collections::HashSet<String> = Tab::MergeRequests
-            .columns(false)
+            .columns(BackendKind::GitLab)
             .iter()
             .map(|s| s.to_string())
             .collect();

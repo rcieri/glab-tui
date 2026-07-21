@@ -1,4 +1,4 @@
-use crate::backend::Backend;
+use crate::backend::{Backend, BackendKind};
 use anyhow::{Context, Result};
 
 pub struct GitlabClient {
@@ -9,6 +9,10 @@ pub struct GitlabClient {
 }
 
 impl GitlabClient {
+    pub fn kind(&self) -> BackendKind {
+        self.backend.kind()
+    }
+
     pub async fn new() -> Result<Self> {
         let is_github = match tokio::process::Command::new("git")
             .args(["remote", "get-url", "origin"])

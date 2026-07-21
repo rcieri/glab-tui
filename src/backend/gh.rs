@@ -74,6 +74,10 @@ impl GhBackend {
 
 #[async_trait]
 impl Backend for GhBackend {
+    fn kind(&self) -> super::BackendKind {
+        super::BackendKind::GitHub
+    }
+
     fn program(&self) -> &'static str {
         "gh"
     }

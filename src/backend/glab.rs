@@ -78,6 +78,10 @@ impl GlabBackend {
 
 #[async_trait]
 impl Backend for GlabBackend {
+    fn kind(&self) -> super::BackendKind {
+        super::BackendKind::GitLab
+    }
+
     fn program(&self) -> &'static str {
         "glab"
     }

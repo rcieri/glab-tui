@@ -1572,18 +1572,20 @@ impl Backend for GlabBackend {
                 "Fetching Milestones",
             )
             .await?;
-        #[derive(Deserialize)]
+        #[derive(Deserialize, Default)]
         struct GiMs {
+            #[serde(default)]
             id: u64,
+            #[serde(default)]
             iid: u64,
+            #[serde(default)]
             title: String,
+            pub description: Option<String>,
             #[serde(default)]
-            description: Option<String>,
             state: String,
-            #[serde(default)]
             start_date: Option<String>,
-            #[serde(default)]
             due_date: Option<String>,
+            #[serde(default)]
             created_at: String,
         }
         let milestones: Vec<GiMs> = serde_json::from_str(&raw)?;

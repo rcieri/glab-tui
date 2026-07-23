@@ -1,8 +1,8 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear},
 };
 
 use super::diff::centered_rect_min;
@@ -40,16 +40,4 @@ pub(crate) fn modal_area(
     let inner = block.inner(area);
     f.render_widget(block, area);
     inner
-}
-
-/// Render a footer hint line inside the given area.
-pub(crate) fn render_footer(f: &mut Frame, text: &str, area: Rect) {
-    let p = Paragraph::new(text)
-        .style(
-            Style::default()
-                .fg(THEME.read().unwrap().hint_text)
-                .bg(Color::Reset),
-        )
-        .alignment(Alignment::Center);
-    f.render_widget(p, area);
 }

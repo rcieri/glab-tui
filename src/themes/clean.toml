@@ -32,7 +32,6 @@ comment_draft_bg = "#2b2209"
 
 # ── Modals ──
 modal_border = "#58a6ff"
-hint_text = "#6e7681"
 
 # ── Pipelines ──
 pipeline_success = "#3fb950"

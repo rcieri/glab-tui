@@ -38,7 +38,6 @@ pub struct Theme {
     pub comment_draft_bg: Color,
     // ── Modals ──
     pub modal_border: Color,
-    pub hint_text: Color,
     // ── Pipelines ──
     pub pipeline_success: Color,
     pub pipeline_failed: Color,
@@ -293,8 +292,6 @@ struct ThemeToml {
     // ── Modals ──
     #[serde(default)]
     modal_border: Option<String>,
-    #[serde(default)]
-    hint_text: Option<String>,
     // ── Pipelines ──
     #[serde(default)]
     pipeline_success: Option<String>,
@@ -388,7 +385,6 @@ impl ThemeToml {
             comment_bg: hex_or(&self.comment_bg, highlight_bg),
             comment_draft_bg: hex_or(&self.comment_draft_bg, yellow_bg),
             modal_border: hex_or(&self.modal_border, border_focused),
-            hint_text: hex_or(&self.hint_text, text_muted),
             pipeline_success: hex_or(&self.pipeline_success, green),
             pipeline_failed: hex_or(&self.pipeline_failed, red),
             pipeline_running: hex_or(&self.pipeline_running, blue),
@@ -501,7 +497,6 @@ impl Theme {
             comment_bg:       Color::Rgb(43, 43, 57),
             comment_draft_bg: Color::Rgb(45, 35, 15),
             modal_border:     Color::Rgb(49, 191, 103),
-            hint_text:        Color::Rgb(130, 130, 138),
             pipeline_success: Color::Rgb(49, 191, 103),
             pipeline_failed:  Color::Rgb(224, 73, 83),
             pipeline_running: Color::Rgb(61, 139, 255),
@@ -583,7 +578,6 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.comment_draft_bg, &overrides.comment_draft_bg);
     // ── Modals ──
     apply_color(&mut base.modal_border, &overrides.modal_border);
-    apply_color(&mut base.hint_text, &overrides.hint_text);
     // ── Pipelines ──
     apply_color(&mut base.pipeline_success, &overrides.pipeline_success);
     apply_color(&mut base.pipeline_failed, &overrides.pipeline_failed);
@@ -627,7 +621,6 @@ pub struct ThemeOverrides {
     comment_draft_bg: Option<String>,
     // ── Modals ──
     modal_border: Option<String>,
-    hint_text: Option<String>,
     // ── Pipelines ──
     pipeline_success: Option<String>,
     pipeline_failed: Option<String>,

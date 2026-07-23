@@ -239,7 +239,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
 
             // Fallback: sidebar / content clicks
             if let Some(sidebar_rect) = app.sidebar_rect {
-                if rect_contains(sidebar_rect, row, col) && col >= sidebar_rect.x {
+                if rect_contains(sidebar_rect, row, col) {
                     let tab_idx = (row - sidebar_rect.y - 1) as usize;
                     let tabs = app.available_tabs();
                     if tab_idx < tabs.len() {
@@ -265,18 +265,16 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
 
 /// Mouse click on confirm popup YES/NO buttons.
 fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
-    // Footer area: last 3 rows of 60×9 = rows 6-8
+    // Footer area: last 3 rows of 60x9 = rows 6-8
     let footer_y = rect.y + 6;
     if row < footer_y || row >= rect.y + rect.height {
-        return; // click not on footer
+        return;
     }
     let inner = border_inner(rect);
     let mid = inner.x + inner.width / 2;
     if col < mid {
-        // YES clicked
         app.confirm_popup_selected_yes = true;
     } else {
-        // NO clicked
         app.confirm_popup_selected_yes = false;
     }
     // Execute or cancel
@@ -295,17 +293,21 @@ fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
                                 iid,
                             )
                             .await;
-                            let _ = tx.send(match res {
-                                Ok(_) => crate::event::Event::MilestoneDeleted,
-                                Err(e) => crate::event::Event::CommandCompleted(
-                                    crate::app::Tab::Milestones,
-                                    Err(e.to_string()),
-                                ),
-                            });
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::Milestones,
-                                Ok(()),
-                            ));
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::Milestones,
+                                        Ok(()),
+                                    ));
+                                    let _ = tx.send(crate::event::Event::MilestoneDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::Milestones,
+                                        Err(e.to_string()),
+                                    ));
+                                }
+                            }
                         });
                     }
                     crate::app::ConfirmAction::DeleteRelease(tag_name) => {
@@ -316,17 +318,21 @@ fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
                                 &tag_name,
                             )
                             .await;
-                            let _ = tx.send(match res {
-                                Ok(_) => crate::event::Event::ReleaseDeleted,
-                                Err(e) => crate::event::Event::CommandCompleted(
-                                    crate::app::Tab::Releases,
-                                    Err(e.to_string()),
-                                ),
-                            });
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::Releases,
-                                Ok(()),
-                            ));
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::Releases,
+                                        Ok(()),
+                                    ));
+                                    let _ = tx.send(crate::event::Event::ReleaseDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::Releases,
+                                        Err(e.to_string()),
+                                    ));
+                                }
+                            }
                         });
                     }
                     crate::app::ConfirmAction::DeleteBranch(branch_name) => {
@@ -339,121 +345,91 @@ fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
                             .await;
                             let _ = tx.send(crate::event::Event::CommandCompleted(
                                 crate::app::Tab::Branches,
-                                res.map_err(|e| e.to_string()),
+                                res.map(|_| ())
+                                    .map_err(|e| format!("Failed to delete branch: {}", e)),
                             ));
                         });
                     }
                     crate::app::ConfirmAction::CloseIssue(iid) => {
-                        let issue_iid_str = iid.to_string();
-                        let cli = if client.is_github { "gh" } else { "glab" };
-                        let subcmd = if client.is_github { "issue" } else { "issue" };
-                        let cmd = format!(
-                            "{} {} close {} -R {}",
-                            cli, subcmd, issue_iid_str, project_path
-                        );
+                        if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
+                            app.issues.items.remove(pos);
+                        }
+                        app.update_filter_selection();
+                        let tx2 = tx.clone();
                         tokio::spawn(async move {
-                            let out = tokio::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(&cmd)
-                                .output()
-                                .await;
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                            let result = client.close_issue(&project_path, iid).await;
+                            let _ = tx2.send(crate::event::Event::CommandCompleted(
                                 crate::app::Tab::Issues,
-                                out.map(|_| ()).map_err(|e| e.to_string()),
+                                result.map_err(|e| e.to_string()),
                             ));
                         });
                     }
                     crate::app::ConfirmAction::DeleteIssue(iid) => {
-                        let issue_iid_str = iid.to_string();
-                        let cli = if client.is_github { "gh" } else { "glab" };
-                        let subcmd = if client.is_github { "issue" } else { "issue" };
-                        let cmd = format!(
-                            "{} {} delete {} -R {} {}",
-                            cli,
-                            subcmd,
-                            issue_iid_str,
-                            project_path,
-                            if client.is_github { "--yes" } else { "" }
-                        );
                         tokio::spawn(async move {
-                            let out = tokio::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(&cmd)
-                                .output()
-                                .await;
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::Issues,
-                                out.map(|_| ()).map_err(|e| e.to_string()),
-                            ));
-                            let _ = tx.send(crate::event::Event::IssueDeleted);
+                            let res = client.delete_issue(&project_path, iid).await;
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::Issues,
+                                        Ok(()),
+                                    ));
+                                    let _ = tx.send(crate::event::Event::IssueDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::Issues,
+                                        Err(format!("Failed to delete issue: {}", e)),
+                                    ));
+                                }
+                            }
                         });
                     }
                     crate::app::ConfirmAction::CloseMr(iid) => {
-                        let mr_iid_str = iid.to_string();
-                        let cli = if client.is_github { "gh" } else { "glab" };
-                        let subcmd = if client.is_github { "pr" } else { "mr" };
-                        let cmd = format!(
-                            "{} {} close {} -R {}",
-                            cli, subcmd, mr_iid_str, project_path
-                        );
+                        if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
+                            app.mrs.items.remove(pos);
+                        }
+                        app.update_filter_selection();
+                        let tx2 = tx.clone();
                         tokio::spawn(async move {
-                            let out = tokio::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(&cmd)
-                                .output()
-                                .await;
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                            let result = client.close_mr(&project_path, iid).await;
+                            let _ = tx2.send(crate::event::Event::CommandCompleted(
                                 crate::app::Tab::MergeRequests,
-                                out.map(|_| ()).map_err(|e| e.to_string()),
+                                result.map_err(|e| e.to_string()),
                             ));
                         });
                     }
                     crate::app::ConfirmAction::DeleteMr(iid) => {
-                        let mr_iid_str = iid.to_string();
-                        let cli = if client.is_github { "gh" } else { "glab" };
-                        let subcmd = if client.is_github { "pr" } else { "mr" };
-                        let cmd = format!(
-                            "{} {} delete {} -R {}",
-                            cli, subcmd, mr_iid_str, project_path
-                        );
                         tokio::spawn(async move {
-                            let out = tokio::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(&cmd)
-                                .output()
-                                .await;
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::MergeRequests,
-                                out.map(|_| ()).map_err(|e| e.to_string()),
-                            ));
-                            let _ = tx.send(crate::event::Event::MrDeleted);
+                            let res = client.delete_mr(&project_path, iid).await;
+                            match res {
+                                Ok(_) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::MergeRequests,
+                                        Ok(()),
+                                    ));
+                                    let _ = tx.send(crate::event::Event::MrDeleted);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(crate::event::Event::CommandCompleted(
+                                        crate::app::Tab::MergeRequests,
+                                        Err(format!("Failed to delete merge request: {}", e)),
+                                    ));
+                                }
+                            }
                         });
                     }
                     crate::app::ConfirmAction::MergeMr(iid) => {
-                        let mr_iid_str = iid.to_string();
-                        let cli = if client.is_github { "gh" } else { "glab" };
-                        let subcmd = if client.is_github { "pr" } else { "mr" };
-                        let cmd = format!(
-                            "{} {} merge {} -R {} --squash {}",
-                            cli,
-                            subcmd,
-                            mr_iid_str,
-                            project_path,
-                            if client.is_github {
-                                "--delete-branch"
-                            } else {
-                                "--remove-source-branch"
-                            }
-                        );
+                        if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
+                            app.mrs.items.remove(pos);
+                        }
+                        app.update_filter_selection();
+                        let tx2 = tx.clone();
                         tokio::spawn(async move {
-                            let out = tokio::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(&cmd)
-                                .output()
-                                .await;
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                            let result =
+                                client.merge_mr(&project_path, iid, true, true, None).await;
+                            let _ = tx2.send(crate::event::Event::CommandCompleted(
                                 crate::app::Tab::MergeRequests,
-                                out.map(|_| ()).map_err(|e| e.to_string()),
+                                result.map_err(|e| e.to_string()),
                             ));
                         });
                     }
@@ -547,7 +523,7 @@ fn handle_save_menu_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
         return;
     }
     let inner = border_inner(rect);
-    if row < inner.y || row > inner.y + 3 {
+    if row < inner.y || row >= inner.y + 3 {
         return;
     }
     let idx = (row - inner.y) as usize;
@@ -609,10 +585,10 @@ fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16
     if day_col >= 7 {
         return;
     }
-    let start_weekday = chrono::NaiveDate::from_ymd_opt(dp.year, dp.month, 1)
-        .unwrap()
-        .weekday()
-        .num_days_from_sunday();
+    let Some(first_date) = chrono::NaiveDate::from_ymd_opt(dp.year, dp.month, 1) else {
+        return;
+    };
+    let start_weekday = first_date.weekday().num_days_from_sunday();
     let total_days = crate::app::days_in_month(dp.year, dp.month);
     let cell_idx = day_y * 7 + day_col;
     let day_num = (cell_idx as i32) - (start_weekday as i32) + 1;

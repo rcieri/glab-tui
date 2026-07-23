@@ -187,6 +187,18 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
+            _ if keybinding_matches(&app.config.keybindings.issues.select_issue, key_event) => {
+                if let Some(selected_idx) = app.issues.state.selected() {
+                    let iid = app.filtered_issues().get(selected_idx).map(|i| i.iid);
+                    if let Some(iid) = iid {
+                        if app.selected_issues.contains(&iid) {
+                            app.selected_issues.remove(&iid);
+                        } else {
+                            app.selected_issues.insert(iid);
+                        }
+                    }
+                }
+            }
             _ => handled = false,
         },
         crate::app::Tab::MergeRequests => {
@@ -594,22 +606,6 @@ pub async fn handle_active_tab_key(
                                         result.map_err(|e| e.to_string()),
                                     ));
                                 });
-                            }
-                        }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.issues.select_issue,
-                            key_event,
-                        ) =>
-                        {
-                            if let Some(selected_idx) = app.issues.state.selected() {
-                                let iid = app.filtered_issues().get(selected_idx).map(|i| i.iid);
-                                if let Some(iid) = iid {
-                                    if app.selected_issues.contains(&iid) {
-                                        app.selected_issues.remove(&iid);
-                                    } else {
-                                        app.selected_issues.insert(iid);
-                                    }
-                                }
                             }
                         }
                         _ => handled = false,

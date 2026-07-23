@@ -472,6 +472,9 @@ impl GitlabClient {
         iids: &[u64],
         milestone: &str,
     ) -> Result<()> {
+        if milestone.trim().is_empty() {
+            return Ok(());
+        }
         for &iid in iids {
             self.backend
                 .update_issue_milestone(project, iid, milestone)
@@ -530,6 +533,9 @@ impl GitlabClient {
         iids: &[u64],
         milestone: &str,
     ) -> Result<()> {
+        if milestone.trim().is_empty() {
+            return Ok(());
+        }
         for &iid in iids {
             self.backend
                 .update_mr_milestone(project, iid, milestone)

@@ -3601,6 +3601,14 @@ async fn main() -> Result<()> {
                                             .map(|(_, v)| v.trim().to_string())
                                             .unwrap_or_default();
 
+                                        if labels.is_empty()
+                                            && assignees.is_empty()
+                                            && milestone.is_empty()
+                                        {
+                                            app.edit_menu = None;
+                                            continue;
+                                        }
+
                                         let selected: Vec<u64> =
                                             app.selected_issues.iter().copied().collect();
                                         app.edit_menu = None;
@@ -3674,6 +3682,14 @@ async fn main() -> Result<()> {
                                             .find(|(k, _)| k == "Milestone")
                                             .map(|(_, v)| v.trim().to_string())
                                             .unwrap_or_default();
+
+                                        if labels.is_empty()
+                                            && assignees.is_empty()
+                                            && milestone.is_empty()
+                                        {
+                                            app.edit_menu = None;
+                                            continue;
+                                        }
 
                                         let selected: Vec<u64> =
                                             app.selected_mrs.iter().copied().collect();

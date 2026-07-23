@@ -426,10 +426,11 @@ pub async fn handle_active_tab_key(
                                 }
                             });
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.view_related_pipelines,
-                            key_event,
-                        ) =>
+                        _ if key_event.code == KeyCode::Char('P')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.view_related_pipelines,
+                                key_event,
+                            ) =>
                         {
                             let pipe_id = mr.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
                                 app.pipelines
@@ -852,10 +853,11 @@ pub async fn handle_active_tab_key(
                                 }
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.jobs.start_job,
-                            key_event,
-                        ) =>
+                        _ if key_event.code == KeyCode::Char('S')
+                            || keybinding_matches(
+                                &app.config.keybindings.jobs.start_job,
+                                key_event,
+                            ) =>
                         {
                             if app.is_github() {
                                 app.error_message =

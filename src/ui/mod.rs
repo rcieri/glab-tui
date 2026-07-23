@@ -222,8 +222,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // Middle: Sidebar | Main Area | Preview Area
     let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 
-    let sidebar_width = if size.width >= 80 {
-        Constraint::Length(22)
+    let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
+        Constraint::Length(app.config.ui.sidebar_width)
     } else {
         Constraint::Length(0)
     };
@@ -268,7 +268,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 
     // Split middle column vertically: main content area + compact terminal pane
-    let term_height = if app.active_tab != Tab::Terminal && size.height >= 18 {
+    let term_height = if app.active_tab != Tab::Terminal
+        && size.height >= 18
+        && app.config.ui.terminal_pane_visible
+    {
         6
     } else {
         0

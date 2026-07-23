@@ -307,7 +307,7 @@ impl Tab {
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
-    pub fields: Vec<(String, String)>, // (Label, Value)
+    pub fields: Vec<(String, String)>, // (Label, Value) — TODO: migrate to Vec<Field>
     pub selected_idx: usize,
     pub entity_iid: u64,
     pub entity_type: String, // "issue", "mr"
@@ -317,6 +317,60 @@ pub struct EditMenu {
 impl EditMenu {
     pub fn is_new(&self) -> bool {
         self.entity_type.starts_with("new_")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FieldType {
+    Text,
+    MultiSelect,
+    Date,
+    Toggle,
+    Ref,
+}
+
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub label: String,
+    pub kind: FieldType,
+    pub value: String,
+}
+
+impl Field {
+    pub fn text(label: &str, value: String) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::Text,
+            value,
+        }
+    }
+    pub fn multi_select(label: &str, value: String) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::MultiSelect,
+            value,
+        }
+    }
+    pub fn toggle(label: &str, value: String) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::Toggle,
+            value,
+        }
+    }
+    pub fn ref_field(label: &str, value: String) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::Ref,
+            value,
+        }
+    }
+    pub fn date(label: &str, value: String) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::Date,
+            value,
+        }
     }
 }
 

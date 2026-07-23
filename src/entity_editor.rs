@@ -638,8 +638,9 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 mr.description.clone().unwrap_or_default(),
             ));
 
+            let mr_label = app.kind().term("mr_short");
             app.edit_menu = Some(crate::app::EditMenu {
-                title: format!("Edit MR #{}", mr.iid),
+                title: format!("Edit {} #{}", mr_label, mr.iid),
                 fields,
                 selected_idx,
                 entity_iid: mr.iid,
@@ -653,11 +654,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
         }
     } else if entity_type == "milestone" {
         if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
-            let is_github = app
-                .gitlab_client
-                .as_ref()
-                .map(|c| c.is_github)
-                .unwrap_or(false);
+            let is_github = app.is_github();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
             let mut fields = vec![("Title".to_string(), milestone.title.clone())];
             if !is_github {

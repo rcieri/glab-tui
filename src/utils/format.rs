@@ -84,21 +84,13 @@ pub fn format_ref(r#ref: &str) -> String {
 }
 
 fn extract_quotes(s: &str) -> String {
-    if let Some(first_idx) = s.find('"') {
-        if let Some(last_idx) = s.rfind('"') {
-            if first_idx < last_idx {
-                return s[first_idx + 1..last_idx].trim().to_string();
-            }
+    let s = s.trim();
+    for quote in ['"', '\''] {
+        if let Some(inner) = s.strip_prefix(quote).and_then(|s| s.strip_suffix(quote)) {
+            return inner.trim().to_string();
         }
     }
-    if let Some(first_idx) = s.find('\'') {
-        if let Some(last_idx) = s.rfind('\'') {
-            if first_idx < last_idx {
-                return s[first_idx + 1..last_idx].trim().to_string();
-            }
-        }
-    }
-    s.trim().to_string()
+    s.to_string()
 }
 
 /// Extracts a status prefix (like Draft:, Resolve:, WIP:) from a Merge Request title.
@@ -742,7 +734,10 @@ mod tests {
         );
         assert_eq!(
             parse_mr_title_prefix("Resolve: \"Fix connection leak\" in db"),
-            ("Resolve".to_string(), "Fix connection leak".to_string())
+            (
+                "Resolve".to_string(),
+                "\"Fix connection leak\" in db".to_string()
+            )
         );
         assert_eq!(
             parse_mr_title_prefix("[WIP] add new routes"),
@@ -761,7 +756,30 @@ mod tests {
         );
         assert_eq!(
             parse_mr_title_prefix("Title with 'single quotes' in it"),
-            ("".to_string(), "single quotes".to_string())
+            (
+                "".to_string(),
+                "Title with 'single quotes' in it".to_string()
+            )
+        );
+        assert_eq!(
+            parse_mr_title_prefix("Fix \"bug\" in parser"),
+            ("".to_string(), "Fix \"bug\" in parser".to_string())
+        );
+        assert_eq!(
+            parse_mr_title_prefix("'wrapped in single quotes'"),
+            ("".to_string(), "wrapped in single quotes".to_string())
+        );
+        assert_eq!(
+            parse_mr_title_prefix("\"  padded  \""),
+            ("".to_string(), "padded".to_string())
+        );
+        assert_eq!(
+            parse_mr_title_prefix("  \"outer ws\"  "),
+            ("".to_string(), "outer ws".to_string())
+        );
+        assert_eq!(
+            parse_mr_title_prefix("\"\""),
+            ("".to_string(), "".to_string())
         );
     }
 

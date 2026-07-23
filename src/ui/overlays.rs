@@ -542,23 +542,20 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let d = |k: String| std::borrow::Cow::Owned(k);
 
         let shortcuts: Vec<Shortcut> = vec![
-            // Global & Nav
+            // ── Global & Nav ──
             Shortcut {
                 category: "Global & Nav",
-                key: s("l / →"),
+                key: d(format!("{} / →", app.config.keybindings.global.next_tab)),
                 action: "Next tab",
             },
             Shortcut {
                 category: "Global & Nav",
-                key: s("h / ←"),
+                key: d(format!("{} / ←", app.config.keybindings.global.prev_tab)),
                 action: "Previous tab",
             },
             Shortcut {
                 category: "Global & Nav",
-                key: d(format!(
-                    "{}, / Tab / t",
-                    app.config.keybindings.global.configure
-                )),
+                key: d(format!("{}", app.config.keybindings.global.configure)),
                 action: "Toggle columns config popup",
             },
             Shortcut {
@@ -568,7 +565,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Global & Nav",
-                key: s("J / K"),
+                key: d(format!(
+                    "{} / {}",
+                    app.config.keybindings.global.scroll_down,
+                    app.config.keybindings.global.scroll_up
+                )),
                 action: "Scroll description / trace / notes",
             },
             Shortcut {
@@ -591,6 +592,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Global & Nav",
+                key: d(format!("{}", app.config.keybindings.global.global_search)),
+                action: "Global search across all tabs",
+            },
+            Shortcut {
+                category: "Global & Nav",
                 key: s("u"),
                 action: "Check for updates",
             },
@@ -609,6 +615,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 key: s("Ctrl+C"),
                 action: "Quit program",
             },
+            // ── Issues ──
             Shortcut {
                 category: "Issues",
                 key: d(format!("{}", app.config.keybindings.issues.create_issue)),
@@ -649,6 +656,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 key: d(format!("{}", app.config.keybindings.issues.create_mr)),
                 action: "Create Merge Request from selected Issue",
             },
+            // ── Merge Requests ──
             Shortcut {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.create_mr)),
@@ -712,6 +720,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 key: s("o"),
                 action: "Open selected MR in browser",
             },
+            // ── Pipelines ──
             Shortcut {
                 category: "Pipelines",
                 key: s("Enter"),
@@ -719,17 +728,20 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Pipelines",
-                key: s("p"),
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.pipelines.trigger_pipeline
+                )),
                 action: "Trigger new pipeline from MR",
             },
             Shortcut {
                 category: "Pipelines",
-                key: s("r"),
+                key: d(format!("{}", app.config.keybindings.pipelines.retry)),
                 action: "Retry selected pipeline(s)",
             },
             Shortcut {
                 category: "Pipelines",
-                key: s("c"),
+                key: d(format!("{}", app.config.keybindings.pipelines.cancel)),
                 action: "Cancel pipeline execution",
             },
             Shortcut {
@@ -742,9 +754,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 key: s("o"),
                 action: "Open pipeline in browser",
             },
+            // ── Jobs ──
             Shortcut {
                 category: "Jobs",
-                key: s("Enter"),
+                key: d(format!("{}", app.config.keybindings.jobs.view_trace)),
                 action: "View job trace (toggle zoom)",
             },
             Shortcut {
@@ -754,7 +767,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Jobs",
-                key: s("r"),
+                key: d(format!("{}", app.config.keybindings.jobs.enter_pipeline)),
+                action: "Switch to pipeline selector",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: d(format!("{}", app.config.keybindings.jobs.retry)),
                 action: "Retry selected job(s)",
             },
             Shortcut {
@@ -764,64 +782,116 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Jobs",
-                key: s("c"),
+                key: d(format!("{}", app.config.keybindings.jobs.cancel)),
                 action: "Cancel selected job(s)",
             },
             Shortcut {
                 category: "Jobs",
-                key: s("Space"),
+                key: d(format!("{}", app.config.keybindings.jobs.select_job)),
                 action: "Check / uncheck job for bulk retry/cancel",
             },
             Shortcut {
                 category: "Jobs",
-                key: s("s"),
+                key: d(format!("{}", app.config.keybindings.jobs.select_stage)),
                 action: "Select all jobs in stage",
             },
             Shortcut {
                 category: "Jobs",
-                key: s("d"),
+                key: d(format!("{}", app.config.keybindings.jobs.download_artifact)),
                 action: "Download job artifact",
             },
             Shortcut {
                 category: "Jobs",
-                key: s("e"),
+                key: d(format!("{}", app.config.keybindings.jobs.view_trace_editor)),
                 action: "Open job trace in external $EDITOR",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: d(format!("{}", app.config.keybindings.jobs.open_in_browser)),
+                action: "Open selected job in browser",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: d(format!("{}", app.config.keybindings.jobs.toggle_trace_wrap)),
+                action: "Toggle trace word wrap / clipped view",
             },
             Shortcut {
                 category: "Jobs",
                 key: s("m"),
                 action: "Collapse / expand matrix jobs",
             },
+            // ── Milestones ──
             Shortcut {
-                category: "Jobs",
-                key: s("o"),
-                action: "Open selected job in browser",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: s("w"),
-                action: "Toggle trace word wrap / clipped view",
+                category: "Milestones",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.milestones.create_milestone
+                )),
+                action: "Create new milestone",
             },
             Shortcut {
                 category: "Milestones",
-                key: s("n"),
-                action: "Create new milestone",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.milestones.edit_milestone
+                )),
+                action: "Edit selected milestone",
+            },
+            Shortcut {
+                category: "Milestones",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.milestones.close_milestone
+                )),
+                action: "Close selected milestone",
+            },
+            Shortcut {
+                category: "Milestones",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.milestones.reopen_milestone
+                )),
+                action: "Reopen selected milestone",
+            },
+            Shortcut {
+                category: "Milestones",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.milestones.delete_milestone
+                )),
+                action: "Delete selected milestone",
+            },
+            Shortcut {
+                category: "Milestones",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.milestones.open_in_browser
+                )),
+                action: "Open milestone in browser",
             },
             Shortcut {
                 category: "Milestones",
                 key: s("J / K"),
                 action: "Scroll milestone issues list",
             },
+            // ── Runners ──
             Shortcut {
                 category: "Runners",
-                key: s("p / r"),
+                key: d(format!(
+                    "{} / {}",
+                    app.config.keybindings.runners.pause, app.config.keybindings.runners.resume,
+                )),
                 action: "Pause / Resume runner",
             },
             Shortcut {
                 category: "Runners",
-                key: s("e"),
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.runners.edit_description
+                )),
                 action: "Edit runner description text",
             },
+            // ── Releases ──
             Shortcut {
                 category: "Releases",
                 key: s("Enter"),
@@ -829,24 +899,56 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Releases",
-                key: s("n"),
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.releases.create_release
+                )),
                 action: "Create new release tag & changelog",
             },
             Shortcut {
                 category: "Releases",
-                key: s("o"),
+                key: d(format!("{}", app.config.keybindings.releases.edit_release)),
+                action: "Edit selected release",
+            },
+            Shortcut {
+                category: "Releases",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.releases.delete_release
+                )),
+                action: "Delete selected release",
+            },
+            Shortcut {
+                category: "Releases",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.releases.open_in_browser
+                )),
                 action: "Open release in browser",
+            },
+            // ── TODOs ──
+            Shortcut {
+                category: "TODOs",
+                key: d(format!("{}", app.config.keybindings.todos.mark_as_read)),
+                action: "Open todo target & mark read",
             },
             Shortcut {
                 category: "TODOs",
-                key: s("Enter / o"),
-                action: "Open todo target & mark read",
+                key: d(format!("{}", app.config.keybindings.todos.open_in_browser)),
+                action: "Open todo in browser",
             },
+            // ── Terminal ──
             Shortcut {
                 category: "Terminal",
                 key: s("j / k / ↑ / ↓"),
                 action: "Scroll terminal log",
             },
+            Shortcut {
+                category: "Terminal",
+                key: d(format!("{}", app.config.keybindings.terminal.toggle_wrap)),
+                action: "Toggle terminal line wrapping",
+            },
+            // ── Branches ──
             Shortcut {
                 category: "Branches",
                 key: d(format!("{}", app.config.keybindings.branches.create_branch)),
@@ -857,6 +959,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 key: d(format!("{}", app.config.keybindings.branches.delete_branch)),
                 action: "Delete selected branch",
             },
+            // ── Environments ──
             Shortcut {
                 category: "Environments",
                 key: d(format!(
@@ -865,6 +968,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 )),
                 action: "View deployments list for environment",
             },
+            // ── Diff View ──
             Shortcut {
                 category: "Diff View",
                 key: s("q / Esc"),

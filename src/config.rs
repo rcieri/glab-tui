@@ -1090,6 +1090,24 @@ fn def_page_size() -> usize {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct UiConfig {
+    pub sidebar_width: u16,
+    pub sidebar_visible: bool,
+    pub terminal_pane_visible: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            sidebar_width: 22,
+            sidebar_visible: true,
+            terminal_pane_visible: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub theme_preset: Option<String>,
     pub active_tab: Option<String>,
@@ -1098,6 +1116,7 @@ pub struct Config {
     #[serde(default = "def_page_size")]
     pub page_size: usize,
     pub disabled_tabs: Option<Vec<String>>,
+    pub ui: UiConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1120,6 +1139,7 @@ impl Default for Config {
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             disabled_tabs: None,
+            ui: UiConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),

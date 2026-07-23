@@ -76,18 +76,95 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
     pairs
 }
 
+fn rect_contains(rect: ratatui::layout::Rect, row: u16, col: u16) -> bool {
+    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
+
+/// Inner area of a bordered block (Borders::ALL = 1 char per side).
+fn border_inner(outer: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    ratatui::layout::Rect::new(
+        outer.x + 1,
+        outer.y + 1,
+        outer.width.saturating_sub(2),
+        outer.height.saturating_sub(2),
+    )
+}
+
 fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent) {
+    use app::OverlayKind;
     use crossterm::event::MouseEventKind;
+
+    let row = mouse_event.row;
+    let col = mouse_event.column;
 
     match mouse_event.kind {
         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+            let scroll_down = mouse_event.kind == MouseEventKind::ScrollDown;
+
+            // Check overlays in z-order (topmost first)
+            for (kind, rect) in app.overlay_stack.iter().rev() {
+                if !rect_contains(*rect, row, col) {
+                    continue;
+                }
+                let inner = border_inner(*rect);
+                match kind {
+                    OverlayKind::Selector | OverlayKind::ColumnFilter => {
+                        if let Some(ref mut sel) = app.selector {
+                            let delta: i32 = if scroll_down { 1 } else { -1 };
+                            let new_idx = (sel.cursor_idx as i32 + delta).max(0) as usize;
+                            if new_idx < sel.get_filtered_items().len() {
+                                sel.cursor_idx = new_idx;
+                                sel.state.select(Some(new_idx));
+                            }
+                        }
+                        return;
+                    }
+                    OverlayKind::EditMenu => {
+                        if let Some(ref mut menu) = app.edit_menu {
+                            let new = if scroll_down {
+                                (menu.selected_idx + 1).min(menu.fields.len().saturating_sub(1))
+                            } else {
+                                menu.selected_idx.saturating_sub(1)
+                            };
+                            menu.selected_idx = new;
+                            menu.state.select(Some(new));
+                        }
+                        return;
+                    }
+                    OverlayKind::Help => {
+                        return;
+                    }
+                    OverlayKind::Configure => {
+                        let new = if scroll_down {
+                            app.column_checklist_idx.saturating_add(1)
+                        } else {
+                            app.column_checklist_idx.saturating_sub(1)
+                        };
+                        app.column_checklist_idx = new;
+                        return;
+                    }
+                    OverlayKind::DatePicker => {
+                        if let Some(ref mut dp) = app.date_picker {
+                            if scroll_down {
+                                dp.day =
+                                    (dp.day + 1).min(crate::app::days_in_month(dp.year, dp.month));
+                            } else {
+                                dp.day = if dp.day > 1 { dp.day - 1 } else { 1 };
+                            }
+                        }
+                        return;
+                    }
+                    // Consume scroll on non-scrollable modals
+                    _ => return,
+                }
+            }
+
+            // Fallback: content area scrolling
             if let Some(content_rect) = app.content_rect {
-                if mouse_event.row >= content_rect.y
-                    && mouse_event.row < content_rect.y + content_rect.height
-                {
+                if rect_contains(content_rect, row, col) {
                     if let Some(s) = app.active_table_state_mut() {
                         let selected = s.selected().unwrap_or(0);
-                        let new = if mouse_event.kind == MouseEventKind::ScrollDown {
+                        let new = if scroll_down {
                             selected.saturating_add(1)
                         } else {
                             selected.saturating_sub(1)
@@ -98,10 +175,8 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                 }
             }
             if let Some(detail_rect) = app.detail_rect {
-                if mouse_event.row >= detail_rect.y
-                    && mouse_event.row < detail_rect.y + detail_rect.height
-                {
-                    if mouse_event.kind == MouseEventKind::ScrollDown {
+                if rect_contains(detail_rect, row, col) {
+                    if scroll_down {
                         app.detail_scroll = app.detail_scroll.saturating_add(1);
                     } else {
                         app.detail_scroll = app.detail_scroll.saturating_sub(1);
@@ -110,17 +185,62 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                 }
             }
         }
-        MouseEventKind::Down(_) => {
-            let click_row = mouse_event.row;
-            let click_col = mouse_event.column;
 
+        MouseEventKind::Down(_) => {
+            // Check overlays in z-order (topmost first)
+            for (kind, rect) in app.overlay_stack.iter().rev() {
+                if !rect_contains(*rect, row, col) {
+                    continue;
+                }
+                let inner = border_inner(*rect);
+                match kind {
+                    OverlayKind::ConfirmPopup => {
+                        handle_confirm_popup_mouse(app, *rect, row, col);
+                        return;
+                    }
+                    OverlayKind::SubmitReview => {
+                        // Click anywhere on the prompt → close (same as Esc)
+                        app.show_submit_review_prompt = None;
+                        return;
+                    }
+                    OverlayKind::ColumnFilter => {
+                        handle_selector_mouse(app, inner, row, col, true);
+                        return;
+                    }
+                    OverlayKind::SaveMenu => {
+                        handle_save_menu_mouse(app, *rect, row, col);
+                        return;
+                    }
+                    OverlayKind::Configure => {
+                        handle_configure_mouse(app, *rect, row, col);
+                        return;
+                    }
+                    OverlayKind::DatePicker => {
+                        handle_date_picker_mouse(app, *rect, row, col);
+                        return;
+                    }
+                    OverlayKind::Selector => {
+                        handle_selector_mouse(app, inner, row, col, false);
+                        return;
+                    }
+                    OverlayKind::EditMenu => {
+                        handle_edit_menu_mouse(app, inner, row, col);
+                        return;
+                    }
+                    OverlayKind::Help => {
+                        // Click in search area → focus search
+                        if row >= inner.y && row < inner.y + 3 {
+                            app.help_search_query.clear();
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // Fallback: sidebar / content clicks
             if let Some(sidebar_rect) = app.sidebar_rect {
-                if click_col >= sidebar_rect.x
-                    && click_col < sidebar_rect.x + sidebar_rect.width
-                    && click_row > sidebar_rect.y
-                    && click_row < sidebar_rect.y + sidebar_rect.height
-                {
-                    let tab_idx = (click_row - sidebar_rect.y - 1) as usize;
+                if rect_contains(sidebar_rect, row, col) && col >= sidebar_rect.x {
+                    let tab_idx = (row - sidebar_rect.y - 1) as usize;
                     let tabs = app.available_tabs();
                     if tab_idx < tabs.len() {
                         app.active_tab = tabs[tab_idx];
@@ -130,12 +250,8 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
             }
 
             if let Some(content_rect) = app.content_rect {
-                if click_col >= content_rect.x
-                    && click_col < content_rect.x + content_rect.width
-                    && click_row >= content_rect.y + 3
-                    && click_row < content_rect.y + content_rect.height
-                {
-                    let row_idx = (click_row - content_rect.y).saturating_sub(3) as usize;
+                if rect_contains(content_rect, row, col) && row >= content_rect.y + 3 {
+                    let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
                     if let Some(s) = app.active_table_state_mut() {
                         s.select(Some(row_idx));
                     }
@@ -144,6 +260,454 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
             }
         }
         _ => {}
+    }
+}
+
+/// Mouse click on confirm popup YES/NO buttons.
+fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
+    // Footer area: last 3 rows of 60×9 = rows 6-8
+    let footer_y = rect.y + 6;
+    if row < footer_y || row >= rect.y + rect.height {
+        return; // click not on footer
+    }
+    let inner = border_inner(rect);
+    let mid = inner.x + inner.width / 2;
+    if col < mid {
+        // YES clicked
+        app.confirm_popup_selected_yes = true;
+    } else {
+        // NO clicked
+        app.confirm_popup_selected_yes = false;
+    }
+    // Execute or cancel
+    if let Some(confirm_action) = app.confirm_popup.take() {
+        if app.confirm_popup_selected_yes {
+            let client = app.gitlab_client.clone();
+            let project_path = app.project_context.clone();
+            let tx = client.as_ref().and_then(|c| c.tx.clone());
+            if let (Some(client), Some(tx)) = (client, tx) {
+                match confirm_action {
+                    crate::app::ConfirmAction::DeleteMilestone(iid) => {
+                        tokio::spawn(async move {
+                            let res = crate::domain::milestones::delete_milestone(
+                                &client,
+                                &project_path,
+                                iid,
+                            )
+                            .await;
+                            let _ = tx.send(match res {
+                                Ok(_) => crate::event::Event::MilestoneDeleted,
+                                Err(e) => crate::event::Event::CommandCompleted(
+                                    crate::app::Tab::Milestones,
+                                    Err(e.to_string()),
+                                ),
+                            });
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::Milestones,
+                                Ok(()),
+                            ));
+                        });
+                    }
+                    crate::app::ConfirmAction::DeleteRelease(tag_name) => {
+                        tokio::spawn(async move {
+                            let res = crate::domain::releases::delete_release(
+                                &client,
+                                &project_path,
+                                &tag_name,
+                            )
+                            .await;
+                            let _ = tx.send(match res {
+                                Ok(_) => crate::event::Event::ReleaseDeleted,
+                                Err(e) => crate::event::Event::CommandCompleted(
+                                    crate::app::Tab::Releases,
+                                    Err(e.to_string()),
+                                ),
+                            });
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::Releases,
+                                Ok(()),
+                            ));
+                        });
+                    }
+                    crate::app::ConfirmAction::DeleteBranch(branch_name) => {
+                        tokio::spawn(async move {
+                            let res = crate::domain::branches::delete_branch(
+                                &client,
+                                &project_path,
+                                &branch_name,
+                            )
+                            .await;
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::Branches,
+                                res.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                    crate::app::ConfirmAction::CloseIssue(iid) => {
+                        let issue_iid_str = iid.to_string();
+                        let cli = if client.is_github { "gh" } else { "glab" };
+                        let subcmd = if client.is_github { "issue" } else { "issue" };
+                        let cmd = format!(
+                            "{} {} close {} -R {}",
+                            cli, subcmd, issue_iid_str, project_path
+                        );
+                        tokio::spawn(async move {
+                            let out = tokio::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&cmd)
+                                .output()
+                                .await;
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::Issues,
+                                out.map(|_| ()).map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                    crate::app::ConfirmAction::DeleteIssue(iid) => {
+                        let issue_iid_str = iid.to_string();
+                        let cli = if client.is_github { "gh" } else { "glab" };
+                        let subcmd = if client.is_github { "issue" } else { "issue" };
+                        let cmd = format!(
+                            "{} {} delete {} -R {} {}",
+                            cli,
+                            subcmd,
+                            issue_iid_str,
+                            project_path,
+                            if client.is_github { "--yes" } else { "" }
+                        );
+                        tokio::spawn(async move {
+                            let out = tokio::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&cmd)
+                                .output()
+                                .await;
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::Issues,
+                                out.map(|_| ()).map_err(|e| e.to_string()),
+                            ));
+                            let _ = tx.send(crate::event::Event::IssueDeleted);
+                        });
+                    }
+                    crate::app::ConfirmAction::CloseMr(iid) => {
+                        let mr_iid_str = iid.to_string();
+                        let cli = if client.is_github { "gh" } else { "glab" };
+                        let subcmd = if client.is_github { "pr" } else { "mr" };
+                        let cmd = format!(
+                            "{} {} close {} -R {}",
+                            cli, subcmd, mr_iid_str, project_path
+                        );
+                        tokio::spawn(async move {
+                            let out = tokio::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&cmd)
+                                .output()
+                                .await;
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                out.map(|_| ()).map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                    crate::app::ConfirmAction::DeleteMr(iid) => {
+                        let mr_iid_str = iid.to_string();
+                        let cli = if client.is_github { "gh" } else { "glab" };
+                        let subcmd = if client.is_github { "pr" } else { "mr" };
+                        let cmd = format!(
+                            "{} {} delete {} -R {}",
+                            cli, subcmd, mr_iid_str, project_path
+                        );
+                        tokio::spawn(async move {
+                            let out = tokio::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&cmd)
+                                .output()
+                                .await;
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                out.map(|_| ()).map_err(|e| e.to_string()),
+                            ));
+                            let _ = tx.send(crate::event::Event::MrDeleted);
+                        });
+                    }
+                    crate::app::ConfirmAction::MergeMr(iid) => {
+                        let mr_iid_str = iid.to_string();
+                        let cli = if client.is_github { "gh" } else { "glab" };
+                        let subcmd = if client.is_github { "pr" } else { "mr" };
+                        let cmd = format!(
+                            "{} {} merge {} -R {} --squash {}",
+                            cli,
+                            subcmd,
+                            mr_iid_str,
+                            project_path,
+                            if client.is_github {
+                                "--delete-branch"
+                            } else {
+                                "--remove-source-branch"
+                            }
+                        );
+                        tokio::spawn(async move {
+                            let out = tokio::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&cmd)
+                                .output()
+                                .await;
+                            let _ = tx.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                out.map(|_| ()).map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                }
+            }
+        }
+        // else: NO clicked — popup was already taken, so it's dismissed
+    }
+}
+
+/// Mouse click on selector list area.
+fn handle_selector_mouse(
+    app: &mut App,
+    inner: ratatui::layout::Rect,
+    row: u16,
+    col: u16,
+    has_search: bool,
+) {
+    let sel = match &mut app.selector {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Search/filter bar click area
+    if has_search {
+        let search_top = inner.y;
+        let search_bot = inner.y + 3;
+        if row >= search_top && row < search_bot {
+            sel.is_filtering = true;
+            return;
+        }
+    }
+
+    // List area: after search (if present), before footer
+    let list_y = if has_search { inner.y + 3 } else { inner.y };
+    let list_h = inner.height.saturating_sub(if has_search { 4 } else { 1 });
+    let list_bot = list_y + list_h;
+
+    if row < list_y || row >= list_bot {
+        return;
+    }
+
+    let offset = sel.state.offset();
+    let item_idx = (row - list_y) as usize + offset;
+    let items = sel.get_filtered_items();
+    if item_idx >= items.len() {
+        return;
+    }
+
+    sel.cursor_idx = item_idx;
+    sel.state.select(Some(item_idx));
+
+    // Toggle or select
+    if sel.multi_select {
+        let item = items[item_idx].to_string();
+        if sel.selected_items.contains(&item) {
+            sel.selected_items.remove(&item);
+        } else {
+            sel.selected_items.insert(item);
+        }
+    } else {
+        // For single-select: select + confirm
+        let item = items[item_idx].to_string();
+        sel.selected_items.clear();
+        sel.selected_items.insert(item);
+    }
+}
+
+/// Mouse click on edit menu field list area.
+fn handle_edit_menu_mouse(app: &mut App, inner: ratatui::layout::Rect, row: u16, _col: u16) {
+    let menu = match &mut app.edit_menu {
+        Some(m) => m,
+        None => return,
+    };
+    let list_bot = inner.y + inner.height.saturating_sub(1);
+    if row < inner.y || row >= list_bot {
+        return;
+    }
+    let offset = menu.state.offset();
+    let item_idx = (row - inner.y) as usize + offset;
+    if item_idx >= menu.fields.len() {
+        return;
+    }
+    menu.selected_idx = item_idx;
+    menu.state.select(Some(item_idx));
+}
+
+/// Mouse click on save submenu.
+fn handle_save_menu_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, _col: u16) {
+    if !app.save_menu_open {
+        return;
+    }
+    let inner = border_inner(rect);
+    if row < inner.y || row > inner.y + 3 {
+        return;
+    }
+    let idx = (row - inner.y) as usize;
+    match idx {
+        0 => app.save_menu_selection = Some(SaveMenu::Local),
+        1 => app.save_menu_selection = Some(SaveMenu::Global),
+        2 => app.save_menu_selection = Some(SaveMenu::Cancel),
+        _ => {}
+    }
+}
+
+/// Mouse click on date picker.
+fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
+    use chrono::Datelike;
+    let dp = match &mut app.date_picker {
+        Some(d) => d,
+        None => return,
+    };
+    let inner = border_inner(rect);
+
+    // Header row: ◀ (col 0-2), Month Year (center), ▶ (cols 33-35 for 36-wide)
+    let header_y = inner.y;
+    if row == header_y {
+        let left_arrow = col >= rect.x && col <= rect.x + 3;
+        let right_arrow = col >= rect.x + rect.width - 4 && col <= rect.x + rect.width;
+        if left_arrow {
+            if dp.month == 1 {
+                dp.month = 12;
+                dp.year = dp.year.saturating_sub(1);
+            } else {
+                dp.month -= 1;
+            }
+            dp.day = dp.day.min(crate::app::days_in_month(dp.year, dp.month));
+            return;
+        }
+        if right_arrow {
+            if dp.month == 12 {
+                dp.month = 1;
+                dp.year += 1;
+            } else {
+                dp.month += 1;
+            }
+            dp.day = dp.day.min(crate::app::days_in_month(dp.year, dp.month));
+            return;
+        }
+        return;
+    }
+
+    // Day grid: rows inner.y+1 through inner.y+7, 7 columns
+    let day_y = row.saturating_sub(inner.y + 1);
+    if day_y >= 7 {
+        return;
+    }
+    // Columns in the grid: each cell ~5 chars wide (36-2 border = 34, 34/7 ≈ 4.8)
+    let grid_start = inner.x;
+    let grid_width = inner.width;
+    let col_width = grid_width / 7;
+    let day_col = col.saturating_sub(grid_start) / col_width;
+    if day_col >= 7 {
+        return;
+    }
+    let start_weekday = chrono::NaiveDate::from_ymd_opt(dp.year, dp.month, 1)
+        .unwrap()
+        .weekday()
+        .num_days_from_sunday();
+    let total_days = crate::app::days_in_month(dp.year, dp.month);
+    let cell_idx = day_y * 7 + day_col;
+    let day_num = (cell_idx as i32) - (start_weekday as i32) + 1;
+    if day_num >= 1 && day_num <= total_days as i32 {
+        dp.day = day_num as u32;
+    }
+}
+
+/// Mouse click on column configure overlay.
+fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
+    let tab = app.active_tab;
+    let kind = app.kind();
+    let cols = tab.columns(kind);
+    let group_cols: Vec<&str> = cols.iter().copied().collect();
+    let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
+    let themes = crate::config::all_theme_presets();
+
+    // Build layout same as rendering
+    let inner = border_inner(rect);
+    let mut y_off = inner.y;
+
+    // Skip COLUMNS header
+    y_off += 1;
+    // Each column item
+    let col_start = y_off;
+    let col_end = col_start + columns_list.len() as u16;
+    y_off = col_end;
+    y_off += 1; // spacer
+    // GROUP BY header
+    y_off += 1;
+    let group_start = y_off;
+    let group_end = group_start + group_cols.len() as u16;
+    y_off = group_end;
+    y_off += 1; // spacer
+    // ORDER header
+    y_off += 1;
+    let order_start = y_off;
+    let order_end = order_start + 2;
+    y_off = order_end;
+    y_off += 1; // spacer
+    // PAGE SIZE
+    y_off += 1; // header
+    let page_size_start = y_off;
+    y_off += 1; // value
+    y_off += 1; // spacer
+    // THEME header
+    y_off += 1;
+    let theme_start = y_off;
+    let theme_end = theme_start + themes.len() as u16;
+    y_off = theme_end;
+    y_off += 1; // spacer
+    // SAVE
+    y_off += 1;
+    let save_y = y_off;
+
+    if row >= col_start && row < col_end {
+        let idx = (row - col_start) as usize;
+        if idx < columns_list.len() {
+            let (orig_idx, col_name) = columns_list[idx];
+            let col_str = col_name.to_string();
+            if let Some(set) = app.enabled_columns.get_mut(&tab) {
+                if set.contains(&col_str) {
+                    set.remove(&col_str);
+                } else {
+                    set.insert(col_str);
+                }
+                app.update_filter_selection();
+            }
+            app.column_checklist_idx = orig_idx;
+        }
+    } else if row >= group_start && row < group_end {
+        let idx = (row - group_start) as usize;
+        if idx < group_cols.len() {
+            let col = group_cols[idx];
+            app.group_by_column.insert(tab, Some(col.to_string()));
+            app.column_checklist_idx = cols.len() + idx;
+        }
+    } else if row >= order_start && row < order_end {
+        let idx = (row - order_start) as usize;
+        if idx == 0 {
+            app.group_ascending.insert(tab, true);
+        } else {
+            app.group_ascending.insert(tab, false);
+        }
+        app.column_checklist_idx = group_end as usize + idx;
+    } else if row == page_size_start {
+        app.editing_page_size = true;
+    } else if row >= theme_start && row < theme_end {
+        let idx = (row - theme_start) as usize;
+        if idx < themes.len() {
+            app.config.theme_preset = Some(themes[idx].to_string());
+            app.apply_config();
+        }
+    } else if row == save_y {
+        app.save_menu_open = true;
     }
 }
 

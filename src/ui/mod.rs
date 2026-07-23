@@ -1799,8 +1799,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if let Some(ref msg) = app.error_message {
         let toast_width = (msg.len() as u16 + 4).min(size.width.saturating_sub(4));
-        let toast_h = 3;
-        let toast_y = size.height.saturating_sub(toast_h + 1);
+        let toast_h = 1;
+        let toast_y = size.height.saturating_sub(1);
         let toast_area = Rect::new(
             (size.width.saturating_sub(toast_width)) / 2,
             toast_y,
@@ -1809,11 +1809,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         );
         let toast = Paragraph::new(msg.as_str())
             .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().bg)
-                    .bg(THEME.read().unwrap().red),
-            );
+            .style(Style::default().fg(THEME.read().unwrap().red));
         f.render_widget(toast, toast_area);
     }
 }

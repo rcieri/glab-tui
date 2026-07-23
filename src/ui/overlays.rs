@@ -1,5 +1,6 @@
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::{get_label_color, highlight_fuzzy_match};
+use super::modal::{modal_area, render_footer};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
@@ -16,18 +17,8 @@ use ratatui::{
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     let icons = ICONS.read().unwrap();
     if let Some(menu) = &mut app.edit_menu {
-        let block = Block::default()
-            .title(format!(" {} ", menu.title))
-            .title_style(
-                Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(Color::Reset));
-
-        let area = centered_rect_min(52, 48, 42, 8, size);
+        let is_new_entity = menu.is_new();
+        let body = modal_area(f, &menu.title, 52, 48, 42, 8, size);
 
         let label_width = menu
             .fields
@@ -200,7 +191,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             })
             .collect();
 
-        let is_new_entity = menu.is_new();
         let submit_idx = menu.fields.len() + 1;
         let all_items: Vec<ListItem> = if is_new_entity {
             let is_submit_selected = menu.selected_idx == submit_idx;
@@ -237,45 +227,21 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             " ↑↓ Navigate  Enter: Edit  Esc: Close "
         };
 
-        let inner_area = block.inner(area);
-        let layout = Layout::default()
+        let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(2)])
-            .split(inner_area);
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(body);
 
         let list = List::new(all_items).style(Style::default().bg(Color::Reset));
-
-        let footer = Paragraph::new(footer_text)
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .bg(Color::Reset)
-                    .add_modifier(Modifier::ITALIC),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
-        f.render_widget(Clear, area);
-        f.render_widget(block, area);
         let mut state = menu.state.clone();
-        f.render_stateful_widget(list, layout[0], &mut state);
+        f.render_stateful_widget(list, chunks[0], &mut state);
         menu.state = state;
-        f.render_widget(footer, layout[1]);
+        render_footer(f, footer_text, chunks[1]);
     }
 
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
-            let block = Block::default()
-                .title(format!(" {} ", selector.title))
-                .title_style(
-                    Style::default()
-                        .fg(THEME.read().unwrap().header_fg)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-                .style(Style::default().bg(Color::Reset));
-
-            let area = centered_rect_min(50, 60, 34, 6, size);
+            let body = modal_area(f, &selector.title, 50, 60, 34, 6, size);
 
             let has_filter = selector.field_type != "comment_action_select"
                 && selector.field_type != "review_submit_status"
@@ -285,20 +251,19 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 vec![
                     Constraint::Length(3), // Search/Filter
                     Constraint::Min(0),    // List of items
-                    Constraint::Length(3), // Help/Info footer
+                    Constraint::Length(1), // Footer
                 ]
             } else {
                 vec![
                     Constraint::Min(0),    // List of items
-                    Constraint::Length(3), // Help/Info footer
+                    Constraint::Length(1), // Footer
                 ]
             };
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .margin(1)
                 .constraints(constraints)
-                .split(area);
+                .split(body);
 
             let (search_chunk, list_chunk, footer_chunk) = if has_filter {
                 (Some(chunks[0]), chunks[1], chunks[2])
@@ -344,20 +309,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 "  Esc/Enter: Stop filtering • Backspace: Delete  "
             } else if has_filter {
                 "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • f: Filter • Esc: Back  "
-            } else {
+            } else if selector.multi_select {
                 "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • Esc: Back  "
+            } else {
+                "  j/k: Navigate • Enter: Select • Esc: Back  "
             };
-            let footer_p = Paragraph::new(footer_text)
-                .style(
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
-                        .bg(Color::Reset)
-                        .add_modifier(Modifier::ITALIC),
-                )
-                .wrap(ratatui::widgets::Wrap { trim: true });
-
-            f.render_widget(Clear, area);
-            f.render_widget(block, area);
 
             if let Some(sc) = search_chunk {
                 f.render_widget(search_p, sc);
@@ -467,7 +423,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     selector.state = state;
                 }
             }
-            f.render_widget(footer_p, footer_chunk);
+            render_footer(f, footer_text, footer_chunk);
         }
     }
 

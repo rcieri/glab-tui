@@ -1675,7 +1675,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Min(0), // Message
+                Constraint::Min(0),    // Message
+                Constraint::Length(1), // YES/NO buttons
             ])
             .split(area);
 
@@ -1684,8 +1685,44 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(Style::default().fg(THEME.read().unwrap().text_normal))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
+        let footer_p = Paragraph::new(Line::from(vec![
+            Span::styled(
+                "     [ YES ]     ",
+                Style::default()
+                    .fg(if app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().bg
+                    } else {
+                        THEME.read().unwrap().border_focused
+                    })
+                    .bg(if app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().border_focused
+                    } else {
+                        Color::Reset
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("    "),
+            Span::styled(
+                "     [ NO ]     ",
+                Style::default()
+                    .fg(if !app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().bg
+                    } else {
+                        THEME.read().unwrap().border_focused
+                    })
+                    .bg(if !app.confirm_popup_selected_yes {
+                        THEME.read().unwrap().border_focused
+                    } else {
+                        Color::Reset
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]))
+        .alignment(Alignment::Center);
+
         f.render_widget(Clear, area);
         f.render_widget(block, area);
         f.render_widget(message_p, chunks[0]);
+        f.render_widget(footer_p, chunks[1]);
     }
 }

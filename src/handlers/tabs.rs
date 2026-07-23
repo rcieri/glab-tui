@@ -1698,7 +1698,16 @@ pub async fn handle_active_tab_key(
             }
 
             KeyCode::Esc | KeyCode::Backspace => {
-                if app.job_trace_loading {
+                let has_selections = !app.selected_issues.is_empty()
+                    || !app.selected_mrs.is_empty()
+                    || !app.selected_pipelines.is_empty()
+                    || !app.selected_jobs.is_empty();
+                if has_selections {
+                    app.selected_issues.clear();
+                    app.selected_mrs.clear();
+                    app.selected_pipelines.clear();
+                    app.selected_jobs.clear();
+                } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {
                     app.details_zoomed = false;

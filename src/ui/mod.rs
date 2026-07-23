@@ -1773,4 +1773,35 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 
     render_overlays(f, app, size);
+
+    if let Some(msg) = &app.error_message {
+        if app.error_message_at.is_none() {
+            app.error_message_at = Some(std::time::Instant::now());
+        }
+        if let Some(at) = app.error_message_at {
+            if at.elapsed() > std::time::Duration::from_secs(4) {
+                app.error_message = None;
+                app.error_message_at = None;
+            }
+        }
+    }
+    if let Some(ref msg) = app.error_message {
+        let toast_width = (msg.len() as u16 + 4).min(size.width.saturating_sub(4));
+        let toast_h = 3;
+        let toast_y = size.height.saturating_sub(toast_h + 1);
+        let toast_area = Rect::new(
+            (size.width.saturating_sub(toast_width)) / 2,
+            toast_y,
+            toast_width,
+            toast_h,
+        );
+        let toast = Paragraph::new(msg.as_str())
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(THEME.read().unwrap().bg)
+                    .bg(THEME.read().unwrap().red),
+            );
+        f.render_widget(toast, toast_area);
+    }
 }

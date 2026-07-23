@@ -2525,6 +2525,18 @@ impl App {
                     }
                 }
             }
+            if enabled_cols.contains("Name") {
+                check_match(item.name());
+            }
+            if enabled_cols.contains("Event") {
+                check_match(item.event());
+            }
+            if enabled_cols.contains("SHA") {
+                check_match(item.head_sha());
+            }
+            if enabled_cols.contains("Actor") {
+                check_match(item.actor_login());
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2552,12 +2564,16 @@ impl App {
                     "Status" => a.status().to_string(),
                     "Ref" => a.ref_branch().to_string(),
                     "ID" => a.id().to_string(),
+                    "Name" => a.name().to_string(),
+                    "Event" => a.event().to_string(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
                     "Status" => b.status().to_string(),
                     "Ref" => b.ref_branch().to_string(),
                     "ID" => b.id().to_string(),
+                    "Name" => b.name().to_string(),
+                    "Event" => b.event().to_string(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {

@@ -633,6 +633,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 action: "Open selected Issue in browser",
             },
             Shortcut {
+                category: "Issues",
+                key: d(format!("{}", app.config.keybindings.issues.create_mr)),
+                action: "Create Merge Request from selected Issue",
+            },
+            Shortcut {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.create_mr)),
                 action: "Create new Merge Request",

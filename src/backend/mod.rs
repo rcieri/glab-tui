@@ -15,8 +15,43 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::mpsc::UnboundedSender;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendKind {
+    GitLab,
+    GitHub,
+}
+
+impl BackendKind {
+    pub fn is_github(self) -> bool {
+        matches!(self, BackendKind::GitHub)
+    }
+
+    pub fn is_gitlab(self) -> bool {
+        matches!(self, BackendKind::GitLab)
+    }
+
+    pub fn term(self, key: &str) -> &'static str {
+        match (self, key) {
+            (BackendKind::GitLab, "mr") => "Merge Request",
+            (BackendKind::GitHub, "mr") => "Pull Request",
+            (BackendKind::GitLab, "mr_short") => "MR",
+            (BackendKind::GitHub, "mr_short") => "PR",
+            (BackendKind::GitLab, "pipeline") => "Pipeline",
+            (BackendKind::GitHub, "pipeline") => "Action",
+            (BackendKind::GitLab, "pipeline_plural") => "Pipelines",
+            (BackendKind::GitHub, "pipeline_plural") => "Actions",
+            (BackendKind::GitLab, "todo") => "Todo",
+            (BackendKind::GitHub, "todo") => "Notification",
+            (BackendKind::GitLab, "todo_plural") => "Todos",
+            (BackendKind::GitHub, "todo_plural") => "Notifications",
+            _ => "",
+        }
+    }
+}
+
 #[async_trait]
 pub trait Backend: Send + Sync {
+    fn kind(&self) -> BackendKind;
     fn program(&self) -> &'static str;
 
     fn set_tx(&mut self, tx: UnboundedSender<Event>);

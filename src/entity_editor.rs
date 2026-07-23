@@ -553,7 +553,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
 
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
 
-            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+            let is_github = app.is_github();
             let program = if is_github { "gh" } else { "glab" };
             let mut fields = vec![
                 ("Title".to_string(), issue.title.clone()),
@@ -621,9 +621,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
 
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
 
-            let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
-            let program = if is_github { "gh" } else { "glab" };
-            let is_github = is_github;
+            let is_github = app.is_github();
             let mut fields = vec![
                 ("Title".to_string(), mr.title.clone()),
                 ("Labels".to_string(), labels),

@@ -18,11 +18,7 @@ pub async fn handle_active_tab_key(
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
-                let is_github = app
-                    .gitlab_client
-                    .as_ref()
-                    .map(|c| c.is_github)
-                    .unwrap_or(false);
+                let is_github = app.is_github();
                 let mut fields = vec![
                     ("Title".to_string(), String::new()),
                     ("Labels".to_string(), String::new()),
@@ -131,7 +127,7 @@ pub async fn handle_active_tab_key(
             KeyCode::Char('o') => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return;
                         };
@@ -177,11 +173,7 @@ pub async fn handle_active_tab_key(
         },
         crate::app::Tab::MergeRequests => {
             if keybinding_matches(&app.config.keybindings.mrs.create_mr, key_event) {
-                let is_github = app
-                    .gitlab_client
-                    .as_ref()
-                    .map(|c| c.is_github)
-                    .unwrap_or(false);
+                let is_github = app.is_github();
                 let pr_suffix = if is_github {
                     "Pull Request"
                 } else {
@@ -435,8 +427,7 @@ pub async fn handle_active_tab_key(
                             });
                         }
                         KeyCode::Char('o') => {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let is_github = app.is_github();
                             let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
@@ -693,8 +684,7 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         KeyCode::Char('o') => {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let is_github = app.is_github();
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
                             };
@@ -1170,7 +1160,7 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return;
                         };
@@ -1242,8 +1232,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let is_github =
-                                app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                            let is_github = app.is_github();
                             let entity = if item.target_type.contains("MergeRequest") {
                                 if is_github { "pr" } else { "mr" }
                             } else {
@@ -1280,11 +1269,7 @@ pub async fn handle_active_tab_key(
                 key_event,
             ) =>
             {
-                let is_github = app
-                    .gitlab_client
-                    .as_ref()
-                    .map(|c| c.is_github)
-                    .unwrap_or(false);
+                let is_github = app.is_github();
                 let mut fields = vec![
                     ("Title".to_string(), String::new()),
                     ("Description".to_string(), String::new()),
@@ -1424,7 +1409,7 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let is_github = app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return;
                         };

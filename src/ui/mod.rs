@@ -159,7 +159,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
     // Top: Title & Context
     let icons = crate::config::ICONS.read().unwrap();
-    let header_icon = if app.gitlab_client.as_ref().map_or(false, |c| c.is_github) {
+    let header_icon = if app.is_github() {
         &icons.header_github
     } else {
         &icons.header_gitlab
@@ -283,16 +283,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
     };
 
     // Sidebar: Tabs
-    let is_github = app
-        .gitlab_client
-        .as_ref()
-        .map(|c| c.is_github)
-        .unwrap_or(false);
+    let kind = app.kind();
     let sidebar_items: Vec<ListItem> = app
         .available_tabs()
         .iter()
         .map(|t| {
-            let title = format!(" {} ", t.title(is_github).to_uppercase());
+            let title = format!(" {} ", t.title(kind).to_uppercase());
             if *t == app.active_tab {
                 ListItem::new(title).style(
                     Style::default()
@@ -320,7 +316,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(sidebar, sidebar_rect);
 
     // Main Area Title
-    let tab_title = format!(" {} ", app.active_tab.title(is_github));
+    let tab_title = format!(" {} ", app.active_tab.title(kind));
     let main_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app.focus_column_checklist {
@@ -493,7 +489,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
             .style(Style::default().bg(Color::Reset));
 
-        let pr_label = if app.gitlab_client.as_ref().map_or(true, |c| c.is_github) {
+        let pr_label = if app.is_github() {
             "Pull Request"
         } else {
             "Merge Request"
@@ -540,7 +536,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             String::new()
         };
 
-        let pr_label = if app.gitlab_client.as_ref().map_or(true, |c| c.is_github) {
+        let pr_label = if app.is_github() {
             "Pull Request"
         } else {
             "Merge Request"

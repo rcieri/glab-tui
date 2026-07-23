@@ -1203,12 +1203,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
     if app.focus_column_checklist {
         let tab = app.active_tab;
-        let is_github = app
-            .gitlab_client
-            .as_ref()
-            .map(|c| c.is_github)
-            .unwrap_or(false);
-        let cols = tab.columns(is_github);
+        let kind = app.kind();
+        let is_github = kind.is_github();
+        let cols = tab.columns(kind);
         let active_idx = app.column_checklist_idx;
 
         let group_cols: Vec<&str> = cols.iter().copied().collect();
@@ -1230,7 +1227,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .title(format!(
                 " {} Configure View: {} ",
                 icons.label_configure,
-                tab.title(is_github)
+                tab.title(kind)
             ))
             .title_style(
                 Style::default()

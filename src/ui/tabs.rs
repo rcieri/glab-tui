@@ -683,11 +683,7 @@ pub(crate) fn render_tab_merge_requests(
                     24,
                 ));
             }
-            let is_github = app
-                .gitlab_client
-                .as_ref()
-                .map(|c| c.is_github)
-                .unwrap_or(false);
+            let is_github = app.is_github();
             if app.is_column_visible(
                 Tab::MergeRequests,
                 if is_github { "Action" } else { "Pipeline" },
@@ -851,11 +847,7 @@ pub(crate) fn render_tab_merge_requests(
             header_cells.push(Cell::from("Labels"));
             widths.push(Constraint::Length(26));
         }
-        let is_github = app
-            .gitlab_client
-            .as_ref()
-            .map(|c| c.is_github)
-            .unwrap_or(false);
+        let is_github = app.is_github();
         if app.is_column_visible(
             Tab::MergeRequests,
             if is_github { "Action" } else { "Pipeline" },
@@ -1229,11 +1221,7 @@ pub(crate) fn render_tab_pipelines(
     header_style: Style,
 ) {
     let icons = crate::config::ICONS.read().unwrap();
-    let is_github = app
-        .gitlab_client
-        .as_ref()
-        .map(|c| c.is_github)
-        .unwrap_or(false);
+    let is_github = app.is_github();
     if app.pipelines.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(if is_github {
@@ -1862,12 +1850,9 @@ pub(crate) fn render_tab_jobs(
             widths.push(Constraint::Min(0));
         }
 
-        let is_github = app
-            .gitlab_client
-            .as_ref()
-            .map(|c| c.is_github)
-            .unwrap_or(false);
-        let jobs_title = Tab::Jobs.title(is_github);
+        let kind = app.kind();
+        let is_github = kind.is_github();
+        let jobs_title = Tab::Jobs.title(kind);
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(
@@ -2956,11 +2941,7 @@ pub(crate) fn render_tab_milestones(
             detail_rect,
         );
     } else {
-        let is_github = app
-            .gitlab_client
-            .as_ref()
-            .map(|c| c.is_github)
-            .unwrap_or(false);
+        let kind = app.kind();
         let mut filtered_milestones = App::filtered_milestones_list(
             &app.milestones.items,
             &app.search_query,
@@ -2986,7 +2967,7 @@ pub(crate) fn render_tab_milestones(
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
-        let cols = Tab::Milestones.columns(is_github);
+        let cols = Tab::Milestones.columns(kind);
         for col in &cols {
             if app.is_column_visible(Tab::Milestones, col) {
                 header_cells.push(Cell::from(*col));
@@ -3370,7 +3351,7 @@ pub(crate) fn render_tab_branches(
             Row::new(cells).style(row_style).height(1)
         });
 
-        let cols = Tab::Branches.columns(false);
+        let cols = Tab::Branches.columns(app.kind());
         let widths: Vec<Constraint> = cols
             .iter()
             .filter(|c| app.is_column_visible(Tab::Branches, c))
@@ -3507,7 +3488,7 @@ pub(crate) fn render_tab_environments(
             Row::new(cells).style(row_style).height(1)
         });
 
-        let cols = Tab::Environments.columns(false);
+        let cols = Tab::Environments.columns(app.kind());
         let widths: Vec<Constraint> = cols
             .iter()
             .filter(|c| app.is_column_visible(Tab::Environments, c))

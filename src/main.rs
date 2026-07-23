@@ -1195,11 +1195,7 @@ async fn main() -> Result<()> {
                                         if !value.trim().is_empty() {
                                             let tag_name = value.trim().to_string();
                                             let tx = events.sender();
-                                            let is_github = app
-                                                .gitlab_client
-                                                .as_ref()
-                                                .map(|c| c.is_github)
-                                                .unwrap_or(false);
+                                            let is_github = app.is_github();
                                             let program = if is_github { "gh" } else { "glab" };
                                             let _ = tx.send(Event::CommandStarted(format!(
                                                 "Creating Release: {} release create {}",
@@ -1558,10 +1554,7 @@ async fn main() -> Result<()> {
                                         mr_iid,
                                         status,
                                     } => {
-                                        let is_github = app
-                                            .gitlab_client
-                                            .as_ref()
-                                            .map_or(false, |c| c.is_github);
+                                        let is_github = app.is_github();
                                         let tx = events.sender();
                                         let comments = app.draft_comments.clone();
                                         app.draft_comments.clear();
@@ -2503,11 +2496,7 @@ async fn main() -> Result<()> {
 
                                         app.selector = None;
 
-                                        let is_github = app
-                                            .gitlab_client
-                                            .as_ref()
-                                            .map(|c| c.is_github)
-                                            .unwrap_or(false);
+                                        let is_github = app.is_github();
                                         let pr_suffix = if is_github {
                                             "Pull Request"
                                         } else {
@@ -2788,10 +2777,7 @@ async fn main() -> Result<()> {
                                                         .find(|c| c.id == comment_id)
                                                         .cloned()
                                                     {
-                                                        let is_github = app
-                                                            .gitlab_client
-                                                            .as_ref()
-                                                            .map_or(false, |c| c.is_github);
+                                                        let is_github = app.is_github();
 
                                                         let mut actions =
                                                             vec!["Reply to Thread".to_string()];
@@ -3800,12 +3786,7 @@ async fn main() -> Result<()> {
                                             current_set.insert(current_val);
                                         }
                                     } else if field_type == "workflow_file" {
-                                        let is_github = app
-                                            .gitlab_client
-                                            .as_ref()
-                                            .map(|c| c.is_github)
-                                            .unwrap_or(false);
-                                        all_items = get_workflow_files(is_github);
+                                        all_items = get_workflow_files(app.is_github());
                                         is_loading = false;
                                         // Pre-select any already-typed value
                                         let current_val = menu.fields[menu.selected_idx].1.clone();
@@ -4725,10 +4706,7 @@ async fn main() -> Result<()> {
                                         } else if matching_current.len() == 1 {
                                             let comment = matching_current[0];
                                             let comment_id = comment.id;
-                                            let is_github = app
-                                                .gitlab_client
-                                                .as_ref()
-                                                .map_or(false, |c| c.is_github);
+                                            let is_github = app.is_github();
 
                                             let mut actions = vec!["Reply to Thread".to_string()];
 
@@ -4885,8 +4863,7 @@ async fn main() -> Result<()> {
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('r') => {
-                                let is_github =
-                                    app.gitlab_client.as_ref().map_or(false, |c| c.is_github);
+                                let is_github = app.is_github();
                                 app.selector = Some(crate::app::Selector {
                                     title: format!(
                                         " Submit {} Review ",
@@ -5090,12 +5067,8 @@ async fn main() -> Result<()> {
                             continue;
                         }
 
-                        let is_github = app
-                            .gitlab_client
-                            .as_ref()
-                            .map(|c| c.is_github)
-                            .unwrap_or(false);
-                        let cols = app.active_tab.columns(is_github);
+                        let kind = app.kind();
+                        let cols = app.active_tab.columns(kind);
                         let group_cols: Vec<&str> = cols.iter().copied().collect();
                         let cols_end = cols.len();
                         let group_end = cols_end + group_cols.len();

@@ -824,6 +824,37 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         _ if keybinding_matches(
+                            &app.config.keybindings.jobs.start_job,
+                            key_event,
+                        ) =>
+                        {
+                            if let Some(client) = &app.gitlab_client {
+                                let client_clone = client.clone();
+                                let project_context = app.project_context.clone();
+                                let pipe_id = app.active_pipeline_id.unwrap_or(0);
+                                let tx = tx.clone();
+
+                                if let Some(j) = app.jobs.items.get_mut(idx) {
+                                    if j.status == "manual" {
+                                        j.status = "running".to_string();
+                                    }
+                                }
+                                tokio::spawn(async move {
+                                    let _ = client_clone.start_job(&project_context, job_id).await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
+                                        &client_clone,
+                                        &project_context,
+                                        pipe_id,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
+                                    }
+                                });
+                            }
+                        }
+                        _ if keybinding_matches(
                             &app.config.keybindings.jobs.select_stage,
                             key_event,
                         ) =>

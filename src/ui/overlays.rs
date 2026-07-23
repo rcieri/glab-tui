@@ -15,10 +15,13 @@ use ratatui::{
 };
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
+    app.overlay_stack.clear();
     let icons = ICONS.read().unwrap();
     if let Some(menu) = &mut app.edit_menu {
         let is_new_entity = menu.is_new();
-        let body = modal_area(f, &menu.title, 52, 48, 42, 8, size);
+        let (body, edit_menu_area) = modal_area(f, &menu.title, 52, 48, 42, 8, size);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::EditMenu, edit_menu_area));
 
         let label_width = menu
             .fields
@@ -192,7 +195,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
-            let body = modal_area(f, &selector.title, 50, 60, 34, 6, size);
+            let (body, selector_area) = modal_area(f, &selector.title, 50, 60, 34, 6, size);
+            app.overlay_stack
+                .push((crate::app::OverlayKind::Selector, selector_area));
 
             let has_filter = selector.field_type != "comment_action_select"
                 && selector.field_type != "review_submit_status"
@@ -424,6 +429,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         // 36 columns wide, 11 rows high
         let area = centered_rect_fixed(36, 11, size);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::DatePicker, area));
         let inner_area = block.inner(area);
 
         let chunks = Layout::default()
@@ -926,6 +933,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(Style::default().bg(Color::Reset));
 
         let area = centered_rect_fixed(72, 30, size);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::Help, area));
 
         let help_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -1099,6 +1108,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let height =
             (columns_list.len() + group_cols.len() + theme_list_len + 4 + 2 + 2 + 6 + 6) as u16;
         let area = centered_rect_fixed(width, height, size);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::Configure, area));
 
         let checklist_block = Block::default()
             .borders(Borders::ALL)
@@ -1396,6 +1407,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let submenu_height = 7;
             let submenu_width = 30;
             let submenu_area = centered_rect_fixed(submenu_width, submenu_height, size);
+            app.overlay_stack
+                .push((crate::app::OverlayKind::SaveMenu, submenu_area));
             let submenu_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
@@ -1464,6 +1477,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .style(Style::default().bg(Color::Reset));
 
             let area = centered_rect_fixed(44, 44, size);
+            app.overlay_stack
+                .push((crate::app::OverlayKind::ColumnFilter, area));
 
             let constraints = vec![
                 Constraint::Length(3), // Search/Filter
@@ -1595,6 +1610,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(Style::default().bg(Color::Reset));
 
         let area = centered_rect_fixed(60, 9, size);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::SubmitReview, area));
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -1687,6 +1704,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(Style::default().bg(Color::Reset));
 
         let area = centered_rect_fixed(60, 9, size);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::ConfirmPopup, area));
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)

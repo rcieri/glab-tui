@@ -24,7 +24,7 @@ pub(crate) fn modal_block(title: &str) -> Block<'static> {
         .style(Style::default().bg(Color::Reset))
 }
 
-/// Clear, size, and render a modal frame. Returns the inner area for body content.
+/// Clear, size, and render a modal frame. Returns (inner_area, outer_area) for body content.
 pub(crate) fn modal_area(
     f: &mut Frame,
     title: &str,
@@ -33,11 +33,11 @@ pub(crate) fn modal_area(
     min_w: u16,
     min_h: u16,
     size: Rect,
-) -> Rect {
+) -> (Rect, Rect) {
     let area = centered_rect_min(percent_x, percent_y, min_w, min_h, size);
     f.render_widget(Clear, area);
     let block = modal_block(title);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    inner
+    (inner, area)
 }

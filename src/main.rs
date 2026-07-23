@@ -220,7 +220,12 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         return;
                     }
                     OverlayKind::Selector => {
-                        handle_selector_mouse(app, inner, row, col, false);
+                        let has_search = app.selector.as_ref().map_or(false, |s| {
+                            s.field_type != "comment_action_select"
+                                && s.field_type != "review_submit_status"
+                                && s.field_type != "merge_options"
+                        });
+                        handle_selector_mouse(app, inner, row, col, has_search);
                         return;
                     }
                     OverlayKind::EditMenu => {

@@ -421,6 +421,128 @@ impl GitlabClient {
     pub async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
         self.backend.open_milestone_in_browser(project, id).await
     }
+
+    pub async fn bulk_update_issues_labels(
+        &self,
+        project: &str,
+        iids: &[u64],
+        labels: &str,
+    ) -> Result<()> {
+        if labels.trim().is_empty() {
+            return Ok(());
+        }
+        let add: Vec<String> = labels
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for &iid in iids {
+            self.backend
+                .update_issue_labels(project, iid, &add, &[])
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn bulk_update_issues_assignees(
+        &self,
+        project: &str,
+        iids: &[u64],
+        assignees: &str,
+    ) -> Result<()> {
+        if assignees.trim().is_empty() {
+            return Ok(());
+        }
+        let add: Vec<String> = assignees
+            .split(',')
+            .map(|s| s.trim().trim_start_matches('@').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for &iid in iids {
+            self.backend
+                .update_issue_assignees(project, iid, &add, &[])
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn bulk_update_issues_milestone(
+        &self,
+        project: &str,
+        iids: &[u64],
+        milestone: &str,
+    ) -> Result<()> {
+        if milestone.trim().is_empty() {
+            return Ok(());
+        }
+        for &iid in iids {
+            self.backend
+                .update_issue_milestone(project, iid, milestone)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn bulk_update_mrs_labels(
+        &self,
+        project: &str,
+        iids: &[u64],
+        labels: &str,
+    ) -> Result<()> {
+        if labels.trim().is_empty() {
+            return Ok(());
+        }
+        let add: Vec<String> = labels
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for &iid in iids {
+            self.backend
+                .update_mr_labels(project, iid, &add, &[])
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn bulk_update_mrs_assignees(
+        &self,
+        project: &str,
+        iids: &[u64],
+        assignees: &str,
+    ) -> Result<()> {
+        if assignees.trim().is_empty() {
+            return Ok(());
+        }
+        let add: Vec<String> = assignees
+            .split(',')
+            .map(|s| s.trim().trim_start_matches('@').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for &iid in iids {
+            self.backend
+                .update_mr_assignees(project, iid, &add, &[])
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn bulk_update_mrs_milestone(
+        &self,
+        project: &str,
+        iids: &[u64],
+        milestone: &str,
+    ) -> Result<()> {
+        if milestone.trim().is_empty() {
+            return Ok(());
+        }
+        for &iid in iids {
+            self.backend
+                .update_mr_milestone(project, iid, milestone)
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 impl Clone for GitlabClient {

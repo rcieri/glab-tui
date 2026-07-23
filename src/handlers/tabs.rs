@@ -47,7 +47,33 @@ pub async fn handle_active_tab_key(
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
-                if let Some(selected_idx) = app.issues.state.selected() {
+                let cursor_iid = app
+                    .issues
+                    .state
+                    .selected()
+                    .and_then(|idx| app.filtered_issues().get(idx).map(|i| i.iid));
+                if let Some(iid) = cursor_iid {
+                    app.selected_issues.insert(iid);
+                }
+                if app.selected_issues.len() > 1 {
+                    let count = app.selected_issues.len();
+                    app.edit_menu = Some(crate::app::EditMenu {
+                        title: format!("Bulk Edit {} Issues", count),
+                        fields: vec![
+                            ("Labels".to_string(), String::new()),
+                            ("Assignees".to_string(), String::new()),
+                            ("Milestone".to_string(), String::new()),
+                        ],
+                        selected_idx: 0,
+                        entity_iid: 0,
+                        entity_type: "new_bulk_edit_issues".to_string(),
+                        state: {
+                            let mut s = ListState::default();
+                            s.select(Some(0));
+                            s
+                        },
+                    });
+                } else if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let labels = if issue.labels.is_empty() {
@@ -167,6 +193,18 @@ pub async fn handle_active_tab_key(
                                     result.map_err(|e| e.to_string()),
                                 ));
                             });
+                        }
+                    }
+                }
+            }
+            _ if keybinding_matches(&app.config.keybindings.issues.select_issue, key_event) => {
+                if let Some(selected_idx) = app.issues.state.selected() {
+                    let iid = app.filtered_issues().get(selected_idx).map(|i| i.iid);
+                    if let Some(iid) = iid {
+                        if app.selected_issues.contains(&iid) {
+                            app.selected_issues.remove(&iid);
+                        } else {
+                            app.selected_issues.insert(iid);
                         }
                     }
                 }
@@ -293,6 +331,113 @@ pub async fn handle_active_tab_key(
                         );
                     }
                 }
+            } else if keybinding_matches(&app.config.keybindings.mrs.select_mr, key_event) {
+                if let Some(selected_idx) = app.mrs.state.selected() {
+                    let iid = app.filtered_mrs().get(selected_idx).map(|m| m.iid);
+                    if let Some(iid) = iid {
+                        if app.selected_mrs.contains(&iid) {
+                            app.selected_mrs.remove(&iid);
+                        } else {
+                            app.selected_mrs.insert(iid);
+                        }
+                    }
+                }
+            } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
+                let cursor_iid = app
+                    .mrs
+                    .state
+                    .selected()
+                    .and_then(|idx| app.filtered_mrs().get(idx).map(|m| m.iid));
+                if let Some(iid) = cursor_iid {
+                    app.selected_mrs.insert(iid);
+                }
+                if app.selected_mrs.len() > 1 {
+                    let count = app.selected_mrs.len();
+                    let pr_suffix = if app.is_github() { "PR" } else { "MR" };
+                    app.edit_menu = Some(crate::app::EditMenu {
+                        title: format!("Bulk Edit {} {}s", count, pr_suffix),
+                        fields: vec![
+                            ("Labels".to_string(), String::new()),
+                            ("Assignees".to_string(), String::new()),
+                            ("Milestone".to_string(), String::new()),
+                        ],
+                        selected_idx: 0,
+                        entity_iid: 0,
+                        entity_type: "new_bulk_edit_mrs".to_string(),
+                        state: {
+                            let mut s = ListState::default();
+                            s.select(Some(0));
+                            s
+                        },
+                    });
+                } else if let Some(selected_idx) = app.mrs.state.selected() {
+                    let filtered = app.filtered_mrs();
+                    if let Some(mr) = filtered.get(selected_idx) {
+                        let labels = if mr.labels.is_empty() {
+                            "None".to_string()
+                        } else {
+                            mr.labels.join(", ")
+                        };
+                        let milestone = mr
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .unwrap_or_else(|| "None".to_string());
+                        let assignees = if mr.assignees.is_empty() {
+                            "None".to_string()
+                        } else {
+                            mr.assignees
+                                .iter()
+                                .map(|a| format!("@{}", a.username))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        let reviewers = if mr.reviewers.is_empty() {
+                            "None".to_string()
+                        } else {
+                            mr.reviewers
+                                .iter()
+                                .map(|r| format!("@{}", r.username))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        let draft_status = if mr.draft { "Draft" } else { "Ready" };
+                        let pr_suffix = if app
+                            .gitlab_client
+                            .as_ref()
+                            .map(|c| c.is_github)
+                            .unwrap_or(false)
+                        {
+                            "PR"
+                        } else {
+                            "MR"
+                        };
+                        app.edit_menu = Some(crate::app::EditMenu {
+                            title: format!("Edit {} #{}", pr_suffix, mr.iid),
+                            fields: vec![
+                                ("Title".to_string(), mr.title.clone()),
+                                ("Labels".to_string(), labels),
+                                ("Assignees".to_string(), assignees),
+                                ("Reviewers".to_string(), reviewers),
+                                ("Milestone".to_string(), milestone),
+                                ("Target Branch".to_string(), mr.target_branch.clone()),
+                                ("Status (Draft/Ready)".to_string(), draft_status.to_string()),
+                                (
+                                    "Description".to_string(),
+                                    mr.description.clone().unwrap_or_default(),
+                                ),
+                            ],
+                            selected_idx: 0,
+                            entity_iid: mr.iid,
+                            entity_type: "mr".to_string(),
+                            state: {
+                                let mut s = ListState::default();
+                                s.select(Some(0));
+                                s
+                            },
+                        });
+                    }
+                }
             } else if let Some(selected_idx) = app.mrs.state.selected() {
                 let filtered = app.filtered_mrs();
                 let mr_ref = filtered.get(selected_idx);
@@ -300,75 +445,6 @@ pub async fn handle_active_tab_key(
                     let mr_iid = mr.iid;
                     let mr_title = mr.title.clone();
                     match key_event.code {
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.edit_entity,
-                            key_event,
-                        ) =>
-                        {
-                            let labels = if mr.labels.is_empty() {
-                                "None".to_string()
-                            } else {
-                                mr.labels.join(", ")
-                            };
-                            let milestone = mr
-                                .milestone
-                                .as_ref()
-                                .map(|m| m.title.clone())
-                                .unwrap_or_else(|| "None".to_string());
-                            let assignees = if mr.assignees.is_empty() {
-                                "None".to_string()
-                            } else {
-                                mr.assignees
-                                    .iter()
-                                    .map(|a| format!("@{}", a.username))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            };
-                            let reviewers = if mr.reviewers.is_empty() {
-                                "None".to_string()
-                            } else {
-                                mr.reviewers
-                                    .iter()
-                                    .map(|r| format!("@{}", r.username))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            };
-                            let draft_status = if mr.draft { "Draft" } else { "Ready" };
-                            let pr_suffix = if app
-                                .gitlab_client
-                                .as_ref()
-                                .map(|c| c.is_github)
-                                .unwrap_or(false)
-                            {
-                                "PR"
-                            } else {
-                                "MR"
-                            };
-                            app.edit_menu = Some(crate::app::EditMenu {
-                                title: format!("Edit {} #{}", pr_suffix, mr.iid),
-                                fields: vec![
-                                    ("Title".to_string(), mr.title.clone()),
-                                    ("Labels".to_string(), labels),
-                                    ("Assignees".to_string(), assignees),
-                                    ("Reviewers".to_string(), reviewers),
-                                    ("Milestone".to_string(), milestone),
-                                    ("Target Branch".to_string(), mr.target_branch.clone()),
-                                    ("Status (Draft/Ready)".to_string(), draft_status.to_string()),
-                                    (
-                                        "Description".to_string(),
-                                        mr.description.clone().unwrap_or_default(),
-                                    ),
-                                ],
-                                selected_idx: 0,
-                                entity_iid: mr.iid,
-                                entity_type: "mr".to_string(),
-                                state: {
-                                    let mut s = ListState::default();
-                                    s.select(Some(0));
-                                    s
-                                },
-                            });
-                        }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.approve_mr,
                             key_event,
@@ -1710,7 +1786,16 @@ pub async fn handle_active_tab_key(
             }
 
             KeyCode::Esc | KeyCode::Backspace => {
-                if app.job_trace_loading {
+                let has_selections = !app.selected_issues.is_empty()
+                    || !app.selected_mrs.is_empty()
+                    || !app.selected_pipelines.is_empty()
+                    || !app.selected_jobs.is_empty();
+                if has_selections {
+                    app.selected_issues.clear();
+                    app.selected_mrs.clear();
+                    app.selected_pipelines.clear();
+                    app.selected_jobs.clear();
+                } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {
                     app.details_zoomed = false;

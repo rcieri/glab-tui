@@ -1801,6 +1801,8 @@ pub struct App {
     pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
+    pub selected_issues: std::collections::HashSet<u64>,
+    pub selected_mrs: std::collections::HashSet<u64>,
     pub details_zoomed: bool,
     pub detail_visible: bool,
     pub job_trace_needs_scroll_to_bottom: bool,
@@ -1889,6 +1891,8 @@ impl Default for App {
             detail_scroll: 0,
             selected_pipelines: std::collections::HashSet::new(),
             selected_jobs: std::collections::HashSet::new(),
+            selected_issues: std::collections::HashSet::new(),
+            selected_mrs: std::collections::HashSet::new(),
             details_zoomed: false,
             detail_visible: false,
             job_trace_needs_scroll_to_bottom: false,
@@ -2173,6 +2177,8 @@ impl App {
         self.active_tab = tabs[next_index];
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
+        self.selected_issues.clear();
+        self.selected_mrs.clear();
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -2192,6 +2198,8 @@ impl App {
         self.active_tab = tabs[prev_index];
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
+        self.selected_issues.clear();
+        self.selected_mrs.clear();
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();

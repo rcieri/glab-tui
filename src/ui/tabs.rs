@@ -83,6 +83,7 @@ pub(crate) fn render_tab_issues(
 
         let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
             let is_selected = app.issues.state.selected() == Some(idx);
+            let is_checked = app.selected_issues.contains(&i.iid);
             let (state_text, state_style) = if i.state == "opened" {
                 (
                     format!("{} OPEN", icons.state_open),
@@ -90,6 +91,8 @@ pub(crate) fn render_tab_issues(
                         .fg(THEME.read().unwrap().green)
                         .bg(if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             THEME.read().unwrap().green_bg
                         })
@@ -102,6 +105,8 @@ pub(crate) fn render_tab_issues(
                         .fg(THEME.read().unwrap().red)
                         .bg(if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             THEME.read().unwrap().red_bg
                         })
@@ -124,7 +129,7 @@ pub(crate) fn render_tab_issues(
                     &state_text,
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     state_style,
                     Alignment::Center,
                 ));
@@ -134,7 +139,7 @@ pub(crate) fn render_tab_issues(
                     &truncate(&i.title, 100),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().text_normal),
                     Alignment::Left,
                 ));
@@ -153,7 +158,7 @@ pub(crate) fn render_tab_issues(
                     &truncate(&assignees_str, 20),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
                 ));
@@ -163,7 +168,7 @@ pub(crate) fn render_tab_issues(
                     &i.labels,
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     24,
                 ));
             }
@@ -177,7 +182,7 @@ pub(crate) fn render_tab_issues(
                     &truncate(&milestone_str, 18),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().yellow),
                     Alignment::Left,
                 ));
@@ -188,7 +193,7 @@ pub(crate) fn render_tab_issues(
                     due_str,
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().yellow),
                     Alignment::Left,
                 ));
@@ -199,13 +204,15 @@ pub(crate) fn render_tab_issues(
                     &truncate(&author_str, 15),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_selected {
                 Style::default().bg(THEME.read().unwrap().highlight_bg)
+            } else if is_checked {
+                Style::default().bg(THEME.read().unwrap().checked_bg)
             } else {
                 Style::default()
             };
@@ -525,6 +532,7 @@ pub(crate) fn render_tab_merge_requests(
 
         let rows = filtered_mrs.iter().enumerate().map(|(idx, m)| {
             let is_selected = app.mrs.state.selected() == Some(idx);
+            let is_checked = app.selected_mrs.contains(&m.iid);
             let (prefix, clean_title) = crate::utils::format::parse_mr_title_prefix(&m.title);
 
             let (state_text, state_style) = if m.state == "opened" {
@@ -534,6 +542,8 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(THEME.read().unwrap().green)
                         .bg(if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             THEME.read().unwrap().green_bg
                         })
@@ -546,6 +556,8 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(THEME.read().unwrap().purple)
                         .bg(if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             THEME.read().unwrap().purple_bg
                         })
@@ -558,6 +570,8 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(THEME.read().unwrap().red)
                         .bg(if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             THEME.read().unwrap().red_bg
                         })
@@ -572,6 +586,8 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(THEME.read().unwrap().yellow)
                         .bg(if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             THEME.read().unwrap().yellow_bg
                         })
@@ -586,6 +602,8 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(THEME.read().unwrap().yellow)
                             .bg(if is_selected {
                                 THEME.read().unwrap().highlight_bg
+                            } else if is_checked {
+                                THEME.read().unwrap().checked_bg
                             } else {
                                 THEME.read().unwrap().yellow_bg
                             })
@@ -598,6 +616,8 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(THEME.read().unwrap().green)
                             .bg(if is_selected {
                                 THEME.read().unwrap().highlight_bg
+                            } else if is_checked {
+                                THEME.read().unwrap().checked_bg
                             } else {
                                 THEME.read().unwrap().green_bg
                             })
@@ -622,7 +642,7 @@ pub(crate) fn render_tab_merge_requests(
                     &state_text,
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     state_style,
                     Alignment::Center,
                 ));
@@ -632,7 +652,7 @@ pub(crate) fn render_tab_merge_requests(
                     &status_styled,
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     status_style,
                     Alignment::Center,
                 ));
@@ -642,7 +662,7 @@ pub(crate) fn render_tab_merge_requests(
                     &truncate(&clean_title, 100),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().text_normal),
                     Alignment::Left,
                 ));
@@ -661,7 +681,7 @@ pub(crate) fn render_tab_merge_requests(
                     &truncate(&assignees_str, 20),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
                 ));
@@ -680,7 +700,7 @@ pub(crate) fn render_tab_merge_requests(
                     &truncate(&reviewers_str, 20),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
                 ));
@@ -690,7 +710,7 @@ pub(crate) fn render_tab_merge_requests(
                     &m.labels,
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     24,
                 ));
             }
@@ -756,6 +776,8 @@ pub(crate) fn render_tab_merge_requests(
                         };
                         let bg = if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             pipe_bg
                         };
@@ -763,7 +785,7 @@ pub(crate) fn render_tab_merge_requests(
                             &pipe_text,
                             &app.search_query,
                             is_selected,
-                            false,
+                            is_checked,
                             Style::default()
                                 .fg(pipe_color)
                                 .bg(bg)
@@ -775,7 +797,7 @@ pub(crate) fn render_tab_merge_requests(
                             &stages_dots,
                             &app.search_query,
                             is_selected,
-                            false,
+                            is_checked,
                             Style::default().fg(THEME.read().unwrap().text_normal),
                             Alignment::Left,
                         ));
@@ -785,7 +807,7 @@ pub(crate) fn render_tab_merge_requests(
                         "—",
                         &app.search_query,
                         is_selected,
-                        false,
+                        is_checked,
                         Style::default().fg(THEME.read().unwrap().text_muted),
                         Alignment::Center,
                     ));
@@ -801,7 +823,7 @@ pub(crate) fn render_tab_merge_requests(
                     &truncate(&mr_milestone_str, 18),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().yellow),
                     Alignment::Left,
                 ));
@@ -812,13 +834,15 @@ pub(crate) fn render_tab_merge_requests(
                     &truncate(&author_str, 15),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_selected {
                 Style::default().bg(THEME.read().unwrap().highlight_bg)
+            } else if is_checked {
+                Style::default().bg(THEME.read().unwrap().checked_bg)
             } else {
                 Style::default()
             };

@@ -914,6 +914,32 @@ async fn main() -> Result<()> {
 
                                     let diff_res = cmd.output().await;
 
+                                    // Close the diff terminal entry before the backend
+                                    // list_mr_notes call, which emits its own entry.
+                                    match diff_res.as_ref() {
+                                        Ok(output) if output.status.success() => {
+                                            let _ = tx.send(Event::CommandCompleted(
+                                                app::Tab::MergeRequests,
+                                                Ok(()),
+                                            ));
+                                        }
+                                        Ok(output) => {
+                                            let err = String::from_utf8_lossy(&output.stderr)
+                                                .trim()
+                                                .to_string();
+                                            let _ = tx.send(Event::CommandCompleted(
+                                                app::Tab::MergeRequests,
+                                                Err(format!("Failed to fetch diff: {}", err)),
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            let _ = tx.send(Event::CommandCompleted(
+                                                app::Tab::MergeRequests,
+                                                Err(format!("Failed to fetch diff: {}", e)),
+                                            ));
+                                        }
+                                    }
+
                                     let comments = if let Some(ref c) = client {
                                         crate::domain::mr::list_mr_notes(
                                             c,

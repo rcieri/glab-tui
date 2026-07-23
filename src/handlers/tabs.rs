@@ -1320,10 +1320,6 @@ pub async fn handle_active_tab_key(
                         let project_path = app.project_context.clone();
                         let milestone_iid = milestone.iid;
                         let tx = tx.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Closing milestone #{}",
-                            milestone_iid
-                        )));
                         tokio::spawn(async move {
                             let res = crate::domain::milestones::update_milestone_state(
                                 &client,
@@ -1361,10 +1357,6 @@ pub async fn handle_active_tab_key(
                         let project_path = app.project_context.clone();
                         let milestone_iid = milestone.iid;
                         let tx = tx.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Reopening milestone #{}",
-                            milestone_iid
-                        )));
                         tokio::spawn(async move {
                             let res = crate::domain::milestones::update_milestone_state(
                                 &client,

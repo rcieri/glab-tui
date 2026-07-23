@@ -1697,6 +1697,11 @@ impl Backend for GhBackend {
         close: bool,
     ) -> Result<()> {
         let state = if close { "closed" } else { "open" };
+        let desc = if close {
+            "CLOSING MILESTONE"
+        } else {
+            "REOPENING MILESTONE"
+        };
         self.run_gh(
             &[
                 "api",
@@ -1706,7 +1711,7 @@ impl Backend for GhBackend {
                 "-f",
                 &format!("state={}", state),
             ],
-            "Updating Milestone State",
+            desc,
         )
         .await?;
         Ok(())

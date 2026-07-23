@@ -664,6 +664,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Merge Requests",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.mrs.view_related_pipelines
+                )),
+                action: "View related pipelines for selected MR",
+            },
+            Shortcut {
+                category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.close_entity)),
                 action: "Close selected MR",
             },
@@ -726,6 +734,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 category: "Jobs",
                 key: s("r"),
                 action: "Retry selected job(s)",
+            },
+            Shortcut {
+                category: "Jobs",
+                key: d(format!("{}", app.config.keybindings.jobs.start_job)),
+                action: "Start manual job (GitLab only)",
             },
             Shortcut {
                 category: "Jobs",

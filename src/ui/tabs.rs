@@ -776,6 +776,8 @@ pub(crate) fn render_tab_merge_requests(
                         };
                         let bg = if is_selected {
                             THEME.read().unwrap().highlight_bg
+                        } else if is_checked {
+                            THEME.read().unwrap().checked_bg
                         } else {
                             pipe_bg
                         };
@@ -783,7 +785,7 @@ pub(crate) fn render_tab_merge_requests(
                             &pipe_text,
                             &app.search_query,
                             is_selected,
-                            false,
+                            is_checked,
                             Style::default()
                                 .fg(pipe_color)
                                 .bg(bg)
@@ -795,7 +797,7 @@ pub(crate) fn render_tab_merge_requests(
                             &stages_dots,
                             &app.search_query,
                             is_selected,
-                            false,
+                            is_checked,
                             Style::default().fg(THEME.read().unwrap().text_normal),
                             Alignment::Left,
                         ));
@@ -805,7 +807,7 @@ pub(crate) fn render_tab_merge_requests(
                         "—",
                         &app.search_query,
                         is_selected,
-                        false,
+                        is_checked,
                         Style::default().fg(THEME.read().unwrap().text_muted),
                         Alignment::Center,
                     ));
@@ -821,7 +823,7 @@ pub(crate) fn render_tab_merge_requests(
                     &truncate(&mr_milestone_str, 18),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().yellow),
                     Alignment::Left,
                 ));
@@ -832,7 +834,7 @@ pub(crate) fn render_tab_merge_requests(
                     &truncate(&author_str, 15),
                     &app.search_query,
                     is_selected,
-                    false,
+                    is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
                 ));

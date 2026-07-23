@@ -342,7 +342,7 @@ pub async fn handle_active_tab_key(
                         }
                     }
                 }
-            } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) && {
+            } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
                 let cursor_iid = app
                     .mrs
                     .state
@@ -351,26 +351,93 @@ pub async fn handle_active_tab_key(
                 if let Some(iid) = cursor_iid {
                     app.selected_mrs.insert(iid);
                 }
-                app.selected_mrs.len() > 1
-            } {
-                let count = app.selected_mrs.len();
-                let pr_suffix = if app.is_github() { "PR" } else { "MR" };
-                app.edit_menu = Some(crate::app::EditMenu {
-                    title: format!("Bulk Edit {} {}s", count, pr_suffix),
-                    fields: vec![
-                        ("Labels".to_string(), String::new()),
-                        ("Assignees".to_string(), String::new()),
-                        ("Milestone".to_string(), String::new()),
-                    ],
-                    selected_idx: 0,
-                    entity_iid: 0,
-                    entity_type: "new_bulk_edit_mrs".to_string(),
-                    state: {
-                        let mut s = ListState::default();
-                        s.select(Some(0));
-                        s
-                    },
-                });
+                if app.selected_mrs.len() > 1 {
+                    let count = app.selected_mrs.len();
+                    let pr_suffix = if app.is_github() { "PR" } else { "MR" };
+                    app.edit_menu = Some(crate::app::EditMenu {
+                        title: format!("Bulk Edit {} {}s", count, pr_suffix),
+                        fields: vec![
+                            ("Labels".to_string(), String::new()),
+                            ("Assignees".to_string(), String::new()),
+                            ("Milestone".to_string(), String::new()),
+                        ],
+                        selected_idx: 0,
+                        entity_iid: 0,
+                        entity_type: "new_bulk_edit_mrs".to_string(),
+                        state: {
+                            let mut s = ListState::default();
+                            s.select(Some(0));
+                            s
+                        },
+                    });
+                } else if let Some(selected_idx) = app.mrs.state.selected() {
+                    let filtered = app.filtered_mrs();
+                    if let Some(mr) = filtered.get(selected_idx) {
+                        let labels = if mr.labels.is_empty() {
+                            "None".to_string()
+                        } else {
+                            mr.labels.join(", ")
+                        };
+                        let milestone = mr
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .unwrap_or_else(|| "None".to_string());
+                        let assignees = if mr.assignees.is_empty() {
+                            "None".to_string()
+                        } else {
+                            mr.assignees
+                                .iter()
+                                .map(|a| format!("@{}", a.username))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        let reviewers = if mr.reviewers.is_empty() {
+                            "None".to_string()
+                        } else {
+                            mr.reviewers
+                                .iter()
+                                .map(|r| format!("@{}", r.username))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        let draft_status = if mr.draft { "Draft" } else { "Ready" };
+                        let pr_suffix = if app
+                            .gitlab_client
+                            .as_ref()
+                            .map(|c| c.is_github)
+                            .unwrap_or(false)
+                        {
+                            "PR"
+                        } else {
+                            "MR"
+                        };
+                        app.edit_menu = Some(crate::app::EditMenu {
+                            title: format!("Edit {} #{}", pr_suffix, mr.iid),
+                            fields: vec![
+                                ("Title".to_string(), mr.title.clone()),
+                                ("Labels".to_string(), labels),
+                                ("Assignees".to_string(), assignees),
+                                ("Reviewers".to_string(), reviewers),
+                                ("Milestone".to_string(), milestone),
+                                ("Target Branch".to_string(), mr.target_branch.clone()),
+                                ("Status (Draft/Ready)".to_string(), draft_status.to_string()),
+                                (
+                                    "Description".to_string(),
+                                    mr.description.clone().unwrap_or_default(),
+                                ),
+                            ],
+                            selected_idx: 0,
+                            entity_iid: mr.iid,
+                            entity_type: "mr".to_string(),
+                            state: {
+                                let mut s = ListState::default();
+                                s.select(Some(0));
+                                s
+                            },
+                        });
+                    }
+                }
             } else if let Some(selected_idx) = app.mrs.state.selected() {
                 let filtered = app.filtered_mrs();
                 let mr_ref = filtered.get(selected_idx);
@@ -378,75 +445,6 @@ pub async fn handle_active_tab_key(
                     let mr_iid = mr.iid;
                     let mr_title = mr.title.clone();
                     match key_event.code {
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.edit_entity,
-                            key_event,
-                        ) =>
-                        {
-                            let labels = if mr.labels.is_empty() {
-                                "None".to_string()
-                            } else {
-                                mr.labels.join(", ")
-                            };
-                            let milestone = mr
-                                .milestone
-                                .as_ref()
-                                .map(|m| m.title.clone())
-                                .unwrap_or_else(|| "None".to_string());
-                            let assignees = if mr.assignees.is_empty() {
-                                "None".to_string()
-                            } else {
-                                mr.assignees
-                                    .iter()
-                                    .map(|a| format!("@{}", a.username))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            };
-                            let reviewers = if mr.reviewers.is_empty() {
-                                "None".to_string()
-                            } else {
-                                mr.reviewers
-                                    .iter()
-                                    .map(|r| format!("@{}", r.username))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            };
-                            let draft_status = if mr.draft { "Draft" } else { "Ready" };
-                            let pr_suffix = if app
-                                .gitlab_client
-                                .as_ref()
-                                .map(|c| c.is_github)
-                                .unwrap_or(false)
-                            {
-                                "PR"
-                            } else {
-                                "MR"
-                            };
-                            app.edit_menu = Some(crate::app::EditMenu {
-                                title: format!("Edit {} #{}", pr_suffix, mr.iid),
-                                fields: vec![
-                                    ("Title".to_string(), mr.title.clone()),
-                                    ("Labels".to_string(), labels),
-                                    ("Assignees".to_string(), assignees),
-                                    ("Reviewers".to_string(), reviewers),
-                                    ("Milestone".to_string(), milestone),
-                                    ("Target Branch".to_string(), mr.target_branch.clone()),
-                                    ("Status (Draft/Ready)".to_string(), draft_status.to_string()),
-                                    (
-                                        "Description".to_string(),
-                                        mr.description.clone().unwrap_or_default(),
-                                    ),
-                                ],
-                                selected_idx: 0,
-                                entity_iid: mr.iid,
-                                entity_type: "mr".to_string(),
-                                state: {
-                                    let mut s = ListState::default();
-                                    s.select(Some(0));
-                                    s
-                                },
-                            });
-                        }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.approve_mr,
                             key_event,

@@ -1274,6 +1274,12 @@ impl Backend for GhBackend {
         Ok(())
     }
 
+    async fn start_job(&self, _project: &str, _job_id: u64) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "Starting manual jobs is not supported on GitHub"
+        ))
+    }
+
     async fn run_pipeline(
         &self,
         project: &str,

@@ -206,6 +206,7 @@ pub trait Backend: Send + Sync {
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn retry_job(&self, project: &str, job_id: u64) -> Result<()>;
+    async fn start_job(&self, project: &str, job_id: u64) -> Result<()>;
     async fn cancel_job(&self, project: &str, job_id: u64) -> Result<()>;
     async fn run_pipeline(
         &self,

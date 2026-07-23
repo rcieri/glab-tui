@@ -1325,6 +1325,14 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
+    async fn start_job(&self, project: &str, job_id: u64) -> Result<()> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!("/projects/{}/jobs/{}/play", encoded, job_id);
+        self.raw_api(&endpoint, "POST", None, "Starting Job")
+            .await?;
+        Ok(())
+    }
+
     async fn run_pipeline(
         &self,
         _project: &str,

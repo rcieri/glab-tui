@@ -748,6 +748,8 @@ pub struct KeybindingJobs {
     #[serde(default)]
     pub retry: String,
     #[serde(default)]
+    pub start_job: String,
+    #[serde(default)]
     pub select_stage: String,
     #[serde(default)]
     pub cancel: String,
@@ -875,6 +877,7 @@ keybind_defaults! {
     def_enter_pipeline = "p",
     def_select_job = "Space",
     def_retry_job = "r",
+    def_start_job = "p",
     def_select_stage = "s",
     def_cancel_job = "c",
     def_download_artifact_job = "d",
@@ -980,6 +983,7 @@ impl Default for KeybindingJobs {
             enter_pipeline: def_enter_pipeline(),
             select_job: def_select_job(),
             retry: def_retry_job(),
+            start_job: def_start_job(),
             select_stage: def_select_stage(),
             cancel: def_cancel_job(),
             download_artifact: def_download_artifact_job(),

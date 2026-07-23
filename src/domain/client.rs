@@ -61,6 +61,10 @@ impl GitlabClient {
         self.backend.cancel_job(project_path, job_id).await
     }
 
+    pub async fn start_job(&self, project_path: &str, job_id: u64) -> Result<()> {
+        self.backend.start_job(project_path, job_id).await
+    }
+
     pub async fn fetch_labels(&self, project_path: &str) -> Result<Vec<String>> {
         self.backend.fetch_labels(project_path).await
     }

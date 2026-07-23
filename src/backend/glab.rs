@@ -1742,6 +1742,11 @@ impl Backend for GlabBackend {
         close: bool,
     ) -> Result<()> {
         let action = if close { "close" } else { "reopen" };
+        let desc = if close {
+            "CLOSING MILESTONE"
+        } else {
+            "REOPENING MILESTONE"
+        };
         self.run_glab(
             &[
                 "milestone",
@@ -1750,7 +1755,7 @@ impl Backend for GlabBackend {
                 "-R",
                 project,
             ],
-            "Updating Milestone State",
+            desc,
         )
         .await?;
         Ok(())

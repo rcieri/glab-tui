@@ -1167,6 +1167,26 @@ impl Backend for GhBackend {
         pipeline_id: u64,
         _page_size: usize,
     ) -> Result<Vec<Job>> {
+        // Fetch workflow name for this run
+        let workflow_name = self
+            .run_gh(
+                &[
+                    "run",
+                    "view",
+                    &pipeline_id.to_string(),
+                    "--json",
+                    "workflowName",
+                    "--jq",
+                    ".workflowName",
+                    "-R",
+                    project,
+                ],
+                "Fetching Workflow",
+            )
+            .await
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| "actions".to_string());
+
         let raw = self
             .run_gh(
                 &[
@@ -1214,7 +1234,7 @@ impl Backend for GhBackend {
                 Job {
                     id: j.id,
                     status,
-                    stage: "build".to_string(),
+                    stage: workflow_name.clone(),
                     name: j.name,
                     matrix: None,
                 }

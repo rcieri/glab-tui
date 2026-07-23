@@ -282,6 +282,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
         (content_rect, Rect::default())
     };
 
+    app.sidebar_rect = Some(sidebar_rect);
+    app.content_rect = Some(content_area);
+    app.detail_rect = if detail_rect.width > 0 {
+        Some(detail_rect)
+    } else {
+        None
+    };
+
     // Sidebar: Tabs
     let kind = app.kind();
     let sidebar_items: Vec<ListItem> = app

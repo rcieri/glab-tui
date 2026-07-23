@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::widgets::ListState;
 use std::sync::LazyLock;
@@ -1775,6 +1776,9 @@ pub struct App {
         std::collections::HashMap<String, std::collections::HashSet<String>>,
     >,
     pub column_filter_context: Option<(Tab, String)>,
+    pub sidebar_rect: Option<Rect>,
+    pub content_rect: Option<Rect>,
+    pub detail_rect: Option<Rect>,
 }
 
 impl Default for App {
@@ -1865,6 +1869,9 @@ impl Default for App {
             group_items: Vec::new(),
             column_filters: std::collections::HashMap::new(),
             column_filter_context: None,
+            sidebar_rect: None,
+            content_rect: None,
+            detail_rect: None,
         }
     }
 }
@@ -1875,6 +1882,22 @@ impl App {
             .as_ref()
             .map(|c| c.backend.kind())
             .unwrap_or(BackendKind::GitLab)
+    }
+
+    pub fn active_table_state_mut(&mut self) -> Option<&mut ratatui::widgets::TableState> {
+        match self.active_tab {
+            Tab::Issues => Some(&mut self.issues.state),
+            Tab::MergeRequests => Some(&mut self.mrs.state),
+            Tab::Pipelines => Some(&mut self.pipelines.state),
+            Tab::Jobs => Some(&mut self.jobs.state),
+            Tab::Runners => Some(&mut self.runners.state),
+            Tab::Releases => Some(&mut self.releases.state),
+            Tab::Todos => Some(&mut self.todos.state),
+            Tab::Milestones => Some(&mut self.milestones.state),
+            Tab::Branches => Some(&mut self.branches.state),
+            Tab::Environments => Some(&mut self.environments.state),
+            Tab::Terminal => None,
+        }
     }
 
     pub fn is_github(&self) -> bool {

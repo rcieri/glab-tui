@@ -426,6 +426,29 @@ pub async fn handle_active_tab_key(
                                 }
                             });
                         }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.view_related_pipelines,
+                            key_event,
+                        ) =>
+                        {
+                            let pipe_id = mr.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
+                                app.pipelines
+                                    .items
+                                    .iter()
+                                    .find(|p| p.ref_branch() == mr.source_branch)
+                                    .map(|p| p.id())
+                            });
+                            app.active_tab = crate::app::Tab::Pipelines;
+                            app.pending_pipeline_select = pipe_id;
+                            if let Some(client) = &app.gitlab_client {
+                                crate::fetch::spawn_refresh_active_tab(
+                                    client,
+                                    &app.project_context,
+                                    crate::app::Tab::Pipelines,
+                                    tx.clone(),
+                                );
+                            }
+                        }
                         KeyCode::Char('o') => {
                             let is_github = app.is_github();
                             let entity = if is_github { "pr" } else { "mr" };

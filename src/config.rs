@@ -690,6 +690,8 @@ pub struct KeybindingMrs {
     #[serde(default)]
     pub view_diff: String,
     #[serde(default)]
+    pub view_related_pipelines: String,
+    #[serde(default)]
     pub edit_entity: String,
     #[serde(default)]
     pub close_entity: String,
@@ -859,6 +861,7 @@ keybind_defaults! {
     def_merge_mr = "m",
     def_toggle_draft = "s",
     def_view_diff = "v",
+    def_view_related_pipelines = "P",
     def_trigger_pipeline = "p",
     def_retry = "r",
     def_cancel = "d",
@@ -931,6 +934,7 @@ impl Default for KeybindingMrs {
             merge_mr: def_merge_mr(),
             toggle_draft: def_toggle_draft(),
             view_diff: def_view_diff(),
+            view_related_pipelines: def_view_related_pipelines(),
             edit_entity: def_edit_entity(),
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),

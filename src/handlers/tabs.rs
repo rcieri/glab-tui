@@ -559,15 +559,21 @@ pub async fn handle_active_tab_key(
                 let current_branch =
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
+                let is_github = app.is_github();
+                let mut fields = vec![
+                    ("Branch / Ref".to_string(), current_branch.clone()),
+                    ("Variables".to_string(), String::new()),
+                    ("Inputs".to_string(), String::new()),
+                ];
+                if is_github {
+                    fields.push(("Workflow File".to_string(), String::new()));
+                } else {
+                    fields.insert(1, ("Merge Request Pipeline".to_string(), "No".to_string()));
+                }
+
                 app.edit_menu = Some(crate::app::EditMenu {
                     title: "Run Pipeline".to_string(),
-                    fields: vec![
-                        ("Branch / Ref".to_string(), current_branch.clone()),
-                        ("Merge Request Pipeline".to_string(), "No".to_string()),
-                        ("Variables".to_string(), String::new()),
-                        ("Inputs".to_string(), String::new()),
-                        ("Workflow / CI File (GitHub)".to_string(), String::new()),
-                    ],
+                    fields,
                     selected_idx: 0,
                     entity_iid: 0,
                     entity_type: "new_pipeline".to_string(),

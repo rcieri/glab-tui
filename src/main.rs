@@ -3278,7 +3278,7 @@ async fn main() -> Result<()> {
                                                 "source_branch" => "Source Branch",
                                                 "target_branch" => "Target Branch",
                                                 "pipeline_branch" => "Branch / Ref",
-                                                "workflow_file" => "Workflow / CI File (GitHub)",
+                                                "workflow_file" => "Workflow File",
                                                 "tag" => "Tag",
                                                 _ => "",
                                             };
@@ -3679,7 +3679,7 @@ async fn main() -> Result<()> {
                                         let workflow = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Workflow / CI File (GitHub)")
+                                            .find(|(k, _)| k == "Workflow File")
                                             .map(|(_, v)| v.trim().to_string())
                                             .unwrap_or_default();
 
@@ -3788,7 +3788,7 @@ async fn main() -> Result<()> {
                                     || field_name == "Source Branch"
                                     || field_name == "Target Branch"
                                     || field_name == "Branch / Ref"
-                                    || field_name == "Workflow / CI File (GitHub)"
+                                    || field_name == "Workflow File"
                                     || field_name == "Tag"
                                 {
                                     let mut current_set = std::collections::HashSet::new();
@@ -3803,7 +3803,7 @@ async fn main() -> Result<()> {
                                         "Source Branch" => "source_branch",
                                         "Target Branch" => "target_branch",
                                         "Branch / Ref" => "pipeline_branch",
-                                        "Workflow / CI File (GitHub)" => "workflow_file",
+                                        "Workflow File" => "workflow_file",
                                         "Tag" => "tag",
                                         _ => "",
                                     };

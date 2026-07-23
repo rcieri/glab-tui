@@ -1499,7 +1499,11 @@ pub(crate) fn render_tab_pipelines(
                 let mut text = Vec::new();
                 text.push(Line::from(vec![
                     Span::styled(
-                        "Pipeline ID: ",
+                        if is_github {
+                            "Run ID:     "
+                        } else {
+                            "Pipeline ID: "
+                        },
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ),
                     Span::styled(
@@ -1554,8 +1558,13 @@ pub(crate) fn render_tab_pipelines(
                 text.push(Line::from(""));
 
                 if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
+                    let stage_label = if is_github {
+                        "Jobs Status:"
+                    } else {
+                        "Stages Success Rate:"
+                    };
                     text.push(Line::from(vec![Span::styled(
-                        format!("{} Stages Success Rate:", icons.label_stages),
+                        format!("{} {stage_label}", icons.label_stages),
                         Style::default()
                             .fg(THEME.read().unwrap().header_fg)
                             .add_modifier(Modifier::BOLD),
@@ -1564,7 +1573,11 @@ pub(crate) fn render_tab_pipelines(
                     super::helpers::append_stage_summaries(&mut text, jobs);
                 } else {
                     text.push(Line::from(vec![Span::styled(
-                        "Loading stages...",
+                        if is_github {
+                            "Loading jobs..."
+                        } else {
+                            "Loading stages..."
+                        },
                         Style::default()
                             .fg(THEME.read().unwrap().text_muted)
                             .add_modifier(Modifier::ITALIC),
@@ -1985,8 +1998,13 @@ pub(crate) fn render_tab_jobs(
                 )
                 .border_style(Style::default().fg(THEME.read().unwrap().border));
             let mut text = Vec::new();
+            let stage_label = if is_github {
+                "Jobs Status:"
+            } else {
+                "Stages Success Rate:"
+            };
             text.push(Line::from(vec![Span::styled(
-                "Stages Success Rate:",
+                stage_label,
                 Style::default()
                     .fg(THEME.read().unwrap().header_fg)
                     .add_modifier(Modifier::BOLD),

@@ -1739,6 +1739,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     }
 
     if let Some(confirm) = &app.confirm_popup {
+        let kind = app.kind();
         let (title, message) = match confirm {
             crate::app::ConfirmAction::DeleteMilestone(iid) => (
                 format!(" {} Delete Milestone? ", icons.action_delete),
@@ -1763,21 +1764,33 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     iid
                 ),
             ),
-            crate::app::ConfirmAction::CloseMr(iid) => (
-                format!(" {} Close Merge Request? ", icons.action_close),
-                format!("Are you sure you want to close MR/PR #{}?", iid),
-            ),
-            crate::app::ConfirmAction::DeleteMr(iid) => (
-                format!(" {} Delete Merge Request? ", icons.action_delete),
-                format!(
-                    "Are you sure you want to delete MR #{}? This action is permanent.",
-                    iid
-                ),
-            ),
-            crate::app::ConfirmAction::MergeMr(iid) => (
-                format!(" {} Merge Request? ", icons.action_merge),
-                format!("Are you sure you want to merge MR/PR #{}?", iid),
-            ),
+            crate::app::ConfirmAction::CloseMr(iid) => {
+                let mr = kind.term("mr");
+                let mr_short = kind.term("mr_short");
+                (
+                    format!(" {} Close {mr}? ", icons.action_close),
+                    format!("Are you sure you want to close {mr_short} #{}?", iid),
+                )
+            }
+            crate::app::ConfirmAction::DeleteMr(iid) => {
+                let mr = kind.term("mr");
+                let mr_short = kind.term("mr_short");
+                (
+                    format!(" {} Delete {mr}? ", icons.action_delete),
+                    format!(
+                        "Are you sure you want to delete {mr_short} #{}? This action is permanent.",
+                        iid
+                    ),
+                )
+            }
+            crate::app::ConfirmAction::MergeMr(iid) => {
+                let mr = kind.term("mr");
+                let mr_short = kind.term("mr_short");
+                (
+                    format!(" {} Merge {mr}? ", icons.action_merge),
+                    format!("Are you sure you want to merge {mr_short} #{}?", iid),
+                )
+            }
         };
 
         let block = Block::default()

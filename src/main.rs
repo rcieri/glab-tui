@@ -529,6 +529,13 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::Pipelines);
                     app.status_message = None;
                     app.pipelines.items = pipelines;
+                    if let Some(pipe_id) = app.pending_pipeline_select.take() {
+                        if let Some(idx) =
+                            app.pipelines.items.iter().position(|p| p.id() == pipe_id)
+                        {
+                            app.pipelines.state.select(Some(idx));
+                        }
+                    }
                     app.update_filter_selection();
                     let new_ids: std::collections::HashSet<u64> =
                         app.pipelines.items.iter().map(|p| p.id()).collect();

@@ -1582,8 +1582,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Min(0),    // Message
-                Constraint::Length(2), // Footer
+                Constraint::Min(0), // Message
             ])
             .split(area);
 

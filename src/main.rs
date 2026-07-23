@@ -204,7 +204,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         return;
                     }
                     OverlayKind::ColumnFilter => {
-                        handle_selector_mouse(app, inner, row, col, true);
+                        handle_selector_mouse(app, inner, row, col, 3, 3);
                         return;
                     }
                     OverlayKind::SaveMenu => {
@@ -225,7 +225,8 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                                 && s.field_type != "review_submit_status"
                                 && s.field_type != "merge_options"
                         });
-                        handle_selector_mouse(app, inner, row, col, has_search);
+                        let sr = if has_search { 3 } else { 0 };
+                        handle_selector_mouse(app, inner, row, col, sr, 1);
                         return;
                     }
                     OverlayKind::EditMenu => {
@@ -451,7 +452,8 @@ fn handle_selector_mouse(
     inner: ratatui::layout::Rect,
     row: u16,
     col: u16,
-    has_search: bool,
+    search_rows: u16,
+    footer_rows: u16,
 ) {
     let sel = match &mut app.selector {
         Some(s) => s,
@@ -459,18 +461,17 @@ fn handle_selector_mouse(
     };
 
     // Search/filter bar click area
-    if has_search {
-        let search_top = inner.y;
-        let search_bot = inner.y + 3;
-        if row >= search_top && row < search_bot {
+    if search_rows > 0 {
+        let search_bot = inner.y + search_rows;
+        if row >= inner.y && row < search_bot {
             sel.is_filtering = true;
             return;
         }
     }
 
-    // List area: after search (if present), before footer
-    let list_y = if has_search { inner.y + 3 } else { inner.y };
-    let list_h = inner.height.saturating_sub(if has_search { 4 } else { 1 });
+    // List area: after search, before footer
+    let list_y = inner.y + search_rows;
+    let list_h = inner.height.saturating_sub(search_rows + footer_rows);
     let list_bot = list_y + list_h;
 
     if row < list_y || row >= list_bot {

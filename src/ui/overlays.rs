@@ -221,10 +221,18 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             items
         };
 
-        let footer_text = if is_new_entity {
-            " ↑↓ Navigate  Enter: Edit / Submit  Esc: Cancel "
+        let mnemonics = if menu.entity_type == "issue" {
+            "  t: Title  c: Confidential  u: Due Date  w: Weight  d/D: Description  "
+        } else if menu.entity_type == "mr" {
+            "  t: Title  s: Draft/Ready  g: Target Branch  d/D: Description  "
         } else {
-            " ↑↓ Navigate  Enter: Edit  Esc: Close "
+            ""
+        };
+
+        let footer_text = if is_new_entity {
+            format!(" ↑↓ Navigate  Enter: Edit / Submit  Esc: Cancel {mnemonics}")
+        } else {
+            format!(" ↑↓ Navigate  Enter: Edit  Esc: Close  {mnemonics}")
         };
 
         let chunks = Layout::default()
@@ -236,7 +244,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let mut state = menu.state.clone();
         f.render_stateful_widget(list, chunks[0], &mut state);
         menu.state = state;
-        render_footer(f, footer_text, chunks[1]);
+        render_footer(f, &footer_text, chunks[1]);
     }
 
     if app.column_filter_context.is_none() {

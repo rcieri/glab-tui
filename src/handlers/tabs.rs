@@ -45,7 +45,25 @@ pub async fn handle_active_tab_key(
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
-                if let Some(selected_idx) = app.issues.state.selected() {
+                if app.selected_issues.len() > 1 {
+                    let count = app.selected_issues.len();
+                    app.edit_menu = Some(crate::app::EditMenu {
+                        title: format!("Bulk Edit {} Issues", count),
+                        fields: vec![
+                            ("Labels".to_string(), String::new()),
+                            ("Assignees".to_string(), String::new()),
+                            ("Milestone".to_string(), String::new()),
+                        ],
+                        selected_idx: 0,
+                        entity_iid: 0,
+                        entity_type: "new_bulk_edit_issues".to_string(),
+                        state: {
+                            let mut s = ListState::default();
+                            s.select(Some(0));
+                            s
+                        },
+                    });
+                } else if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let labels = if issue.labels.is_empty() {
@@ -219,6 +237,38 @@ pub async fn handle_active_tab_key(
                         );
                     }
                 }
+            } else if keybinding_matches(&app.config.keybindings.mrs.select_mr, key_event) {
+                if let Some(selected_idx) = app.mrs.state.selected() {
+                    let iid = app.filtered_mrs().get(selected_idx).map(|m| m.iid);
+                    if let Some(iid) = iid {
+                        if app.selected_mrs.contains(&iid) {
+                            app.selected_mrs.remove(&iid);
+                        } else {
+                            app.selected_mrs.insert(iid);
+                        }
+                    }
+                }
+            } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event)
+                && app.selected_mrs.len() > 1
+            {
+                let count = app.selected_mrs.len();
+                let pr_suffix = if app.is_github() { "PR" } else { "MR" };
+                app.edit_menu = Some(crate::app::EditMenu {
+                    title: format!("Bulk Edit {} {}s", count, pr_suffix),
+                    fields: vec![
+                        ("Labels".to_string(), String::new()),
+                        ("Assignees".to_string(), String::new()),
+                        ("Milestone".to_string(), String::new()),
+                    ],
+                    selected_idx: 0,
+                    entity_iid: 0,
+                    entity_type: "new_bulk_edit_mrs".to_string(),
+                    state: {
+                        let mut s = ListState::default();
+                        s.select(Some(0));
+                        s
+                    },
+                });
             } else if let Some(selected_idx) = app.mrs.state.selected() {
                 let filtered = app.filtered_mrs();
                 let mr_ref = filtered.get(selected_idx);
@@ -544,6 +594,22 @@ pub async fn handle_active_tab_key(
                                         result.map_err(|e| e.to_string()),
                                     ));
                                 });
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.issues.select_issue,
+                            key_event,
+                        ) =>
+                        {
+                            if let Some(selected_idx) = app.issues.state.selected() {
+                                let iid = app.filtered_issues().get(selected_idx).map(|i| i.iid);
+                                if let Some(iid) = iid {
+                                    if app.selected_issues.contains(&iid) {
+                                        app.selected_issues.remove(&iid);
+                                    } else {
+                                        app.selected_issues.insert(iid);
+                                    }
+                                }
                             }
                         }
                         _ => handled = false,

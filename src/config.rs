@@ -668,6 +668,8 @@ pub struct KeybindingIssues {
     pub reopen_entity: String,
     #[serde(default = "def_delete_entity")]
     pub delete_entity: String,
+    #[serde(default)]
+    pub select_issue: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -692,6 +694,8 @@ pub struct KeybindingMrs {
     pub reopen_entity: String,
     #[serde(default = "def_delete_entity")]
     pub delete_entity: String,
+    #[serde(default)]
+    pub select_mr: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -847,11 +851,13 @@ keybind_defaults! {
     def_scroll_up = "K",
     def_save_view = "s",
     def_create_issue = "n",
+    def_select_issue = "Space",
     def_edit_entity = "e",
     def_close_entity = "c",
     def_reopen_entity = "r",
     def_delete_entity = "d",
     def_create_mr = "n",
+    def_select_mr = "Space",
     def_approve_mr = "a",
     def_merge_mr = "m",
     def_toggle_draft = "s",
@@ -918,6 +924,7 @@ impl Default for KeybindingIssues {
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
             delete_entity: def_delete_entity(),
+            select_issue: def_select_issue(),
         }
     }
 }
@@ -935,6 +942,7 @@ impl Default for KeybindingMrs {
             close_entity: def_close_entity(),
             reopen_entity: def_reopen_entity(),
             delete_entity: def_delete_entity(),
+            select_mr: def_select_mr(),
         }
     }
 }
@@ -1207,6 +1215,7 @@ save_view = "s"
 
 [keybindings.issues]
 create_issue = "n"
+select_issue = "Space"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
@@ -1214,6 +1223,7 @@ delete_entity = "d"
 
 [keybindings.mrs]
 create_mr = "n"
+select_mr = "Space"
 approve_mr = "a"
 merge_mr = "m"
 toggle_draft = "s"

@@ -3581,6 +3581,154 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                         continue;
+                                    } else if entity_type == "new_bulk_edit_issues" {
+                                        let labels = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Labels")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let assignees = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Assignees")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let milestone = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Milestone")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        let selected: Vec<u64> =
+                                            app.selected_issues.iter().copied().collect();
+                                        app.edit_menu = None;
+                                        app.selected_issues.clear();
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let tab = app.active_tab;
+                                        tokio::spawn(async move {
+                                            if !labels.is_empty() {
+                                                if let Err(e) = client
+                                                    .bulk_update_issues_labels(
+                                                        &project, &selected, &labels,
+                                                    )
+                                                    .await
+                                                {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                            if !assignees.is_empty() {
+                                                if let Err(e) = client
+                                                    .bulk_update_issues_assignees(
+                                                        &project, &selected, &assignees,
+                                                    )
+                                                    .await
+                                                {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                            if !milestone.is_empty() {
+                                                if let Err(e) = client
+                                                    .bulk_update_issues_milestone(
+                                                        &project, &selected, &milestone,
+                                                    )
+                                                    .await
+                                                {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                            let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
+                                        });
+                                        continue;
+                                    } else if entity_type == "new_bulk_edit_mrs" {
+                                        let labels = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Labels")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let assignees = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Assignees")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+                                        let milestone = menu
+                                            .fields
+                                            .iter()
+                                            .find(|(k, _)| k == "Milestone")
+                                            .map(|(_, v)| v.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        let selected: Vec<u64> =
+                                            app.selected_mrs.iter().copied().collect();
+                                        app.edit_menu = None;
+                                        app.selected_mrs.clear();
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let tab = app.active_tab;
+                                        tokio::spawn(async move {
+                                            if !labels.is_empty() {
+                                                if let Err(e) = client
+                                                    .bulk_update_mrs_labels(
+                                                        &project, &selected, &labels,
+                                                    )
+                                                    .await
+                                                {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                            if !assignees.is_empty() {
+                                                if let Err(e) = client
+                                                    .bulk_update_mrs_assignees(
+                                                        &project, &selected, &assignees,
+                                                    )
+                                                    .await
+                                                {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                            if !milestone.is_empty() {
+                                                if let Err(e) = client
+                                                    .bulk_update_mrs_milestone(
+                                                        &project, &selected, &milestone,
+                                                    )
+                                                    .await
+                                                {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                    return;
+                                                }
+                                            }
+                                            let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
+                                        });
+                                        continue;
                                     } else if entity_type == "new_milestone" {
                                         let title = menu
                                             .fields

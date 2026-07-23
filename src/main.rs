@@ -76,6 +76,77 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
     pairs
 }
 
+fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent) {
+    use crossterm::event::MouseEventKind;
+
+    match mouse_event.kind {
+        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+            if let Some(content_rect) = app.content_rect {
+                if mouse_event.row >= content_rect.y
+                    && mouse_event.row < content_rect.y + content_rect.height
+                {
+                    if let Some(s) = app.active_table_state_mut() {
+                        let selected = s.selected().unwrap_or(0);
+                        let new = if mouse_event.kind == MouseEventKind::ScrollDown {
+                            selected.saturating_add(1)
+                        } else {
+                            selected.saturating_sub(1)
+                        };
+                        s.select(Some(new));
+                    }
+                    return;
+                }
+            }
+            if let Some(detail_rect) = app.detail_rect {
+                if mouse_event.row >= detail_rect.y
+                    && mouse_event.row < detail_rect.y + detail_rect.height
+                {
+                    if mouse_event.kind == MouseEventKind::ScrollDown {
+                        app.detail_scroll = app.detail_scroll.saturating_add(1);
+                    } else {
+                        app.detail_scroll = app.detail_scroll.saturating_sub(1);
+                    }
+                    return;
+                }
+            }
+        }
+        MouseEventKind::Down(_) => {
+            let click_row = mouse_event.row;
+            let click_col = mouse_event.column;
+
+            if let Some(sidebar_rect) = app.sidebar_rect {
+                if click_col >= sidebar_rect.x
+                    && click_col < sidebar_rect.x + sidebar_rect.width
+                    && click_row > sidebar_rect.y
+                    && click_row < sidebar_rect.y + sidebar_rect.height
+                {
+                    let tab_idx = (click_row - sidebar_rect.y - 1) as usize;
+                    let tabs = app.available_tabs();
+                    if tab_idx < tabs.len() {
+                        app.active_tab = tabs[tab_idx];
+                    }
+                    return;
+                }
+            }
+
+            if let Some(content_rect) = app.content_rect {
+                if click_col >= content_rect.x
+                    && click_col < content_rect.x + content_rect.width
+                    && click_row >= content_rect.y + 3
+                    && click_row < content_rect.y + content_rect.height
+                {
+                    let row_idx = (click_row - content_rect.y).saturating_sub(3) as usize;
+                    if let Some(s) = app.active_table_state_mut() {
+                        s.select(Some(row_idx));
+                    }
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 pub use git_helpers::*;
 pub use keybinding::keybinding_matches;
 pub use templates::*;
@@ -951,6 +1022,9 @@ async fn main() -> Result<()> {
                             app.error_message = Some(err);
                         }
                     }
+                }
+                Event::Mouse(mouse_event) => {
+                    handle_mouse_event(&mut app, &mouse_event);
                 }
                 Event::Key(key_event) => {
                     if key_event.code == KeyCode::Char('c')

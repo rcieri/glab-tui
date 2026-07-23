@@ -9,6 +9,17 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
+/// Return a responsive column width: uses `base` normally but shrinks on narrow terminals.
+fn col_w(content_width: u16, base: u16) -> Constraint {
+    if content_width >= 120 {
+        Constraint::Length(base)
+    } else if content_width >= 90 {
+        Constraint::Length(base.min(14))
+    } else {
+        Constraint::Length(base.min(10))
+    }
+}
+
 pub(crate) fn render_tab_issues(
     f: &mut Frame,
     app: &mut App,
@@ -218,23 +229,23 @@ pub(crate) fn render_tab_issues(
         }
         if app.is_column_visible(Tab::Issues, "Assignees") {
             header_cells.push(Cell::from("Assignees"));
-            widths.push(Constraint::Length(22));
+            widths.push(col_w(content_area.width, 22));
         }
         if app.is_column_visible(Tab::Issues, "Labels") {
             header_cells.push(Cell::from("Labels"));
-            widths.push(Constraint::Length(26));
+            widths.push(col_w(content_area.width, 26));
         }
         if app.is_column_visible(Tab::Issues, "Milestone") {
             header_cells.push(Cell::from("Milestone"));
-            widths.push(Constraint::Length(18));
+            widths.push(col_w(content_area.width, 18));
         }
         if app.is_column_visible(Tab::Issues, "Due Date") {
             header_cells.push(Cell::from("Due Date"));
-            widths.push(Constraint::Length(20));
+            widths.push(col_w(content_area.width, 20));
         }
         if app.is_column_visible(Tab::Issues, "Author") {
             header_cells.push(Cell::from("Author"));
-            widths.push(Constraint::Length(18));
+            widths.push(col_w(content_area.width, 18));
         }
 
         if widths.is_empty() {
@@ -837,15 +848,15 @@ pub(crate) fn render_tab_merge_requests(
         }
         if app.is_column_visible(Tab::MergeRequests, "Assignees") {
             header_cells.push(Cell::from("Assignees"));
-            widths.push(Constraint::Length(22));
+            widths.push(col_w(content_area.width, 22));
         }
         if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
             header_cells.push(Cell::from("Reviewers"));
-            widths.push(Constraint::Length(22));
+            widths.push(col_w(content_area.width, 22));
         }
         if app.is_column_visible(Tab::MergeRequests, "Labels") {
             header_cells.push(Cell::from("Labels"));
-            widths.push(Constraint::Length(26));
+            widths.push(col_w(content_area.width, 26));
         }
         let is_github = app.is_github();
         if app.is_column_visible(
@@ -860,11 +871,11 @@ pub(crate) fn render_tab_merge_requests(
         }
         if app.is_column_visible(Tab::MergeRequests, "Milestone") {
             header_cells.push(Cell::from("Milestone"));
-            widths.push(Constraint::Length(18));
+            widths.push(col_w(content_area.width, 18));
         }
         if app.is_column_visible(Tab::MergeRequests, "Author") {
             header_cells.push(Cell::from("Author"));
-            widths.push(Constraint::Length(18));
+            widths.push(col_w(content_area.width, 18));
         }
 
         if widths.is_empty() {

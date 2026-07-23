@@ -47,6 +47,14 @@ pub async fn handle_active_tab_key(
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
+                let cursor_iid = app
+                    .issues
+                    .state
+                    .selected()
+                    .and_then(|idx| app.filtered_issues().get(idx).map(|i| i.iid));
+                if let Some(iid) = cursor_iid {
+                    app.selected_issues.insert(iid);
+                }
                 if app.selected_issues.len() > 1 {
                     let count = app.selected_issues.len();
                     app.edit_menu = Some(crate::app::EditMenu {
@@ -334,9 +342,17 @@ pub async fn handle_active_tab_key(
                         }
                     }
                 }
-            } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event)
-                && app.selected_mrs.len() > 1
-            {
+            } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) && {
+                let cursor_iid = app
+                    .mrs
+                    .state
+                    .selected()
+                    .and_then(|idx| app.filtered_mrs().get(idx).map(|m| m.iid));
+                if let Some(iid) = cursor_iid {
+                    app.selected_mrs.insert(iid);
+                }
+                app.selected_mrs.len() > 1
+            } {
                 let count = app.selected_mrs.len();
                 let pr_suffix = if app.is_github() { "PR" } else { "MR" };
                 app.edit_menu = Some(crate::app::EditMenu {

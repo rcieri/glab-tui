@@ -1,6 +1,6 @@
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::{get_label_color, highlight_fuzzy_match};
-use super::modal::{modal_area, render_footer};
+use super::modal::modal_area;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
@@ -63,44 +63,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 };
 
                 let mut val_spans = Vec::new();
-                if val.is_empty() {
-                    let action_hint = if is_selected {
-                        match label.as_str() {
-                            "Labels"
-                            | "Assignees"
-                            | "Reviewers"
-                            | "Milestone"
-                            | "Confidential"
-                            | "Status (Draft/Ready)"
-                            | "Merge Request Pipeline"
-                            | "Source Branch"
-                            | "Target Branch" => " <Enter to select>",
-                            "Description" => " <Enter to edit>",
-                            _ => " <Enter to edit>",
-                        }
-                    } else {
-                        " <empty>"
-                    };
-                    let hint_style = if is_selected {
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::ITALIC)
-                    } else {
-                        Style::default()
-                            .fg(THEME.read().unwrap().border)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::ITALIC)
-                    };
-                    val_spans.push(Span::styled(
-                        if is_selected {
-                            format!("{} ▋", action_hint)
-                        } else {
-                            action_hint.to_string()
-                        },
-                        hint_style,
-                    ));
-                } else {
+                if !val.is_empty() {
                     let truncated = if val.len() > 50 {
                         let mut s = val[..47].to_string();
                         s.push_str("...");
@@ -221,30 +184,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             items
         };
 
-        let mnemonics = if menu.entity_type == "issue" {
-            "  t: Title  c: Confidential  u: Due Date  w: Weight  d/D: Description  "
-        } else if menu.entity_type == "mr" {
-            "  t: Title  s: Draft/Ready  g: Target Branch  d/D: Description  "
-        } else {
-            ""
-        };
-
-        let footer_text = if is_new_entity {
-            format!(" ↑↓ Navigate  Enter: Edit / Submit  Esc: Cancel {mnemonics}")
-        } else {
-            format!(" ↑↓ Navigate  Enter: Edit  Esc: Close  {mnemonics}")
-        };
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)])
-            .split(body);
-
         let list = List::new(all_items).style(Style::default().bg(Color::Reset));
         let mut state = menu.state.clone();
-        f.render_stateful_widget(list, chunks[0], &mut state);
+        f.render_stateful_widget(list, body, &mut state);
         menu.state = state;
-        render_footer(f, &footer_text, chunks[1]);
     }
 
     if app.column_filter_context.is_none() {
@@ -259,12 +202,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 vec![
                     Constraint::Length(3), // Search/Filter
                     Constraint::Min(0),    // List of items
-                    Constraint::Length(1), // Footer
                 ]
             } else {
                 vec![
-                    Constraint::Min(0),    // List of items
-                    Constraint::Length(1), // Footer
+                    Constraint::Min(0), // List of items
                 ]
             };
 
@@ -273,10 +214,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .constraints(constraints)
                 .split(body);
 
-            let (search_chunk, list_chunk, footer_chunk) = if has_filter {
-                (Some(chunks[0]), chunks[1], chunks[2])
+            let (search_chunk, list_chunk) = if has_filter {
+                (Some(chunks[0]), chunks[1])
             } else {
-                (None, chunks[0], chunks[1])
+                (None, chunks[0])
             };
 
             let border_color_search = if selector.is_filtering {
@@ -312,16 +253,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .block(search_block)
                 .style(search_style)
                 .wrap(ratatui::widgets::Wrap { trim: true });
-
-            let footer_text = if selector.is_filtering {
-                "  Esc/Enter: Stop filtering • Backspace: Delete  "
-            } else if has_filter {
-                "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • f: Filter • Esc: Back  "
-            } else if selector.multi_select {
-                "  j/k: Navigate • Space: Toggle • Enter: Save & Exit • Esc: Back  "
-            } else {
-                "  j/k: Navigate • Enter: Select • Esc: Back  "
-            };
 
             if let Some(sc) = search_chunk {
                 f.render_widget(search_p, sc);
@@ -431,7 +362,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     selector.state = state;
                 }
             }
-            render_footer(f, footer_text, footer_chunk);
         }
     }
 
@@ -456,8 +386,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .margin(1)
             .constraints(
                 [
-                    Constraint::Min(0),    // Value input line
-                    Constraint::Length(2), // Help footer
+                    Constraint::Min(0), // Value input line
                 ]
                 .as_ref(),
             )
@@ -478,17 +407,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .wrap(ratatui::widgets::Wrap { trim: true });
 
-        let footer_p = Paragraph::new("  Enter: Confirm • Esc: Cancel • Ctrl-e: Open $EDITOR  ")
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .bg(Color::Reset)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .alignment(ratatui::layout::Alignment::Center);
-
         f.render_widget(value_p, chunks[0]);
-        f.render_widget(footer_p, chunks[1]);
     }
 
     if let Some(date_picker) = &app.date_picker {
@@ -513,7 +432,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 [
                     Constraint::Length(1), // Month/Year line
                     Constraint::Min(0),    // Grid of days
-                    Constraint::Length(1), // Footer keys
                 ]
                 .as_ref(),
             )
@@ -600,20 +518,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .header(table_header)
             .column_spacing(1);
 
-        let footer_p = Paragraph::new("←↓↑→/hjkl: Move • [/]: Month • Enter: Set")
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .bg(Color::Reset)
-                    .add_modifier(Modifier::ITALIC),
-            )
-            .alignment(Alignment::Center);
-
         f.render_widget(Clear, area);
         f.render_widget(block, area);
         f.render_widget(header_p, chunks[0]);
         f.render_widget(table, chunks[1]);
-        f.render_widget(footer_p, chunks[2]);
     }
 
     if app.show_help {
@@ -1008,7 +916,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 [
                     Constraint::Length(3), // Search / Filter
                     Constraint::Min(0),    // Table
-                    Constraint::Length(2), // Help footer
                 ]
                 .as_ref(),
             )
@@ -1150,19 +1057,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .row_highlight_style(Style::default())
             .column_spacing(2);
 
-        let footer_p = Paragraph::new(" Press Esc or Enter to close ")
-            .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .add_modifier(Modifier::ITALIC),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
         f.render_widget(Clear, area);
         f.render_widget(search_p, help_chunks[0]);
         f.render_widget(table, help_chunks[1]);
-        f.render_widget(footer_p, help_chunks[2]);
     }
 
     if app.focus_column_checklist {
@@ -1228,7 +1125,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         constraints.push(Constraint::Length(1)); // spacer
         constraints.push(Constraint::Length(1)); // SAVE header
         constraints.push(Constraint::Length(1)); // SAVE button
-        constraints.push(Constraint::Min(0)); // footer
 
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -1476,17 +1372,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(save_button_style)
             .alignment(Alignment::Center);
         f.render_widget(save_button, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let footer_p = Paragraph::new(" [Spc/Enter] Toggle • [,/Esc] Close ")
-            .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .add_modifier(Modifier::ITALIC),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
-        f.render_widget(footer_p, popup_layout[chunk_idx]);
 
         // Save submenu
         if app.save_menu_open {
@@ -1565,7 +1450,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let constraints = vec![
                 Constraint::Length(3), // Search/Filter
                 Constraint::Min(0),    // List of items
-                Constraint::Length(3), // Help/Info footer
             ];
 
             let chunks = Layout::default()
@@ -1574,7 +1458,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .constraints(constraints)
                 .split(area);
 
-            let (search_chunk, list_chunk, footer_chunk) = (chunks[0], chunks[1], chunks[2]);
+            let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
 
             let border_color_search = if selector.is_filtering {
                 THEME.read().unwrap().border_focused
@@ -1676,16 +1560,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let mut state = selector.state.clone();
             f.render_stateful_widget(list, list_chunk, &mut state);
             selector.state = state;
-
-            let footer_p = Paragraph::new(" [Spc] Toggle • [Enter] Confirm • [Esc] Cancel ")
-                .alignment(Alignment::Center)
-                .style(
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
-                        .add_modifier(Modifier::ITALIC),
-                )
-                .wrap(ratatui::widgets::Wrap { trim: true });
-            f.render_widget(footer_p, footer_chunk);
         }
     }
 
@@ -1723,19 +1597,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         .style(Style::default().fg(THEME.read().unwrap().text_normal))
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-        let footer_p = Paragraph::new(" y: Yes (Submit) • n: No (Discard & Exit) • Esc: Cancel ")
-            .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .add_modifier(Modifier::ITALIC),
-            )
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
         f.render_widget(Clear, area);
         f.render_widget(block, area);
         f.render_widget(message_p, chunks[0]);
-        f.render_widget(footer_p, chunks[1]);
     }
 
     if let Some(confirm) = &app.confirm_popup {
@@ -1811,8 +1675,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Min(0),    // Message
-                Constraint::Length(2), // Footer
+                Constraint::Min(0), // Message
             ])
             .split(area);
 
@@ -1821,44 +1684,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(Style::default().fg(THEME.read().unwrap().text_normal))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
-        let footer_p = Paragraph::new(Line::from(vec![
-            Span::styled(
-                "     [ YES ]     ",
-                Style::default()
-                    .fg(if app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().bg
-                    } else {
-                        THEME.read().unwrap().border_focused
-                    })
-                    .bg(if app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().border_focused
-                    } else {
-                        Color::Reset
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(
-                "     [ NO ]     ",
-                Style::default()
-                    .fg(if !app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().bg
-                    } else {
-                        THEME.read().unwrap().border_focused
-                    })
-                    .bg(if !app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().border_focused
-                    } else {
-                        Color::Reset
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]))
-        .alignment(Alignment::Center);
-
         f.render_widget(Clear, area);
         f.render_widget(block, area);
         f.render_widget(message_p, chunks[0]);
-        f.render_widget(footer_p, chunks[1]);
     }
 }

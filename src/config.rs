@@ -26,6 +26,28 @@ pub struct Theme {
     pub yellow_bg: Color,
     pub purple: Color,
     pub purple_bg: Color,
+    // ── Diff ──
+    pub diff_addition_fg: Color,
+    pub diff_addition_bg: Color,
+    pub diff_deletion_fg: Color,
+    pub diff_deletion_bg: Color,
+    pub diff_gutter_bg: Color,
+    pub diff_sep: Color,
+    // ── Comments ──
+    pub comment_bg: Color,
+    pub comment_draft_bg: Color,
+    // ── Modals ──
+    pub modal_border: Color,
+    pub hint_text: Color,
+    // ── Pipelines ──
+    pub pipeline_success: Color,
+    pub pipeline_failed: Color,
+    pub pipeline_running: Color,
+    pub pipeline_pending: Color,
+    pub pipeline_canceled: Color,
+    pub pipeline_skipped: Color,
+    // ── Label palette ──
+    pub label_palette: [Color; 10],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,7 +251,7 @@ fn color_to_hex(c: Color) -> String {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ThemeToml {
     bg: String,
     border: String,
@@ -250,36 +272,148 @@ struct ThemeToml {
     yellow_bg: String,
     purple: String,
     purple_bg: String,
+    // ── Diff (optional — fall back to derived values) ──
+    #[serde(default)]
+    diff_addition_fg: Option<String>,
+    #[serde(default)]
+    diff_addition_bg: Option<String>,
+    #[serde(default)]
+    diff_deletion_fg: Option<String>,
+    #[serde(default)]
+    diff_deletion_bg: Option<String>,
+    #[serde(default)]
+    diff_gutter_bg: Option<String>,
+    #[serde(default)]
+    diff_sep: Option<String>,
+    // ── Comments ──
+    #[serde(default)]
+    comment_bg: Option<String>,
+    #[serde(default)]
+    comment_draft_bg: Option<String>,
+    // ── Modals ──
+    #[serde(default)]
+    modal_border: Option<String>,
+    #[serde(default)]
+    hint_text: Option<String>,
+    // ── Pipelines ──
+    #[serde(default)]
+    pipeline_success: Option<String>,
+    #[serde(default)]
+    pipeline_failed: Option<String>,
+    #[serde(default)]
+    pipeline_running: Option<String>,
+    #[serde(default)]
+    pipeline_pending: Option<String>,
+    #[serde(default)]
+    pipeline_canceled: Option<String>,
+    #[serde(default)]
+    pipeline_skipped: Option<String>,
+    // ── Label palette ──
+    #[serde(default)]
+    label_palette_0: Option<String>,
+    #[serde(default)]
+    label_palette_1: Option<String>,
+    #[serde(default)]
+    label_palette_2: Option<String>,
+    #[serde(default)]
+    label_palette_3: Option<String>,
+    #[serde(default)]
+    label_palette_4: Option<String>,
+    #[serde(default)]
+    label_palette_5: Option<String>,
+    #[serde(default)]
+    label_palette_6: Option<String>,
+    #[serde(default)]
+    label_palette_7: Option<String>,
+    #[serde(default)]
+    label_palette_8: Option<String>,
+    #[serde(default)]
+    label_palette_9: Option<String>,
 }
 
 impl ThemeToml {
     fn to_theme(&self) -> Option<Theme> {
+        let bg = hex_to_color(&self.bg)?;
+        let border = hex_to_color(&self.border)?;
+        let border_focused = hex_to_color(&self.border_focused)?;
+        let header_fg = hex_to_color(&self.header_fg)?;
+        let highlight_bg = hex_to_color(&self.highlight_bg)?;
+        let inactive_bg = hex_to_color(&self.inactive_bg)?;
+        let text_normal = hex_to_color(&self.text_normal)?;
+        let text_muted = hex_to_color(&self.text_muted)?;
+        let checked_bg = hex_to_color(&self.checked_bg)?;
+        let green = hex_to_color(&self.green)?;
+        let green_bg = hex_to_color(&self.green_bg)?;
+        let red = hex_to_color(&self.red)?;
+        let red_bg = hex_to_color(&self.red_bg)?;
+        let blue = hex_to_color(&self.blue)?;
+        let blue_bg = hex_to_color(&self.blue_bg)?;
+        let yellow = hex_to_color(&self.yellow)?;
+        let yellow_bg = hex_to_color(&self.yellow_bg)?;
+        let purple = hex_to_color(&self.purple)?;
+        let purple_bg = hex_to_color(&self.purple_bg)?;
+
+        let hex_or = |opt: &Option<String>, fallback: Color| -> Color {
+            opt.as_ref()
+                .and_then(|s| hex_to_color(s))
+                .unwrap_or(fallback)
+        };
+
         Some(Theme {
-            bg: hex_to_color(&self.bg)?,
-            border: hex_to_color(&self.border)?,
-            border_focused: hex_to_color(&self.border_focused)?,
-            header_fg: hex_to_color(&self.header_fg)?,
-            highlight_bg: hex_to_color(&self.highlight_bg)?,
-            inactive_bg: hex_to_color(&self.inactive_bg)?,
-            text_normal: hex_to_color(&self.text_normal)?,
-            text_muted: hex_to_color(&self.text_muted)?,
-            checked_bg: hex_to_color(&self.checked_bg)?,
-            green: hex_to_color(&self.green)?,
-            green_bg: hex_to_color(&self.green_bg)?,
-            red: hex_to_color(&self.red)?,
-            red_bg: hex_to_color(&self.red_bg)?,
-            blue: hex_to_color(&self.blue)?,
-            blue_bg: hex_to_color(&self.blue_bg)?,
-            yellow: hex_to_color(&self.yellow)?,
-            yellow_bg: hex_to_color(&self.yellow_bg)?,
-            purple: hex_to_color(&self.purple)?,
-            purple_bg: hex_to_color(&self.purple_bg)?,
+            bg,
+            border,
+            border_focused,
+            header_fg,
+            highlight_bg,
+            inactive_bg,
+            text_normal,
+            text_muted,
+            checked_bg,
+            green,
+            green_bg,
+            red,
+            red_bg,
+            blue,
+            blue_bg,
+            yellow,
+            yellow_bg,
+            purple,
+            purple_bg,
+            diff_addition_fg: hex_or(&self.diff_addition_fg, green),
+            diff_addition_bg: hex_or(&self.diff_addition_bg, green_bg),
+            diff_deletion_fg: hex_or(&self.diff_deletion_fg, red),
+            diff_deletion_bg: hex_or(&self.diff_deletion_bg, red_bg),
+            diff_gutter_bg: hex_or(&self.diff_gutter_bg, border),
+            diff_sep: hex_or(&self.diff_sep, text_muted),
+            comment_bg: hex_or(&self.comment_bg, highlight_bg),
+            comment_draft_bg: hex_or(&self.comment_draft_bg, yellow_bg),
+            modal_border: hex_or(&self.modal_border, border_focused),
+            hint_text: hex_or(&self.hint_text, text_muted),
+            pipeline_success: hex_or(&self.pipeline_success, green),
+            pipeline_failed: hex_or(&self.pipeline_failed, red),
+            pipeline_running: hex_or(&self.pipeline_running, blue),
+            pipeline_pending: hex_or(&self.pipeline_pending, yellow),
+            pipeline_canceled: hex_or(&self.pipeline_canceled, text_muted),
+            pipeline_skipped: hex_or(&self.pipeline_skipped, text_muted),
+            label_palette: [
+                hex_or(&self.label_palette_0, purple),
+                hex_or(&self.label_palette_1, blue),
+                hex_or(&self.label_palette_2, green),
+                hex_or(&self.label_palette_3, yellow),
+                hex_or(&self.label_palette_4, red),
+                hex_or(&self.label_palette_5, Color::Rgb(240, 140, 180)),
+                hex_or(&self.label_palette_6, Color::Rgb(250, 120, 80)),
+                hex_or(&self.label_palette_7, Color::Rgb(40, 200, 200)),
+                hex_or(&self.label_palette_8, Color::Rgb(180, 230, 40)),
+                hex_or(&self.label_palette_9, Color::Rgb(220, 160, 255)),
+            ],
         })
     }
 }
 
 const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("default", include_str!("themes/default.toml")),
+    ("clean", include_str!("themes/clean.toml")),
     ("tokyo-night", include_str!("themes/tokyo-night.toml")),
     ("gruvbox", include_str!("themes/gruvbox.toml")),
     ("nord", include_str!("themes/nord.toml")),
@@ -358,6 +492,34 @@ impl Theme {
             yellow_bg:        Color::Rgb(45, 35, 15),
             purple:           Color::Rgb(168, 122, 243),
             purple_bg:        Color::Rgb(38, 25, 55),
+            diff_addition_fg: Color::Rgb(49, 191, 103),
+            diff_addition_bg: Color::Rgb(20, 45, 28),
+            diff_deletion_fg: Color::Rgb(224, 73, 83),
+            diff_deletion_bg: Color::Rgb(50, 20, 25),
+            diff_gutter_bg:   Color::Rgb(35, 35, 45),
+            diff_sep:         Color::Rgb(130, 130, 138),
+            comment_bg:       Color::Rgb(43, 43, 57),
+            comment_draft_bg: Color::Rgb(45, 35, 15),
+            modal_border:     Color::Rgb(49, 191, 103),
+            hint_text:        Color::Rgb(130, 130, 138),
+            pipeline_success: Color::Rgb(49, 191, 103),
+            pipeline_failed:  Color::Rgb(224, 73, 83),
+            pipeline_running: Color::Rgb(61, 139, 255),
+            pipeline_pending: Color::Rgb(235, 180, 50),
+            pipeline_canceled:Color::Rgb(130, 130, 138),
+            pipeline_skipped: Color::Rgb(130, 130, 138),
+            label_palette: [
+                Color::Rgb(168, 122, 243),
+                Color::Rgb(61, 139, 255),
+                Color::Rgb(49, 191, 103),
+                Color::Rgb(235, 180, 50),
+                Color::Rgb(224, 73, 83),
+                Color::Rgb(240, 140, 180),
+                Color::Rgb(250, 120, 80),
+                Color::Rgb(40, 200, 200),
+                Color::Rgb(180, 230, 40),
+                Color::Rgb(220, 160, 255),
+            ],
         }
     }
 
@@ -409,6 +571,26 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.yellow_bg, &overrides.yellow_bg);
     apply_color(&mut base.purple, &overrides.purple);
     apply_color(&mut base.purple_bg, &overrides.purple_bg);
+    // ── Diff ──
+    apply_color(&mut base.diff_addition_fg, &overrides.diff_addition_fg);
+    apply_color(&mut base.diff_addition_bg, &overrides.diff_addition_bg);
+    apply_color(&mut base.diff_deletion_fg, &overrides.diff_deletion_fg);
+    apply_color(&mut base.diff_deletion_bg, &overrides.diff_deletion_bg);
+    apply_color(&mut base.diff_gutter_bg, &overrides.diff_gutter_bg);
+    apply_color(&mut base.diff_sep, &overrides.diff_sep);
+    // ── Comments ──
+    apply_color(&mut base.comment_bg, &overrides.comment_bg);
+    apply_color(&mut base.comment_draft_bg, &overrides.comment_draft_bg);
+    // ── Modals ──
+    apply_color(&mut base.modal_border, &overrides.modal_border);
+    apply_color(&mut base.hint_text, &overrides.hint_text);
+    // ── Pipelines ──
+    apply_color(&mut base.pipeline_success, &overrides.pipeline_success);
+    apply_color(&mut base.pipeline_failed, &overrides.pipeline_failed);
+    apply_color(&mut base.pipeline_running, &overrides.pipeline_running);
+    apply_color(&mut base.pipeline_pending, &overrides.pipeline_pending);
+    apply_color(&mut base.pipeline_canceled, &overrides.pipeline_canceled);
+    apply_color(&mut base.pipeline_skipped, &overrides.pipeline_skipped);
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -433,6 +615,26 @@ pub struct ThemeOverrides {
     yellow_bg: Option<String>,
     purple: Option<String>,
     purple_bg: Option<String>,
+    // ── Diff ──
+    diff_addition_fg: Option<String>,
+    diff_addition_bg: Option<String>,
+    diff_deletion_fg: Option<String>,
+    diff_deletion_bg: Option<String>,
+    diff_gutter_bg: Option<String>,
+    diff_sep: Option<String>,
+    // ── Comments ──
+    comment_bg: Option<String>,
+    comment_draft_bg: Option<String>,
+    // ── Modals ──
+    modal_border: Option<String>,
+    hint_text: Option<String>,
+    // ── Pipelines ──
+    pipeline_success: Option<String>,
+    pipeline_failed: Option<String>,
+    pipeline_running: Option<String>,
+    pipeline_pending: Option<String>,
+    pipeline_canceled: Option<String>,
+    pipeline_skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1191,6 +1393,7 @@ pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Icons::default(
 pub fn all_theme_presets() -> Vec<String> {
     let mut presets: Vec<String> = vec![
         "default".into(),
+        "clean".into(),
         "tokyo-night".into(),
         "gruvbox".into(),
         "nord".into(),

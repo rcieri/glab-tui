@@ -1,0 +1,55 @@
+bg = "#0f1117"
+border = "#2e323c"
+border_focused = "#58a6ff"
+header_fg = "#58a6ff"
+highlight_bg = "#1a1d26"
+inactive_bg = "#161b22"
+text_normal = "#c9d1d9"
+text_muted = "#6e7681"
+checked_bg = "#0d419d"
+green = "#3fb950"
+green_bg = "#0f2d1a"
+red = "#f85149"
+red_bg = "#2d1215"
+blue = "#58a6ff"
+blue_bg = "#0c2d6b"
+yellow = "#d29922"
+yellow_bg = "#2b2209"
+purple = "#bc8cff"
+purple_bg = "#1d1733"
+
+# ── Diff ──
+diff_addition_fg = "#3fb950"
+diff_addition_bg = "#122d1a"
+diff_deletion_fg = "#f85149"
+diff_deletion_bg = "#2d1215"
+diff_gutter_bg = "#1a1d26"
+diff_sep = "#30363d"
+
+# ── Comments ──
+comment_bg = "#1a1d26"
+comment_draft_bg = "#2b2209"
+
+# ── Modals ──
+modal_border = "#58a6ff"
+hint_text = "#6e7681"
+
+# ── Pipelines ──
+pipeline_success = "#3fb950"
+pipeline_failed = "#f85149"
+pipeline_running = "#58a6ff"
+pipeline_pending = "#d29922"
+pipeline_canceled = "#6e7681"
+pipeline_skipped = "#6e7681"
+
+# ── Label palette ──
+label_palette_0 = "#bc8cff"
+label_palette_1 = "#58a6ff"
+label_palette_2 = "#3fb950"
+label_palette_3 = "#d29922"
+label_palette_4 = "#f85149"
+label_palette_5 = "#f08cb4"
+label_palette_6 = "#fa7850"
+label_palette_7 = "#28c8c8"
+label_palette_8 = "#b4e628"
+label_palette_9 = "#dca0ff"

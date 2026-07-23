@@ -670,6 +670,8 @@ pub struct KeybindingIssues {
     pub delete_entity: String,
     #[serde(default)]
     pub select_issue: String,
+    #[serde(default)]
+    pub create_mr: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -852,6 +854,7 @@ keybind_defaults! {
     def_save_view = "s",
     def_create_issue = "n",
     def_select_issue = "Space",
+    def_create_mr_issue = "m",
     def_edit_entity = "e",
     def_close_entity = "c",
     def_reopen_entity = "r",
@@ -925,6 +928,7 @@ impl Default for KeybindingIssues {
             reopen_entity: def_reopen_entity(),
             delete_entity: def_delete_entity(),
             select_issue: def_select_issue(),
+            create_mr: def_create_mr_issue(),
         }
     }
 }
@@ -1216,6 +1220,7 @@ save_view = "s"
 [keybindings.issues]
 create_issue = "n"
 select_issue = "Space"
+create_mr = "m"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"

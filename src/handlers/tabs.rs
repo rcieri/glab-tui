@@ -3,7 +3,9 @@ use crate::app::App;
 use crate::entity_editor::rebuild_edit_menu;
 use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
+use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
+use crate::templates::get_default_template;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
@@ -196,6 +198,78 @@ pub async fn handle_active_tab_key(
                         } else {
                             app.selected_issues.insert(iid);
                         }
+                    }
+                }
+            }
+            _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
+                if let Some(selected_idx) = app.issues.state.selected() {
+                    let filtered = app.filtered_issues();
+                    if let Some(issue) = filtered.get(selected_idx) {
+                        let is_github = app.is_github();
+                        let pr_suffix = if is_github {
+                            "Pull Request"
+                        } else {
+                            "Merge Request"
+                        };
+
+                        let title_val = issue.title.clone();
+                        let source_branch_val = format!("{}-{}", issue.iid, slugify(&issue.title));
+                        let labels_val = if issue.labels.is_empty() {
+                            String::new()
+                        } else {
+                            issue.labels.join(", ")
+                        };
+                        let assignees_val = if issue.assignees.is_empty() {
+                            String::new()
+                        } else {
+                            issue
+                                .assignees
+                                .iter()
+                                .map(|a| format!("@{}", a.username))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        let milestone_val = issue
+                            .milestone
+                            .as_ref()
+                            .map(|m| m.title.clone())
+                            .unwrap_or_default();
+                        let description_val = if let Some(ref d) = issue.description {
+                            format!("Closes #{}\n\n{}", issue.iid, d)
+                        } else {
+                            let mr_tmpl = get_default_template("mr").unwrap_or_default();
+                            if mr_tmpl.is_empty() {
+                                format!("Closes #{}", issue.iid)
+                            } else {
+                                format!("Closes #{}\n\n{}", issue.iid, mr_tmpl)
+                            }
+                        };
+
+                        app.edit_menu = Some(crate::app::EditMenu {
+                            title: format!("Create {} from #{}", pr_suffix, issue.iid),
+                            fields: vec![
+                                ("Title".to_string(), title_val),
+                                ("Source Branch".to_string(), source_branch_val),
+                                (
+                                    "Target Branch".to_string(),
+                                    get_default_branch().unwrap_or_else(|| "main".to_string()),
+                                ),
+                                ("Labels".to_string(), labels_val),
+                                ("Assignees".to_string(), assignees_val),
+                                ("Reviewers".to_string(), String::new()),
+                                ("Milestone".to_string(), milestone_val),
+                                ("Status (Draft/Ready)".to_string(), "Draft".to_string()),
+                                ("Description".to_string(), description_val),
+                            ],
+                            selected_idx: 0,
+                            entity_iid: issue.iid,
+                            entity_type: "new_mr".to_string(),
+                            state: {
+                                let mut s = ListState::default();
+                                s.select(Some(0));
+                                s
+                            },
+                        });
                     }
                 }
             }

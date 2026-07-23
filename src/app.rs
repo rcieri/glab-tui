@@ -1741,6 +1741,19 @@ pub enum GroupItem {
     Item(usize),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayKind {
+    EditMenu,
+    Selector,
+    DatePicker,
+    Help,
+    Configure,
+    SaveMenu,
+    ColumnFilter,
+    SubmitReview,
+    ConfirmPopup,
+}
+
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),  // milestone iid
@@ -1837,6 +1850,7 @@ pub struct App {
     pub sidebar_rect: Option<Rect>,
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
+    pub overlay_stack: Vec<(OverlayKind, Rect)>,
 }
 
 impl Default for App {
@@ -1934,6 +1948,7 @@ impl Default for App {
             sidebar_rect: None,
             content_rect: None,
             detail_rect: None,
+            overlay_stack: vec![],
         }
     }
 }

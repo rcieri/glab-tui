@@ -1200,6 +1200,10 @@ async fn main() -> Result<()> {
                     app.milestones.items = milestones;
                     app.update_filter_selection();
                     app.project_cache.milestones = app.milestones.items.clone();
+                    app.milestone_issues_cache.clear();
+                    app.selected_milestone_issues = None;
+                    app.selected_milestone_iid = None;
+                    app.project_cache.milestone_issues.clear();
                     crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MilestoneIssuesFetched(iid, issues) => {

@@ -1860,21 +1860,32 @@ impl Backend for GhBackend {
         struct GhBrCommit {
             sha: String,
         }
-        let gh_branches: Vec<GhBr> = serde_json::from_str(&raw)?;
-        let mut branches: Vec<Branch> = gh_branches
+        #[derive(Deserialize)]
+        struct GhRepo {
+            default_branch: String,
+        }
+        let repo_raw = self
+            .raw_api(
+                &format!("/repos/{}", project),
+                "GET",
+                None,
+                "Fetching Repo Info",
+            )
+            .await?;
+        let repo: GhRepo = serde_json::from_str(&repo_raw)?;
+        let default_branch = repo.default_branch;
+
+        let branches: Vec<Branch> = serde_json::from_str::<Vec<GhBr>>(&raw)?
             .into_iter()
             .map(|b| Branch {
-                name: b.name.clone(),
-                default: false,
+                default: b.name == default_branch,
                 protected: b.protected,
-                web_url: String::new(),
+                web_url: format!("https://github.com/{}/tree/{}", project, b.name),
+                name: b.name,
                 can_push: false,
                 commit_sha: b.commit.as_ref().map(|c| c.sha.clone()).unwrap_or_default(),
             })
             .collect();
-        if let Some(first) = branches.first_mut() {
-            first.default = true;
-        }
         Ok(branches)
     }
 

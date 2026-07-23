@@ -1458,10 +1458,6 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_environments();
                     if let Some(env) = filtered.get(selected_idx) {
                         let env_name = env.name.clone();
-                        let _ = tx.send(Event::CommandStarted(format!(
-                            "Fetching deployments for {}",
-                            env_name
-                        )));
                         let client = app.gitlab_client.clone();
                         let project_context = app.project_context.clone();
                         let tx = tx.clone();

@@ -1361,10 +1361,6 @@ async fn main() -> Result<()> {
                                             let project_context = app.project_context.clone();
                                             let ref_branch = ref_branch.clone();
                                             let tx = events.sender();
-                                            let _ = tx.send(Event::CommandStarted(format!(
-                                                "Creating branch: {} from {}",
-                                                branch_name, ref_branch
-                                            )));
                                             tokio::spawn(async move {
                                                 if let Some(client) = client {
                                                     match crate::domain::branches::create_branch(

@@ -1,6 +1,44 @@
 use clap::{Parser, Subcommand};
 use std::process::Command;
 
+// ── ANSI color helpers ──
+const C_RESET: &str = "\x1b[0m";
+const C_BOLD: &str = "\x1b[1m";
+const C_DIM: &str = "\x1b[2m";
+const C_GREEN: &str = "\x1b[32m";
+const C_RED: &str = "\x1b[31m";
+const C_YELLOW: &str = "\x1b[33m";
+const C_BLUE: &str = "\x1b[34m";
+const C_CYAN: &str = "\x1b[36m";
+
+fn styled(text: &str, code: &str) -> String {
+    format!("{}{}{}", code, text, C_RESET)
+}
+
+fn pass(label: &str, detail: &str) {
+    println!(" {} {}", styled(label, C_GREEN), detail);
+}
+
+fn fail(label: &str, detail: &str) {
+    println!(" {} {}", styled(label, C_RED), detail);
+}
+
+fn warn(label: &str, detail: &str) {
+    println!(" {} {}", styled(label, C_YELLOW), detail);
+}
+
+fn info(label: &str, detail: &str) {
+    println!(" {} {}", styled(label, C_DIM), detail);
+}
+
+fn header(text: &str) {
+    println!("{}", styled(text, &format!("{}{}", C_BOLD, C_CYAN)));
+}
+
+fn subheader(text: &str) {
+    println!("{}", styled(text, C_BOLD));
+}
+
 #[derive(Parser)]
 #[command(name = "glab-tui")]
 #[command(about = "GitLab/GitHub terminal user interface")]
@@ -55,19 +93,22 @@ pub enum Commands {
 pub async fn run_doctor() {
     let mut has_backend = false;
 
-    println!("glab-tui doctor");
-    println!("================");
+    header("glab-tui doctor");
+    println!("{}", styled("================", C_CYAN));
     println!();
 
     // ── glab ──
     match Command::new("glab").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("[PASS] glab: {}", v);
+            pass("[PASS]", &format!("glab: {}", v));
             has_backend = true;
         }
         _ => {
-            println!("[FAIL] glab not found — install from https://gitlab.com/gitlab-org/cli");
+            fail(
+                "[FAIL]",
+                "glab not found — install from https://gitlab.com/gitlab-org/cli",
+            );
         }
     }
 
@@ -75,11 +116,14 @@ pub async fn run_doctor() {
     match Command::new("gh").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("[PASS] gh:   {}", v);
+            pass("[PASS]", &format!("gh:   {}", v));
             has_backend = true;
         }
         _ => {
-            println!("[FAIL] gh not found — install from https://cli.github.com");
+            fail(
+                "[FAIL]",
+                "gh not found — install from https://cli.github.com",
+            );
         }
     }
 
@@ -87,10 +131,10 @@ pub async fn run_doctor() {
     match Command::new("git").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("[PASS] git:  {}", v);
+            pass("[PASS]", &format!("git:  {}", v));
         }
         _ => {
-            println!("[FAIL] git not found");
+            fail("[FAIL]", "git not found");
         }
     }
 
@@ -100,22 +144,31 @@ pub async fn run_doctor() {
         Ok(content) => {
             let valid = toml::from_str::<toml::Table>(&content).is_ok();
             if valid {
-                println!(
-                    "[PASS] Config: {} ({} bytes)",
-                    config_path.display(),
-                    content.len()
+                pass(
+                    "[PASS]",
+                    &format!(
+                        "Config: {} ({} bytes)",
+                        config_path.display(),
+                        content.len()
+                    ),
                 );
             } else {
-                println!(
-                    "[WARN] Config file exists but is not valid TOML: {}",
-                    config_path.display()
+                warn(
+                    "[WARN]",
+                    &format!(
+                        "Config file exists but is not valid TOML: {}",
+                        config_path.display()
+                    ),
                 );
             }
         }
         Err(_) => {
-            println!(
-                "[INFO] No config file found at {} (using defaults)",
-                config_path.display()
+            info(
+                "[INFO]",
+                &format!(
+                    "No config file found at {} (using defaults)",
+                    config_path.display()
+                ),
             );
         }
     }
@@ -130,114 +183,141 @@ pub async fn run_doctor() {
             })
             .unwrap_or(0);
         let total_size = crate::utils::cache::get_cache_dir_size();
-        println!(
-            "[PASS] Cache:  {} ({} files, {} KB)",
-            cache_dir.display(),
-            file_count,
-            total_size / 1024
+        pass(
+            "[PASS]",
+            &format!(
+                "Cache:  {} ({} files, {} KB)",
+                cache_dir.display(),
+                file_count,
+                total_size / 1024
+            ),
         );
     } else {
-        println!("[INFO] No cache directory at {}", cache_dir.display());
+        info(
+            "[INFO]",
+            &format!("No cache directory at {}", cache_dir.display()),
+        );
     }
 
     // ── Current repo ──
     println!();
-    println!("Repository context");
-    println!("-------------------");
+    subheader("Repository context");
+    println!("{}", styled("-------------------", C_DIM));
     match crate::domain::client::get_project_context().await {
         Ok(context) => {
-            println!("  Remote:  {}", context);
-            let is_github = match Command::new("git")
-                .args(["remote", "get-url", "origin"])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
-                    String::from_utf8_lossy(&o.stdout).contains("github.com")
-                }
-                _ => false,
+            println!("  Remote:  {}", styled(&context, C_BOLD));
+            let is_github = detect_github();
+            let backend = if is_github {
+                styled("GitHub", C_BLUE)
+            } else {
+                styled("GitLab", C_YELLOW)
             };
-            println!("  Backend: {}", if is_github { "GitHub" } else { "GitLab" });
+            println!("  Backend: {}", backend);
         }
         Err(_) => {
-            println!("  No git remote detected (not inside a git repo?)");
+            println!(
+                "  {}",
+                styled("No git remote detected (not inside a git repo?)", C_DIM)
+            );
         }
     }
 
     // ── Terminal ──
     let term = std::env::var("TERM").unwrap_or_else(|_| "unknown".to_string());
-    println!("  TERM:    {}", term);
+    println!("  TERM:    {}", styled(&term, C_DIM));
 
     println!();
     if has_backend {
-        println!("Status: OK — at least one backend CLI is available.");
+        println!(
+            "{} {}",
+            styled("Status:", C_BOLD),
+            styled("OK — at least one backend CLI is available.", C_GREEN)
+        );
     } else {
-        println!("Status: FAIL — neither glab nor gh is installed. At least one is required.");
+        println!(
+            "{} {}",
+            styled("Status:", C_BOLD),
+            styled(
+                "FAIL — neither glab nor gh is installed. At least one is required.",
+                C_RED
+            )
+        );
         std::process::exit(1);
     }
 }
 
 pub fn run_clean_cache(dry_run: bool) {
     if dry_run {
-        println!("glab-tui clean-cache --dry-run");
-        println!("===============================");
-        println!("(Preview only — no files will be removed)");
+        header("glab-tui clean-cache --dry-run");
+        println!("{}", styled("===============================", C_CYAN));
+        info("[INFO]", "(Preview only — no files will be removed)");
     } else {
-        println!("glab-tui clean-cache");
-        println!("====================");
+        header("glab-tui clean-cache");
+        println!("{}", styled("====================", C_CYAN));
     }
     println!();
 
     let result = crate::utils::cache::clean_cache(dry_run);
 
     // ── Recent repos ──
-    println!("Recent repositories:");
+    subheader("Recent repositories:");
     if result.removed_repos.is_empty() {
-        println!("  All {} entries are valid.", result.kept_repos.len());
+        pass(
+            "  OK",
+            &format!("All {} entries are valid.", result.kept_repos.len()),
+        );
     } else {
         for r in &result.removed_repos {
-            println!("  [REMOVED] {}", r);
+            println!("  {} {}", styled("[REMOVED]", C_RED), r);
         }
     }
     for r in &result.kept_repos {
-        println!("  [KEPT]    {}", r);
+        println!("  {} {}", styled("[KEPT]   ", C_GREEN), styled(r, C_DIM));
     }
 
     // ── Cache files ──
     println!();
-    println!("Cache files:");
+    subheader("Cache files:");
     if result.removed_files.is_empty() {
-        println!(
-            "  All {} cache files are valid (no orphaned entries).",
-            result.kept_files.len()
+        pass(
+            "  OK",
+            &format!(
+                "All {} cache files are valid (no orphaned entries).",
+                result.kept_files.len()
+            ),
         );
     } else {
         for f in &result.removed_files {
-            println!("  [REMOVED] {}", f);
+            println!("  {} {}", styled("[REMOVED]", C_RED), f);
         }
     }
     for f in &result.kept_files {
-        println!("  [KEPT]    {}", f);
+        println!("  {} {}", styled("[KEPT]   ", C_GREEN), styled(f, C_DIM));
     }
 
     // ── Summary ──
     println!();
-    if dry_run {
-        println!(
-            "Would remove: {} recent-repo entries, {} cache files ({} KB)",
-            result.removed_repos.len(),
-            result.removed_files.len(),
-            result.total_removed_size / 1024
-        );
+    let (action, dir_repos, dir_files, dir_kb) = (
+        if dry_run { "Would remove" } else { "Removed" },
+        result.removed_repos.len(),
+        result.removed_files.len(),
+        result.total_removed_size / 1024,
+    );
+    let summary_style = if dir_repos + dir_files > 0 {
+        C_YELLOW
     } else {
-        println!(
-            "Removed: {} recent-repo entries, {} cache files ({} KB)",
-            result.removed_repos.len(),
-            result.removed_files.len(),
-            result.total_removed_size / 1024
-        );
-    }
+        C_DIM
+    };
     println!(
-        "Kept:    {} recent-repo entries, {} cache files",
+        "  {}: {} recent-repo entries, {} cache files ({} KB)",
+        styled(action, summary_style),
+        dir_repos,
+        dir_files,
+        dir_kb
+    );
+    println!(
+        "  {}:    {} recent-repo entries, {} cache files",
+        styled("Kept", C_GREEN),
         result.kept_repos.len(),
         result.kept_files.len()
     );
@@ -247,18 +327,28 @@ pub fn run_config_show() {
     let config = crate::config::Config::load();
     match toml::to_string_pretty(&config) {
         Ok(toml_str) => println!("{}", toml_str),
-        Err(e) => eprintln!("Error serializing config: {}", e),
+        Err(e) => eprintln!(
+            "{}",
+            styled(&format!("Error serializing config: {}", e), C_RED)
+        ),
     }
 }
 
 pub fn run_cache_list() {
     let cache_dir = crate::utils::cache::get_cache_dir();
     if !cache_dir.exists() {
-        println!("Cache directory does not exist: {}", cache_dir.display());
+        warn(
+            "[WARN]",
+            &format!("Cache directory does not exist: {}", cache_dir.display()),
+        );
         return;
     }
 
-    println!("Cache directory: {}", cache_dir.display());
+    println!(
+        "{} {}",
+        styled("Cache directory:", C_BOLD),
+        styled(&cache_dir.display().to_string(), C_DIM)
+    );
     println!();
 
     let mut entries: Vec<(String, u64, String)> = Vec::new();
@@ -291,15 +381,27 @@ pub fn run_cache_list() {
 
     let total: u64 = entries.iter().map(|(_, s, _)| s).sum();
     for (name, size, modified) in &entries {
-        if *name == "recent_repos.json" {
-            println!("  {:<40} {:>8} KB  {}", name, size / 1024, modified);
+        let name_style = if name == "recent_repos.json" {
+            styled(name, C_DIM)
         } else {
-            println!("  {:<40} {:>8} KB  {}", name, size / 1024, modified);
-        }
+            name.clone()
+        };
+        println!(
+            "  {:<40} {:>9}  {}",
+            name_style,
+            styled(&format!("{} KB", size / 1024), C_BLUE),
+            styled(modified, C_DIM)
+        );
     }
 
     println!();
-    println!("Total: {} files, {} KB", entries.len(), total / 1024);
+    println!(
+        "  {}",
+        styled(
+            &format!("Total: {} files, {} KB", entries.len(), total / 1024),
+            C_BOLD
+        )
+    );
 }
 
 pub fn run_open_in_browser(entity: &str, id: &str) {
@@ -329,7 +431,13 @@ pub fn run_open_in_browser(entity: &str, id: &str) {
         }
         "job" => {
             if is_github {
-                eprintln!("Direct job browser URLs are not supported for GitHub Actions.");
+                eprintln!(
+                    "{}",
+                    styled(
+                        "Direct job browser URLs are not supported for GitHub Actions.",
+                        C_YELLOW
+                    )
+                );
                 return;
             } else {
                 ("glab", vec!["ci", "view", id, "-w"])
@@ -344,50 +452,61 @@ pub fn run_open_in_browser(entity: &str, id: &str) {
         }
         _ => {
             eprintln!(
-                "Unknown entity '{}'. Valid: issue, mr, pr, pipeline, job, milestone",
-                entity
+                "{} Unknown entity '{}'. Valid: issue, mr, pr, pipeline, job, milestone",
+                styled("error:", C_RED),
+                styled(entity, C_BOLD)
             );
             std::process::exit(1);
         }
     };
 
-    println!("Opening {} {} in browser...", entity, id);
+    println!(
+        "{} {} {} {} ...",
+        styled("Opening", C_GREEN),
+        styled(entity, C_BOLD),
+        styled(id, C_BOLD),
+        styled("in browser", C_GREEN)
+    );
     match Command::new(program).args(&subcommand).spawn() {
         Ok(_) => {}
         Err(e) => {
-            eprintln!("Failed to run {}: {}", program, e);
+            eprintln!(
+                "{} Failed to run {}: {}",
+                styled("error:", C_RED),
+                styled(program, C_BOLD),
+                e
+            );
             std::process::exit(1);
         }
     }
 }
 
 pub fn run_repos_list() {
-    println!("Recent repositories:");
+    subheader("Recent repositories:");
     let recent = crate::utils::cache::get_recent_repos();
     if recent.is_empty() {
-        println!("  (none)");
+        println!("  {}", styled("(none)", C_DIM));
     } else {
-        for (i, r) in recent.iter().enumerate() {
-            let marker = if crate::utils::cache::is_git_repo(r) {
-                "[✓]"
+        for r in &recent {
+            if crate::utils::cache::is_git_repo(r) {
+                println!("  {} {}", styled("[✓]", C_GREEN), r);
             } else {
-                "[✗]"
-            };
-            println!("  {} {}", marker, r);
+                println!("  {} {}", styled("[✗]", C_RED), styled(r, C_DIM));
+            }
         }
     }
 
     println!();
-    println!("Sibling repositories:");
+    subheader("Sibling repositories:");
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let siblings = crate::utils::cache::get_sibling_repos(&cwd);
     if siblings.is_empty() {
-        println!("  (none)");
+        println!("  {}", styled("(none)", C_DIM));
     } else {
         for s in &siblings {
-            println!("  {}", s);
+            println!("  {}", styled(s, C_DIM));
         }
     }
 }
@@ -397,13 +516,19 @@ pub async fn run_update() {
     match crate::utils::update::perform_self_update().await {
         Ok(updated) => {
             if updated {
-                println!("Successfully updated to the latest version! Please restart glab-tui.");
+                println!(
+                    "{}",
+                    styled(
+                        "Successfully updated to the latest version! Please restart glab-tui.",
+                        C_GREEN
+                    )
+                );
             } else {
                 println!("Already up to date.");
             }
         }
         Err(e) => {
-            eprintln!("Update failed: {}", e);
+            eprintln!("{}", styled(&format!("Update failed: {}", e), C_RED));
             std::process::exit(1);
         }
     }

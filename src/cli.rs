@@ -75,8 +75,6 @@ pub enum Commands {
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
-    /// Print the resolved configuration (merge of global + repo-local overrides)
-    Config,
     /// List cached data files with sizes
     Cache,
     /// Open an entity in the browser without launching the TUI
@@ -170,6 +168,23 @@ pub async fn run_doctor() {
                     config_path.display()
                 ),
             );
+        }
+    }
+
+    // Repo-local config paths
+    if let Some(root) = find_git_root() {
+        let repo_configs = [
+            root.join(".glab-tui").join("config.toml"),
+            root.join(".config").join("glab-tui").join("config.toml"),
+        ];
+        for repo_path in &repo_configs {
+            if repo_path.exists() {
+                let size = std::fs::metadata(repo_path).map(|m| m.len()).unwrap_or(0);
+                info(
+                    "      ",
+                    &format!("Repo: {} ({} bytes)", repo_path.display(), size),
+                );
+            }
         }
     }
 
@@ -321,62 +336,6 @@ pub fn run_clean_cache(dry_run: bool) {
         result.kept_repos.len(),
         result.kept_files.len()
     );
-}
-
-pub fn run_config_show() {
-    header("glab-tui config");
-    println!("{}", styled("================", C_CYAN));
-    println!();
-
-    let global_path = crate::config::Config::config_path();
-    let global_exists = global_path.exists();
-
-    // ── Global config ──
-    subheader(&format!("Global: {}", global_path.display()));
-    println!(
-        "{}",
-        styled("----------------------------------------", C_DIM)
-    );
-    if global_exists {
-        match std::fs::read_to_string(&global_path) {
-            Ok(content) => println!("{}", content),
-            Err(e) => {
-                fail("[FAIL]", &format!("Error reading: {}", e));
-            }
-        }
-    } else {
-        info("[INFO]", "(file does not exist — using built-in defaults)");
-    }
-
-    // ── Repo-local configs ──
-    let mut found_repo = false;
-    if let Some(root) = find_git_root() {
-        let repo_configs = [
-            root.join(".glab-tui").join("config.toml"),
-            root.join(".config").join("glab-tui").join("config.toml"),
-        ];
-        for repo_path in &repo_configs {
-            if repo_path.exists() {
-                println!();
-                subheader(&format!("Repo-local: {}", repo_path.display()));
-                println!(
-                    "{}",
-                    styled("----------------------------------------", C_DIM)
-                );
-                match std::fs::read_to_string(repo_path) {
-                    Ok(content) => println!("{}", content),
-                    Err(e) => {
-                        fail("[FAIL]", &format!("Error reading: {}", e));
-                    }
-                }
-                found_repo = true;
-            }
-        }
-    }
-
-    if !global_exists && !found_repo {
-        info("[INFO]", "No config files found — using built-in defaults.");
-    }
 }
 
 fn find_git_root() -> Option<std::path::PathBuf> {

@@ -324,14 +324,72 @@ pub fn run_clean_cache(dry_run: bool) {
 }
 
 pub fn run_config_show() {
-    let config = crate::config::Config::load();
-    match toml::to_string_pretty(&config) {
-        Ok(toml_str) => println!("{}", toml_str),
-        Err(e) => eprintln!(
-            "{}",
-            styled(&format!("Error serializing config: {}", e), C_RED)
-        ),
+    header("glab-tui config");
+    println!("{}", styled("================", C_CYAN));
+    println!();
+
+    let global_path = crate::config::Config::config_path();
+    let global_exists = global_path.exists();
+
+    // ── Global config ──
+    subheader(&format!("Global: {}", global_path.display()));
+    println!(
+        "{}",
+        styled("----------------------------------------", C_DIM)
+    );
+    if global_exists {
+        match std::fs::read_to_string(&global_path) {
+            Ok(content) => println!("{}", content),
+            Err(e) => {
+                fail("[FAIL]", &format!("Error reading: {}", e));
+            }
+        }
+    } else {
+        info("[INFO]", "(file does not exist — using built-in defaults)");
     }
+
+    // ── Repo-local configs ──
+    let mut found_repo = false;
+    if let Some(root) = find_git_root() {
+        let repo_configs = [
+            root.join(".glab-tui").join("config.toml"),
+            root.join(".config").join("glab-tui").join("config.toml"),
+        ];
+        for repo_path in &repo_configs {
+            if repo_path.exists() {
+                println!();
+                subheader(&format!("Repo-local: {}", repo_path.display()));
+                println!(
+                    "{}",
+                    styled("----------------------------------------", C_DIM)
+                );
+                match std::fs::read_to_string(repo_path) {
+                    Ok(content) => println!("{}", content),
+                    Err(e) => {
+                        fail("[FAIL]", &format!("Error reading: {}", e));
+                    }
+                }
+                found_repo = true;
+            }
+        }
+    }
+
+    if !global_exists && !found_repo {
+        info("[INFO]", "No config files found — using built-in defaults.");
+    }
+}
+
+fn find_git_root() -> Option<std::path::PathBuf> {
+    let mut current = std::env::current_dir().ok()?;
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    None
 }
 
 pub fn run_cache_list() {

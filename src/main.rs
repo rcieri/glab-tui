@@ -4,6 +4,7 @@
 
 mod app;
 mod backend;
+mod cli;
 mod config;
 mod domain;
 mod editor;
@@ -702,75 +703,31 @@ use handlers::overlays::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let mut custom_repo: Option<String> = None;
-    let mut custom_dir: Option<String> = None;
+    use clap::Parser;
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-h" | "--help" => {
-                println!("glab-tui - GitLab/GitHub terminal user interface");
-                println!();
-                println!("Usage:");
-                println!("  glab-tui [options]");
-                println!();
-                println!("Options:");
-                println!("  -h, --help               Show this help message");
-                println!("  -v, --version            Show version information");
-                println!("  -u, --update             Check and install updates");
-                println!("  -r, --repo <namespace>   Specify git repo context (e.g., group/repo)");
-                println!("  -d, --dir <path>         Specify local repository directory to run in");
+    // ── Subcommand dispatch ──
+    let cli = cli::Cli::parse();
+
+    if let Some(cmd) = cli.command {
+        match cmd {
+            cli::Commands::Doctor => {
+                cli::run_doctor().await;
                 return Ok(());
             }
-            "-v" | "--version" => {
-                println!("glab-tui version {}", env!("CARGO_PKG_VERSION"));
+            cli::Commands::CleanCache { dry_run } => {
+                cli::run_clean_cache(dry_run);
                 return Ok(());
-            }
-            "-u" | "--update" => {
-                println!("Checking for updates...");
-                match crate::utils::update::perform_self_update().await {
-                    Ok(updated) => {
-                        if updated {
-                            println!(
-                                "Successfully updated to the latest version! Please restart glab-tui."
-                            );
-                        } else {
-                            println!("Already up to date.");
-                        }
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        eprintln!("Update failed: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-            }
-            "-r" | "--repo" => {
-                if i + 1 < args.len() {
-                    custom_repo = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --repo option requires a namespace argument");
-                    std::process::exit(1);
-                }
-            }
-            "-d" | "--dir" => {
-                if i + 1 < args.len() {
-                    custom_dir = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    eprintln!("Error: --dir option requires a path argument");
-                    std::process::exit(1);
-                }
-            }
-            unknown => {
-                eprintln!("Error: Unknown argument '{}'", unknown);
-                eprintln!("Run 'glab-tui --help' for usage details.");
-                std::process::exit(1);
             }
         }
     }
+
+    if cli.update {
+        cli::run_update().await;
+        return Ok(());
+    }
+
+    let custom_repo = cli.repo;
+    let custom_dir = cli.dir;
 
     if let Some(ref dir) = custom_dir {
         if let Err(e) = std::env::set_current_dir(dir) {

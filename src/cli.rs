@@ -37,6 +37,19 @@ pub enum Commands {
         #[arg(short = 'n', long)]
         dry_run: bool,
     },
+    /// Print the resolved configuration (merge of global + repo-local overrides)
+    Config,
+    /// List cached data files with sizes
+    Cache,
+    /// Open an entity in the browser without launching the TUI
+    Open {
+        /// Entity type: issue, mr, pr, pipeline, job, milestone
+        entity: String,
+        /// Entity ID (IID for issues/MRs, internal ID for pipelines/jobs)
+        id: String,
+    },
+    /// List recently-used repositories
+    Repos,
 }
 
 pub async fn run_doctor() {
@@ -230,6 +243,155 @@ pub fn run_clean_cache(dry_run: bool) {
     );
 }
 
+pub fn run_config_show() {
+    let config = crate::config::Config::load();
+    match toml::to_string_pretty(&config) {
+        Ok(toml_str) => println!("{}", toml_str),
+        Err(e) => eprintln!("Error serializing config: {}", e),
+    }
+}
+
+pub fn run_cache_list() {
+    let cache_dir = crate::utils::cache::get_cache_dir();
+    if !cache_dir.exists() {
+        println!("Cache directory does not exist: {}", cache_dir.display());
+        return;
+    }
+
+    println!("Cache directory: {}", cache_dir.display());
+    println!();
+
+    let mut entries: Vec<(String, u64, String)> = Vec::new();
+    if let Ok(dir_entries) = std::fs::read_dir(&cache_dir) {
+        for entry in dir_entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".json") {
+                continue;
+            }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let modified = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| {
+                    let duration = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                    chrono::DateTime::from_timestamp(
+                        duration.as_secs() as i64,
+                        duration.subsec_nanos(),
+                    )
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            entries.push((name, size, modified));
+        }
+    }
+
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let total: u64 = entries.iter().map(|(_, s, _)| s).sum();
+    for (name, size, modified) in &entries {
+        if *name == "recent_repos.json" {
+            println!("  {:<40} {:>8} KB  {}", name, size / 1024, modified);
+        } else {
+            println!("  {:<40} {:>8} KB  {}", name, size / 1024, modified);
+        }
+    }
+
+    println!();
+    println!("Total: {} files, {} KB", entries.len(), total / 1024);
+}
+
+pub fn run_open_in_browser(entity: &str, id: &str) {
+    let is_github = detect_github();
+
+    let (program, subcommand) = match entity {
+        "issue" => {
+            if is_github {
+                ("gh", vec!["issue", "view", id, "--web"])
+            } else {
+                ("glab", vec!["issue", "view", id, "-w"])
+            }
+        }
+        "mr" | "pr" => {
+            if is_github {
+                ("gh", vec!["pr", "view", id, "--web"])
+            } else {
+                ("glab", vec!["mr", "view", id, "-w"])
+            }
+        }
+        "pipeline" => {
+            if is_github {
+                ("gh", vec!["run", "view", id, "--web"])
+            } else {
+                ("glab", vec!["ci", "view", id, "-w"])
+            }
+        }
+        "job" => {
+            if is_github {
+                eprintln!("Direct job browser URLs are not supported for GitHub Actions.");
+                return;
+            } else {
+                ("glab", vec!["ci", "view", id, "-w"])
+            }
+        }
+        "milestone" => {
+            if is_github {
+                ("gh", vec!["issue", "list", "--milestone", id, "--web"])
+            } else {
+                ("glab", vec!["milestone", "view", id, "-w"])
+            }
+        }
+        _ => {
+            eprintln!(
+                "Unknown entity '{}'. Valid: issue, mr, pr, pipeline, job, milestone",
+                entity
+            );
+            std::process::exit(1);
+        }
+    };
+
+    println!("Opening {} {} in browser...", entity, id);
+    match Command::new(program).args(&subcommand).spawn() {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Failed to run {}: {}", program, e);
+            std::process::exit(1);
+        }
+    }
+}
+
+pub fn run_repos_list() {
+    println!("Recent repositories:");
+    let recent = crate::utils::cache::get_recent_repos();
+    if recent.is_empty() {
+        println!("  (none)");
+    } else {
+        for (i, r) in recent.iter().enumerate() {
+            let marker = if crate::utils::cache::is_git_repo(r) {
+                "[✓]"
+            } else {
+                "[✗]"
+            };
+            println!("  {} {}", marker, r);
+        }
+    }
+
+    println!();
+    println!("Sibling repositories:");
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let siblings = crate::utils::cache::get_sibling_repos(&cwd);
+    if siblings.is_empty() {
+        println!("  (none)");
+    } else {
+        for s in &siblings {
+            println!("  {}", s);
+        }
+    }
+}
+
 pub async fn run_update() {
     println!("Checking for updates...");
     match crate::utils::update::perform_self_update().await {
@@ -244,5 +406,15 @@ pub async fn run_update() {
             eprintln!("Update failed: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+fn detect_github() -> bool {
+    match Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).contains("github.com"),
+        _ => false,
     }
 }

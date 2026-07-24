@@ -718,6 +718,22 @@ async fn main() -> Result<()> {
                 cli::run_clean_cache(dry_run);
                 return Ok(());
             }
+            cli::Commands::Config => {
+                cli::run_config_show();
+                return Ok(());
+            }
+            cli::Commands::Cache => {
+                cli::run_cache_list();
+                return Ok(());
+            }
+            cli::Commands::Open { entity, id } => {
+                cli::run_open_in_browser(&entity, &id);
+                return Ok(());
+            }
+            cli::Commands::Repos => {
+                cli::run_repos_list();
+                return Ok(());
+            }
         }
     }
 

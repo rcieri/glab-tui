@@ -1161,7 +1161,7 @@ impl Default for Config {
 }
 
 impl Config {
-    fn config_path() -> PathBuf {
+    pub fn config_path() -> PathBuf {
         let mut path = config_dir();
         let _ = std::fs::create_dir_all(&path);
         path.push("config.toml");

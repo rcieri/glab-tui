@@ -22,16 +22,9 @@ pub struct ProjectCache {
 }
 
 fn get_cache_file_path(project_context: &str) -> PathBuf {
-    let safe_name = project_context.replace('/', "_").replace('\\', "_");
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-
-    let mut path = PathBuf::from(home);
-    path.push(".cache");
-    path.push("glab-tui");
+    let mut path = get_cache_dir();
     let _ = fs::create_dir_all(&path);
-    path.push(format!("{}.json", safe_name));
+    path.push(cache_file_name(project_context));
     path
 }
 
@@ -53,13 +46,7 @@ pub fn save_cache(project_context: &str, cache: &ProjectCache) {
 }
 
 fn get_recent_repos_file_path() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-
-    let mut path = PathBuf::from(home);
-    path.push(".cache");
-    path.push("glab-tui");
+    let mut path = get_cache_dir();
     let _ = fs::create_dir_all(&path);
     path.push("recent_repos.json");
     path
@@ -99,6 +86,130 @@ pub fn add_recent_repo(repo_path: &str) {
     if let Ok(content) = serde_json::to_string(&repos) {
         let _ = fs::write(path, content);
     }
+}
+
+pub fn get_cache_dir() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    let mut path = PathBuf::from(home);
+    path.push(".cache");
+    path.push("glab-tui");
+    path
+}
+
+pub fn cache_file_name(project_context: &str) -> String {
+    let safe_name = project_context.replace('/', "_").replace('\\', "_");
+    format!("{}.json", safe_name)
+}
+
+pub fn get_cache_dir_size() -> u64 {
+    let dir = get_cache_dir();
+    let mut total = 0u64;
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    total
+}
+
+#[derive(Debug)]
+pub struct CleanCacheResult {
+    pub kept_repos: Vec<String>,
+    pub removed_repos: Vec<String>,
+    pub kept_files: Vec<String>,
+    pub removed_files: Vec<String>,
+    pub total_removed_size: u64,
+}
+
+pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
+    let mut result = CleanCacheResult {
+        kept_repos: Vec::new(),
+        removed_repos: Vec::new(),
+        kept_files: Vec::new(),
+        removed_files: Vec::new(),
+        total_removed_size: 0,
+    };
+
+    // ── Prune recent_repos.json dead entries ──
+    let recent_path = get_recent_repos_file_path();
+    let recent_repos = get_recent_repos();
+    let mut live_repos: Vec<String> = Vec::new();
+    let mut dead_repos: Vec<String> = Vec::new();
+
+    for r in &recent_repos {
+        if is_git_repo(r) {
+            live_repos.push(r.clone());
+        } else {
+            dead_repos.push(r.clone());
+        }
+    }
+
+    result.kept_repos = live_repos.clone();
+    result.removed_repos = dead_repos.clone();
+
+    if !dry_run && !dead_repos.is_empty() {
+        if let Ok(content) = serde_json::to_string(&live_repos) {
+            let _ = fs::write(&recent_path, content);
+        }
+    }
+
+    // ── Prune orphaned cache files ──
+    // Collect valid cache file names from live repos' project contexts
+    let mut valid_cache_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for repo_path in &live_repos {
+        if let Some(context) = get_project_context_for_path(repo_path) {
+            valid_cache_files.insert(cache_file_name(&context));
+        }
+    }
+
+    let cache_dir = get_cache_dir();
+    if let Ok(entries) = fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            // Skip non-JSON files and special files
+            if file_name == "recent_repos.json" || !file_name.ends_with(".json") {
+                continue;
+            }
+            if valid_cache_files.contains(&file_name) {
+                result.kept_files.push(file_name);
+            } else {
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                result.total_removed_size += size;
+                result.removed_files.push(file_name.clone());
+                if !dry_run {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
+    result
+}
+
+fn get_project_context_for_path(repo_path: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["-C", repo_path, "remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = if url.starts_with("git@") {
+        url.split(':').nth(1).unwrap_or("").to_string()
+    } else if url.starts_with("http") {
+        let parts: Vec<&str> = url.split('/').collect();
+        if parts.len() >= 2 {
+            format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+    Some(path.trim_end_matches(".git").to_string())
 }
 
 pub fn is_git_repo(path: &str) -> bool {

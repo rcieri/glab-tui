@@ -4706,29 +4706,27 @@ async fn main() -> Result<()> {
                                             current_set.insert(current_val);
                                         }
                                     } else if field_name.starts_with("Input: ") {
-                                        if let Some(ref menu) = app.edit_menu {
-                                            let input_name =
-                                                field_name.strip_prefix("Input: ").unwrap_or("");
-                                            if let Some(input) = menu
-                                                .workflow_inputs
-                                                .iter()
-                                                .find(|i| i.name == input_name)
-                                            {
-                                                use crate::domain::workflow_inputs::WorkflowInputType;
-                                                match input.input_type {
-                                                    WorkflowInputType::Choice => {
-                                                        all_items = input.options.clone();
-                                                    }
-                                                    WorkflowInputType::Boolean => {
-                                                        all_items = vec![
-                                                            "true".to_string(),
-                                                            "false".to_string(),
-                                                        ];
-                                                    }
-                                                    _ => {}
+                                        let input_name =
+                                            field_name.strip_prefix("Input: ").unwrap_or("");
+                                        if let Some(input) = menu
+                                            .workflow_inputs
+                                            .iter()
+                                            .find(|i| i.name == input_name)
+                                        {
+                                            use crate::domain::workflow_inputs::WorkflowInputType;
+                                            match input.input_type {
+                                                WorkflowInputType::Choice => {
+                                                    all_items = input.options.clone();
                                                 }
-                                                is_loading = false;
+                                                WorkflowInputType::Boolean => {
+                                                    all_items = vec![
+                                                        "true".to_string(),
+                                                        "false".to_string(),
+                                                    ];
+                                                }
+                                                _ => {}
                                             }
+                                            is_loading = false;
                                         }
                                         let current_val = menu.fields[menu.selected_idx].1.clone();
                                         if !current_val.is_empty() {

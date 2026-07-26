@@ -1,8 +1,0 @@
-[submodule "scoop"]
-	path = scoop
-	url = https://github.com/rcieri/scoop-glab-tui.git
-	branch = master
-[submodule "Formula"]
-	path = Formula
-	url = https://github.com/rcieri/homebrew-glab-tui.git
-	branch = main

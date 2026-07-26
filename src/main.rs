@@ -744,6 +744,7 @@ async fn main() -> Result<()> {
 
     if let Some(ref dir) = custom_dir {
         if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("Error changing directory to '{}': {}", dir, e);
             std::process::exit(1);
         }
     }

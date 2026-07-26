@@ -585,6 +585,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     s.select(Some(selected_idx));
                     s
                 },
+                workflow_inputs: vec![],
             });
         }
     } else if entity_type == "mr" {
@@ -650,6 +651,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     s.select(Some(selected_idx));
                     s
                 },
+                workflow_inputs: vec![],
             });
         }
     } else if entity_type == "milestone" {
@@ -689,6 +691,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     s.select(Some(selected_idx));
                     s
                 },
+                workflow_inputs: vec![],
             });
         }
     }

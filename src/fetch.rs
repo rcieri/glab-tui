@@ -3,6 +3,24 @@ use crate::domain;
 use crate::event::Event;
 use crate::git_helpers::get_current_branch;
 
+pub fn spawn_fetch_repo_attributes(
+    client: &domain::client::GitlabClient,
+    project_context: &str,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let client = client.clone();
+    let project_context = project_context.to_string();
+    tokio::spawn(async move {
+        let (labels_res, members_res) = tokio::join!(
+            client.fetch_labels(&project_context),
+            client.fetch_members(&project_context),
+        );
+        let labels = labels_res.unwrap_or_default();
+        let members = members_res.unwrap_or_default();
+        let _ = tx.send(Event::RepoAttributesFetched { labels, members });
+    });
+}
+
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     project_context: &str,

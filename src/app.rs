@@ -146,6 +146,18 @@ impl Tab {
         }
     }
 
+    pub fn is_high_churn(&self) -> bool {
+        match self {
+            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Jobs | Tab::Todos => true,
+            Tab::Runners
+            | Tab::Releases
+            | Tab::Milestones
+            | Tab::Branches
+            | Tab::Environments
+            | Tab::Terminal => false,
+        }
+    }
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "issues" => Some(Tab::Issues),
@@ -1851,6 +1863,11 @@ pub struct App {
     pub content_rect: Option<Rect>,
     pub detail_rect: Option<Rect>,
     pub overlay_stack: Vec<(OverlayKind, Rect)>,
+    pub cached_labels: Vec<String>,
+    pub cached_members: Vec<String>,
+    pub last_attr_refresh: std::time::Instant,
+    pub pending_delete_milestone_iid: Option<u64>,
+    pub pending_delete_release_tag: Option<String>,
 }
 
 impl Default for App {
@@ -1949,6 +1966,11 @@ impl Default for App {
             content_rect: None,
             detail_rect: None,
             overlay_stack: vec![],
+            cached_labels: Vec::new(),
+            cached_members: Vec::new(),
+            last_attr_refresh: std::time::Instant::now(),
+            pending_delete_milestone_iid: None,
+            pending_delete_release_tag: None,
         }
     }
 }

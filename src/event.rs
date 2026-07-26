@@ -21,6 +21,10 @@ pub enum Event {
     RunnersFetched(Vec<crate::domain::runners::Runner>),
     ReleasesFetched(Vec<crate::domain::releases::Release>),
     SelectorItemsFetched(Vec<String>),
+    RepoAttributesFetched {
+        labels: Vec<String>,
+        members: Vec<String>,
+    },
     FetchFailed(crate::app::Tab, String),
     DiffFetched {
         mr_iid: u64,

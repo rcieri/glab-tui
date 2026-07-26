@@ -3030,7 +3030,7 @@ pub(crate) fn render_tab_milestones(
                     "State" => widths.push(Constraint::Length(10)),
                     "Start Date" => widths.push(Constraint::Length(20)),
                     "Due Date" => widths.push(Constraint::Length(20)),
-                    "Progress" => widths.push(Constraint::Length(8)),
+                    "Progress" => widths.push(Constraint::Length(18)),
                     _ => widths.push(Constraint::Fill(1)),
                 }
             }
@@ -3119,39 +3119,40 @@ pub(crate) fn render_tab_milestones(
                             ));
                         }
                         "Progress" => {
-                            let mut color = THEME.read().unwrap().text_muted;
-                            let progress_str =
+                            let (bar_text, color) =
                                 if let Some(issues) = app.milestone_issues_cache.get(&m.iid) {
                                     let total = issues.len();
                                     if total > 0 {
                                         let closed =
                                             issues.iter().filter(|i| i.state == "closed").count();
-                                        let percent = (closed * 100) / total;
-                                        color = if percent <= 33 {
+                                        let pct = (closed as f32 / total as f32) * 100.0;
+                                        let color = if pct <= 33.0 {
                                             THEME.read().unwrap().red
-                                        } else if percent <= 67 {
+                                        } else if pct <= 66.0 {
                                             THEME.read().unwrap().yellow
                                         } else {
                                             THEME.read().unwrap().green
                                         };
-                                        format!("{}%", percent)
+                                        let bar_segments = 10;
+                                        let filled_len = (closed * bar_segments) / total;
+                                        (
+                                            format!(
+                                                "[{}{}] {:.0}%",
+                                                "█".repeat(filled_len),
+                                                "░".repeat(bar_segments - filled_len),
+                                                pct,
+                                            ),
+                                            color,
+                                        )
                                     } else {
-                                        color = THEME.read().unwrap().red;
-                                        "0%".to_string()
+                                        ("[░░░░░░░░░░] 0%".to_string(), THEME.read().unwrap().red)
                                     }
                                 } else if app.selected_milestone_iid == Some(m.iid) {
-                                    "Loading...".to_string()
+                                    ("Loading...".to_string(), THEME.read().unwrap().text_muted)
                                 } else {
-                                    "-".to_string()
+                                    ("-".to_string(), THEME.read().unwrap().text_muted)
                                 };
-                            cells.push(super::helpers::render_fuzzy_cell(
-                                &progress_str,
-                                &app.search_query,
-                                is_selected,
-                                false,
-                                Style::default().fg(color),
-                                Alignment::Left,
-                            ));
+                            cells.push(Cell::from(bar_text).style(Style::default().fg(color)));
                         }
                         _ => {
                             cells.push(Cell::from(String::new()));

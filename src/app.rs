@@ -257,7 +257,7 @@ impl Tab {
                 "Assets",
                 "Description",
             ],
-            Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
+            Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Branches => vec!["Name", "Default", "Protected", "SHA"],
             Tab::Environments => vec!["Name", "State", "Deployment Status", "URL"],
@@ -291,7 +291,7 @@ impl Tab {
             }
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
             Tab::Releases => vec!["Tag", "Release Name", "Date"],
-            Tab::Todos => vec!["State", "Project", "Type", "ID", "Title"],
+            Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
             Tab::Branches => vec!["Name", "Default", "Protected"],
             Tab::Environments => vec!["Name", "State", "Deployment Status"],
@@ -2993,35 +2993,49 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
-        items
+        let matcher = SkimMatcherV2::default();
+        let mut scored: Vec<(i64, &'a crate::domain::notifications::Notification)> = items
             .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
-                        matches = true;
+            .filter_map(|item| {
+                let mut best: i64 = i64::MIN;
+                let mut try_match = |text: &str| {
+                    if let Some((score, _)) = matcher.fuzzy_indices(text, query) {
+                        best = best.max(score);
                     }
                 };
                 if enabled_cols.contains("State") {
-                    check_match(&item.state);
+                    try_match(&item.state);
+                    try_match(if item.state == "unread" || item.state == "pending" {
+                        "NEW"
+                    } else {
+                        "READ"
+                    });
                 }
                 if enabled_cols.contains("Project") {
-                    check_match(&item.project_path);
+                    try_match(&item.project_path);
                 }
                 if enabled_cols.contains("Type") {
-                    check_match(&item.target_type);
+                    try_match(&item.target_type);
                 }
                 if enabled_cols.contains("ID") {
-                    check_match(&item.target_iid.to_string());
-                    check_match(&format!("#{}", item.target_iid));
+                    try_match(&item.target_iid.to_string());
+                    try_match(&format!("#{}", item.target_iid));
                 }
                 if enabled_cols.contains("Title") {
-                    check_match(&item.title);
+                    try_match(&item.title);
                 }
-                matches
+                if enabled_cols.contains("Updated") {
+                    try_match(&crate::utils::format::time_ago(&item.updated_at));
+                }
+                if best > i64::MIN {
+                    Some((best, item))
+                } else {
+                    None
+                }
             })
-            .collect()
+            .collect();
+        scored.sort_by_key(|(score, _)| -(*score));
+        scored.into_iter().map(|(_, item)| item).collect()
     }
 
     pub fn filtered_todos_list<'a>(
@@ -3042,6 +3056,7 @@ impl App {
                     "Project" => a.project_path.clone(),
                     "ID" => a.target_iid.to_string(),
                     "Title" => a.title.clone(),
+                    "Updated" => a.updated_at.clone(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -3050,6 +3065,7 @@ impl App {
                     "Project" => b.project_path.clone(),
                     "ID" => b.target_iid.to_string(),
                     "Title" => b.title.clone(),
+                    "Updated" => b.updated_at.clone(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -3080,6 +3096,7 @@ impl App {
                 "Type" => vec![item.target_type.clone()],
                 "ID" => vec![item.id.clone()],
                 "Title" => vec![item.title.clone()],
+                "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
                 _ => vec![],
             }
         });
@@ -3544,6 +3561,9 @@ impl App {
                         "Title" => {
                             values.insert(item.title.clone());
                         }
+                        "Updated" => {
+                            values.insert(crate::utils::format::time_ago(&item.updated_at));
+                        }
                         _ => {}
                     }
                 }
@@ -3731,6 +3751,7 @@ impl App {
                             let c = n.title.chars().next().unwrap_or('?');
                             c.to_uppercase().to_string()
                         }
+                        "Updated" => crate::utils::format::time_ago(&n.updated_at),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);

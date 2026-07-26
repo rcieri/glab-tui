@@ -3832,6 +3832,13 @@ async fn main() -> Result<()> {
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
                                         // Write the values directly to the active field of app.edit_menu
+                                        eprintln!(
+                                            "SELECTOR-CONFIRM-ENTER entity_type={} entity_iid={} field_type={} menu_present={}",
+                                            entity_type,
+                                            entity_iid,
+                                            field_type,
+                                            app.edit_menu.is_some()
+                                        );
                                         if let Some(ref mut menu) = app.edit_menu {
                                             let target_field_name = match field_type.as_str() {
                                                 "labels" => "Labels",
@@ -3881,6 +3888,10 @@ async fn main() -> Result<()> {
                                                         && !display_val.is_empty();
 
                                                     f.1 = display_val.clone();
+                                                    eprintln!(
+                                                        "SELECTOR-CONFIRM field updated: target={} new_value={}",
+                                                        target_field_name, display_val
+                                                    );
 
                                                     let _ = f; // release borrow before modifying fields
 
@@ -4579,7 +4590,13 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                if field_name == "Labels"
+                                if field_name.starts_with("Input: ")
+                                {
+                                    eprintln!(
+                                        "EDITMENU-ENTER Input field field_name={} menu.workflow_inputs.len={}",
+                                        field_name,
+                                        menu.workflow_inputs.len()
+                                    );
                                     || field_name == "Assignees"
                                     || field_name == "Reviewers"
                                     || field_name == "Milestone"

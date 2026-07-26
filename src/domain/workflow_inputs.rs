@@ -48,7 +48,9 @@ struct WorkflowInputDef {
 
 pub fn parse_workflow_inputs(yaml_path: &str) -> Option<Vec<WorkflowInput>> {
     let content = std::fs::read_to_string(yaml_path).ok()?;
-    let wf: WorkflowTop = serde_yaml::from_str(&content).ok()?;
+    let wf: WorkflowTop = serde_yaml::from_str(&content)
+        .inspect_err(|e| eprintln!("workflow YAML parse error for {}: {}", yaml_path, e))
+        .ok()?;
     let on = wf.on.or(wf.true_on)?;
     let inputs = on.workflow_dispatch?.inputs?;
 
@@ -86,5 +88,30 @@ pub fn parse_workflow_inputs(yaml_path: &str) -> Option<Vec<WorkflowInput>> {
         None
     } else {
         Some(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_prepare_release_workflow() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let yaml_path = format!("{}/.github/workflows/prepare-release.yml", manifest_dir);
+        let inputs = parse_workflow_inputs(&yaml_path);
+        assert!(
+            inputs.is_some(),
+            "Failed to parse prepare-release.yml — inputs should not be None"
+        );
+        let inputs = inputs.unwrap();
+        assert_eq!(inputs.len(), 1, "Expected 1 input, got {}", inputs.len());
+
+        let version = &inputs[0];
+        assert_eq!(version.name, "version_increment");
+        assert_eq!(version.required, true);
+        assert_eq!(version.default, Some("patch".to_string()));
+        assert_eq!(version.input_type, WorkflowInputType::Choice);
+        assert_eq!(version.options, vec!["patch", "minor", "major"]);
     }
 }

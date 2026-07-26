@@ -744,7 +744,6 @@ async fn main() -> Result<()> {
 
     if let Some(ref dir) = custom_dir {
         if let Err(e) = std::env::set_current_dir(dir) {
-            eprintln!("Error changing directory to '{}': {}", dir, e);
             std::process::exit(1);
         }
     }
@@ -3832,13 +3831,6 @@ async fn main() -> Result<()> {
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
                                         // Write the values directly to the active field of app.edit_menu
-                                        eprintln!(
-                                            "SELECTOR-CONFIRM-ENTER entity_type={} entity_iid={} field_type={} menu_present={}",
-                                            entity_type,
-                                            entity_iid,
-                                            field_type,
-                                            app.edit_menu.is_some()
-                                        );
                                         if let Some(ref mut menu) = app.edit_menu {
                                             let target_field_name = match field_type.as_str() {
                                                 "labels" => "Labels",
@@ -3888,10 +3880,6 @@ async fn main() -> Result<()> {
                                                         && !display_val.is_empty();
 
                                                     f.1 = display_val.clone();
-                                                    eprintln!(
-                                                        "SELECTOR-CONFIRM field updated: target={} new_value={}",
-                                                        target_field_name, display_val
-                                                    );
 
                                                     let _ = f; // release borrow before modifying fields
 
@@ -4590,13 +4578,7 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                if field_name.starts_with("Input: ")
-                                {
-                                    eprintln!(
-                                        "EDITMENU-ENTER Input field field_name={} menu.workflow_inputs.len={}",
-                                        field_name,
-                                        menu.workflow_inputs.len()
-                                    );
+                                if field_name == "Labels"
                                     || field_name == "Assignees"
                                     || field_name == "Reviewers"
                                     || field_name == "Milestone"
@@ -4610,6 +4592,7 @@ async fn main() -> Result<()> {
                                     || field_name == "Tag"
                                     || field_name.starts_with("Input: ")
                                 {
+                                    if field_name.starts_with("Input: ") {}
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
                                         "Labels" => "labels",
@@ -5186,7 +5169,11 @@ async fn main() -> Result<()> {
                                             crate::app::TextInputAction::EditField {
                                                 entity_iid,
                                                 entity_type: entity_type.clone(),
-                                                field_type: field_type.to_string(),
+                                                field_type: if field_name.starts_with("Input: ") {
+                                                    field_name.clone()
+                                                } else {
+                                                    field_type.to_string()
+                                                },
                                             }
                                         };
 

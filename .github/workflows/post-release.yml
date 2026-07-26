@@ -52,12 +52,61 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger Homebrew formula update
-        run: gh workflow run update-formula.yml --repo rcieri/homebrew-glab-tui
+      - name: Update Homebrew formula
         env:
+          TAG: ${{ github.event.inputs.tag }}
           GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
+        run: |
+          gh repo clone rcieri/homebrew-glab-tui /tmp/homebrew-glab-tui
+          cd /tmp/homebrew-glab-tui
 
-      - name: Trigger Scoop manifest update
-        run: gh workflow run excavator.yml --repo rcieri/scoop-glab-tui
+          for arch in macos-amd64 macos-arm64 linux-amd64 linux-arm64; do
+            case $arch in
+              macos-amd64) var=MACOS_AMD64 ;;
+              macos-arm64) var=MACOS_ARM64 ;;
+              linux-amd64) var=LINUX_AMD64 ;;
+              linux-arm64) var=LINUX_ARM64 ;;
+            esac
+            echo "Downloading glab-tui-${arch}.tar.gz..."
+            curl -sL "https://github.com/rcieri/glab-tui/releases/download/${TAG}/glab-tui-${arch}.tar.gz" -o "/tmp/glab-tui-${arch}.tar.gz"
+            sha=$(sha256sum "/tmp/glab-tui-${arch}.tar.gz" | cut -d' ' -f1)
+            echo "${var}=${sha}" >> "$GITHUB_ENV"
+          done
+
+          # Update version in URLs
+          sed -i "s|/download/v[0-9.]*/glab-tui-|/download/${TAG}/glab-tui-|g" Formula/glab-tui.rb
+
+          # Update SHA256s
+          sed -i "/glab-tui-macos-amd64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${MACOS_AMD64}\"/}" Formula/glab-tui.rb
+          sed -i "/glab-tui-macos-arm64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${MACOS_ARM64}\"/}" Formula/glab-tui.rb
+          sed -i "/glab-tui-linux-amd64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${LINUX_AMD64}\"/}" Formula/glab-tui.rb
+          sed -i "/glab-tui-linux-arm64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${LINUX_ARM64}\"/}" Formula/glab-tui.rb
+
+          git add Formula/glab-tui.rb
+          git diff --cached --quiet && echo "No changes" || {
+            git commit -m "Update to ${TAG}"
+            git push
+          }
+
+      - name: Update Scoop manifest
         env:
+          TAG: ${{ github.event.inputs.tag }}
           GH_TOKEN: ${{ secrets.REPO_DISPATCH_PAT }}
+        run: |
+          gh repo clone rcieri/scoop-glab-tui /tmp/scoop-glab-tui
+          cd /tmp/scoop-glab-tui
+
+          VERSION="${TAG#v}"
+          curl -sL "https://github.com/rcieri/glab-tui/releases/download/${TAG}/glab-tui-windows-amd64.zip" -o /tmp/glab-tui-windows-amd64.zip
+          sha=$(sha256sum /tmp/glab-tui-windows-amd64.zip | cut -d' ' -f1)
+
+          jq --arg v "$VERSION" --arg sha "$sha" \
+            '.version = $v | .architecture."64bit".url = "https://github.com/rcieri/glab-tui/releases/download/v\($v)/glab-tui-windows-amd64.zip" | .architecture."64bit".hash = $sha' \
+            bucket/glab-tui.json > bucket/glab-tui.json.tmp
+          mv bucket/glab-tui.json.tmp bucket/glab-tui.json
+
+          git add bucket/glab-tui.json
+          git diff --cached --quiet && echo "No changes" || {
+            git commit -m "Update to ${TAG}"
+            git push
+          }

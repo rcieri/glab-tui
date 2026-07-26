@@ -74,10 +74,16 @@ jobs:
 
                       Save and write these file modifications directly back into the working directory.
 
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+
+            - name: Build glab-tui binary
+              run: cargo build --release && cp target/release/glab-tui /usr/local/bin/
+
             - name: Install VHS & Nerd Fonts
               run: |
                 sudo apt-get update -y
-                sudo apt-get install -y golang-go ffmpeg unzip
+                sudo apt-get install -y golang-go ffmpeg unzip ttyd
                 go install github.com/charmbracelet/vhs@latest
                 echo "$HOME/go/bin" >> "$GITHUB_PATH"
                 wget -q https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip

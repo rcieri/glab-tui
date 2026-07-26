@@ -44,6 +44,7 @@ pub async fn handle_active_tab_key(
                         s.select(Some(0));
                         s
                     },
+                    workflow_inputs: vec![],
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
@@ -72,6 +73,7 @@ pub async fn handle_active_tab_key(
                             s.select(Some(0));
                             s
                         },
+                        workflow_inputs: vec![],
                     });
                 } else if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
@@ -130,6 +132,7 @@ pub async fn handle_active_tab_key(
                                 s.select(Some(0));
                                 s
                             },
+                            workflow_inputs: vec![],
                         });
                     }
                 }
@@ -277,6 +280,7 @@ pub async fn handle_active_tab_key(
                                 s.select(Some(0));
                                 s
                             },
+                            workflow_inputs: vec![],
                         });
                     }
                 }
@@ -369,6 +373,7 @@ pub async fn handle_active_tab_key(
                             s.select(Some(0));
                             s
                         },
+                        workflow_inputs: vec![],
                     });
                 } else if let Some(selected_idx) = app.mrs.state.selected() {
                     let filtered = app.filtered_mrs();
@@ -435,6 +440,7 @@ pub async fn handle_active_tab_key(
                                 s.select(Some(0));
                                 s
                             },
+                            workflow_inputs: vec![],
                         });
                     }
                 }
@@ -711,16 +717,14 @@ pub async fn handle_active_tab_key(
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
                 let is_github = app.is_github();
-                let mut fields = vec![
-                    ("Branch / Ref".to_string(), current_branch.clone()),
-                    ("Variables".to_string(), String::new()),
-                    ("Inputs".to_string(), String::new()),
-                ];
+                let mut fields = vec![("Branch / Ref".to_string(), current_branch.clone())];
                 if is_github {
                     fields.push(("Workflow File".to_string(), String::new()));
                 } else {
-                    fields.insert(1, ("Merge Request Pipeline".to_string(), "No".to_string()));
+                    fields.push(("Merge Request Pipeline".to_string(), "No".to_string()));
                 }
+                fields.push(("Inputs".to_string(), String::new()));
+                fields.push(("Variables".to_string(), String::new()));
 
                 app.edit_menu = Some(crate::app::EditMenu {
                     title: "Run Pipeline".to_string(),
@@ -733,6 +737,7 @@ pub async fn handle_active_tab_key(
                         s.select(Some(0));
                         s
                     },
+                    workflow_inputs: vec![],
                 });
             } else if key_event.code == KeyCode::Char('p')
                 || keybinding_matches(
@@ -1337,6 +1342,7 @@ pub async fn handle_active_tab_key(
                         s.select(Some(0));
                         s
                     },
+                    workflow_inputs: vec![],
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
@@ -1504,6 +1510,7 @@ pub async fn handle_active_tab_key(
                         s.select(Some(0));
                         s
                     },
+                    workflow_inputs: vec![],
                 });
             }
             _ if keybinding_matches(

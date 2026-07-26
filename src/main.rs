@@ -3255,6 +3255,7 @@ async fn main() -> Result<()> {
                                                 s.select(Some(0));
                                                 s
                                             },
+                                            workflow_inputs: vec![],
                                         });
                                         continue;
                                     }
@@ -3845,6 +3846,7 @@ async fn main() -> Result<()> {
                                                 "pipeline_branch" => "Branch / Ref",
                                                 "workflow_file" => "Workflow File",
                                                 "tag" => "Tag",
+                                                other if other.starts_with("Input: ") => other,
                                                 _ => "",
                                             };
                                             if !target_field_name.is_empty() {
@@ -3873,7 +3875,55 @@ async fn main() -> Result<()> {
                                                     } else {
                                                         selected_list.join(", ")
                                                     };
-                                                    f.1 = display_val;
+
+                                                    let is_workflow_file = field_type
+                                                        == "workflow_file"
+                                                        && !display_val.is_empty();
+
+                                                    f.1 = display_val.clone();
+
+                                                    let _ = f; // release borrow before modifying fields
+
+                                                    // When a workflow file is selected, parse
+                                                    // its workflow_dispatch inputs and rebuild
+                                                    // the edit menu fields to show per-input fields.
+                                                    if is_workflow_file {
+                                                        let repo_root =
+                                                            std::process::Command::new("git")
+                                                                .args([
+                                                                    "rev-parse",
+                                                                    "--show-toplevel",
+                                                                ])
+                                                                .output()
+                                                                .ok()
+                                                                .and_then(|o| {
+                                                                    String::from_utf8(o.stdout).ok()
+                                                                })
+                                                                .map(|s| s.trim().to_string());
+
+                                                        if let Some(root) = repo_root {
+                                                            let yaml_path = format!(
+                                                                "{}/.github/workflows/{}",
+                                                                root, display_val
+                                                            );
+                                                            if let Some(inputs) =
+                                                                crate::domain::workflow_inputs::parse_workflow_inputs(&yaml_path)
+                                                            {
+                                                                menu.workflow_inputs = inputs.clone();
+                                                                menu.fields.retain(|(l, _)| l != "Inputs");
+                                                                let insert_pos = menu
+                                                                    .fields
+                                                                    .iter()
+                                                                    .position(|(l, _)| l == "Variables")
+                                                                    .unwrap_or(menu.fields.len());
+                                                                for input in inputs.iter().rev() {
+                                                                    let label = format!("Input: {}", input.name);
+                                                                    let default_val = input.default.clone().unwrap_or_default();
+                                                                    menu.fields.insert(insert_pos, (label, default_val));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -4413,7 +4463,29 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         let var_pairs = parse_key_value_pairs(&variables);
-                                        let input_pairs = parse_key_value_pairs(&inputs);
+                                        // Collect per-input fields when workflow_dispatch inputs
+                                        // were detected; otherwise fall back to the generic
+                                        // "Inputs" field.
+                                        let per_input_fields: Vec<&(String, String)> = menu
+                                            .fields
+                                            .iter()
+                                            .filter(|(k, _)| k.starts_with("Input: "))
+                                            .collect();
+                                        let input_pairs: Vec<(String, String)> =
+                                            if !per_input_fields.is_empty() {
+                                                per_input_fields
+                                                    .iter()
+                                                    .map(|(label, value)| {
+                                                        let name = label
+                                                            .strip_prefix("Input: ")
+                                                            .unwrap_or(label);
+                                                        (name.to_string(), value.trim().to_string())
+                                                    })
+                                                    .filter(|(_, v)| !v.is_empty())
+                                                    .collect()
+                                            } else {
+                                                parse_key_value_pairs(&inputs)
+                                            };
                                         let mr_flag = mr.to_lowercase() == "yes";
 
                                         app.edit_menu = None;
@@ -4519,6 +4591,7 @@ async fn main() -> Result<()> {
                                     || field_name == "Branch / Ref"
                                     || field_name == "Workflow File"
                                     || field_name == "Tag"
+                                    || field_name.starts_with("Input: ")
                                 {
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
@@ -4628,6 +4701,33 @@ async fn main() -> Result<()> {
                                         all_items = get_workflow_files(app.is_github());
                                         is_loading = false;
                                         // Pre-select any already-typed value
+                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
+                                    } else if field_name.starts_with("Input: ") {
+                                        let input_name =
+                                            field_name.strip_prefix("Input: ").unwrap_or("");
+                                        if let Some(input) = menu
+                                            .workflow_inputs
+                                            .iter()
+                                            .find(|i| i.name == input_name)
+                                        {
+                                            use crate::domain::workflow_inputs::WorkflowInputType;
+                                            match input.input_type {
+                                                WorkflowInputType::Choice => {
+                                                    all_items = input.options.clone();
+                                                }
+                                                WorkflowInputType::Boolean => {
+                                                    all_items = vec![
+                                                        "true".to_string(),
+                                                        "false".to_string(),
+                                                    ];
+                                                }
+                                                _ => {}
+                                            }
+                                            is_loading = false;
+                                        }
                                         let current_val = menu.fields[menu.selected_idx].1.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
@@ -4759,7 +4859,11 @@ async fn main() -> Result<()> {
                                         is_loading,
                                         entity_iid,
                                         entity_type: entity_type.clone(),
-                                        field_type: field_type.to_string(),
+                                        field_type: if field_name.starts_with("Input: ") {
+                                            field_name.clone()
+                                        } else {
+                                            field_type.to_string()
+                                        },
                                         multi_select,
                                         state: {
                                             let mut s = ListState::default();
@@ -4853,7 +4957,12 @@ async fn main() -> Result<()> {
                                                     is_loading: false,
                                                     entity_iid: 0,
                                                     entity_type: entity_type.clone(),
-                                                    field_type: field_type.to_string(),
+                                                    field_type: if field_name.starts_with("Input: ")
+                                                    {
+                                                        field_name.clone()
+                                                    } else {
+                                                        field_type.to_string()
+                                                    },
                                                     multi_select: false,
                                                     state: {
                                                         let mut s = ListState::default();
@@ -5064,7 +5173,11 @@ async fn main() -> Result<()> {
                                             crate::app::TextInputAction::EditField {
                                                 entity_iid,
                                                 entity_type: entity_type.clone(),
-                                                field_type: field_type.to_string(),
+                                                field_type: if field_name.starts_with("Input: ") {
+                                                    field_name.clone()
+                                                } else {
+                                                    field_type.to_string()
+                                                },
                                             }
                                         };
 

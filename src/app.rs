@@ -2,6 +2,7 @@
 
 use crate::backend::BackendKind;
 use crate::config::Config;
+use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -324,6 +325,7 @@ pub struct EditMenu {
     pub entity_iid: u64,
     pub entity_type: String, // "issue", "mr"
     pub state: ListState,
+    pub workflow_inputs: Vec<WorkflowInput>,
 }
 
 impl EditMenu {

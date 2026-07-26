@@ -8,3 +8,4 @@ pub mod notifications;
 pub mod pipelines;
 pub mod releases;
 pub mod runners;
+pub mod workflow_inputs;

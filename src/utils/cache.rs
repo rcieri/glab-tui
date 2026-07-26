@@ -18,7 +18,9 @@ pub struct ProjectCache {
     #[serde(default)]
     pub milestone_issues: HashMap<u64, Vec<crate::domain::issues::Issue>>,
     #[serde(default)]
-    pub selector_items: Option<Vec<String>>,
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub members: Vec<String>,
 }
 
 fn get_cache_file_path(project_context: &str) -> PathBuf {
@@ -370,11 +372,13 @@ mod tests {
     #[test]
     fn test_project_cache_roundtrip() {
         let mut cache = ProjectCache::default();
-        cache.selector_items = Some(vec!["assignee1".to_string(), "label1".to_string()]);
+        cache.labels = vec!["bug".to_string(), "enhancement".to_string()];
+        cache.members = vec!["@user1".to_string(), "@user2".to_string()];
 
         let serialized = serde_json::to_string(&cache).unwrap();
         let deserialized: ProjectCache = serde_json::from_str(&serialized).unwrap();
 
-        assert_eq!(deserialized.selector_items.unwrap()[0], "assignee1");
+        assert_eq!(deserialized.labels[0], "bug");
+        assert_eq!(deserialized.members[1], "@user2");
     }
 }

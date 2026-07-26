@@ -1534,6 +1534,16 @@ pub async fn handle_active_tab_key(
                         };
                         let project_path = app.project_context.clone();
                         let milestone_iid = milestone.iid;
+                        // Optimistic local update
+                        app.project_cache.milestones = app.milestones.items.clone();
+                        if let Some(m) = app
+                            .milestones
+                            .items
+                            .iter_mut()
+                            .find(|m| m.iid == milestone_iid)
+                        {
+                            m.state = "closed".to_string();
+                        }
                         let tx = tx.clone();
                         tokio::spawn(async move {
                             let res = crate::domain::milestones::update_milestone_state(
@@ -1571,6 +1581,16 @@ pub async fn handle_active_tab_key(
                         };
                         let project_path = app.project_context.clone();
                         let milestone_iid = milestone.iid;
+                        // Optimistic local update
+                        app.project_cache.milestones = app.milestones.items.clone();
+                        if let Some(m) = app
+                            .milestones
+                            .items
+                            .iter_mut()
+                            .find(|m| m.iid == milestone_iid)
+                        {
+                            m.state = "active".to_string();
+                        }
                         let tx = tx.clone();
                         tokio::spawn(async move {
                             let res = crate::domain::milestones::update_milestone_state(

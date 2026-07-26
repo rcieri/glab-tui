@@ -2,7 +2,7 @@ use crate::AppTerminal;
 use crate::app::App;
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
-use crate::fetch::spawn_refresh_active_tab;
+use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
 use crate::keybinding::keybinding_matches;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
@@ -72,6 +72,7 @@ pub fn handle_confirm_popup(
                 }
                 match confirm_action {
                     crate::app::ConfirmAction::DeleteMilestone(iid) => {
+                        app.pending_delete_milestone_iid = Some(iid);
                         let client = app.gitlab_client.clone().unwrap();
                         let project_path = app.project_context.clone();
                         tokio::spawn(async move {
@@ -99,6 +100,7 @@ pub fn handle_confirm_popup(
                         });
                     }
                     crate::app::ConfirmAction::DeleteRelease(tag_name) => {
+                        app.pending_delete_release_tag = Some(tag_name.clone());
                         let client = app.gitlab_client.clone().unwrap();
                         let project_path = app.project_context.clone();
                         tokio::spawn(async move {
@@ -369,11 +371,13 @@ pub fn handle_refresh(
         && app.selector.is_none()
     {
         *last_refresh = Instant::now();
+        app.last_attr_refresh = Instant::now();
         if let Some(client) = app.gitlab_client.clone() {
             if !app.loading_tabs.contains(&app.active_tab) {
                 app.start_loading_tab(app.active_tab);
-                spawn_refresh_active_tab(&client, &app.project_context, app.active_tab, tx);
+                spawn_refresh_active_tab(&client, &app.project_context, app.active_tab, tx.clone());
             }
+            spawn_fetch_repo_attributes(&client.muted(), &app.project_context, tx);
         }
         return true;
     }

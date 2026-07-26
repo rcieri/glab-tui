@@ -698,6 +698,7 @@ pub use git_helpers::*;
 pub use keybinding::keybinding_matches;
 pub use templates::*;
 
+pub use fetch::spawn_fetch_repo_attributes;
 pub use fetch::spawn_refresh_active_tab;
 use handlers::overlays::*;
 
@@ -788,6 +789,8 @@ async fn main() -> Result<()> {
     app.branches.items = cache.branches;
     app.environments.items = cache.environments;
     app.milestone_issues_cache = cache.milestone_issues;
+    app.cached_labels = cache.labels;
+    app.cached_members = cache.members;
 
     let has_any_cached = !app.issues.items.is_empty()
         || !app.mrs.items.is_empty()
@@ -838,6 +841,7 @@ async fn main() -> Result<()> {
             app.start_loading_tab(app.active_tab);
         }
         spawn_refresh_active_tab(&client, &app.project_context, app.active_tab, tx.clone());
+        spawn_fetch_repo_attributes(&client.muted(), &app.project_context, tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         app.terminal_commands.push(crate::app::TerminalCommand {
@@ -1005,23 +1009,42 @@ async fn main() -> Result<()> {
                     if app.active_tab != last_active_tab {
                         last_active_tab = app.active_tab;
                         last_refresh = std::time::Instant::now();
-                    } else if last_refresh.elapsed() >= std::time::Duration::from_secs(60) {
-                        if app.text_input.is_none()
+                        app.last_attr_refresh = std::time::Instant::now();
+                    } else {
+                        if last_refresh.elapsed() >= std::time::Duration::from_secs(60)
+                            && app.active_tab.is_high_churn()
+                        {
+                            if app.text_input.is_none()
+                                && app.edit_menu.is_none()
+                                && app.selector.is_none()
+                                && !app.loading_tabs.contains(&app.active_tab)
+                            {
+                                if let Some(client) = app.gitlab_client.clone() {
+                                    app.start_loading_tab(app.active_tab);
+                                    spawn_refresh_active_tab(
+                                        &client.muted(),
+                                        &app.project_context,
+                                        app.active_tab,
+                                        events.sender(),
+                                    );
+                                }
+                            }
+                            last_refresh = std::time::Instant::now();
+                        }
+                        if app.last_attr_refresh.elapsed() >= std::time::Duration::from_secs(300)
+                            && app.text_input.is_none()
                             && app.edit_menu.is_none()
                             && app.selector.is_none()
-                            && !app.loading_tabs.contains(&app.active_tab)
                         {
                             if let Some(client) = app.gitlab_client.clone() {
-                                app.start_loading_tab(app.active_tab);
-                                spawn_refresh_active_tab(
+                                spawn_fetch_repo_attributes(
                                     &client.muted(),
                                     &app.project_context,
-                                    app.active_tab,
                                     events.sender(),
                                 );
                             }
+                            app.last_attr_refresh = std::time::Instant::now();
                         }
-                        last_refresh = std::time::Instant::now();
                     }
                 }
                 Event::PipelineJobs(id, jobs) => {
@@ -1199,66 +1222,32 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
-                    app.complete_loading_tab(app::Tab::Milestones, "Success");
                     app.status_message = None;
-                    if let Some(client) = app.gitlab_client.clone() {
-                        if !app.loading_tabs.contains(&app::Tab::Milestones) {
-                            app.start_loading_tab(app::Tab::Milestones);
-                        }
-                        spawn_refresh_active_tab(
-                            &client,
-                            &app.project_context,
-                            app::Tab::Milestones,
-                            events.sender(),
-                        );
-                    }
+                    app.project_cache.milestones = app.milestones.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MilestoneDeleted => {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
                     app.status_message = None;
-                    app.milestones.items.clear();
-                    if let Some(client) = app.gitlab_client.clone() {
-                        if !app.loading_tabs.contains(&app::Tab::Milestones) {
-                            app.start_loading_tab(app::Tab::Milestones);
-                        }
-                        spawn_refresh_active_tab(
-                            &client,
-                            &app.project_context,
-                            app::Tab::Milestones,
-                            events.sender(),
-                        );
+                    if let Some(iid) = app.pending_delete_milestone_iid.take() {
+                        app.milestones.items.retain(|m| m.iid != iid);
                     }
+                    app.project_cache.milestones = app.milestones.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::ReleaseUpdated => {
-                    app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.status_message = None;
-                    if let Some(client) = app.gitlab_client.clone() {
-                        if !app.loading_tabs.contains(&app::Tab::Releases) {
-                            app.start_loading_tab(app::Tab::Releases);
-                        }
-                        spawn_refresh_active_tab(
-                            &client,
-                            &app.project_context,
-                            app::Tab::Releases,
-                            events.sender(),
-                        );
-                    }
+                    app.project_cache.releases = app.releases.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::ReleaseDeleted => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.status_message = None;
-                    app.releases.items.clear();
-                    if let Some(client) = app.gitlab_client.clone() {
-                        if !app.loading_tabs.contains(&app::Tab::Releases) {
-                            app.start_loading_tab(app::Tab::Releases);
-                        }
-                        spawn_refresh_active_tab(
-                            &client,
-                            &app.project_context,
-                            app::Tab::Releases,
-                            events.sender(),
-                        );
+                    if let Some(tag) = app.pending_delete_release_tag.take() {
+                        app.releases.items.retain(|r| r.tag_name != tag);
                     }
+                    app.project_cache.releases = app.releases.items.clone();
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::IssueDeleted => {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
@@ -1313,21 +1302,67 @@ async fn main() -> Result<()> {
                     crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::SelectorItemsFetched(items) => {
-                    let mut fallback_success = false;
+                    let mut applied_from_cache = false;
                     if items.is_empty() {
-                        if let Some(cached) = &app.project_cache.selector_items {
-                            app.status_message =
-                                Some("Offline fallback: loaded cached selector items.".to_string());
-                            if let Some(mut selector) = app.selector.take() {
-                                selector.all_items = cached.clone();
-                                selector.is_loading = false;
-                                app.selector = Some(selector);
+                        // Determine which typed cache to fall back on
+                        if let Some(ref selector) = app.selector {
+                            let fallback = match selector.field_type.as_str() {
+                                "labels" => {
+                                    if !app.cached_labels.is_empty() {
+                                        Some(app.cached_labels.clone())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                "assignees" | "reviewers" => {
+                                    if !app.cached_members.is_empty() {
+                                        Some(app.cached_members.clone())
+                                    } else {
+                                        None
+                                    }
+                                }
+                                "milestone" => Some(
+                                    app.milestones
+                                        .items
+                                        .iter()
+                                        .map(|m| m.title.clone())
+                                        .collect(),
+                                ),
+                                "source_branch" | "target_branch" | "pipeline_branch" => Some(
+                                    app.branches.items.iter().map(|b| b.name.clone()).collect(),
+                                ),
+                                _ => None,
+                            };
+                            if let Some(cached) = fallback {
+                                if !cached.is_empty() {
+                                    app.status_message = Some(
+                                        "Offline fallback: cached selector items.".to_string(),
+                                    );
+                                    if let Some(mut selector) = app.selector.take() {
+                                        selector.all_items = cached;
+                                        selector.is_loading = false;
+                                        app.selector = Some(selector);
+                                    }
+                                    applied_from_cache = true;
+                                }
                             }
-                            fallback_success = true;
                         }
                     }
-                    if !fallback_success {
-                        app.project_cache.selector_items = Some(items.clone());
+                    if !applied_from_cache {
+                        // Update typed cache based on field type
+                        if let Some(ref selector) = app.selector {
+                            match selector.field_type.as_str() {
+                                "labels" => {
+                                    app.cached_labels = items.clone();
+                                    app.project_cache.labels = items.clone();
+                                }
+                                "assignees" | "reviewers" => {
+                                    app.cached_members = items.clone();
+                                    app.project_cache.members = items.clone();
+                                }
+                                _ => {}
+                            }
+                        }
                         crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
                             selector.all_items = items;
@@ -1335,6 +1370,17 @@ async fn main() -> Result<()> {
                             app.selector = Some(selector);
                         }
                     }
+                }
+                Event::RepoAttributesFetched { labels, members } => {
+                    if !labels.is_empty() {
+                        app.cached_labels = labels.clone();
+                        app.project_cache.labels = labels;
+                    }
+                    if !members.is_empty() {
+                        app.cached_members = members.clone();
+                        app.project_cache.members = members;
+                    }
+                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::DeploymentsFetched(deployments) => {
                     app.deployments.items = deployments;
@@ -4538,16 +4584,45 @@ async fn main() -> Result<()> {
                                                 current_set.insert("No".to_string());
                                             }
                                         }
+                                    } else if field_type == "labels" {
+                                        if !app.cached_labels.is_empty() {
+                                            all_items = app.cached_labels.clone();
+                                            is_loading = false;
+                                        }
+                                    } else if field_type == "assignees" || field_type == "reviewers"
+                                    {
+                                        if !app.cached_members.is_empty() {
+                                            all_items = app.cached_members.clone();
+                                            is_loading = false;
+                                        }
+                                    } else if field_type == "milestone" {
+                                        all_items = app
+                                            .milestones
+                                            .items
+                                            .iter()
+                                            .map(|m| m.title.clone())
+                                            .collect();
+                                        is_loading = false;
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"
+                                        || field_type == "pipeline_branch"
                                     {
-                                        is_loading = true;
-                                    } else if field_type == "pipeline_branch" {
-                                        is_loading = true;
-                                        // Pre-select the current branch value
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
-                                        if !current_val.is_empty() {
-                                            current_set.insert(current_val);
+                                        let branch_names: Vec<String> = app
+                                            .branches
+                                            .items
+                                            .iter()
+                                            .map(|b| b.name.clone())
+                                            .collect();
+                                        if field_type == "pipeline_branch" {
+                                            let current_val =
+                                                menu.fields[menu.selected_idx].1.clone();
+                                            if !current_val.is_empty() {
+                                                current_set.insert(current_val);
+                                            }
+                                        }
+                                        if !branch_names.is_empty() {
+                                            all_items = branch_names;
+                                            is_loading = false;
                                         }
                                     } else if field_type == "workflow_file" {
                                         all_items = get_workflow_files(app.is_github());

@@ -4592,7 +4592,6 @@ async fn main() -> Result<()> {
                                     || field_name == "Tag"
                                     || field_name.starts_with("Input: ")
                                 {
-                                    if field_name.starts_with("Input: ") {}
                                     let mut current_set = std::collections::HashSet::new();
                                     let field_type = match field_name.as_str() {
                                         "Labels" => "labels",
@@ -4859,7 +4858,11 @@ async fn main() -> Result<()> {
                                         is_loading,
                                         entity_iid,
                                         entity_type: entity_type.clone(),
-                                        field_type: field_type.to_string(),
+                                        field_type: if field_name.starts_with("Input: ") {
+                                            field_name.clone()
+                                        } else {
+                                            field_type.to_string()
+                                        },
                                         multi_select,
                                         state: {
                                             let mut s = ListState::default();

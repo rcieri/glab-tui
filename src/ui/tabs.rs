@@ -2705,14 +2705,32 @@ pub(crate) fn render_tab_todos(
     header_style: Style,
 ) {
     let icons = crate::config::ICONS.read().unwrap();
-    if app.todos.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
-        f.render_widget(
-            Paragraph::new(format!("\n\n {} Loading todos...", icons.label_loading))
+    if app.todos.items.is_empty() {
+        let entity_label = if app.kind().is_github() {
+            "notifications"
+        } else {
+            "todos"
+        };
+        if app.loading_tabs.contains(&app.active_tab) {
+            f.render_widget(
+                Paragraph::new(format!(
+                    "\n\n {} Loading {}...",
+                    icons.label_loading, entity_label
+                ))
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
-            content_area,
-        );
+                content_area,
+            );
+        } else {
+            f.render_widget(
+                Paragraph::new(format!("\n\n {} No {}", icons.label_details, entity_label))
+                    .alignment(Alignment::Center)
+                    .block(main_block.clone())
+                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                content_area,
+            );
+        }
         f.render_widget(
             Paragraph::new("Select a todo...")
                 .block(
@@ -2745,6 +2763,7 @@ pub(crate) fn render_tab_todos(
                 "Type" => vec![item.target_type.clone()],
                 "ID" => vec![item.id.to_string()],
                 "Title" => vec![item.title.clone()],
+                "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
                 _ => vec![],
             },
         );
@@ -2752,14 +2771,19 @@ pub(crate) fn render_tab_todos(
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
             let is_row_highlighted = app.todos.state.selected() == Some(idx);
 
-            let state_str = if n.state == "unread" || n.state == "pending" {
-                "•"
+            let (state_str, state_style) = if n.state == "unread" || n.state == "pending" {
+                (
+                    " NEW",
+                    Style::default()
+                        .fg(THEME.read().unwrap().green)
+                        .add_modifier(Modifier::BOLD),
+                )
             } else {
-                " "
+                (
+                    " READ",
+                    Style::default().fg(THEME.read().unwrap().text_muted),
+                )
             };
-            let state_style = Style::default()
-                .fg(THEME.read().unwrap().green)
-                .add_modifier(Modifier::BOLD);
 
             let type_style = if n.target_type == "MergeRequest" {
                 Style::default()
@@ -2822,6 +2846,16 @@ pub(crate) fn render_tab_todos(
                     Alignment::Left,
                 ));
             }
+            if app.is_column_visible(Tab::Todos, "Updated") {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &time_ago(&n.updated_at),
+                    &app.search_query,
+                    is_row_highlighted,
+                    false,
+                    Style::default().fg(THEME.read().unwrap().yellow),
+                    Alignment::Left,
+                ));
+            }
             let row_style = if is_row_highlighted {
                 Style::default().bg(THEME.read().unwrap().highlight_bg)
             } else {
@@ -2834,8 +2868,8 @@ pub(crate) fn render_tab_todos(
         let mut widths = Vec::new();
 
         if app.is_column_visible(Tab::Todos, "State") {
-            header_cells.push(Cell::from(""));
-            widths.push(Constraint::Length(10));
+            header_cells.push(Cell::from("State"));
+            widths.push(Constraint::Length(6));
         }
         if app.is_column_visible(Tab::Todos, "Project") {
             header_cells.push(Cell::from("Project"));
@@ -2852,6 +2886,10 @@ pub(crate) fn render_tab_todos(
         if app.is_column_visible(Tab::Todos, "Title") {
             header_cells.push(Cell::from("Title"));
             widths.push(Constraint::Fill(1));
+        }
+        if app.is_column_visible(Tab::Todos, "Updated") {
+            header_cells.push(Cell::from("Updated"));
+            widths.push(Constraint::Length(16));
         }
 
         if widths.is_empty() {
@@ -2916,7 +2954,11 @@ pub(crate) fn render_tab_todos(
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ),
                     Span::styled(
-                        &n.state,
+                        if n.state == "unread" || n.state == "pending" {
+                            "NEW"
+                        } else {
+                            "READ"
+                        },
                         Style::default().fg(if n.state == "unread" || n.state == "pending" {
                             THEME.read().unwrap().green
                         } else {
@@ -2930,17 +2972,26 @@ pub(crate) fn render_tab_todos(
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ),
                     Span::styled(
-                        &n.updated_at,
+                        time_ago(&n.updated_at),
                         Style::default().fg(THEME.read().unwrap().yellow),
                     ),
                 ]));
                 text.push(Line::from(""));
-                text.push(Line::from(Span::styled(
-                    " Press Enter to mark read and switch to item",
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
-                        .add_modifier(Modifier::ITALIC),
-                )));
+                if n.state == "unread" || n.state == "pending" {
+                    text.push(Line::from(Span::styled(
+                        " Press Enter to mark read and switch to item",
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                } else {
+                    text.push(Line::from(Span::styled(
+                        " Press Enter to switch to item",
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                }
                 f.render_widget(
                     Paragraph::new(text)
                         .block(preview_block)

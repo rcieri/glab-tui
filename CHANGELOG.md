@@ -2,6 +2,63 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-07-26
+
+### Added
+- **Mouse support** — Full mouse interaction across the entire UI: sidebar tab switching, table row selection, and scroll-based navigation. All overlays and modals (confirm popup, selector, edit menu, date picker, column configure, help, save submenu) respond to click and scroll events. Z-order overlay dispatch via new `OverlayKind` enum and `overlay_stack` tracking (#205, #216, #228).
+- **CLI subcommands** — New `doctor`, `clean-cache`, `cache`, `open`, and `repos` subcommands via `clap` derive parser (#178, #237):
+  - `doctor` — validates glab/gh/git availability, config, cache, repo context, and terminal.
+  - `clean-cache [--dry-run]` — prunes stale cache entries.
+  - `cache` — lists cached files with sizes and timestamps.
+  - `open <entity> <id>` — opens entities in the browser via glab/gh.
+  - `repos` — lists recently-used repositories with validity markers.
+  - All output color-coded with ANSI SGR sequences.
+- **Bulk editing** for issues and merge requests — Multi-select via `Space` (default), then press `e` to bulk-edit labels, assignees, and milestone across all selected items. Selection state tracked per-tab with `HashSet<u64>`, cleared on tab switch or `Esc`. Cursor item automatically included in selection for intuitive single/bulk flow (#215, #230).
+- **Cache repo attributes** — Labels, members, and milestones cached with typed fields in `ProjectCache`, pre-fetched at startup and on explicit refresh. Selectors populate from cache immediately, eliminating loading spinners. Auto-refresh gated to high-churn tabs only (Issues, MRs, Pipelines, Jobs, Todos) (#174, #240).
+- **Create MR/PR from issue** — Press `m` in the Issues tab to open an EditMenu pre-filled with issue data. Source branch auto-generated from issue IID and slugified title; description includes `Closes #N` reference (#185, #229).
+- **`UiConfig`** — Configurable `sidebar_width` (default 22), `sidebar_visible` (default true), and `terminal_pane_visible` (default true) in config TOML (#202, #223).
+- **`BackendKind` enum** — `BackendKind::{GitLab, GitHub}` with `App::backend_kind()` helper for cleaner host-specific branching (#206).
+- **Semantic theme tokens** — New label palette tokens (`label_text`, `label_bg`) and `clean` preset theme (`src/themes/clean.toml`) (#207).
+- **Unified `Modal` component** — `modal_block()` and `modal_area()` helpers in `src/ui/modal.rs` providing standard double-border styling and centered sizing. Edit menu and selector overlays migrated (#193, #210).
+- **Auto-dismiss error toast** — `app.error_message` now renders as a red-bg bottom-centered toast, auto-dismissing after 4 seconds (#211).
+- **`FieldType` enum** — Typed `Field` constructors (`Text`, `MultiSelect`, `Date`, `Toggle`, `Ref`) for EditMenu migration. Edit menu titles use backend-specific labels (MR/PR) (#194, #225).
+- **Edit menu mnemonics** — Footer hints show mnemonic keybindings per field (e.g., `t` for Title, `d` for Description) (#201, #220).
+- **Pipeline dialog gating** — "Merge Request Pipeline" shown only for GitLab, "Workflow File" only for GitHub (#199, #222).
+- **Pipeline search/group-by** — Name, Event, SHA, and Actor columns now support fuzzy search and group-by in the pipelines tab (#198, #221).
+- **View related pipelines** — Press `P` in the MR tab to switch to Pipelines tab and auto-select the head pipeline (#209, #212).
+- **Start manual jobs** — Press `S` (GitLab only) to start manual pipeline jobs via `POST /projects/:id/jobs/:job_id/play` (#208, #214).
+- **Todos tab enhancements** — Badges, `Updated` column, `time_ago` formatting, fuzzy search support (#158, #239).
+- **Milestone progress bar** — Visual progress bar replaces percentage text in milestones table column (#161, #238).
+- **`clap` dependency** — Added `clap = { version = "4", features = ["derive"] }` for CLI argument parsing.
+
+### Fixed
+- **Help overlay completeness** — Added all missing keybindings (global_search, save_view, enter_pipeline, milestones edit/close/reopen/delete, releases edit/delete, terminal toggle_wrap). Upgraded hardcoded key references to config-backed lookups (#236).
+- **Milestone cache staleness** — `milestone_issues_cache` cleared on `MilestonesFetched` event so completed/closed counts are re-fetched after refresh (#231, #235).
+- **GitHub branch metadata** — `list_members` now fetches the real `default_branch` from repo info API instead of marking the first branch as default; `web_url` populated for GitHub branches (#171, #235).
+- **Quote extraction** — `extract_quotes()` now only strips matching outer quote pairs, preserving natural quotes inside titles (e.g., `Fix "bug" in parser`) (#232, #234).
+- **Mouse click targeting** — Selector click handler parameterized for search/footer height differences; search bar presence correctly computed from `field_type` for ColumnFilter overlay.
+- **Confirm popup mouse integration** — Raw shell commands replaced with `GitlabClient` backend methods; unconditional event-sending gated behind `Ok` branches; optimistic UI updates added before async calls.
+- **Shift+P/S keybindings** — Added bare `KeyCode::Char('P'/'S')` checks before `keybinding_matches` to handle crossterm's Shift-modifier reporting (#227).
+- **Responsive column widths** — `col_w()` helper caps widths for narrow terminals: 80-col terminals now get readable table columns (#203, #224).
+- **GitHub adaptation** — Confirm popup labels use backend-specific terms (MR/PR); pipeline detail labels adapted for GitHub (Run ID, Jobs Status) (#200, #219).
+- **Pipeline keybindings** — `view_related_pipelines` and `start_job` properly wired; `start_job` default changed from `p` to `S` to avoid shadowing `enter_pipeline` (#227).
+- **GitHub job stages** — Pipeline stage column uses workflow name for GitHub instead of stage ID (#213).
+- **Terminal output consistency** — Milestone close/reopen operations now use `CLOSING MILESTONE` / `REOPENING MILESTONE` labels matching the convention used by all other mutation operations (#217, #218).
+- **GitLab milestone fixes** — Various milestone command parsing and state sync corrections.
+
+### Changed
+- **Hints removed** — All inline edit menu hints, modal footer bars, and inline command hints removed. Users now rely on the help overlay (`?`). Removed unused `hint_text` theme token (#180, #226).
+- **Selector overlay** — Refactored to use new `Modal` component; footer adapted for multi-select vs single-select.
+- **Pipeline start job** — Default keybinding changed from `p` to `S` (was shadowing `enter_pipeline`).
+- **Auto-refresh scope** — 60-second timer gated to high-churn tabs only (Issues, MRs, Pipelines, Jobs, Todos); other tabs skip the timer.
+- **Optimistic local updates** — Milestone close/reopen and delete operations update local state immediately, skipping full re-fetches where possible.
+
+### Dependencies
+- Add `clap` `4.6` (with `derive` feature)
+- Bump transitive `anstream`, `anstyle`, `clap_builder`, `clap_derive`, `clap_lex` (via clap addition)
+
+---
+
 ## [0.7.0] - 2026-07-20
 
 ### Added

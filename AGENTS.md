@@ -24,15 +24,16 @@ The application detects whether the current repository is hosted on GitHub or Gi
 ## 2. Directory Structure
 
 * [src/main.rs](src/main.rs): Entry point. Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
-* [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic.
-* [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs.
+* [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `Selector`, `DiffView`, `DatePicker`), fuzzy-filtering logic, overlay stack tracking (`overlay_stack: Vec<OverlayKind>`), and bulk-selection state (`selected_issues`, `selected_mrs`).
+* [src/cli.rs](src/cli.rs): `clap`-based CLI entry point with `doctor`, `clean-cache`, `cache`, `open`, and `repos` subcommands. Uses raw ANSI SGR sequences for color-coded output.
+* [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, `UiConfig` (sidebar/terminal pane), and all `KeybindingXxx` structs.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/backend/](src/backend/): CLI backend layer.
-    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions.
+    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions. Also defines `BackendKind::{GitLab, GitHub}` for cleaner host-specific branching (`app.backend_kind()`).
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
 * [src/domain/](src/domain/): Domain models and top-level API functions.
-    * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, and event tx.
+    * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, and event tx. Contains `bulk_update_issues`/`bulk_update_mrs`.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
     * [pipelines.rs](src/domain/pipelines.rs): Pipeline, Job structures and job deduplication logic.
@@ -42,25 +43,33 @@ The application detects whether the current repository is hosted on GitHub or Gi
     * [milestones.rs](src/domain/milestones.rs): Milestone structures.
     * [branches.rs](src/domain/branches.rs): Branch structures.
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
-* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches.
+* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches. Auto-refresh gated to high-churn tabs only (Issues, MRs, Pipelines, Jobs, Todos).
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
-    * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
-    * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (confirm popup, date picker, help, refresh, repo switcher).
+    * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc., now includes `select_issue`/`select_mr` for bulk edit, `start_job`, `view_related_pipelines`).
+    * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (confirm popup, date picker, help, refresh, repo switcher) — also processes mouse events dispatched by overlay stack.
 * [src/utils/](src/utils/):
-    * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json`.
+    * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json`. Exports `get_cache_dir()`, `cache_file_name()`, `get_cache_dir_size()`, `CleanCacheResult`.
     * [format.rs](src/utils/format.rs): Time parsing, markdown rendering, string truncation.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
     * [update.rs](src/utils/update.rs): GitHub releases self-updater.
+* [src/ui/](src/ui/): Ratatui render modules.
+    * [mod.rs](src/ui/mod.rs): Re-exports.
+    * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions (includes `checked_bg` rendering for selected rows).
+    * [overlays.rs](src/ui/overlays.rs): Overlay render functions.
+    * [helpers.rs](src/ui/helpers.rs): Shared UI helpers.
+    * [diff.rs](src/ui/diff.rs): Diff view render functions.
+    * [modal.rs](src/ui/modal.rs): Unified `Modal` component — `modal_block()` and `modal_area()` for double-border modal styling.
 * [src/templates.rs](src/templates.rs): Default issue/MR description templates.
 * [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`).
 * [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic.
+* [src/themes/](src/themes/): Bundled theme TOML files (includes `clean.toml` preset).
 
 ## 3. Core Architectural Patterns
 
 ### State Management (`App`)
 * **Single Source of Truth:** All application state lives in the `App` struct inside [src/app.rs](src/app.rs).
-* **No Blocking in UI:** `ui::render` is called on every tick. Never perform I/O, API calls, or heavy computation inside [src/ui.rs](src/ui.rs).
+* **No Blocking in UI:** `ui::render` is called on every tick. Never perform I/O, API calls, or heavy computation inside [src/ui/](src/ui/) modules.
 
 ### Event Loop & Async Operations
 * User input (`crossterm` events) and background task results communicate with the main loop via the `Event` enum over a `tokio::sync::mpsc::UnboundedSender`.
@@ -90,6 +99,29 @@ The application detects whether the current repository is hosted on GitHub or Gi
   - `DiffFetched` event now uses named fields: `{ mr_iid, raw_diff, comments }`.
 * **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui.rs](src/ui.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
 
+### Mouse Support & Overlay Stack
+* Mouse events are dispatched through the overlay stack (`app.overlay_stack: Vec<OverlayKind>`).
+* `OverlayKind` enum identifies which overlay is active (None, Help, Selector, EditMenu, DatePicker, ColumnConfigure, ConfirmPopup, SaveSubmenu, SubmitReviewPrompt).
+* Each overlay stores its bounding `Rect` during rendering for hit-testing.
+* `handle_mouse_event()` iterates the stack in z-order: top overlay gets first dispatch, then sidebar/content/detail fallback.
+* Parameterized click handlers handle varying search/footer heights across selector types.
+
+### Bulk Editing
+* Users can select multiple issues or MRs via `Space` (configurable `select_issue`/`select_mr` keybinding) for bulk operations.
+* Selection state tracked in `app.selected_issues: HashSet<u64>` and `app.selected_mrs: HashSet<u64>`.
+* Pressing `e` with 2+ items selected opens a bulk edit menu for labels, assignees, and milestone.
+* `GitlabClient` contains `bulk_update_issues()` and `bulk_update_mrs()` methods.
+* `Esc` clears all selections before performing normal Esc behavior.
+* Cursor item is automatically included in the effective selection for bulk edit.
+
+### CLI Subcommands
+* `glab-tui` now supports `doctor`, `clean-cache`, `cache`, `open`, and `repos` subcommands via `clap` derive (`src/cli.rs`).
+* `doctor` validates backend CLI availability, config validity, cache health, repo context, and terminal capability.
+* `clean-cache [--dry-run]` prunes stale entries from `recent_repos.json` and removes orphaned cache files.
+* Output uses raw ANSI SGR sequences (no ratatui) — green PASS, red FAIL, yellow WARN, cyan headers, dim secondary info.
+* `Config::config_path()` is public for use by doctor diagnostics.
+* Cache helpers: `get_cache_dir()`, `cache_file_name()`, `get_cache_dir_size()`, `CleanCacheResult`.
+
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
 * `ProjectCache` now stores `enabled_columns`, `group_by_column`, `group_ascending`, and `column_filters` in addition to API data.
@@ -101,6 +133,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`.
 * Icons: The global `ICONS` `RwLock` is initialized at startup with hardcoded nerd font defaults and is not user-configurable.
 * Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES`. User themes in `~/.config/glab-tui/themes/` take precedence.
+* `UiConfig` fields: `sidebar_width` (default 22), `sidebar_visible` (default true), `terminal_pane_visible` (default true) are configurable in the `[ui]` section of `config.toml`.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens to `Theme` if needed.
 
 ### Keybinding System

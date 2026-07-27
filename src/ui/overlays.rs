@@ -1778,46 +1778,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         }
     }
 
-    if app.show_submit_review_prompt.is_some() {
-        let block = Block::default()
-            .title(format!(" {} Submit Review? ", icons.action_review))
-            .title_style(
-                Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .border_type(BorderType::Double)
-            .style(Style::default().bg(Color::Reset));
-
-        let area = centered_rect_fixed(60, 9, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::SubmitReview, area));
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints([
-                Constraint::Min(0), // Message
-            ])
-            .split(area);
-
-        let message_p = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(
-                "You have pending draft comments. Would you like to submit your review now?",
-            ),
-        ])
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(THEME.read().unwrap().text_normal))
-        .wrap(ratatui::widgets::Wrap { trim: true });
-
-        f.render_widget(Clear, area);
-        f.render_widget(block, area);
-        f.render_widget(message_p, chunks[0]);
-    }
-
     if let Some(confirm) = &app.confirm_popup {
         let kind = app.kind();
         let (title, message) = match confirm {
@@ -1871,6 +1831,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     format!("Are you sure you want to merge {mr_short} #{}?", iid),
                 )
             }
+            crate::app::ConfirmAction::SubmitReview(_) => (
+                format!(" {} Submit Review? ", icons.action_review),
+                "You have pending draft comments. Would you like to submit your review now?"
+                    .to_string(),
+            ),
         };
 
         let block = Block::default()

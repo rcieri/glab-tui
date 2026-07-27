@@ -9,46 +9,6 @@ use ratatui::widgets::ListState;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
-pub fn handle_submit_review_prompt(app: &mut App, key_event: &KeyEvent) -> bool {
-    if let Some(mr_iid) = app.show_submit_review_prompt {
-        match key_event.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                app.show_submit_review_prompt = None;
-                app.selector = Some(crate::app::Selector {
-                    title: " Submit Pull Request Review ".to_string(),
-                    all_items: vec![
-                        "Approve".to_string(),
-                        "Request Changes".to_string(),
-                        "Comment".to_string(),
-                    ],
-                    selected_items: std::collections::HashSet::new(),
-                    cursor_idx: 0,
-                    search_query: String::new(),
-                    is_filtering: false,
-                    is_loading: false,
-                    entity_iid: mr_iid,
-                    entity_type: "mr".to_string(),
-                    field_type: "review_submit_status".to_string(),
-                    multi_select: false,
-                    state: ListState::default(),
-                });
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                app.show_submit_review_prompt = None;
-                app.draft_comments.clear();
-                app.in_review_mode = false;
-                app.diff_view = None;
-            }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                app.show_submit_review_prompt = None;
-            }
-            _ => {}
-        }
-        return true;
-    }
-    false
-}
-
 pub fn handle_confirm_popup(
     app: &mut App,
     key_event: &KeyEvent,
@@ -67,7 +27,11 @@ pub fn handle_confirm_popup(
             }
             KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if key_event.code == KeyCode::Enter && !app.confirm_popup_selected_yes {
-                    // Cancel
+                    if matches!(confirm_action, crate::app::ConfirmAction::SubmitReview(_)) {
+                        app.draft_comments.clear();
+                        app.in_review_mode = false;
+                        app.diff_view = None;
+                    }
                     return true;
                 }
                 match confirm_action {
@@ -252,9 +216,35 @@ pub fn handle_confirm_popup(
                             ));
                         });
                     }
+                    crate::app::ConfirmAction::SubmitReview(mr_iid) => {
+                        app.selector = Some(crate::app::Selector {
+                            title: " Submit Pull Request Review ".to_string(),
+                            all_items: vec![
+                                "Approve".to_string(),
+                                "Request Changes".to_string(),
+                                "Comment".to_string(),
+                            ],
+                            selected_items: std::collections::HashSet::new(),
+                            cursor_idx: 0,
+                            search_query: String::new(),
+                            is_filtering: false,
+                            is_loading: false,
+                            entity_iid: mr_iid,
+                            entity_type: "mr".to_string(),
+                            field_type: "review_submit_status".to_string(),
+                            multi_select: false,
+                            state: ListState::default(),
+                        });
+                    }
                 }
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {}
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                if matches!(confirm_action, crate::app::ConfirmAction::SubmitReview(_)) {
+                    app.draft_comments.clear();
+                    app.in_review_mode = false;
+                    app.diff_view = None;
+                }
+            }
             _ => {
                 app.confirm_popup = Some(confirm_action);
             }

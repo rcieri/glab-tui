@@ -2239,13 +2239,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -2846,13 +2847,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -2907,13 +2909,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3137,13 +3140,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3275,13 +3279,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3326,13 +3331,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };

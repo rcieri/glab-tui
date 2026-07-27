@@ -3054,7 +3054,7 @@ pub(crate) fn render_tab_todos(
         let mut widths = Vec::new();
 
         if app.is_column_visible(Tab::Todos, "State") {
-            header_cells.push(Cell::from("State"));
+            header_cells.push(Cell::from(Line::from("State").alignment(Alignment::Center)));
             widths.push(Constraint::Length(6));
         }
         if app.is_column_visible(Tab::Todos, "Project") {

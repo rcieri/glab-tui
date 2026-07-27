@@ -209,6 +209,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Style::default().fg(THEME.read().unwrap().yellow),
         ));
     }
+    if let Some(Some(group_col)) = app.group_by_column.get(&app.active_tab) {
+        title_spans.push(Span::styled(
+            format!(" {} GROUPED: {} ", icons.label_filtered, group_col),
+            Style::default()
+                .bg(THEME.read().unwrap().blue)
+                .fg(THEME.read().unwrap().bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
 
     let title = Paragraph::new(Line::from(title_spans))
         .style(Style::default().bg(THEME.read().unwrap().bg))

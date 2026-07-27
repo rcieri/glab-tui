@@ -199,11 +199,6 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         handle_confirm_popup_mouse(app, *rect, row, col);
                         return;
                     }
-                    OverlayKind::SubmitReview => {
-                        // Click anywhere on the prompt → close (same as Esc)
-                        app.show_submit_review_prompt = None;
-                        return;
-                    }
                     OverlayKind::ColumnFilter => {
                         handle_selector_mouse(app, inner, row, col, 3, 3);
                         return;
@@ -440,10 +435,36 @@ fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
                             ));
                         });
                     }
+                    crate::app::ConfirmAction::SubmitReview(mr_iid) => {
+                        app.selector = Some(crate::app::Selector {
+                            title: " Submit Pull Request Review ".to_string(),
+                            all_items: vec![
+                                "Approve".to_string(),
+                                "Request Changes".to_string(),
+                                "Comment".to_string(),
+                            ],
+                            selected_items: std::collections::HashSet::new(),
+                            cursor_idx: 0,
+                            search_query: String::new(),
+                            is_filtering: false,
+                            is_loading: false,
+                            entity_iid: mr_iid,
+                            entity_type: "mr".to_string(),
+                            field_type: "review_submit_status".to_string(),
+                            multi_select: false,
+                            state: ratatui::widgets::ListState::default(),
+                        });
+                    }
                 }
             }
+        } else {
+            // NO clicked — if the confirm_action was SubmitReview, clean up
+            if matches!(confirm_action, crate::app::ConfirmAction::SubmitReview(_)) {
+                app.draft_comments.clear();
+                app.in_review_mode = false;
+                app.diff_view = None;
+            }
         }
-        // else: NO clicked — popup was already taken, so it's dismissed
     }
 }
 
@@ -1611,13 +1632,7 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if handle_submit_review_prompt(&mut app, &key_event)
-                        || handle_confirm_popup(
-                            &mut app,
-                            &key_event,
-                            &mut terminal,
-                            events.sender(),
-                        )
+                    if handle_confirm_popup(&mut app, &key_event, &mut terminal, events.sender())
                         || handle_help_keybinding(&mut app, &key_event)
                         || handle_help_overlay(&mut app, &key_event)
                         || handle_switch_repo(&mut app, &key_event)
@@ -5217,7 +5232,10 @@ async fn main() -> Result<()> {
                                     diff_view.file_tree_visible = true;
                                 } else {
                                     if !app.draft_comments.is_empty() {
-                                        app.show_submit_review_prompt = Some(diff_view.mr_iid);
+                                        app.confirm_popup =
+                                            Some(crate::app::ConfirmAction::SubmitReview(
+                                                diff_view.mr_iid,
+                                            ));
                                     } else {
                                         app.diff_view = None;
                                         continue;
@@ -5278,7 +5296,10 @@ async fn main() -> Result<()> {
                                         diff_view.search_active = false;
                                     }
                                     if !app.draft_comments.is_empty() {
-                                        app.show_submit_review_prompt = Some(diff_view.mr_iid);
+                                        app.confirm_popup =
+                                            Some(crate::app::ConfirmAction::SubmitReview(
+                                                diff_view.mr_iid,
+                                            ));
                                     } else {
                                         app.diff_view = None;
                                         continue;

@@ -1764,7 +1764,6 @@ pub enum OverlayKind {
     Configure,
     SaveMenu,
     ColumnFilter,
-    SubmitReview,
     ConfirmPopup,
 }
 
@@ -1778,6 +1777,7 @@ pub enum ConfirmAction {
     CloseIssue(u64),       // issue iid
     CloseMr(u64),          // mr iid
     MergeMr(u64),          // mr iid
+    SubmitReview(u64),     // mr iid
 }
 
 pub struct App {
@@ -1828,7 +1828,7 @@ pub struct App {
     pub diff_view: Option<DiffView>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
-    pub show_submit_review_prompt: Option<u64>,
+
     pub confirm_popup: Option<ConfirmAction>,
     pub confirm_popup_selected_yes: bool,
     pub diff_loading: bool,
@@ -1923,7 +1923,6 @@ impl Default for App {
             diff_view: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
-            show_submit_review_prompt: None,
             confirm_popup: None,
             confirm_popup_selected_yes: false,
             diff_loading: false,
@@ -4538,14 +4537,6 @@ index abcdef..ffffff 100644
             side_by_side[3].right.as_ref().unwrap().content,
             " normal line"
         );
-    }
-
-    #[test]
-    fn test_show_submit_review_prompt_defaults() {
-        let app = App::default();
-        assert_eq!(app.show_submit_review_prompt, None);
-        assert!(!app.in_review_mode);
-        assert!(app.draft_comments.is_empty());
     }
 
     #[test]

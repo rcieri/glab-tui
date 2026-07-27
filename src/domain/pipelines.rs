@@ -255,6 +255,9 @@ mod tests {
                 stage: "build".into(),
                 name: "compile-code".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
             Job {
                 id: 102,
@@ -262,6 +265,9 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
             Job {
                 id: 103,
@@ -269,6 +275,9 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
             Job {
                 id: 104,
@@ -276,6 +285,9 @@ mod tests {
                 stage: "build".into(),
                 name: "compile-code".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
         ];
 
@@ -303,6 +315,9 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests [ubuntu, unit]".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
             Job {
                 id: 202,
@@ -310,6 +325,9 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests [windows, integration]".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
             Job {
                 id: 203,
@@ -317,6 +335,9 @@ mod tests {
                 stage: "test".into(),
                 name: "run-tests [ubuntu, unit]".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
             Job {
                 id: 204,
@@ -324,6 +345,9 @@ mod tests {
                 stage: "test".into(),
                 name: "lint".into(),
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             },
         ];
 
@@ -353,6 +377,9 @@ mod tests {
             stage: "build".into(),
             name: "test-matrix (ubuntu-latest, 20)".into(),
             matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: Vec::new(),
         }];
         let processed = process_pipeline_jobs(input_jobs);
         assert_eq!(processed.len(), 1);

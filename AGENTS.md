@@ -59,6 +59,15 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * [src/templates.rs](src/templates.rs): Default issue/MR description templates.
 * [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`).
 * [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic.
+* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`) and ANSI-styled diagnostic output.
+* [src/ui/](src/ui/): Ratatui render functions.
+    * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
+    * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions.
+    * [overlays.rs](src/ui/overlays.rs): Overlay render functions.
+    * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers.
+    * [diff.rs](src/ui/diff.rs): Diff view render functions.
+    * [modal.rs](src/ui/modal.rs): Unified modal component.
+* [src/themes/](src/themes/): 13 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84).
 
 ## 3. Core Architectural Patterns
 
@@ -281,15 +290,12 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Delete issue (GH) | `gh issue delete <iid> -R <repo> --yes` |
 | Approve MR | `gh pr review <iid> --approve` / `glab mr approve <iid>` |
 | Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --remove-source-branch --squash` |
-| Toggle draft | `gh pr ready <iid>` / `glab mr update <iid> --draft\|--ready` |
+| Toggle draft (→ ready) | `gh pr ready <iid>` / `glab mr update <iid> --ready` |
+| Toggle draft (→ draft) | `gh pr ready <iid> --undo` / `glab mr update <iid> --draft` |
 | Create release | `gh release create <tag> -F <changelog>` / `glab release create <tag> -F <changelog>` |
 | Create milestone | `gh api POST repos/{}/milestones -f title=...` / `glab api POST projects/{}/milestones -f title=...` |
 | Create branch | `glab api POST ...repository/branches` / `gh api POST ...git/refs` |
 | Delete branch | `glab api DELETE ...repository/branches/{}` / `gh api DELETE ...git/refs/heads/{}` |
-| Run pipeline | `gh workflow run` / `glab ci run --mr` |
-| Open in browser | `gh issue\|pr\|run view --web` / `glab issue\|mr\|ci view -w` |
-| Reply to comment | `gh api POST repos/{}/pulls/{}/comments` / `glab api POST projects/{}/merge_requests/{}/discussions/{}/notes` |
-| Submit review | `gh api POST repos/{}/pulls/{}/reviews` / `glab api POST projects/{}/merge_requests/{}/...` |
 | Run pipeline | `gh workflow run` / `glab ci run --mr` |
 | Open in browser | `gh issue\|pr\|run view --web` / `glab issue\|mr\|ci view -w` |
 | Reply to comment | `gh api POST repos/{}/pulls/{}/comments` / `glab api POST projects/{}/merge_requests/{}/discussions/{}/notes` |

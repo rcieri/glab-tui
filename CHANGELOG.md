@@ -11,12 +11,12 @@ All notable changes to this project will be documented in this file.
 - **CLI subcommands** — New `doctor` and `clean-cache` subcommands for system diagnostics and cache management, implemented with `clap` derive (#178, #237).
 - **Todos/Notifications tab overhaul** — Badges, relative `time_ago` timestamps, an explicit Updated column, and fuzzy search across all todo columns (#158, #239).
 - **Milestone visual progress bar** — Replaces plain percentage text with a rendered progress bar in the milestones table column (#161, #238).
-- **Configurable sidebar and terminal pane** — New `UiConfig` section in `config.toml` lets users set sidebar width and terminal pane height (#223).
+- **Configurable sidebar and terminal pane** — New `UiConfig` section in `config.toml` lets users set sidebar width and toggle sidebar/terminal pane visibility (#223).
 - **Edit menu mnemonics footer** — Keybinding hints displayed at the bottom of edit menus for quick reference (#220).
 - **Pipeline search and group-by** — Filter and group pipelines by Name, Event, SHA, and Actor columns (#221).
 - **Run pipeline dialog** — Gated on backend availability with appropriate messaging when the feature is not supported (#222).
 - **Related pipelines from MR detail** — Press `P` in MR detail view to list pipelines associated with the selected merge request (#212).
-- **Manual GitLab job start** — Press `p` to start manual (blocked) GitLab CI jobs from the job view (#214).
+- **Manual GitLab job start** — Press `S` to start manual (blocked) GitLab CI jobs from the job view (#214).
 - **Unified Modal component** — Reusable double-bordered modal widget for consistent overlay rendering (#210).
 - **Auto-dismiss error toasts** — Error messages render as timed notification toasts instead of persistent overlays (#211).
 - **BackendKind enum** — Runtime backend identification (`BackendKind::GitLab` / `BackendKind::GitHub`) with terminology helpers (`term()`) for host-aware UI strings (#206).
@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - **Performance optimizations** — Cached repo attributes, reduced over-fetching of unchanged data, and streamlined mutation handlers (#240).
 
 ### Fixed
+- **GitHub PR draft toggle** — Fixed `gh pr edit --draft` (invalid command) → `gh pr ready --undo` for marking PRs as draft.
 - **Help overlay completeness** — All missing keybindings now documented; overlay switched from hardcoded to config-backed rendering (#236).
 - **Cache staleness** — Milestone issues no longer served stale; GitHub branch metadata correctly fetched (#235).
 - **Quote stripping** — `extract_quotes` now only strips outer matching quote pairs instead of all quotes (#234).
@@ -42,6 +43,7 @@ All notable changes to this project will be documented in this file.
 - **In-terminal hints removed** — All inline status hints removed from the UI; functionality consolidated into the help overlay (`?`) (#226).
 - **Edit menu terminology** — Standardized field labels using the new `FieldType` enum (#225).
 - **Terminology extraction** — Hardcoded host-aware strings (Merge Request / Pull Request, Pipeline / Action, Todo / Notification) moved into `BackendKind::term()` for single-source-of-truth (#206).
+- **CI release automation** — Submodules (`Formula/`, `scoop/`) removed; `post-release.yml` now updates Homebrew and Scoop manifests directly instead of dispatching to submodule repos.
 
 ### Dependencies
 - Add `clap` 4 (with `derive` feature) — CLI argument parsing for subcommands

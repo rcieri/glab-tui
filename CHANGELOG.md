@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-07-26
+
+### Added
+- **Mouse support** — Click to navigate and interact with all overlays, modals, sidebar tabs, and table scrolling via mouse events. Includes parameterized selector click handlers and backend-aware confirm popup interactions (#216, #227, #228).
+- **Bulk editing** — Select multiple issues or merge requests and apply batch operations (close, reopen, label, assign) in a single action (#215, #230).
+- **Create MR/PR from issue** — Press `m` on a selected issue to instantly create a merge/pull request from it, with automatic branch creation and push (#185, #229).
+- **CLI subcommands** — New `doctor` and `clean-cache` subcommands for system diagnostics and cache management, implemented with `clap` derive (#178, #237).
+- **Todos/Notifications tab overhaul** — Badges, relative `time_ago` timestamps, an explicit Updated column, and fuzzy search across all todo columns (#158, #239).
+- **Milestone visual progress bar** — Replaces plain percentage text with a rendered progress bar in the milestones table column (#161, #238).
+- **Configurable sidebar and terminal pane** — New `UiConfig` section in `config.toml` lets users set sidebar width and toggle sidebar/terminal pane visibility (#223).
+- **Edit menu mnemonics footer** — Keybinding hints displayed at the bottom of edit menus for quick reference (#220).
+- **Pipeline search and group-by** — Filter and group pipelines by Name, Event, SHA, and Actor columns (#221).
+- **Run pipeline dialog** — Gated on backend availability with appropriate messaging when the feature is not supported (#222).
+- **Related pipelines from MR detail** — Press `P` in MR detail view to list pipelines associated with the selected merge request (#212).
+- **Manual GitLab job start** — Press `S` to start manual (blocked) GitLab CI jobs from the job view (#214).
+- **Unified Modal component** — Reusable double-bordered modal widget for consistent overlay rendering (#210).
+- **Auto-dismiss error toasts** — Error messages render as timed notification toasts instead of persistent overlays (#211).
+- **BackendKind enum** — Runtime backend identification (`BackendKind::GitLab` / `BackendKind::GitHub`) with terminology helpers (`term()`) for host-aware UI strings (#206).
+- **Semantic theme tokens** — Label palette, clean preset, and expanded color token system for finer-grained UI theming (#207).
+- **workflow_dispatch inputs** — Detects and prompts for `workflow_dispatch` inputs when triggering GitHub Actions pipelines.
+- **Performance optimizations** — Cached repo attributes, reduced over-fetching of unchanged data, and streamlined mutation handlers (#240).
+
+### Fixed
+- **GitHub PR draft toggle** — Fixed `gh pr edit --draft` (invalid command) → `gh pr ready --undo` for marking PRs as draft.
+- **Help overlay completeness** — All missing keybindings now documented; overlay switched from hardcoded to config-backed rendering (#236).
+- **Cache staleness** — Milestone issues no longer served stale; GitHub branch metadata correctly fetched (#235).
+- **Quote stripping** — `extract_quotes` now only strips outer matching quote pairs instead of all quotes (#234).
+- **Mouse click targeting** — Selector click handler properly accounts for search bar and footer height; search bar presence detected from `field_type` (#227).
+- **Confirm popup with mouse** — Backend methods used for confirm action execution; event-sending bugs resolved (#227).
+- **Keybinding modifier keys** — Bare `KeyCode` checks added for uppercase `P` and `S` modifiers to prevent conflicts (#227).
+- **Pipeline keybinding wiring** — `view_related_pipelines` and `start_job` keybindings properly routed to their handlers.
+- **Responsive column widths** — Table columns now adapt gracefully on 80-col terminals (#224).
+- **Confirm popup and pipeline detail** — Missing confirm popup handling and pipeline detail adaptations restored (#219).
+- **Milestone terminal output** — Unified close/reopen command output to prevent terminal corruption (#218).
+- **GitHub job stage name** — Uses workflow name instead of raw job identifier for GitHub Actions stage column (#213).
+- **GitLab milestone fixes** — Corrected milestone update and deletion behavior.
+
+### Changed
+- **In-terminal hints removed** — All inline status hints removed from the UI; functionality consolidated into the help overlay (`?`) (#226).
+- **Edit menu terminology** — Standardized field labels using the new `FieldType` enum (#225).
+- **Terminology extraction** — Hardcoded host-aware strings (Merge Request / Pull Request, Pipeline / Action, Todo / Notification) moved into `BackendKind::term()` for single-source-of-truth (#206).
+- **CI release automation** — Submodules (`Formula/`, `scoop/`) removed; `post-release.yml` now updates Homebrew and Scoop manifests directly instead of dispatching to submodule repos.
+
+### Dependencies
+- Add `clap` 4 (with `derive` feature) — CLI argument parsing for subcommands
+- Add `serde_yaml` 0.9 — YAML support for `doctor` diagnostics output
+
+---
+
 ## [0.7.0] - 2026-07-20
 
 ### Added

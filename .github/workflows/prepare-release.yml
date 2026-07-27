@@ -25,7 +25,6 @@ jobs:
               uses: actions/checkout@v7
               with:
                   fetch-depth: 0
-                  submodules: true
 
             - name: Configure Git
               run: |
@@ -94,11 +93,6 @@ jobs:
             - name: Generate demo GIFs
               run: ./assets/generate-demos.sh
 
-            - name: Update submodule refs to latest
-              run: |
-                git submodule update --remote --merge
-                git add Formula/ scoop/
-
             - name: Commit changes and push to release branch
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -111,9 +105,9 @@ jobs:
                       exit 0
                   fi
                   BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
-                  git add assets/demo-*.gif Formula/ scoop/
+                  git add assets/demo-*.gif
                   git diff --cached --quiet && echo "No changes to commit" && exit 0
-                  git commit -m "chore: update demo GIFs and submodule refs to ${{ env.NEW_TAG }}"
+                  git commit -m "chore: update demo GIFs for ${{ env.NEW_TAG }}"
                   git push origin "$BRANCH"
 
             - name: Standardize Pull Request Title

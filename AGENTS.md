@@ -8,16 +8,18 @@ Welcome, AI Agent! This document contains essential context, architectural guide
 Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out to the official `glab` and `gh` CLIs** under the hood.
 
 * **Primary Language:** Rust (Edition 2024)
-* **TUI Framework:** `ratatui` (v0.30.2)
+* **TUI Framework:** `ratatui` (v0.30.1)
 * **Syntax Highlighting:** `syntect` (v5, `default-fancy` features)
-* **Async Runtime:** `tokio` (v1.53)
+* **Async Runtime:** `tokio` (v1.38, full)
 * **Async Traits:** `async-trait` (v0.1)
-* **Terminal Handling:** `crossterm`
+* **CLI Parsing:** `clap` (v4, derive)
+* **Terminal Handling:** `crossterm` (v0.29)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
+* **YAML:** `serde_yaml` (v0.9) — diagnostics output
 * **Package:** `glab-tui-crate` (binary: `glab-tui`)
 
 ### Dual-Engine Architecture
-The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)).
+The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
 
 **Rule:** Never use `glab api` or `gh api` when a native subcommand exists. Prefer native subcommands — they use built-in pagination, auth, and output formatting. Only fall back to raw API calls for endpoints with no native CLI equivalent.
 
@@ -42,6 +44,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
     * [milestones.rs](src/domain/milestones.rs): Milestone structures.
     * [branches.rs](src/domain/branches.rs): Branch structures.
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
+    * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
 * [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
@@ -52,9 +55,19 @@ The application detects whether the current repository is hosted on GitHub or Gi
     * [format.rs](src/utils/format.rs): Time parsing, markdown rendering, string truncation.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
     * [update.rs](src/utils/update.rs): GitHub releases self-updater.
+* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`) and ANSI-styled diagnostic output.
 * [src/templates.rs](src/templates.rs): Default issue/MR description templates.
 * [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`).
 * [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic.
+* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`) and ANSI-styled diagnostic output.
+* [src/ui/](src/ui/): Ratatui render functions.
+    * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
+    * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions.
+    * [overlays.rs](src/ui/overlays.rs): Overlay render functions.
+    * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers.
+    * [diff.rs](src/ui/diff.rs): Diff view render functions.
+    * [modal.rs](src/ui/modal.rs): Unified modal component.
+* [src/themes/](src/themes/): 13 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84).
 
 ## 3. Core Architectural Patterns
 
@@ -123,6 +136,12 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * `ConfirmAction` enum in [src/app.rs](src/app.rs) lists all confirmable actions. The UI renders a yes/no box; the selected state is `app.confirm_popup_selected_yes: bool`.
 * Add new variants to `ConfirmAction` when introducing destructive operations. Handle the confirmation flow in [src/main.rs](src/main.rs) by checking `app.confirm_popup` before proceeding.
 
+### Mouse Support
+* Mouse events (`crossterm::event::MouseEvent`) are handled in the event loop for selecting tabs, scrolling tables, and interacting with overlays.
+* All modal and overlay interactions (confirm popups, selectors, date picker, help) have click handlers routed through their respective state components.
+* Selector overlays compute mouse target positions based on search bar presence (determined by `field_type`) and footer height.
+* Add new mouse handlers following the pattern in [src/handlers/overlays.rs](src/handlers/overlays.rs) and [src/handlers/tabs.rs](src/handlers/tabs.rs).
+
 ### Column Configure Popup
 * The configure overlay (`Tab`) has three sections: **COLUMNS** (checkbox toggle), **GROUP BY** (single-select), and **ORDER** (Ascending/Descending).
 * Value-based column filtering is available by pressing `Enter` on a focused column item, which opens a selector overlay with distinct values for that column.
@@ -185,6 +204,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Cancel pipeline | `glab ci cancel pipeline <id> -R <repo>` |
 | Retry job | `glab ci retry <job_id> -R <repo>` |
 | Cancel job | `glab ci cancel job <id> -R <repo>` |
+| Start manual job | `glab ci retry <job_id> -R <repo>` |
 | Mark todo done | `glab todo done <id>` |
 
 #### Data Fetching — Raw API (no native subcommand exists)
@@ -201,6 +221,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
+| List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
+| List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 
 ### GhBackend (`src/backend/gh.rs`)
 
@@ -249,6 +271,9 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List members | `GET /repos/{}/assignees?per_page=100` | No native command |
 | Update milestone | `PATCH repos/{}/milestones/{}` | No `gh milestone` command |
 | Delete milestone | `DELETE repos/{}/milestones/{}` | No `gh milestone` command |
+| List environments | `GET /repos/{}/environments?per_page=<N>` | No native command |
+| List deployments | `GET /repos/{}/deployments?per_page=<N>` | No native command |
+| List members | `GET /repos/{}/assignees?per_page=100` | No native command |
 
 ### Direct CLI Commands (`src/main.rs` — `run_cli()`)
 
@@ -265,7 +290,8 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Delete issue (GH) | `gh issue delete <iid> -R <repo> --yes` |
 | Approve MR | `gh pr review <iid> --approve` / `glab mr approve <iid>` |
 | Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --remove-source-branch --squash` |
-| Toggle draft | `gh pr ready <iid>` / `glab mr update <iid> --draft\|--ready` |
+| Toggle draft (→ ready) | `gh pr ready <iid>` / `glab mr update <iid> --ready` |
+| Toggle draft (→ draft) | `gh pr ready <iid> --undo` / `glab mr update <iid> --draft` |
 | Create release | `gh release create <tag> -F <changelog>` / `glab release create <tag> -F <changelog>` |
 | Create milestone | `gh api POST repos/{}/milestones -f title=...` / `glab api POST projects/{}/milestones -f title=...` |
 | Create branch | `glab api POST ...repository/branches` / `gh api POST ...git/refs` |

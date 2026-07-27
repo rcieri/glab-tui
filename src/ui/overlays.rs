@@ -607,6 +607,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Global & Nav",
+                key: d(format!("{}", app.config.keybindings.global.save_view)),
+                action: "Save view layout to config",
+            },
+            Shortcut {
+                category: "Global & Nav",
                 key: d(format!("q / {} / Esc", app.config.keybindings.global.quit)),
                 action: "Quit / Close overlay",
             },
@@ -728,6 +733,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Pipelines",
+                key: s("n"),
+                action: "Create pipeline with interactive form",
+            },
+            Shortcut {
+                category: "Pipelines",
                 key: d(format!(
                     "{}",
                     app.config.keybindings.pipelines.trigger_pipeline
@@ -743,6 +753,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 category: "Pipelines",
                 key: d(format!("{}", app.config.keybindings.pipelines.cancel)),
                 action: "Cancel pipeline execution",
+            },
+            Shortcut {
+                category: "Pipelines",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.pipelines.download_artifact
+                )),
+                action: "Download pipeline artifact",
             },
             Shortcut {
                 category: "Pipelines",
@@ -992,7 +1010,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Diff View",
                 key: s("J / K"),
-                action: "Next / Previous Hunk",
+                action: "Page down / Page up",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("[ / ]"),
+                action: "Previous / Next Hunk",
             },
             Shortcut {
                 category: "Diff View",
@@ -1003,6 +1026,51 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 category: "Diff View",
                 key: s("r"),
                 action: "Submit Review (approve/changes/comment)",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("d"),
+                action: "Toggle unified / side-by-side layout",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("v / V"),
+                action: "Start / Stop line selection for comment",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("a"),
+                action: "Interact with comments on current line",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("C"),
+                action: "Add comment via external $EDITOR",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("e"),
+                action: "Add code suggestion via $EDITOR",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("/ f"),
+                action: "Search within diff",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("Ctrl+n / Ctrl+N"),
+                action: "Search next / previous match",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("z / Z"),
+                action: "Collapse / Expand all files",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("Enter / Space"),
+                action: "Expand file tree / Toggle zoom",
             },
             Shortcut {
                 category: "Diff View",

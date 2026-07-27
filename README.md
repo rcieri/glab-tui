@@ -7,13 +7,17 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ## Features
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
+- **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
+- **Bulk editing** — select multiple issues or merge requests and apply batch operations (close, reopen, label, assign)
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description)
 - **Merge Requests / Pull Requests** — list, filter, create MRs from issues, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
 - **Code Reviews** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, and atomic review submission
 - **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with syntax highlighting
-- **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces
+- **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces; trigger pipelines with `workflow_dispatch` input prompts
 - **Runners** — list runners with structured details panel; pause/resume, edit descriptions, and monitor live performance/queue metrics
 - **Releases** — browse project releases and view details in the terminal
+- **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
+- **Milestones** — progress bar column, inline editing, and milestone issue caching
 - **Multi-colored Labels** — table columns render labels with their individual unique hashed colors, preserving search highlights
 - **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility, group by any column, and set sort order
 - **Value-based Column Filtering** — filter table rows by specific column values from the configure popup
@@ -21,8 +25,9 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
+- **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `open` (open entity in browser)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
-- **Themes** — six built-in color themes; fully customizable via `config.toml` or custom `.toml` files
+- **Themes** — 13 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---
@@ -160,7 +165,7 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # [theme]
 # bg = "#121214"
 # border_focused = "#31bf67"
-# ...19 color tokens total
+# ...color tokens (see bundled themes for the full list)
 
 # Remap any keybinding
 [keybindings.global]
@@ -208,11 +213,16 @@ glab-tui --dir /path/to/other/repo
 
 ### Options
 
-| Flag | Argument | Description |
-|---|---|---|
+| Flag / Subcommand | Argument | Description |
+|---|---|---|---|
 | `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
 | `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
+| `--update` | | Check for and install updates |
 | `-h`, `--help` | | Print usage help details |
+| `doctor` | *(subcommand)* | Check system health — dependency availability, config integrity, cache status |
+| `clean-cache` | `[--dry-run]` | Remove stale cache entries for repos that no longer exist |
+| `cache` | *(subcommand)* | List cached data files with sizes |
+| `open` | `<entity> <id>` | Open an entity (issue/MR/pipeline) in the browser |
 
 The TUI will launch in the terminal, auto-detecting the project context and fetching the Issues tab immediately.
 
@@ -248,8 +258,10 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 |---|---|
 | `n` | Create new issue (prompts for title) |
 | `e` | Open edit menu for selected issue |
+| `m` | Create MR/PR from selected issue |
 | `c` | Close selected issue |
 | `r` | Reopen selected issue |
+| `Space` | Select issue for bulk editing |
 | `J` | Scroll description panel down |
 | `K` | Scroll description panel up |
 
@@ -277,6 +289,8 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | `a` | Approve selected MR |
 | `m` | Merge selected MR (squash + remove source branch) |
 | `v` | View diff of selected MR in terminal |
+| `P` | View related pipelines from MR detail |
+| `Space` | Select MR for bulk editing |
 | `o` | Open selected MR in browser |
 | `s` | Toggle Draft / Ready status |
 | `c` | Close selected MR |
@@ -324,6 +338,7 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 |---|---|
 | `Enter` | Fetch and display job trace |
 | `r` | Retry selected job (or all checked jobs) |
+| `S` | Start manual (blocked) GitLab CI job |
 | `d` | Download job artifact |
 | `o` | Open job in browser |
 | `e` | Open job trace in `$EDITOR` |
@@ -380,6 +395,8 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | [`toml`](https://crates.io/crates/toml) | 1.1 | Parsing `config.toml` and theme files |
 | [`anyhow`](https://crates.io/crates/anyhow) | 1.0 | Ergonomic error handling |
 | [`async-trait`](https://crates.io/crates/async-trait) | 0.1 | Async trait support for Backend trait |
+| [`clap`](https://crates.io/crates/clap) | 4 (derive) | CLI argument parsing for subcommands |
+| [`serde_yaml`](https://crates.io/crates/serde_yaml) | 0.9 | YAML output for `doctor` diagnostics |
 | [`chrono`](https://crates.io/crates/chrono) | 0.4 | Timestamp formatting ("2 hours ago") |
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
@@ -401,6 +418,7 @@ src/
 ├── editor.rs        # External editor integration ($EDITOR)
 ├── entity_editor.rs # Edit-menu field change logic
 ├── templates.rs     # Default issue/MR/PR description templates
+├── cli.rs           # CLI subcommands (doctor, clean-cache)
 ├── themes/          # Bundled theme TOML files
 ├── backend/         # CLI backend layer
 │   ├── mod.rs       # Backend trait (~40 methods)
@@ -427,7 +445,8 @@ src/
 │   ├── tabs.rs      # Tab-specific render functions
 │   ├── overlays.rs  # Overlay render functions
 │   ├── helpers.rs   # Shared UI helpers
-│   └── diff.rs      # Diff view render functions
+│   ├── diff.rs      # Diff view render functions
+└── modal.rs     # Unified modal component
 └── utils/
     ├── mod.rs
     ├── cache.rs     # Offline caching

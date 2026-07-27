@@ -835,7 +835,7 @@ impl Backend for GhBackend {
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
         if is_draft {
             self.run_gh(
-                &["pr", "edit", &iid.to_string(), "--draft", "-R", project],
+                &["pr", "ready", &iid.to_string(), "--undo", "-R", project],
                 "MARKING PR DRAFT",
             )
             .await?;

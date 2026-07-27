@@ -250,15 +250,18 @@ impl Tab {
                 } else {
                     cols.push("Stages");
                 }
+                cols.push("Created");
                 cols
             }
             Tab::Jobs => {
                 let mut cols = vec!["ID", "Status", "Name", "Matrix"];
                 if kind.is_github() {
                     cols.push("Runner");
+                    cols.push("Needs");
                 } else {
                     cols.push("Stage");
                 }
+                cols.push("Duration");
                 cols
             }
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
@@ -290,14 +293,14 @@ impl Tab {
             Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
             Tab::Pipelines => {
                 if kind.is_github() {
-                    vec!["Name", "Status", "Event", "Ref"]
+                    vec!["Name", "Status", "Event", "Ref", "Created"]
                 } else {
                     vec!["ID", "Status", "Stages", "Ref"]
                 }
             }
             Tab::Jobs => {
                 if kind.is_github() {
-                    vec!["Name", "Status", "Ref"]
+                    vec!["Name", "Status", "Runner", "Duration"]
                 } else {
                     vec!["ID", "Stage", "Status", "Name", "Matrix"]
                 }

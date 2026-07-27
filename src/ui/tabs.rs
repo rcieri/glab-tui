@@ -1439,6 +1439,13 @@ pub(crate) fn render_tab_pipelines(
                     Alignment::Left,
                 ));
             }
+            if app.is_column_visible(Tab::Pipelines, "Created") {
+                let created_str = p.created_at().map(|c| time_ago(c)).unwrap_or_default();
+                row_cells.push(Cell::from(Span::styled(
+                    truncate(&created_str, 15),
+                    Style::default().fg(THEME.read().unwrap().yellow),
+                )));
+            }
             if app.is_column_visible(Tab::Pipelines, "Ref") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&format_ref(p.ref_branch()), 100),
@@ -1491,6 +1498,10 @@ pub(crate) fn render_tab_pipelines(
         if app.is_column_visible(Tab::Pipelines, "Actor") {
             header_cells.push(Cell::from("Actor"));
             widths.push(Constraint::Length(18));
+        }
+        if app.is_column_visible(Tab::Pipelines, "Created") {
+            header_cells.push(Cell::from("Created"));
+            widths.push(Constraint::Length(15));
         }
         if app.is_column_visible(Tab::Pipelines, "Ref") {
             header_cells.push(Cell::from("Ref"));
@@ -1579,6 +1590,32 @@ pub(crate) fn render_tab_pipelines(
                         Style::default().fg(THEME.read().unwrap().yellow),
                     ),
                 ]));
+                if let Some(created) = p.created_at() {
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Created:     ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            time_ago(created),
+                            Style::default().fg(THEME.read().unwrap().yellow),
+                        ),
+                    ]));
+                }
+                if let Some(dur) = p.duration_seconds() {
+                    let mins = dur / 60;
+                    let secs = dur % 60;
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Duration:    ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            format!("{}m {}s", mins, secs),
+                            Style::default().fg(THEME.read().unwrap().text_normal),
+                        ),
+                    ]));
+                }
                 text.push(Line::from(""));
 
                 if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
@@ -1864,6 +1901,38 @@ pub(crate) fn render_tab_jobs(
                     Alignment::Left,
                 ));
             }
+            if app.is_column_visible(Tab::Jobs, "Runner") {
+                let runner_str = j.runner().unwrap_or("-");
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(runner_str, 20),
+                    &app.search_query,
+                    is_job_selected,
+                    is_checked,
+                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::Jobs, "Needs") {
+                let needs_str = if j.needs().is_empty() {
+                    "-".to_string()
+                } else {
+                    j.needs().join(", ")
+                };
+                row_cells.push(Cell::from(Span::styled(
+                    truncate(&needs_str, 25),
+                    Style::default().fg(THEME.read().unwrap().text_muted),
+                )));
+            }
+            if app.is_column_visible(Tab::Jobs, "Duration") {
+                let dur_str = match j.duration_seconds() {
+                    Some(d) => format!("{}m {}s", d / 60, d % 60),
+                    None => "-".to_string(),
+                };
+                row_cells.push(Cell::from(Span::styled(
+                    dur_str,
+                    Style::default().fg(THEME.read().unwrap().text_normal),
+                )));
+            }
             let row_style = if is_job_selected {
                 Style::default().bg(THEME.read().unwrap().highlight_bg)
             } else if is_checked {
@@ -1898,6 +1967,18 @@ pub(crate) fn render_tab_jobs(
         if app.is_column_visible(Tab::Jobs, "Matrix") {
             header_cells.push(Cell::from("Matrix"));
             widths.push(Constraint::Length(20));
+        }
+        if app.is_column_visible(Tab::Jobs, "Runner") {
+            header_cells.push(Cell::from("Runner"));
+            widths.push(Constraint::Length(18));
+        }
+        if app.is_column_visible(Tab::Jobs, "Needs") {
+            header_cells.push(Cell::from("Needs"));
+            widths.push(Constraint::Length(14));
+        }
+        if app.is_column_visible(Tab::Jobs, "Duration") {
+            header_cells.push(Cell::from("Duration"));
+            widths.push(Constraint::Length(14));
         }
 
         if widths.is_empty() {
@@ -2074,6 +2155,44 @@ pub(crate) fn render_tab_jobs(
                             Span::styled(
                                 matrix.to_string(),
                                 Style::default().fg(THEME.read().unwrap().text_muted),
+                            ),
+                        ]));
+                    }
+                    if let Some(runner) = j.runner() {
+                        text.push(Line::from(vec![
+                            Span::styled(
+                                "Runner:   ",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            ),
+                            Span::styled(
+                                runner.to_string(),
+                                Style::default().fg(THEME.read().unwrap().text_normal),
+                            ),
+                        ]));
+                    }
+                    if let Some(dur) = j.duration_seconds() {
+                        let mins = dur / 60;
+                        let secs = dur % 60;
+                        text.push(Line::from(vec![
+                            Span::styled(
+                                "Duration: ",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            ),
+                            Span::styled(
+                                format!("{}m {}s", mins, secs),
+                                Style::default().fg(THEME.read().unwrap().text_normal),
+                            ),
+                        ]));
+                    }
+                    if !j.needs().is_empty() {
+                        text.push(Line::from(vec![
+                            Span::styled(
+                                "Needs:    ",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            ),
+                            Span::styled(
+                                j.needs().join(", "),
+                                Style::default().fg(THEME.read().unwrap().yellow),
                             ),
                         ]));
                     }

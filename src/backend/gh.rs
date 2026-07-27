@@ -1099,7 +1099,7 @@ impl Backend for GhBackend {
                     "run",
                     "list",
                     "--json",
-                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event",
+                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event,actorLogin",
                     "-R",
                     project,
                     "--limit",
@@ -1119,6 +1119,8 @@ impl Backend for GhBackend {
             head_branch: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
+            #[serde(rename = "createdAt")]
+            created_at: Option<String>,
             #[serde(rename = "workflowName")]
             workflow_name: Option<String>,
             #[serde(rename = "displayTitle")]
@@ -1126,6 +1128,8 @@ impl Backend for GhBackend {
             #[serde(rename = "headSha")]
             head_sha: Option<String>,
             event: Option<String>,
+            #[serde(rename = "actorLogin")]
+            actor_login: Option<String>,
         }
 
         let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
@@ -1153,9 +1157,12 @@ impl Backend for GhBackend {
                     updated_at: r.updated_at,
                     name: r.workflow_name.unwrap_or_default(),
                     display_title: r.display_title.unwrap_or_default(),
-                    event: r.event.unwrap_or_default(),
+                    event: r.event.clone().unwrap_or_default(),
                     head_sha: r.head_sha.unwrap_or_default(),
-                    actor_login: String::new(),
+                    actor_login: r.actor_login.unwrap_or_default(),
+                    duration_seconds: None,
+                    created_at: r.created_at,
+                    source: r.event,
                 }
             })
             .collect())
@@ -1211,6 +1218,14 @@ impl Backend for GhBackend {
             name: String,
             status: String,
             conclusion: Option<String>,
+            #[serde(rename = "runnerName")]
+            runner_name: Option<String>,
+            #[serde(rename = "startedAt")]
+            started_at: Option<String>,
+            #[serde(rename = "completedAt")]
+            completed_at: Option<String>,
+            #[serde(default)]
+            needs: Vec<String>,
         }
 
         let jobs: Vec<GhJob> = serde_json::from_str(&raw)?;
@@ -1231,12 +1246,19 @@ impl Backend for GhBackend {
                     _ => "pending",
                 }
                 .to_string();
+                let duration = match (&j.started_at, &j.completed_at) {
+                    (Some(start), Some(end)) => chrono_duration(start, end),
+                    _ => None,
+                };
                 Job {
                     id: j.id,
                     status,
                     stage: workflow_name.clone(),
                     name: j.name,
                     matrix: None,
+                    duration_seconds: duration,
+                    runner: j.runner_name,
+                    needs: j.needs,
                 }
             })
             .collect();
@@ -2161,6 +2183,17 @@ impl Backend for GhBackend {
             }
         }
     }
+}
+
+/// Compute duration in seconds between two ISO 8601 timestamps.
+fn chrono_duration(start: &str, end: &str) -> Option<u64> {
+    let s = chrono::DateTime::parse_from_rfc3339(start).ok()?;
+    let e = chrono::DateTime::parse_from_rfc3339(end).ok()?;
+    let diff = e.signed_duration_since(s);
+    if diff < chrono::Duration::zero() {
+        return None;
+    }
+    Some(diff.num_seconds() as u64)
 }
 
 #[cfg(test)]

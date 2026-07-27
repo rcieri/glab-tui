@@ -655,6 +655,9 @@ impl Backend for GlabBackend {
                         event: String::new(),
                         head_sha: String::new(),
                         actor_login: String::new(),
+                        duration_seconds: None,
+                        created_at: None,
+                        source: None,
                     }),
                 }
             }));
@@ -768,6 +771,9 @@ impl Backend for GlabBackend {
                 event: String::new(),
                 head_sha: String::new(),
                 actor_login: String::new(),
+                duration_seconds: None,
+                created_at: None,
+                source: None,
             }),
         })
     }
@@ -1233,6 +1239,9 @@ impl Backend for GlabBackend {
                 event: String::new(),
                 head_sha: String::new(),
                 actor_login: String::new(),
+                duration_seconds: None,
+                created_at: None,
+                source: None,
             }));
             if len < 100 {
                 break;
@@ -1271,6 +1280,9 @@ impl Backend for GlabBackend {
                 stage: j.stage,
                 name: j.name,
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             })
             .collect();
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))

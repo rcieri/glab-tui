@@ -18,6 +18,12 @@ pub struct Pipeline {
     pub head_sha: String,
     #[serde(default)]
     pub actor_login: String,
+    #[serde(default)]
+    pub duration_seconds: Option<u64>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 impl Pipeline {
@@ -48,6 +54,15 @@ impl Pipeline {
     pub fn actor_login(&self) -> &str {
         &self.actor_login
     }
+    pub fn duration_seconds(&self) -> Option<u64> {
+        self.duration_seconds
+    }
+    pub fn created_at(&self) -> Option<&str> {
+        self.created_at.as_deref()
+    }
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -58,6 +73,12 @@ pub struct Job {
     pub name: String,
     #[serde(skip)]
     pub matrix: Option<String>,
+    #[serde(default)]
+    pub duration_seconds: Option<u64>,
+    #[serde(default)]
+    pub runner: Option<String>,
+    #[serde(default)]
+    pub needs: Vec<String>,
 }
 
 impl Job {
@@ -75,6 +96,15 @@ impl Job {
     }
     pub fn matrix(&self) -> Option<&str> {
         self.matrix.as_deref()
+    }
+    pub fn duration_seconds(&self) -> Option<u64> {
+        self.duration_seconds
+    }
+    pub fn runner(&self) -> Option<&str> {
+        self.runner.as_deref()
+    }
+    pub fn needs(&self) -> &[String] {
+        &self.needs
     }
     pub fn set_name(&mut self, name: String) {
         self.name = name;

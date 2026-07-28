@@ -2641,6 +2641,11 @@ impl App {
             if enabled_cols.contains("Actor") {
                 check_match(item.actor_login());
             }
+            if enabled_cols.contains("Created") {
+                if let Some(created) = item.created_at() {
+                    check_match(&crate::utils::format::time_ago(created));
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2670,6 +2675,12 @@ impl App {
                     "ID" => a.id().to_string(),
                     "Name" => a.name().to_string(),
                     "Event" => a.event().to_string(),
+                    "SHA" => a.head_sha().to_string(),
+                    "Actor" => a.actor_login().to_string(),
+                    "Created" => a
+                        .created_at()
+                        .map(|c| crate::utils::format::time_ago(c))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2678,6 +2689,12 @@ impl App {
                     "ID" => b.id().to_string(),
                     "Name" => b.name().to_string(),
                     "Event" => b.event().to_string(),
+                    "SHA" => b.head_sha().to_string(),
+                    "Actor" => b.actor_login().to_string(),
+                    "Created" => b
+                        .created_at()
+                        .map(|c| crate::utils::format::time_ago(c))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2755,6 +2772,21 @@ impl App {
                     check_match(matrix);
                 }
             }
+            if enabled_cols.contains("Runner") {
+                if let Some(runner) = item.runner() {
+                    check_match(runner);
+                }
+            }
+            if enabled_cols.contains("Needs") {
+                for need in item.needs() {
+                    check_match(need);
+                }
+            }
+            if enabled_cols.contains("Duration") {
+                if let Some(dur) = item.duration_seconds() {
+                    check_match(&format!("{}m {}s", dur / 60, dur % 60));
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2782,6 +2814,11 @@ impl App {
                     "Stage" => a.stage().to_string(),
                     "Name" => a.name().to_string(),
                     "ID" => a.id().to_string(),
+                    "Runner" => a.runner().unwrap_or("-").to_string(),
+                    "Duration" => a
+                        .duration_seconds()
+                        .map(|d| format!("{}m", d / 60))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2789,6 +2826,11 @@ impl App {
                     "Stage" => b.stage().to_string(),
                     "Name" => b.name().to_string(),
                     "ID" => b.id().to_string(),
+                    "Runner" => b.runner().unwrap_or("-").to_string(),
+                    "Duration" => b
+                        .duration_seconds()
+                        .map(|d| format!("{}m", d / 60))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -3502,7 +3544,24 @@ impl App {
                         "Ref" => {
                             values.insert(item.ref_branch().to_string());
                         }
-                        _ => {} // Pipeline no longer carries GitHub-specific fields
+                        "Name" => {
+                            values.insert(item.name().to_string());
+                        }
+                        "Event" => {
+                            values.insert(item.event().to_string());
+                        }
+                        "SHA" => {
+                            values.insert(item.head_sha().to_string());
+                        }
+                        "Actor" => {
+                            values.insert(item.actor_login().to_string());
+                        }
+                        "Created" => {
+                            if let Some(c) = item.created_at() {
+                                values.insert(crate::utils::format::time_ago(c));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3521,8 +3580,18 @@ impl App {
                         "Name" => {
                             values.insert(item.name().to_string());
                         }
+                        "Runner" => {
+                            if let Some(r) = item.runner() {
+                                values.insert(r.to_string());
+                            }
+                        }
+                        "Duration" => {
+                            if let Some(d) = item.duration_seconds() {
+                                values.insert(format!("{}m {}s", d / 60, d % 60));
+                            }
+                        }
                         _ => {}
-                    }
+                    };
                 }
             }
             Tab::Runners => {
@@ -3788,9 +3857,14 @@ impl App {
                         "Status" => p.status().to_string(),
                         "Ref" => p.ref_branch().to_string(),
                         "ID" => format!("#{}", p.id()),
-                        "Name" => format!("#{}", p.id()),
-                        "Event" => "Unknown".to_string(),
-                        "SHA" => "Unknown".to_string(),
+                        "Name" => p.name().to_string(),
+                        "Event" => p.event().to_string(),
+                        "SHA" => p.head_sha().to_string(),
+                        "Actor" => p.actor_login().to_string(),
+                        "Created" => p
+                            .created_at()
+                            .map(|c| crate::utils::format::time_ago(c))
+                            .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -3807,6 +3881,11 @@ impl App {
                         "Stage" => j.stage().to_string(),
                         "Name" => j.name().to_string(),
                         "ID" => format!("#{}", j.id()),
+                        "Runner" => j.runner().unwrap_or("-").to_string(),
+                        "Duration" => j
+                            .duration_seconds()
+                            .map(|d| format!("{}m", d / 60))
+                            .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);

@@ -5445,6 +5445,69 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
                             }
+                            KeyCode::Backspace => {
+                                let field_name = if menu.selected_idx < menu.fields.len() {
+                                    menu.fields[menu.selected_idx].label.clone()
+                                } else {
+                                    String::new()
+                                };
+                                if field_name == "Title" || field_name == "Description" {
+                                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                        f.value.pop();
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Char(c)
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                                    && c == 'e' =>
+                            {
+                                let field_name = if menu.selected_idx < menu.fields.len() {
+                                    menu.fields[menu.selected_idx].label.clone()
+                                } else {
+                                    String::new()
+                                };
+                                if field_name == "Description" {
+                                    let entity_iid = menu.entity_iid;
+                                    let entity_type = menu.entity_kind.legacy_string();
+                                    let desc = if let Some(f) =
+                                        menu.fields.iter().find(|f| f.label == "Description")
+                                    {
+                                        f.value.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    app.edit_menu = Some(menu);
+                                    if let Some(new_desc) =
+                                        crate::editor::edit_in_editor(&desc, &mut terminal)
+                                    {
+                                        if let Some(menu) = &mut app.edit_menu {
+                                            if let Some(f) = menu
+                                                .fields
+                                                .iter_mut()
+                                                .find(|f| f.label == "Description")
+                                            {
+                                                f.value = new_desc;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    app.edit_menu = Some(menu);
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                let field_name = if menu.selected_idx < menu.fields.len() {
+                                    menu.fields[menu.selected_idx].label.clone()
+                                } else {
+                                    String::new()
+                                };
+                                if field_name == "Title" || field_name == "Description" {
+                                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                        f.value.push(c);
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
                             _ => {
                                 app.edit_menu = Some(menu);
                             }

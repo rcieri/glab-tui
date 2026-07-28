@@ -25,7 +25,6 @@ pub fn issue_fields(
         crate::app::Field::multi_select("Milestone", milestone),
     ];
     if !is_github {
-        fields.push(crate::app::Field::section("GitLab Specific"));
         fields.push(crate::app::Field::toggle("Confidential", confidential));
         fields.push(crate::app::Field::date("Due Date", due_date));
         fields.push(crate::app::Field::text("Weight", weight));
@@ -55,7 +54,6 @@ pub fn mr_fields(
         crate::app::Field::multi_select("Milestone", milestone),
     ];
     if !is_github {
-        fields.push(crate::app::Field::section("GitLab Specific"));
         fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
         fields.push(crate::app::Field::toggle(
             "Status (Draft/Ready)",
@@ -79,7 +77,6 @@ pub fn milestone_fields(
         crate::app::Field::text("Title", title),
     ];
     if !is_github {
-        fields.push(crate::app::Field::section("GitLab Specific"));
         fields.push(crate::app::Field::date("Start Date", start_date));
     }
     fields.push(crate::app::Field::section("Dates"));

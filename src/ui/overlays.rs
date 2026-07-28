@@ -42,17 +42,22 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let val = &f.value;
                 let is_selected = i == menu.selected_idx;
 
-                // Section headers: full-width colored background bar
+                // Section headers: clean centered label with horizontal rules
                 if f.kind == crate::app::FieldType::Section {
-                    let available = body.width.saturating_sub(2) as usize;
-                    let padded = format!("  {} {}  ", "\u{25CF}", label.to_uppercase());
-                    let pad_right = available.saturating_sub(padded.len());
-                    let line = format!("{}{:\u{2500}<pad$}", padded, "", pad = pad_right.max(0));
+                    let available = body.width.saturating_sub(4) as usize;
+                    let label_text = format!(" {} ", label.to_uppercase());
+                    let pad = (available.saturating_sub(label_text.len() + 2)) / 2;
+                    let line = format!(
+                        "{:\u{2500}>pad$} {} {:\u{2500}<pad$}",
+                        "",
+                        label_text,
+                        "",
+                        pad = pad
+                    );
                     return ListItem::new(Line::from(Span::styled(
                         line,
                         Style::default()
-                            .bg(THEME.read().unwrap().blue_bg)
-                            .fg(THEME.read().unwrap().blue)
+                            .fg(THEME.read().unwrap().text_muted)
                             .add_modifier(Modifier::BOLD),
                     )));
                 }

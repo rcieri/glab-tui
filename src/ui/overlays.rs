@@ -225,9 +225,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 // Show markdown preview for Description when selected
                 if label == "Description" && is_selected && !val.is_empty() {
                     let md_lines = render_markdown(val);
+                    let available = body.height.saturating_sub(2) as usize;
                     let preview: Vec<Line> = md_lines
                         .into_iter()
-                        .take(3)
+                        .take(available)
                         .map(|l| {
                             let spans: Vec<Span> = l
                                 .spans
@@ -259,23 +260,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         padded.extend(line.spans);
                         combined.push(Line::from(padded));
                     }
-                    let count = if val.len() >= 1000 {
-                        format!("{:.1}k", val.len() as f64 / 1000.0)
-                    } else {
-                        format!("{}", val.len())
-                    };
-                    combined.push(Line::from(Span::styled(
-                        format!(
-                            "{:width$}\u{2026} {} chars \u{2014} press Enter to edit",
-                            "",
-                            count,
-                            width = label_width + 4
-                        ),
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::ITALIC),
-                    )));
                     return ListItem::new(combined).style(Style::default().bg(item_bg));
                 }
 

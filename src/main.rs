@@ -5203,6 +5203,7 @@ async fn main() -> Result<()> {
                                 }
 
                                 if field_name == "Description" {
+                                    // For new entities with empty description, show template selector
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
                                         let raw_val = menu.fields[menu.selected_idx].value.clone();
                                         if raw_val.trim().is_empty() {
@@ -5262,28 +5263,7 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    // Show selector: Edit Inline | Open in Editor (handled by description_action)
-                                    app.selector = Some(crate::app::Selector {
-                                        title: " Edit Description ".to_string(),
-                                        all_items: vec![
-                                            "Edit Inline".to_string(),
-                                            "Open in Editor".to_string(),
-                                        ],
-                                        selected_items: std::collections::HashSet::new(),
-                                        cursor_idx: 0,
-                                        search_query: String::new(),
-                                        is_filtering: false,
-                                        is_loading: false,
-                                        entity_iid,
-                                        entity_type: entity_type.clone(),
-                                        field_type: "description_action".to_string(),
-                                        multi_select: false,
-                                        state: {
-                                            let mut s = ListState::default();
-                                            s.select(Some(0));
-                                            s
-                                        },
-                                    });
+                                    // Otherwise inline editing handles Description — Enter does nothing
                                     app.edit_menu = Some(menu);
                                     continue;
                                 }
@@ -5342,8 +5322,7 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
 
-                                if field_name == "Title"
-                                    || field_name == "Weight"
+                                if field_name == "Weight"
                                     || field_name == "Variables"
                                     || field_name == "Inputs"
                                     || field_name == "Release Name"

@@ -4,7 +4,6 @@ use super::modal::modal_area;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
-use crate::utils::format::render_markdown;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -14,7 +13,6 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
     },
 };
-use textwrap;
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
@@ -262,43 +260,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             })
             .collect();
 
-        // Extract description text for inline preview
-        let description_text = menu
-            .fields
-            .iter()
-            .find(|f| f.label == "Description" && !f.value.is_empty())
-            .map(|f| f.value.as_str())
-            .unwrap_or("");
-
         let submit_idx = menu.fields.len() + 1;
-        let has_description = !description_text.is_empty();
-        let desc_lines = if has_description {
-            let md_lines = render_markdown(description_text);
-            let wrap_width = body.width.saturating_sub(6) as usize;
-            let mut wrapped = Vec::new();
-            for l in md_lines {
-                let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
-                for chunk in textwrap::wrap(&text, wrap_width.max(20)) {
-                    let style = l.spans.first().map(|s| s.style).unwrap_or_default();
-                    wrapped.push(Line::from(Span::styled(chunk.into_owned(), style)));
-                }
-            }
-            wrapped
-        } else {
-            Vec::new()
-        };
 
-        // Build layout: fields list, optional desc preview, optional submit
-        let desc_height = if has_description {
-            (desc_lines.len() as u16 + 2).min(14) // +2 for border, capped at 14 rows
-        } else {
-            0
-        };
-
+        // Layout: fields list + optional submit
         let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
-        if has_description {
-            constraints.push(Constraint::Length(desc_height));
-        }
         if is_new_entity {
             constraints.push(Constraint::Length(3)); // submit button
         }
@@ -314,32 +279,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_stateful_widget(list, chunks[0], &mut state);
         menu.state = state;
 
-        let mut chunk_idx = 1;
-
-        // Description preview
-        if has_description {
-            let desc_chunk = chunks[chunk_idx];
-            chunk_idx += 1;
-            let desc_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(THEME.read().unwrap().text_muted))
-                .title(format!(" {} {} ", icons.label_details, "Description"))
-                .title_style(
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
-                        .add_modifier(Modifier::BOLD),
-                );
-            f.render_widget(
-                Paragraph::new(desc_lines)
-                    .block(desc_block)
-                    .wrap(ratatui::widgets::Wrap { trim: true }),
-                desc_chunk,
-            );
-        }
-
         // Submit button (new entities only)
         if is_new_entity {
-            let submit_chunk = chunks[chunk_idx];
+            let submit_chunk = chunks[1];
             let btn_text = format!(" {} Submit ", icons.check_on);
             let is_submit_selected = menu.selected_idx == submit_idx;
             let submit_fg = if is_submit_selected {

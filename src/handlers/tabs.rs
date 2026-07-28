@@ -21,21 +21,17 @@ pub async fn handle_active_tab_key(
         crate::app::Tab::Issues => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
                 let is_github = app.is_github();
-                let mut fields = vec![
-                    crate::app::Field::text("Title", String::new()),
-                    crate::app::Field::section("Details"),
-                    crate::app::Field::multi_select("Labels", String::new()),
-                    crate::app::Field::multi_select("Assignees", String::new()),
-                    crate::app::Field::multi_select("Milestone", String::new()),
-                ];
-                if !is_github {
-                    fields.push(crate::app::Field::section("GitLab Specific"));
-                    fields.push(crate::app::Field::toggle("Confidential", "No".to_string()));
-                    fields.push(crate::app::Field::date("Due Date", String::new()));
-                    fields.push(crate::app::Field::text("Weight", "0".to_string()));
-                }
-                fields.push(crate::app::Field::section("Description"));
-                fields.push(crate::app::Field::text("Description", String::new()));
+                let fields = crate::entity_editor::issue_fields(
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    "No".to_string(),
+                    String::new(),
+                    "0".to_string(),
+                    String::new(),
+                    is_github,
+                );
                 app.edit_menu = Some(crate::app::EditMenu {
                     title: "Create Issue".to_string(),
                     fields,
@@ -107,30 +103,17 @@ pub async fn handle_active_tab_key(
                             .as_ref()
                             .map(|c| c.is_github)
                             .unwrap_or(false);
-                        let mut fields = vec![
-                            crate::app::Field::text("Title", issue.title.clone()),
-                            crate::app::Field::section("Details"),
-                            crate::app::Field::multi_select("Labels", labels),
-                            crate::app::Field::multi_select("Assignees", assignees),
-                            crate::app::Field::multi_select("Milestone", milestone),
-                        ];
-                        if !is_github {
-                            fields.push(crate::app::Field::section("GitLab Specific"));
-                            fields.push(crate::app::Field::toggle(
-                                "Confidential",
-                                "Set...".to_string(),
-                            ));
-                            fields.push(crate::app::Field::date(
-                                "Due Date",
-                                issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
-                            ));
-                            fields.push(crate::app::Field::text("Weight", "Set".to_string()));
-                        }
-                        fields.push(crate::app::Field::section("Description"));
-                        fields.push(crate::app::Field::text(
-                            "Description",
+                        let fields = crate::entity_editor::issue_fields(
+                            issue.title.clone(),
+                            labels,
+                            assignees,
+                            milestone,
+                            "Set...".to_string(),
+                            issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
+                            "Set".to_string(),
                             issue.description.clone().unwrap_or_default(),
-                        ));
+                            is_github,
+                        );
                         app.edit_menu = Some(crate::app::EditMenu {
                             title: format!("Edit Issue #{}", &issue.iid.to_string()),
                             fields,
@@ -424,7 +407,11 @@ pub async fn handle_active_tab_key(
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         };
-                        let draft_status = if mr.draft { "Draft" } else { "Ready" };
+                        let draft_status = if mr.draft {
+                            "Draft".to_string()
+                        } else {
+                            "Ready".to_string()
+                        };
                         let pr_suffix = if app
                             .gitlab_client
                             .as_ref()
@@ -435,30 +422,18 @@ pub async fn handle_active_tab_key(
                         } else {
                             "MR"
                         };
-                        let mut fields = vec![
-                            crate::app::Field::text("Title", mr.title.clone()),
-                            crate::app::Field::section("Details"),
-                            crate::app::Field::multi_select("Labels", labels),
-                            crate::app::Field::multi_select("Assignees", assignees),
-                            crate::app::Field::multi_select("Reviewers", reviewers),
-                            crate::app::Field::multi_select("Milestone", milestone),
-                        ];
-                        if !app.is_github() {
-                            fields.push(crate::app::Field::section("GitLab Specific"));
-                            fields.push(crate::app::Field::ref_field(
-                                "Target Branch",
-                                mr.target_branch.clone(),
-                            ));
-                            fields.push(crate::app::Field::toggle(
-                                "Status (Draft/Ready)",
-                                draft_status.to_string(),
-                            ));
-                        }
-                        fields.push(crate::app::Field::section("Description"));
-                        fields.push(crate::app::Field::text(
-                            "Description",
+                        let is_github = app.is_github();
+                        let fields = crate::entity_editor::mr_fields(
+                            mr.title.clone(),
+                            labels,
+                            assignees,
+                            reviewers,
+                            milestone,
+                            mr.target_branch.clone(),
+                            draft_status,
                             mr.description.clone().unwrap_or_default(),
-                        ));
+                            is_github,
+                        );
                         app.edit_menu = Some(crate::app::EditMenu {
                             title: format!("Edit {} #{}", pr_suffix, mr.iid),
                             fields,
@@ -1531,18 +1506,13 @@ pub async fn handle_active_tab_key(
             ) =>
             {
                 let is_github = app.is_github();
-                let mut fields = vec![
-                    crate::app::Field::section("Details"),
-                    crate::app::Field::text("Title", String::new()),
-                ];
-                if !is_github {
-                    fields.push(crate::app::Field::section("GitLab Specific"));
-                    fields.push(crate::app::Field::date("Start Date", String::new()));
-                }
-                fields.push(crate::app::Field::section("Dates"));
-                fields.push(crate::app::Field::date("Due Date", String::new()));
-                fields.push(crate::app::Field::section("Description"));
-                fields.push(crate::app::Field::text("Description", String::new()));
+                let fields = crate::entity_editor::milestone_fields(
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    is_github,
+                );
                 app.edit_menu = Some(crate::app::EditMenu {
                     title: "Create Milestone".to_string(),
                     fields,

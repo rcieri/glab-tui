@@ -383,21 +383,7 @@ pub(crate) fn render_tab_issues(
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ));
                 } else {
-                    for (idx, label) in issue.labels.iter().enumerate() {
-                        if idx > 0 {
-                            label_spans.push(Span::styled(
-                                ", ",
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            ));
-                        }
-                        let label_color = super::helpers::get_label_color(label);
-                        label_spans.push(Span::styled(
-                            label,
-                            Style::default()
-                                .fg(label_color)
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                    }
+                    label_spans.extend(super::helpers::label_spans(&issue.labels.join(", ")));
                 }
                 text.push(Line::from(label_spans));
                 if let Some(desc) = &issue.description {
@@ -1173,21 +1159,7 @@ pub(crate) fn render_tab_merge_requests(
                         Style::default().fg(THEME.read().unwrap().text_muted),
                     ));
                 } else {
-                    for (idx, label) in mr.labels.iter().enumerate() {
-                        if idx > 0 {
-                            label_spans.push(Span::styled(
-                                ", ",
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            ));
-                        }
-                        let label_color = super::helpers::get_label_color(label);
-                        label_spans.push(Span::styled(
-                            label,
-                            Style::default()
-                                .fg(label_color)
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                    }
+                    label_spans.extend(super::helpers::label_spans(&mr.labels.join(", ")));
                 }
                 text.push(Line::from(label_spans));
                 if let Some(desc) = &mr.description {
@@ -1583,16 +1555,6 @@ pub(crate) fn render_tab_pipelines(
                         Style::default()
                             .fg(status_color)
                             .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Updated:     ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        time_ago(p.updated_at()),
-                        Style::default().fg(THEME.read().unwrap().yellow),
                     ),
                 ]));
                 if let Some(created) = p.created_at() {

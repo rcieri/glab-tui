@@ -192,6 +192,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .fg(THEME.read().unwrap().bg)
                 .add_modifier(Modifier::BOLD),
         ));
+        if app.is_typing_search || !app.search_query.is_empty() {
+            title_spans.push(Span::raw(" "));
+        }
     }
     if app.is_typing_search {
         title_spans.push(Span::styled(

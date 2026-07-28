@@ -4,6 +4,7 @@ use super::modal::modal_area;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
+use crate::utils::format::render_markdown;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -13,6 +14,7 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
     },
 };
+use textwrap;
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
@@ -89,20 +91,36 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 };
 
                 let mut val_spans = Vec::new();
-                if val.is_empty() && f.kind != crate::app::FieldType::Text {
+                // Description: value shown in markdown preview below — keep list compact
+                if label == "Description" {
+                    if val.is_empty() {
+                        val_spans.push(Span::styled(
+                            " Empty",
+                            Style::default()
+                                .fg(THEME.read().unwrap().text_muted)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::ITALIC),
+                        ));
+                    } else {
+                        let chars = val.chars().count();
+                        val_spans.push(Span::styled(
+                            format!(
+                                " {} ",
+                                if chars >= 1000 {
+                                    format!("{:.1}k chars \u{25BC} below", chars as f64 / 1000.0)
+                                } else {
+                                    format!("{} chars \u{25BC} below", chars)
+                                }
+                            ),
+                            Style::default()
+                                .fg(THEME.read().unwrap().text_muted)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::ITALIC),
+                        ));
+                    }
+                } else if val.is_empty() && f.kind != crate::app::FieldType::Text {
                     val_spans.push(Span::styled(
                         " None",
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::ITALIC),
-                    ));
-                } else if val.is_empty()
-                    && f.kind == crate::app::FieldType::Text
-                    && label == "Description"
-                {
-                    val_spans.push(Span::styled(
-                        " Empty",
                         Style::default()
                             .fg(THEME.read().unwrap().text_muted)
                             .bg(item_bg)
@@ -206,29 +224,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         crate::app::FieldType::Text => {
                             let val_fg = match label.as_str() {
                                 "Milestone" => THEME.read().unwrap().purple,
-                                "Description" => THEME.read().unwrap().text_normal,
                                 _ => THEME.read().unwrap().text_normal,
                             };
                             let mut style = Style::default().fg(val_fg).bg(item_bg);
                             if is_selected {
                                 style = style.add_modifier(Modifier::BOLD);
                             }
-                            if label == "Description" && val.len() > 50 {
-                                let count = if val.len() >= 1000 {
-                                    format!("{:.1}k", val.len() as f64 / 1000.0)
-                                } else {
-                                    format!("{}", val.len())
-                                };
-                                val_spans.push(Span::styled(truncated, style));
-                                val_spans.push(Span::styled(
-                                    format!(" ({} chars)", count),
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().text_muted)
-                                        .bg(item_bg),
-                                ));
-                            } else {
-                                val_spans.push(Span::styled(truncated, style));
-                            }
+                            val_spans.push(Span::styled(truncated, style));
                         }
                     }
                 }
@@ -260,10 +262,43 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             })
             .collect();
 
-        let submit_idx = menu.fields.len() + 1;
+        // Extract description text for markdown preview below
+        let description_text = menu
+            .fields
+            .iter()
+            .find(|f| f.label == "Description" && !f.value.is_empty())
+            .map(|f| f.value.as_str())
+            .unwrap_or("");
 
-        // Layout: fields list + optional submit
+        let submit_idx = menu.fields.len() + 1;
+        let has_description = !description_text.is_empty();
+        let desc_lines = if has_description {
+            let md_lines = render_markdown(description_text);
+            let wrap_width = body.width.saturating_sub(6) as usize;
+            let mut wrapped = Vec::new();
+            for l in md_lines {
+                let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                for chunk in textwrap::wrap(&text, wrap_width.max(20)) {
+                    let style = l.spans.first().map(|s| s.style).unwrap_or_default();
+                    wrapped.push(Line::from(Span::styled(chunk.into_owned(), style)));
+                }
+            }
+            wrapped
+        } else {
+            Vec::new()
+        };
+
+        // Layout: fields list, markdown preview, optional submit
+        let desc_height = if has_description {
+            (desc_lines.len() as u16 + 2).min(14) // +2 for border, capped at 14 rows
+        } else {
+            0
+        };
+
         let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
+        if has_description {
+            constraints.push(Constraint::Length(desc_height));
+        }
         if is_new_entity {
             constraints.push(Constraint::Length(3)); // submit button
         }
@@ -279,9 +314,32 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_stateful_widget(list, chunks[0], &mut state);
         menu.state = state;
 
+        let mut chunk_idx = 1;
+
+        // Description markdown preview
+        if has_description {
+            let desc_chunk = chunks[chunk_idx];
+            chunk_idx += 1;
+            let desc_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(THEME.read().unwrap().border))
+                .title(format!(" {} {} ", icons.label_details, "Description"))
+                .title_style(
+                    Style::default()
+                        .fg(THEME.read().unwrap().text_muted)
+                        .add_modifier(Modifier::BOLD),
+                );
+            f.render_widget(
+                Paragraph::new(desc_lines)
+                    .block(desc_block)
+                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                desc_chunk,
+            );
+        }
+
         // Submit button (new entities only)
         if is_new_entity {
-            let submit_chunk = chunks[1];
+            let submit_chunk = chunks[chunk_idx];
             let btn_text = format!(" {} Submit ", icons.check_on);
             let is_submit_selected = menu.selected_idx == submit_idx;
             let submit_fg = if is_submit_selected {

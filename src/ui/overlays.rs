@@ -4,6 +4,7 @@ use super::modal::modal_area;
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
+use crate::utils::format::render_markdown;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -40,21 +41,21 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let val = &f.value;
                 let is_selected = i == menu.selected_idx;
 
-                // Section headers: dimmed centered separators
+                // Section headers: colored background with centered label
                 if f.kind == crate::app::FieldType::Section {
                     let available = body.width.saturating_sub(4) as usize;
-                    let pad = (available.saturating_sub(label.len() + 4)) / 2;
+                    let pad = (available.saturating_sub(label.len() + 6)) / 2;
                     let line = format!(
-                        "{:\u{2500}>pad$} {} {:\u{2500}<pad$}",
+                        "{:\u{2500}>pad$} \u{25CF} {} \u{25CF} {:\u{2500}<pad$}",
                         "",
                         label,
                         "",
-                        pad = pad
+                        pad = pad.saturating_sub(1)
                     );
                     return ListItem::new(Line::from(Span::styled(
                         line,
                         Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
+                            .fg(THEME.read().unwrap().blue)
                             .add_modifier(Modifier::BOLD),
                     )));
                 }
@@ -221,6 +222,63 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     }
                 }
 
+                // Show markdown preview for Description when selected
+                if label == "Description" && is_selected && !val.is_empty() {
+                    let md_lines = render_markdown(val);
+                    let preview: Vec<Line> = md_lines
+                        .into_iter()
+                        .take(3)
+                        .map(|l| {
+                            let spans: Vec<Span> = l
+                                .spans
+                                .into_iter()
+                                .map(|s| Span::styled(s.content, s.style.bg(item_bg)))
+                                .collect();
+                            Line::from(spans)
+                        })
+                        .collect();
+                    let icon = icons.label_details.as_str();
+                    let header = Line::from(vec![
+                        Span::styled(
+                            format!(
+                                " {} {:label_width$} ",
+                                icon,
+                                label,
+                                label_width = label_width
+                            ),
+                            label_style,
+                        ),
+                        Span::styled(format!(" {} \u{25BC}", icons.separator), sep_style),
+                    ]);
+                    let mut combined = vec![header];
+                    for line in preview {
+                        let mut padded = vec![Span::styled(
+                            format!("{:width$}", "", width = label_width + 4),
+                            Style::default().bg(item_bg),
+                        )];
+                        padded.extend(line.spans);
+                        combined.push(Line::from(padded));
+                    }
+                    let count = if val.len() >= 1000 {
+                        format!("{:.1}k", val.len() as f64 / 1000.0)
+                    } else {
+                        format!("{}", val.len())
+                    };
+                    combined.push(Line::from(Span::styled(
+                        format!(
+                            "{:width$}\u{2026} {} chars \u{2014} press Enter to edit",
+                            "",
+                            count,
+                            width = label_width + 4
+                        ),
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
+                    return ListItem::new(combined).style(Style::default().bg(item_bg));
+                }
+
                 let icon = match f.kind {
                     crate::app::FieldType::Section => "", // unreachable
                     crate::app::FieldType::MultiSelect => icons.check_on.as_str(),
@@ -261,6 +319,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             } else {
                 THEME.read().unwrap().green
             };
+            // Separator before submit
+            let sep_pad = body.width.saturating_sub(4) as usize / 2;
+            let sep_line = format!(
+                "{:\u{2500}>pad$} {:\u{2500}<pad$}",
+                "",
+                "",
+                pad = sep_pad.saturating_sub(1)
+            );
             let btn_text = format!(" {} Submit ", icons.check_on);
             let available = body.width.saturating_sub(6) as usize;
             let padding = (available.saturating_sub(btn_text.len())) / 2;
@@ -273,9 +339,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .add_modifier(Modifier::BOLD),
             )]);
             let mut v = items;
-            v.push(ListItem::new(
-                Line::from("").style(Style::default().bg(Color::Reset)),
-            ));
+            v.push(ListItem::new(Line::from(Span::styled(
+                sep_line,
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .add_modifier(Modifier::BOLD),
+            ))));
             v.push(ListItem::new(submit_line));
             v
         } else {

@@ -37,7 +37,7 @@ pub async fn handle_active_tab_key(
                     fields,
                     selected_idx: 0,
                     entity_iid: 0,
-                    entity_type: "new_issue".to_string(),
+                    entity_kind: crate::app::EditEntityKind::CreateIssue,
                     state: {
                         let mut s = ListState::default();
                         s.select(Some(0));
@@ -67,7 +67,7 @@ pub async fn handle_active_tab_key(
                         ],
                         selected_idx: 0,
                         entity_iid: 0,
-                        entity_type: "new_bulk_edit_issues".to_string(),
+                        entity_kind: crate::app::EditEntityKind::BulkEditIssues,
                         state: {
                             let mut s = ListState::default();
                             s.select(Some(0));
@@ -119,7 +119,7 @@ pub async fn handle_active_tab_key(
                             fields,
                             selected_idx: 0,
                             entity_iid: issue.iid,
-                            entity_type: "issue".to_string(),
+                            entity_kind: crate::app::EditEntityKind::EditIssue,
                             state: {
                                 let mut s = ListState::default();
                                 s.select(Some(0));
@@ -274,7 +274,7 @@ pub async fn handle_active_tab_key(
                             ],
                             selected_idx: 0,
                             entity_iid: issue.iid,
-                            entity_type: "new_mr".to_string(),
+                            entity_kind: crate::app::EditEntityKind::CreateMr,
                             state: {
                                 let mut s = ListState::default();
                                 s.select(Some(0));
@@ -368,7 +368,7 @@ pub async fn handle_active_tab_key(
                         ],
                         selected_idx: 0,
                         entity_iid: 0,
-                        entity_type: "new_bulk_edit_mrs".to_string(),
+                        entity_kind: crate::app::EditEntityKind::BulkEditMrs,
                         state: {
                             let mut s = ListState::default();
                             s.select(Some(0));
@@ -439,7 +439,7 @@ pub async fn handle_active_tab_key(
                             fields,
                             selected_idx: 0,
                             entity_iid: mr.iid,
-                            entity_type: "mr".to_string(),
+                            entity_kind: crate::app::EditEntityKind::EditMr,
                             state: {
                                 let mut s = ListState::default();
                                 s.select(Some(0));
@@ -744,7 +744,7 @@ pub async fn handle_active_tab_key(
                     fields,
                     selected_idx: 0,
                     entity_iid: 0,
-                    entity_type: "new_pipeline".to_string(),
+                    entity_kind: crate::app::EditEntityKind::CreatePipeline,
                     state: {
                         let mut s = ListState::default();
                         s.select(Some(0));
@@ -1351,7 +1351,7 @@ pub async fn handle_active_tab_key(
                     ],
                     selected_idx: 0,
                     entity_iid: 0,
-                    entity_type: "new_release".to_string(),
+                    entity_kind: crate::app::EditEntityKind::CreateRelease,
                     state: {
                         let mut s = ListState::default();
                         s.select(Some(0));
@@ -1518,7 +1518,7 @@ pub async fn handle_active_tab_key(
                     fields,
                     selected_idx: 0,
                     entity_iid: 0,
-                    entity_type: "new_milestone".to_string(),
+                    entity_kind: crate::app::EditEntityKind::CreateMilestone,
                     state: {
                         let mut s = ListState::default();
                         s.select(Some(0));

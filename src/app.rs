@@ -320,20 +320,90 @@ impl Tab {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditEntityKind {
+    CreateIssue,
+    EditIssue,
+    BulkEditIssues,
+    CreateMr,
+    EditMr,
+    BulkEditMrs,
+    CreateMilestone,
+    EditMilestone,
+    CreateRelease,
+    CreatePipeline,
+}
+
+impl EditEntityKind {
+    pub fn is_create(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateIssue
+                | Self::CreateMr
+                | Self::CreateMilestone
+                | Self::CreateRelease
+                | Self::CreatePipeline
+                | Self::BulkEditIssues
+                | Self::BulkEditMrs
+        )
+    }
+
+    pub fn needs_submit(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateIssue
+                | Self::EditIssue
+                | Self::CreateMr
+                | Self::EditMr
+                | Self::CreateMilestone
+                | Self::EditMilestone
+                | Self::CreateRelease
+                | Self::CreatePipeline
+        )
+    }
+
+    pub fn entity_name(&self) -> &str {
+        match self {
+            Self::CreateIssue | Self::EditIssue | Self::BulkEditIssues => "issue",
+            Self::CreateMr | Self::EditMr | Self::BulkEditMrs => "mr",
+            Self::CreateMilestone | Self::EditMilestone => "milestone",
+            Self::CreateRelease => "release",
+            Self::CreatePipeline => "pipeline",
+        }
+    }
+
+    /// Return the legacy entity_type string for backward compat.
+    pub fn legacy_string(&self) -> String {
+        match self {
+            Self::CreateIssue => "new_issue",
+            Self::EditIssue => "issue",
+            Self::BulkEditIssues => "new_bulk_edit_issues",
+            Self::CreateMr => "new_mr",
+            Self::EditMr => "mr",
+            Self::BulkEditMrs => "new_bulk_edit_mrs",
+            Self::CreateMilestone => "new_milestone",
+            Self::EditMilestone => "milestone",
+            Self::CreateRelease => "new_release",
+            Self::CreatePipeline => "new_pipeline",
+        }
+        .to_string()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
     pub fields: Vec<Field>,
     pub selected_idx: usize,
     pub entity_iid: u64,
-    pub entity_type: String, // "issue", "mr"
+    pub entity_kind: EditEntityKind,
     pub state: ListState,
     pub workflow_inputs: Vec<WorkflowInput>,
 }
 
 impl EditMenu {
     pub fn is_new(&self) -> bool {
-        self.entity_type.starts_with("new_")
+        self.entity_kind.needs_submit()
     }
 }
 

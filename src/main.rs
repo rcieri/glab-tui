@@ -3301,7 +3301,7 @@ async fn main() -> Result<()> {
                                             ],
                                             selected_idx: 0,
                                             entity_iid: issue_iid,
-                                            entity_type: "new_mr".to_string(),
+                                            entity_kind: crate::app::EditEntityKind::CreateMr,
                                             state: {
                                                 let mut s = ListState::default();
                                                 s.select(Some(0));
@@ -4019,7 +4019,7 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Char('j') | KeyCode::Down => {
                                 let is_new =
-                                    menu.entity_iid == 0 || menu.entity_type.starts_with("new_");
+                                    menu.entity_iid == 0 || menu.entity_kind.needs_submit();
                                 let max_idx = if is_new {
                                     menu.fields.len() + 1 // fields + spacer + submit
                                 } else {
@@ -4045,7 +4045,7 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Char('k') | KeyCode::Up => {
                                 let is_new =
-                                    menu.entity_iid == 0 || menu.entity_type.starts_with("new_");
+                                    menu.entity_iid == 0 || menu.entity_kind.needs_submit();
                                 let max_idx = if is_new {
                                     menu.fields.len() + 1
                                 } else {
@@ -4073,7 +4073,7 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Enter => {
                                 let entity_iid = menu.entity_iid;
-                                let entity_type = menu.entity_type.clone();
+                                let entity_type = menu.entity_kind.legacy_string();
                                 let is_new_entity =
                                     entity_iid == 0 || entity_type.starts_with("new_");
                                 let is_on_submit =

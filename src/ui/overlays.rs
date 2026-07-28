@@ -214,6 +214,40 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             if is_selected {
                                 style = style.add_modifier(Modifier::BOLD);
                             }
+                            // Wrapping for Title when it exceeds pane width
+                            if label == "Title" {
+                                let wrap_width = (body.width / 2)
+                                    .saturating_sub(label_width as u16 + 6)
+                                    as usize;
+                                if val.len() > wrap_width.max(10) {
+                                    let mut lines = Vec::new();
+                                    let mut remaining = val.as_str();
+                                    while !remaining.is_empty() {
+                                        let chunk_size = wrap_width.max(10).min(remaining.len());
+                                        let chunk = &remaining[..chunk_size];
+                                        remaining = &remaining[chunk_size..];
+                                        let mut line_spans = vec![
+                                            Span::styled(
+                                                format!(
+                                                    " {} {:label_width$} ",
+                                                    icons.label_details.as_str(),
+                                                    label,
+                                                    label_width = label_width
+                                                ),
+                                                label_style,
+                                            ),
+                                            Span::styled(
+                                                format!(" {} ", icons.separator),
+                                                sep_style,
+                                            ),
+                                        ];
+                                        line_spans.push(Span::styled(chunk.to_string(), style));
+                                        lines.push(Line::from(line_spans));
+                                    }
+                                    return ListItem::new(lines)
+                                        .style(Style::default().bg(item_bg));
+                                }
+                            }
                             if label == "Title" && is_selected && menu.editing {
                                 let cursor_pos = menu.cursor_pos.min(val.len());
                                 let before = if cursor_pos > 0 && cursor_pos <= val.len() {

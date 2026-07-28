@@ -97,6 +97,17 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             .bg(item_bg)
                             .add_modifier(Modifier::ITALIC),
                     ));
+                } else if val.is_empty()
+                    && f.kind == crate::app::FieldType::Text
+                    && label == "Description"
+                {
+                    val_spans.push(Span::styled(
+                        " Empty",
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::ITALIC),
+                    ));
                 } else if !val.is_empty() {
                     let truncated = if val.len() > 50 {
                         format!("{}...", &val[..47])
@@ -225,7 +236,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 // Show markdown preview for Description when selected
                 if label == "Description" && !val.is_empty() {
                     let md_lines = render_markdown(val);
-                    let available = body.height.saturating_sub(2) as usize;
+                    // Limit preview to remaining space below this field, capped at 12 lines
+                    let available = (body.height as usize).saturating_sub(i + 3).min(12);
                     let preview: Vec<Line> = md_lines
                         .into_iter()
                         .take(available)

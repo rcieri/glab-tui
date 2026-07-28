@@ -224,7 +224,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             }
                             if label == "Title" && is_selected && menu.editing {
                                 let cursor_pos = menu.cursor_pos.min(val.len());
-                                let before = val[..cursor_pos].to_string();
+                                let before = if cursor_pos > 0 && cursor_pos <= val.len() {
+                                    val[..cursor_pos].to_string()
+                                } else {
+                                    String::new()
+                                };
                                 let at_cursor = val
                                     .chars()
                                     .nth(cursor_pos)
@@ -242,7 +246,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                     } else {
                                         at_cursor
                                     },
-                                    Style::default().fg(THEME.read().unwrap().bg).bg(val_fg),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().bg)
+                                        .bg(val_fg)
+                                        .add_modifier(Modifier::SLOW_BLINK),
                                 ));
                                 val_spans.push(Span::styled(after, style));
                             } else {

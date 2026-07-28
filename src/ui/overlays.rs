@@ -14,6 +14,7 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
     },
 };
+use textwrap;
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
@@ -237,19 +238,31 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 if label == "Description" && !val.is_empty() {
                     let md_lines = render_markdown(val);
                     // Limit preview to remaining space below this field, capped at 12 lines
-                    let available = (body.height as usize).saturating_sub(i + 3).min(12);
-                    let preview: Vec<Line> = md_lines
-                        .into_iter()
-                        .take(available)
-                        .map(|l| {
-                            let spans: Vec<Span> = l
+                    let max_lines = (body.height as usize).saturating_sub(i + 3).min(12);
+                    let wrap_width = (body.width as usize)
+                        .saturating_sub(label_width + 6)
+                        .max(20);
+                    let mut preview: Vec<Line> = Vec::with_capacity(max_lines);
+                    for l in md_lines {
+                        let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                        let wrapped = textwrap::wrap(&text, wrap_width);
+                        for chunk in wrapped {
+                            if preview.len() >= max_lines {
+                                break;
+                            }
+                            let default_style = l
                                 .spans
-                                .into_iter()
-                                .map(|s| Span::styled(s.content, s.style.bg(item_bg)))
-                                .collect();
-                            Line::from(spans)
-                        })
-                        .collect();
+                                .first()
+                                .map(|s| s.style)
+                                .unwrap_or_default()
+                                .bg(item_bg);
+                            preview
+                                .push(Line::from(Span::styled(chunk.into_owned(), default_style)));
+                        }
+                        if preview.len() >= max_lines {
+                            break;
+                        }
+                    }
                     let icon = icons.label_details.as_str();
                     let header = Line::from(vec![
                         Span::styled(

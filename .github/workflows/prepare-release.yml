@@ -22,7 +22,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v7
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
                   fetch-depth: 0
 
@@ -54,7 +54,7 @@ jobs:
                   echo "Calculated new version: $NEW_TAG"
 
             - name: OpenCode Docs & Changelog Update
-              uses: anomalyco/opencode/github@latest
+              uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # latest
               env:
                   OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,7 +74,9 @@ jobs:
                       Save and write these file modifications directly back into the working directory.
 
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@stable
+              uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+              with:
+                  toolchain: stable
 
             - name: Build glab-tui binary
               run: cargo build --release && cp target/release/glab-tui /usr/local/bin/

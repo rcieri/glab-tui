@@ -20,7 +20,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     let icons = ICONS.read().unwrap();
     if let Some(menu) = &mut app.edit_menu {
         let is_new_entity = menu.is_new();
-        let (body, edit_menu_area) = modal_area(f, &menu.title, 52, 48, 42, 8, size);
+        let (body, edit_menu_area) = modal_area(f, &menu.title, 62, 55, 48, 10, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::EditMenu, edit_menu_area));
 
@@ -223,7 +223,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 }
 
                 // Show markdown preview for Description when selected
-                if label == "Description" && is_selected && !val.is_empty() {
+                if label == "Description" && !val.is_empty() {
                     let md_lines = render_markdown(val);
                     let available = body.height.saturating_sub(2) as usize;
                     let preview: Vec<Line> = md_lines
@@ -291,54 +291,54 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .collect();
 
         let submit_idx = menu.fields.len() + 1;
-        let all_items: Vec<ListItem> = if is_new_entity {
+
+        // Split body: scrollable fields on top, fixed submit at bottom
+        if is_new_entity {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(3)])
+                .split(body);
+            let list = List::new(items).style(Style::default().bg(Color::Reset));
+            let mut state = menu.state.clone();
+            f.render_stateful_widget(list, chunks[0], &mut state);
+            menu.state = state;
+            // Fixed submit at bottom
+            let btn_text = format!(" {} Submit ", icons.check_on);
+            let available = body.width.saturating_sub(6) as usize;
+            let padding = (available.saturating_sub(btn_text.len())) / 2;
+            let padded = format!("   {:pad$}{}{:pad$}   ", "", btn_text, "", pad = padding);
             let is_submit_selected = menu.selected_idx == submit_idx;
-            let submit_bg = if is_submit_selected {
-                THEME.read().unwrap().green
-            } else {
-                Color::Reset
-            };
             let submit_fg = if is_submit_selected {
                 THEME.read().unwrap().bg
             } else {
                 THEME.read().unwrap().green
             };
-            // Separator before submit
-            let sep_pad = body.width.saturating_sub(4) as usize / 2;
-            let sep_line = format!(
-                "{:\u{2500}>pad$} {:\u{2500}<pad$}",
-                "",
-                "",
-                pad = sep_pad.saturating_sub(1)
+            let submit_bg = if is_submit_selected {
+                THEME.read().unwrap().green
+            } else {
+                Color::Reset
+            };
+            f.render_widget(
+                Paragraph::new(Line::from(vec![Span::styled(
+                    padded,
+                    Style::default()
+                        .fg(submit_fg)
+                        .bg(submit_bg)
+                        .add_modifier(Modifier::BOLD),
+                )]))
+                .block(
+                    Block::default()
+                        .borders(Borders::TOP)
+                        .border_style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                ),
+                chunks[1],
             );
-            let btn_text = format!(" {} Submit ", icons.check_on);
-            let available = body.width.saturating_sub(6) as usize;
-            let padding = (available.saturating_sub(btn_text.len())) / 2;
-            let padded = format!("   {:pad$}{}{:pad$}   ", "", btn_text, "", pad = padding);
-            let submit_line = Line::from(vec![Span::styled(
-                padded,
-                Style::default()
-                    .fg(submit_fg)
-                    .bg(submit_bg)
-                    .add_modifier(Modifier::BOLD),
-            )]);
-            let mut v = items;
-            v.push(ListItem::new(Line::from(Span::styled(
-                sep_line,
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .add_modifier(Modifier::BOLD),
-            ))));
-            v.push(ListItem::new(submit_line));
-            v
         } else {
-            items
-        };
-
-        let list = List::new(all_items).style(Style::default().bg(Color::Reset));
-        let mut state = menu.state.clone();
-        f.render_stateful_widget(list, body, &mut state);
-        menu.state = state;
+            let list = List::new(items).style(Style::default().bg(Color::Reset));
+            let mut state = menu.state.clone();
+            f.render_stateful_widget(list, body, &mut state);
+            menu.state = state;
+        }
     }
 
     if app.column_filter_context.is_none() {

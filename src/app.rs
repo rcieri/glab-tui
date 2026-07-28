@@ -1825,7 +1825,7 @@ pub struct App {
     pub job_trace_needs_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
     pub job_trace_wrap: bool,
-    pub collapse_matrix_jobs: bool,
+
     pub show_help: bool,
     pub help_search_query: String,
     pub diff_view: Option<DiffView>,
@@ -1920,7 +1920,7 @@ impl Default for App {
             job_trace_needs_scroll_to_bottom: false,
             job_trace_loading: false,
             job_trace_wrap: false,
-            collapse_matrix_jobs: false,
+
             show_help: false,
             help_search_query: String::new(),
             diff_view: None,
@@ -2825,18 +2825,7 @@ impl App {
             },
         );
 
-        if self.collapse_matrix_jobs {
-            let mut collapsed: Vec<&crate::domain::pipelines::Job> = Vec::new();
-            let mut seen_names = std::collections::HashSet::new();
-            for job in list {
-                if seen_names.insert(job.name().to_string()) {
-                    collapsed.push(job);
-                }
-            }
-            collapsed
-        } else {
-            list
-        }
+        list
     }
 
     pub fn filter_runners_list<'a>(

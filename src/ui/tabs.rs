@@ -1718,121 +1718,56 @@ pub(crate) fn render_tab_jobs(
         );
 
         let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
-            let (matrix_display, status_text_display, status_color_display, status_bg_display) =
-                if app.collapse_matrix_jobs {
-                    let variants: Vec<&crate::domain::pipelines::Job> = app
-                        .jobs
-                        .items
-                        .iter()
-                        .filter(|job| job.name() == j.name())
-                        .collect();
-
-                    let count = variants.len();
-                    let mut overall_status = "success";
-                    if variants.iter().any(|v| v.status() == "failed") {
-                        overall_status = "failed";
-                    } else if variants.iter().any(|v| v.status() == "running") {
-                        overall_status = "running";
-                    } else if variants
-                        .iter()
-                        .any(|v| v.status() == "pending" || v.status() == "preparing")
-                    {
-                        overall_status = "pending";
-                    } else if variants.iter().any(|v| v.status() == "skipped")
-                        && variants
-                            .iter()
-                            .all(|v| v.status() == "skipped" || v.status() == "success")
-                    {
-                        overall_status = "skipped";
-                    }
-
-                    let (st, sc, sbg) = match overall_status {
-                        "success" => (
-                            format!("{} SUCCESS", icons.status_success),
-                            THEME.read().unwrap().green,
-                            THEME.read().unwrap().green_bg,
-                        ),
-                        "failed" => (
-                            format!("{} FAILED", icons.status_failed),
-                            THEME.read().unwrap().red,
-                            THEME.read().unwrap().red_bg,
-                        ),
-                        "running" => (
-                            format!("{} RUNNING", icons.status_running),
-                            THEME.read().unwrap().blue,
-                            THEME.read().unwrap().blue_bg,
-                        ),
-                        "pending" => (
-                            format!("{} PENDING", icons.status_pending),
-                            THEME.read().unwrap().yellow,
-                            THEME.read().unwrap().yellow_bg,
-                        ),
-                        _ => (
-                            format!("{} SKIP", icons.status_skipped),
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                    };
-
-                    let m_str = if count > 1 {
-                        format!("{} [{} variants]", icons.matrix_variant, count)
-                    } else if let Some(m) = j.matrix() {
-                        format!("{} [{}]", icons.matrix_variant, m)
-                    } else {
-                        String::new()
-                    };
-
-                    (m_str, st, sc, sbg)
-                } else {
-                    let (status_text, status_color, bg_color) = match j.status() {
-                        "success" => (
-                            format!("{} SUCCESS", icons.status_success),
-                            THEME.read().unwrap().green,
-                            THEME.read().unwrap().green_bg,
-                        ),
-                        "failed" => (
-                            format!("{} FAILED", icons.status_failed),
-                            THEME.read().unwrap().red,
-                            THEME.read().unwrap().red_bg,
-                        ),
-                        "running" => (
-                            format!("{} RUNNING", icons.status_running),
-                            THEME.read().unwrap().blue,
-                            THEME.read().unwrap().blue_bg,
-                        ),
-                        "canceled" => (
-                            format!("{} CANCEL", icons.status_canceled),
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "pending" => (
-                            format!("{} PENDING", icons.status_pending),
-                            THEME.read().unwrap().yellow,
-                            THEME.read().unwrap().yellow_bg,
-                        ),
-                        "skipped" => (
-                            format!("{} SKIP", icons.status_skipped),
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        "manual" => (
-                            format!("{} MANUAL", icons.status_manual),
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                        _ => (
-                            format!("{} UNKNOWN", icons.status_unknown),
-                            THEME.read().unwrap().text_muted,
-                            THEME.read().unwrap().inactive_bg,
-                        ),
-                    };
-                    let m_str = if let Some(m) = j.matrix() {
-                        format!("{} [{}]", icons.matrix_variant, m)
-                    } else {
-                        String::new()
-                    };
-                    (m_str, status_text, status_color, bg_color)
+            let (matrix_display, status_text_display, status_color_display, status_bg_display) = {
+                let (status_text, status_color, bg_color) = match j.status() {
+                    "success" => (
+                        format!("{} SUCCESS", icons.status_success),
+                        THEME.read().unwrap().green,
+                        THEME.read().unwrap().green_bg,
+                    ),
+                    "failed" => (
+                        format!("{} FAILED", icons.status_failed),
+                        THEME.read().unwrap().red,
+                        THEME.read().unwrap().red_bg,
+                    ),
+                    "running" => (
+                        format!("{} RUNNING", icons.status_running),
+                        THEME.read().unwrap().blue,
+                        THEME.read().unwrap().blue_bg,
+                    ),
+                    "canceled" => (
+                        format!("{} CANCEL", icons.status_canceled),
+                        THEME.read().unwrap().text_muted,
+                        THEME.read().unwrap().inactive_bg,
+                    ),
+                    "pending" => (
+                        format!("{} PENDING", icons.status_pending),
+                        THEME.read().unwrap().yellow,
+                        THEME.read().unwrap().yellow_bg,
+                    ),
+                    "skipped" => (
+                        format!("{} SKIP", icons.status_skipped),
+                        THEME.read().unwrap().text_muted,
+                        THEME.read().unwrap().inactive_bg,
+                    ),
+                    "manual" => (
+                        format!("{} MANUAL", icons.status_manual),
+                        THEME.read().unwrap().text_muted,
+                        THEME.read().unwrap().inactive_bg,
+                    ),
+                    _ => (
+                        format!("{} UNKNOWN", icons.status_unknown),
+                        THEME.read().unwrap().text_muted,
+                        THEME.read().unwrap().inactive_bg,
+                    ),
                 };
+                let m_str = if let Some(m) = j.matrix() {
+                    format!("{} [{}]", icons.matrix_variant, m)
+                } else {
+                    String::new()
+                };
+                (m_str, status_text, status_color, bg_color)
+            };
 
             let is_job_selected = Some(i) == app.jobs.state.selected();
             let is_checked = app.selected_jobs.contains(&j.id());

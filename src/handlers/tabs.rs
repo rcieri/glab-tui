@@ -112,7 +112,7 @@ pub async fn handle_active_tab_key(
                         if !is_github {
                             fields.push(crate::app::Field::toggle(
                                 "Confidential",
-                                "Toggle/Set".to_string(),
+                                "Set...".to_string(),
                             ));
                             fields.push(crate::app::Field::date(
                                 "Due Date",
@@ -1823,13 +1823,6 @@ pub async fn handle_active_tab_key(
                     app.quit();
                 }
             }
-            KeyCode::Char('m') | KeyCode::Char('M')
-                if app.active_tab == crate::app::Tab::Jobs && app.job_trace.is_none() =>
-            {
-                app.collapse_matrix_jobs = !app.collapse_matrix_jobs;
-                app.jobs.state.select(Some(0));
-            }
-
             KeyCode::Esc | KeyCode::Backspace => {
                 let has_selections = !app.selected_issues.is_empty()
                     || !app.selected_mrs.is_empty()

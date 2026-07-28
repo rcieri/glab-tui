@@ -564,7 +564,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             if !is_github {
                 fields.push(crate::app::Field::toggle(
                     "Confidential",
-                    "Toggle/Set".to_string(),
+                    "Set...".to_string(),
                 ));
                 fields.push(crate::app::Field::date(
                     "Due Date",

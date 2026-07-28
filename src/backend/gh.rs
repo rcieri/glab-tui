@@ -1099,7 +1099,7 @@ impl Backend for GhBackend {
                     "run",
                     "list",
                     "--json",
-                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event,actorLogin",
+                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event",
                     "-R",
                     project,
                     "--limit",
@@ -1128,8 +1128,6 @@ impl Backend for GhBackend {
             #[serde(rename = "headSha")]
             head_sha: Option<String>,
             event: Option<String>,
-            #[serde(rename = "actorLogin")]
-            actor_login: Option<String>,
         }
 
         let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
@@ -1159,7 +1157,7 @@ impl Backend for GhBackend {
                     display_title: r.display_title.unwrap_or_default(),
                     event: r.event.clone().unwrap_or_default(),
                     head_sha: r.head_sha.unwrap_or_default(),
-                    actor_login: r.actor_login.unwrap_or_default(),
+                    actor_login: String::new(),
                     duration_seconds: None,
                     created_at: r.created_at,
                     source: r.event,

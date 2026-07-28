@@ -68,86 +68,153 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 };
 
                 let mut val_spans = Vec::new();
-                if !val.is_empty() {
+                if val.is_empty() && f.kind != crate::app::FieldType::Text {
+                    val_spans.push(Span::styled(
+                        " None",
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::ITALIC),
+                    ));
+                } else if !val.is_empty() {
                     let truncated = if val.len() > 50 {
-                        let mut s = val[..47].to_string();
-                        s.push_str("...");
-                        s
+                        format!("{}...", &val[..47])
                     } else {
                         val.clone()
                     };
-                    match label.as_str() {
-                        "Labels" => {
-                            let parts: Vec<&str> = truncated.split(',').collect();
-                            for (idx, part) in parts.iter().enumerate() {
-                                if idx > 0 {
-                                    val_spans.push(Span::styled(
-                                        ", ",
-                                        Style::default()
-                                            .fg(THEME.read().unwrap().text_normal)
-                                            .bg(item_bg),
-                                    ));
+                    match f.kind {
+                        crate::app::FieldType::MultiSelect => {
+                            if val == "None" {
+                                val_spans.push(Span::styled(
+                                    " None",
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().text_muted)
+                                        .bg(item_bg)
+                                        .add_modifier(Modifier::ITALIC),
+                                ));
+                            } else {
+                                let parts: Vec<&str> = truncated.split(',').collect();
+                                for (idx, part) in parts.iter().enumerate() {
+                                    if idx > 0 {
+                                        val_spans.push(Span::styled(
+                                            ", ",
+                                            Style::default()
+                                                .fg(THEME.read().unwrap().text_normal)
+                                                .bg(item_bg),
+                                        ));
+                                    }
+                                    let trimmed = part.trim();
+                                    let color = if label == "Labels" {
+                                        get_label_color(trimmed)
+                                    } else {
+                                        THEME.read().unwrap().blue
+                                    };
+                                    let mut style = Style::default()
+                                        .fg(color)
+                                        .bg(item_bg)
+                                        .add_modifier(Modifier::BOLD);
+                                    if is_selected {
+                                        style = style.add_modifier(Modifier::UNDERLINED);
+                                    }
+                                    val_spans.push(Span::styled(trimmed.to_string(), style));
                                 }
-                                let trimmed = part.trim();
-                                let label_color = get_label_color(trimmed);
-                                let mut style = Style::default()
-                                    .fg(label_color)
+                            }
+                        }
+                        crate::app::FieldType::Toggle => {
+                            let (display, fg, bg) = match val.to_lowercase().as_str() {
+                                "yes" | "true" | "confidential" => {
+                                    (" YES ", THEME.read().unwrap().bg, THEME.read().unwrap().red)
+                                }
+                                "no" | "false" | "public" => (
+                                    "  NO ",
+                                    THEME.read().unwrap().bg,
+                                    THEME.read().unwrap().green,
+                                ),
+                                "draft" => (
+                                    " DRAFT ",
+                                    THEME.read().unwrap().bg,
+                                    THEME.read().unwrap().yellow,
+                                ),
+                                "ready" => (
+                                    " READY ",
+                                    THEME.read().unwrap().bg,
+                                    THEME.read().unwrap().green,
+                                ),
+                                _ => (&val[..], THEME.read().unwrap().text_muted, Color::Reset),
+                            };
+                            val_spans.push(Span::styled(
+                                display,
+                                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+                            ));
+                        }
+                        crate::app::FieldType::Date => {
+                            let display = if val == "Set" {
+                                "Not set".to_string()
+                            } else {
+                                val.clone()
+                            };
+                            val_spans.push(Span::styled(
+                                format!(" {}", display),
+                                Style::default()
+                                    .fg(THEME.read().unwrap().yellow)
                                     .bg(item_bg)
-                                    .add_modifier(Modifier::BOLD);
-                                if is_selected {
-                                    style = style.add_modifier(Modifier::UNDERLINED);
-                                }
-                                val_spans.push(Span::styled(trimmed.to_string(), style));
-                            }
+                                    .add_modifier(Modifier::BOLD),
+                            ));
                         }
-                        "Assignees" | "Reviewers" => {
-                            let parts: Vec<&str> = truncated.split(',').collect();
-                            for (idx, part) in parts.iter().enumerate() {
-                                if idx > 0 {
-                                    val_spans.push(Span::styled(
-                                        ", ",
-                                        Style::default()
-                                            .fg(THEME.read().unwrap().text_normal)
-                                            .bg(item_bg),
-                                    ));
-                                }
-                                let trimmed = part.trim();
-                                let mut style =
-                                    Style::default().fg(THEME.read().unwrap().blue).bg(item_bg);
-                                if is_selected {
-                                    style = style.add_modifier(Modifier::BOLD);
-                                }
-                                val_spans.push(Span::styled(trimmed.to_string(), style));
-                            }
+                        crate::app::FieldType::Ref => {
+                            val_spans.push(Span::styled(
+                                format!(" {}", truncated),
+                                Style::default()
+                                    .fg(THEME.read().unwrap().purple)
+                                    .bg(item_bg)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
                         }
-                        _ => {
+                        crate::app::FieldType::Text => {
                             let val_fg = match label.as_str() {
                                 "Milestone" => THEME.read().unwrap().purple,
-                                "Due Date" => THEME.read().unwrap().yellow,
-                                "Status (Draft/Ready)" | "Source Branch" | "Target Branch" => {
-                                    THEME.read().unwrap().purple
-                                }
-                                "Confidential" => {
-                                    if val.to_lowercase() == "yes" {
-                                        THEME.read().unwrap().red
-                                    } else {
-                                        THEME.read().unwrap().green
-                                    }
-                                }
+                                "Description" => THEME.read().unwrap().text_normal,
                                 _ => THEME.read().unwrap().text_normal,
                             };
                             let mut style = Style::default().fg(val_fg).bg(item_bg);
                             if is_selected {
                                 style = style.add_modifier(Modifier::BOLD);
                             }
-                            val_spans.push(Span::styled(truncated, style));
+                            if label == "Description" && val.len() > 50 {
+                                let count = if val.len() >= 1000 {
+                                    format!("{:.1}k", val.len() as f64 / 1000.0)
+                                } else {
+                                    format!("{}", val.len())
+                                };
+                                val_spans.push(Span::styled(truncated, style));
+                                val_spans.push(Span::styled(
+                                    format!(" ({} chars)", count),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().text_muted)
+                                        .bg(item_bg),
+                                ));
+                            } else {
+                                val_spans.push(Span::styled(truncated, style));
+                            }
                         }
                     }
                 }
 
+                let icon = match f.kind {
+                    crate::app::FieldType::MultiSelect => icons.check_on.as_str(),
+                    crate::app::FieldType::Toggle => icons.radio_on.as_str(),
+                    crate::app::FieldType::Date => "\u{f073}",
+                    crate::app::FieldType::Ref => icons.label_branch.as_str(),
+                    crate::app::FieldType::Text => icons.label_details.as_str(),
+                };
                 let mut line_spans = vec![
                     Span::styled(
-                        format!("  {:label_width$} ", label, label_width = label_width),
+                        format!(
+                            " {} {:label_width$} ",
+                            icon,
+                            label,
+                            label_width = label_width
+                        ),
                         label_style,
                     ),
                     Span::styled(format!(" {} ", icons.separator), sep_style),
@@ -163,17 +230,21 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let all_items: Vec<ListItem> = if is_new_entity {
             let is_submit_selected = menu.selected_idx == submit_idx;
             let submit_bg = if is_submit_selected {
-                THEME.read().unwrap().border_focused
+                THEME.read().unwrap().green
             } else {
                 Color::Reset
             };
             let submit_fg = if is_submit_selected {
                 THEME.read().unwrap().bg
             } else {
-                THEME.read().unwrap().border_focused
+                THEME.read().unwrap().green
             };
+            let btn_text = format!(" {} Submit ", icons.check_on);
+            let available = body.width.saturating_sub(6) as usize;
+            let padding = (available.saturating_sub(btn_text.len())) / 2;
+            let padded = format!("   {:pad$}{}{:pad$}   ", "", btn_text, "", pad = padding);
             let submit_line = Line::from(vec![Span::styled(
-                "          [ Submit ]          ",
+                padded,
                 Style::default()
                     .fg(submit_fg)
                     .bg(submit_bg)

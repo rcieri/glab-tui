@@ -3522,6 +3522,7 @@ async fn main() -> Result<()> {
                                             },
                                             workflow_inputs: vec![],
                                             cursor_pos: 0,
+                                            editing: false,
                                         });
                                         continue;
                                     }
@@ -4229,7 +4230,11 @@ async fn main() -> Result<()> {
                     if let Some(mut menu) = app.edit_menu.take() {
                         match key_event.code {
                             KeyCode::Esc => {
-                                // close menu
+                                if menu.editing {
+                                    menu.editing = false;
+                                    app.edit_menu = Some(menu);
+                                }
+                                // else: close menu (drop menu by not reassigning)
                             }
                             KeyCode::Char('j') | KeyCode::Down => {
                                 let is_new =
@@ -4302,42 +4307,45 @@ async fn main() -> Result<()> {
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::Left => {
-                                if menu.selected_idx < menu.fields.len() {
-                                    let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title" || label == "Description" {
-                                        menu.cursor_pos = menu.cursor_pos.saturating_sub(1);
-                                    }
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    menu.cursor_pos = menu.cursor_pos.saturating_sub(1);
                                 }
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::Right => {
-                                if menu.selected_idx < menu.fields.len() {
-                                    let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title" || label == "Description" {
-                                        let max = menu.fields[menu.selected_idx].value.len();
-                                        if menu.cursor_pos < max {
-                                            menu.cursor_pos += 1;
-                                        }
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    let max = menu.fields[menu.selected_idx].value.len();
+                                    if menu.cursor_pos < max {
+                                        menu.cursor_pos += 1;
                                     }
                                 }
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::Home => {
-                                if menu.selected_idx < menu.fields.len() {
-                                    let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title" || label == "Description" {
-                                        menu.cursor_pos = 0;
-                                    }
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    menu.cursor_pos = 0;
                                 }
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::End => {
-                                if menu.selected_idx < menu.fields.len() {
-                                    let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title" || label == "Description" {
-                                        menu.cursor_pos =
-                                            menu.fields[menu.selected_idx].value.len();
-                                    }
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
                                 }
                                 app.edit_menu = Some(menu);
                             }
@@ -4919,6 +4927,20 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
+                                // Title / Description: Enter toggles inline edit mode
+                                if field_name == "Title" || field_name == "Description" {
+                                    if menu.editing {
+                                        menu.editing = false;
+                                    } else {
+                                        menu.editing = true;
+                                        if let Some(f) = menu.fields.get(menu.selected_idx) {
+                                            menu.cursor_pos = f.value.len();
+                                        }
+                                    }
+                                    app.edit_menu = Some(menu);
+                                    continue;
+                                }
+
                                 if field_name == "Labels"
                                     || field_name == "Assignees"
                                     || field_name == "Reviewers"
@@ -5482,16 +5504,18 @@ async fn main() -> Result<()> {
                                 }
                             }
                             KeyCode::Backspace => {
-                                let field_name = if menu.selected_idx < menu.fields.len() {
-                                    menu.fields[menu.selected_idx].label.clone()
-                                } else {
-                                    String::new()
-                                };
-                                if field_name == "Title" || field_name == "Description" {
-                                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                        if menu.cursor_pos > 0 {
-                                            f.value.remove(menu.cursor_pos - 1);
-                                            menu.cursor_pos -= 1;
+                                if menu.editing {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Title" || field_name == "Description" {
+                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                            if menu.cursor_pos > 0 {
+                                                f.value.remove(menu.cursor_pos - 1);
+                                                menu.cursor_pos -= 1;
+                                            }
                                         }
                                     }
                                 }
@@ -5535,15 +5559,17 @@ async fn main() -> Result<()> {
                                 }
                             }
                             KeyCode::Char(c) => {
-                                let field_name = if menu.selected_idx < menu.fields.len() {
-                                    menu.fields[menu.selected_idx].label.clone()
-                                } else {
-                                    String::new()
-                                };
-                                if field_name == "Title" || field_name == "Description" {
-                                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                        f.value.insert(menu.cursor_pos, c);
-                                        menu.cursor_pos += 1;
+                                if menu.editing {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Title" || field_name == "Description" {
+                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                            f.value.insert(menu.cursor_pos, c);
+                                            menu.cursor_pos += 1;
+                                        }
                                     }
                                 }
                                 app.edit_menu = Some(menu);

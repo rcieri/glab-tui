@@ -400,6 +400,7 @@ pub struct EditMenu {
     pub state: ListState,
     pub workflow_inputs: Vec<WorkflowInput>,
     pub cursor_pos: usize,
+    pub editing: bool,
 }
 
 impl EditMenu {

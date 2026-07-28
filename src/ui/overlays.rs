@@ -214,7 +214,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 style = style.add_modifier(Modifier::BOLD);
                             }
                             // Show cursor for inline-editable Title field when selected
-                            if label == "Title" && is_selected {
+                            if label == "Title" && is_selected && menu.editing {
                                 let cursor_pos = menu.cursor_pos.min(val.len());
                                 let before = val[..cursor_pos].to_string();
                                 let at_cursor = val
@@ -306,7 +306,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         };
 
         // Show cursor block in preview when Description is selected
-        let desc_lines = if is_desc_selected && !description_text.is_empty() {
+        let desc_lines = if is_desc_selected && menu.editing && !description_text.is_empty() {
             let cursor_pos = menu.cursor_pos.min(description_text.len());
             let mut lines = desc_lines;
             // Blinking cursor indicator appended to first line

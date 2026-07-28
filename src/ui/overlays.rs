@@ -31,24 +31,36 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .map(|f| f.label.len())
             .max()
             .unwrap_or(18)
-            .max(18);
+            .max(14);
 
-        let items: Vec<ListItem> = menu
+        // Build left-pane items (fields — skip Description and its section header)
+        let desc_value = menu
+            .fields
+            .iter()
+            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
+            .map(|f| f.value.clone())
+            .unwrap_or_default();
+
+        let is_desc_selected = menu.selected_idx < menu.fields.len()
+            && menu.fields[menu.selected_idx].label == "Description"
+            && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text;
+
+        let field_items: Vec<ListItem> = menu
             .fields
             .iter()
             .enumerate()
             .filter(|(_, f)| {
                 !(f.kind == crate::app::FieldType::Section
                     && f.label.to_uppercase() == "DESCRIPTION")
+                    && !(f.kind == crate::app::FieldType::Text && f.label == "Description")
             })
             .map(|(i, f)| {
                 let label = &f.label;
                 let val = &f.value;
                 let is_selected = i == menu.selected_idx;
 
-                // Section headers: clean centered label with horizontal rules
                 if f.kind == crate::app::FieldType::Section {
-                    let available = body.width.saturating_sub(4) as usize;
+                    let available = body.width.saturating_sub(4) as usize / 2;
                     let label_text = format!(" {} ", label.to_uppercase());
                     let pad = (available.saturating_sub(label_text.len() + 2)) / 2;
                     let line = format!(
@@ -95,77 +107,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 };
 
                 let mut val_spans = Vec::new();
-
-                // Description: always show inline markdown preview
-                if f.kind == crate::app::FieldType::Text && label == "Description" {
-                    if !val.is_empty() {
-                        let md_lines = render_markdown(val);
-                        let wrap_width = body.width.saturating_sub(label_width as u16 + 6) as usize;
-                        let preview_lines: Vec<Line> = md_lines
-                            .into_iter()
-                            .take(14)
-                            .flat_map(|l| {
-                                let text: String =
-                                    l.spans.iter().map(|s| s.content.as_ref()).collect();
-                                let style = l.spans.first().map(|s| s.style).unwrap_or_default();
-                                textwrap::wrap(&text, wrap_width.max(20))
-                                    .into_iter()
-                                    .map(|c| {
-                                        Line::from(Span::styled(c.into_owned(), style.bg(item_bg)))
-                                    })
-                                    .collect::<Vec<_>>()
-                            })
-                            .collect();
-                        // Build header line
-                        let icon = icons.label_details.as_str();
-                        let header = Line::from(vec![
-                            Span::styled(
-                                format!(
-                                    " {} {:label_width$} ",
-                                    icon,
-                                    label,
-                                    label_width = label_width
-                                ),
-                                label_style,
-                            ),
-                            Span::styled(format!(" {} \u{25BC}", icons.separator), sep_style),
-                            Span::styled(
-                                format!(" {} chars", val.len()),
-                                Style::default()
-                                    .fg(THEME.read().unwrap().text_muted)
-                                    .bg(item_bg)
-                                    .add_modifier(Modifier::ITALIC),
-                            ),
-                        ]);
-                        let mut combined = vec![header];
-                        for line in preview_lines {
-                            let mut padded = vec![Span::styled(
-                                format!("{:width$}", "", width = label_width + 4),
-                                Style::default().bg(item_bg),
-                            )];
-                            padded.extend(line.spans);
-                            combined.push(Line::from(padded));
-                        }
-                        return ListItem::new(combined).style(Style::default().bg(item_bg));
-                    }
-                    if val.is_empty() {
-                        val_spans.push(Span::styled(
-                            " Empty",
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_muted)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::ITALIC),
-                        ));
-                    } else {
-                        val_spans.push(Span::styled(
-                            format!(" {} chars \u{25BC}", val.len()),
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_muted)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::ITALIC),
-                        ));
-                    }
-                } else if val.is_empty() && f.kind != crate::app::FieldType::Text {
+                if val.is_empty() && f.kind != crate::app::FieldType::Text {
                     val_spans.push(Span::styled(
                         " None",
                         Style::default()
@@ -174,7 +116,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             .add_modifier(Modifier::ITALIC),
                     ));
                 } else if !val.is_empty() {
-                    let max_val_width = body.width.saturating_sub(label_width as u16 + 6) as usize;
+                    let max_val_width = (body.width.saturating_sub(6) / 2)
+                        .saturating_sub(label_width as u16)
+                        as usize;
                     let truncated = if val.len() > max_val_width.max(20) {
                         let cutoff = (max_val_width.max(20)).saturating_sub(3);
                         format!("{}...", &val[..cutoff.min(val.len())])
@@ -182,7 +126,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         val.clone()
                     };
                     match f.kind {
-                        crate::app::FieldType::Section => {} // unreachable — handled above
+                        crate::app::FieldType::Section => {}
                         crate::app::FieldType::MultiSelect => {
                             if val == "None" {
                                 val_spans.push(Span::styled(
@@ -279,7 +223,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             if is_selected {
                                 style = style.add_modifier(Modifier::BOLD);
                             }
-                            // Show cursor for inline-editable Title field when selected
                             if label == "Title" && is_selected && menu.editing {
                                 let cursor_pos = menu.cursor_pos.min(val.len());
                                 let before = val[..cursor_pos].to_string();
@@ -311,7 +254,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 }
 
                 let icon = match f.kind {
-                    crate::app::FieldType::Section => "", // unreachable
+                    crate::app::FieldType::Section => "",
                     crate::app::FieldType::MultiSelect => icons.check_on.as_str(),
                     crate::app::FieldType::Toggle => icons.radio_on.as_str(),
                     crate::app::FieldType::Date => "\u{f073}",
@@ -332,30 +275,88 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 ];
                 line_spans.extend(val_spans);
                 let line = Line::from(line_spans);
-
                 ListItem::new(line).style(Style::default().bg(item_bg))
             })
             .collect();
 
+        // Build description preview lines for right pane
+        let desc_lines: Vec<Line> = if desc_value.is_empty() {
+            vec![Line::from(Span::styled(
+                "Empty — press Enter to edit, Ctrl+E for editor",
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            ))]
+        } else {
+            let md_lines = render_markdown(&desc_value);
+            let wrap_width = (body.width.saturating_sub(8) / 2).saturating_sub(2) as usize;
+            md_lines
+                .into_iter()
+                .flat_map(|l| {
+                    let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                    let style = l.spans.first().map(|s| s.style).unwrap_or_default();
+                    textwrap::wrap(&text, wrap_width.max(20))
+                        .into_iter()
+                        .map(|c| Line::from(Span::styled(c.into_owned(), style)))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        };
+
         let submit_idx = menu.fields.len() + 1;
 
-        // Layout: fields list + submit
-        let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
-        constraints.push(Constraint::Length(3));
-
-        let chunks = Layout::default()
+        // Layout: main content + submit
+        let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(constraints)
+            .constraints([Constraint::Min(1), Constraint::Length(3)])
             .split(body);
 
-        let list = List::new(items).style(Style::default().bg(Color::Reset));
+        let main_area = layout[0];
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_area);
+
+        // Left pane: fields list
+        let fields_block = Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(Style::default().fg(THEME.read().unwrap().border));
+        let fields_inner = fields_block.inner(main_chunks[0]);
+        f.render_widget(fields_block, main_chunks[0]);
+        let list = List::new(field_items).style(Style::default().bg(Color::Reset));
         let mut state = menu.state.clone();
-        f.render_stateful_widget(list, chunks[0], &mut state);
+        f.render_stateful_widget(list, fields_inner, &mut state);
         menu.state = state;
 
-        // Submit/Save button
+        // Right pane: description preview
+        let desc_border_color = if is_desc_selected {
+            THEME.read().unwrap().border_focused
+        } else {
+            THEME.read().unwrap().border
+        };
+        let desc_block = Block::default()
+            .borders(Borders::LEFT)
+            .border_style(Style::default().fg(desc_border_color))
+            .title(format!(" {} Description ", icons.label_details))
+            .title_style(
+                Style::default()
+                    .fg(if is_desc_selected {
+                        THEME.read().unwrap().header_fg
+                    } else {
+                        THEME.read().unwrap().text_muted
+                    })
+                    .add_modifier(Modifier::BOLD),
+            );
+        f.render_widget(
+            Paragraph::new(desc_lines)
+                .block(desc_block)
+                .wrap(ratatui::widgets::Wrap { trim: true }),
+            main_chunks[1],
+        );
+
+        // Submit button
         {
-            let submit_chunk = chunks[1];
+            let submit_chunk = layout[1];
             let btn_text = if is_new_entity {
                 format!(" {} Submit ", icons.check_on)
             } else {

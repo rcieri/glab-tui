@@ -1,5 +1,7 @@
 # glab-tui
 
+[![Plumber Score](https://score.getplumber.io/github.com/rcieri/glab-tui.svg)](https://score.getplumber.io/github.com/rcieri/glab-tui)
+
 A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](https://gitlab.com/gitlab-org/cli) and [`gh`](https://cli.github.com/). Browse issues, pull requests / merge requests, pipelines, runners, and releases without leaving your terminal.
 
 ---

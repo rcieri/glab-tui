@@ -344,6 +344,7 @@ pub enum FieldType {
     Date,
     Toggle,
     Ref,
+    Section,
 }
 
 #[derive(Clone, Debug)]
@@ -387,6 +388,13 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Date,
             value,
+        }
+    }
+    pub fn section(label: &str) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::Section,
+            value: String::new(),
         }
     }
 }

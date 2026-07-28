@@ -557,11 +557,13 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             let program = if is_github { "gh" } else { "glab" };
             let mut fields = vec![
                 crate::app::Field::text("Title", issue.title.clone()),
+                crate::app::Field::section("Details"),
                 crate::app::Field::multi_select("Labels", labels),
                 crate::app::Field::multi_select("Assignees", assignees),
                 crate::app::Field::multi_select("Milestone", milestone),
             ];
             if !is_github {
+                fields.push(crate::app::Field::section("GitLab Specific"));
                 fields.push(crate::app::Field::toggle("Confidential", "No".to_string()));
                 fields.push(crate::app::Field::date(
                     "Due Date",
@@ -569,6 +571,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 ));
                 fields.push(crate::app::Field::text("Weight", "Set".to_string()));
             }
+            fields.push(crate::app::Field::section("Description"));
             fields.push(crate::app::Field::text(
                 "Description",
                 issue.description.clone().unwrap_or_default(),
@@ -625,12 +628,14 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             let is_github = app.is_github();
             let mut fields = vec![
                 crate::app::Field::text("Title", mr.title.clone()),
+                crate::app::Field::section("Details"),
                 crate::app::Field::multi_select("Labels", labels),
                 crate::app::Field::multi_select("Assignees", assignees),
                 crate::app::Field::multi_select("Reviewers", reviewers),
                 crate::app::Field::multi_select("Milestone", milestone),
             ];
             if !is_github {
+                fields.push(crate::app::Field::section("GitLab Specific"));
                 fields.push(crate::app::Field::ref_field(
                     "Target Branch",
                     mr.target_branch.clone(),
@@ -640,6 +645,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     draft_status.to_string(),
                 ));
             }
+            fields.push(crate::app::Field::section("Description"));
             fields.push(crate::app::Field::text(
                 "Description",
                 mr.description.clone().unwrap_or_default(),

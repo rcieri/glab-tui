@@ -23,15 +23,18 @@ pub async fn handle_active_tab_key(
                 let is_github = app.is_github();
                 let mut fields = vec![
                     crate::app::Field::text("Title", String::new()),
+                    crate::app::Field::section("Details"),
                     crate::app::Field::multi_select("Labels", String::new()),
                     crate::app::Field::multi_select("Assignees", String::new()),
                     crate::app::Field::multi_select("Milestone", String::new()),
                 ];
                 if !is_github {
+                    fields.push(crate::app::Field::section("GitLab Specific"));
                     fields.push(crate::app::Field::toggle("Confidential", "No".to_string()));
                     fields.push(crate::app::Field::date("Due Date", String::new()));
                     fields.push(crate::app::Field::text("Weight", "0".to_string()));
                 }
+                fields.push(crate::app::Field::section("Description"));
                 fields.push(crate::app::Field::text("Description", String::new()));
                 app.edit_menu = Some(crate::app::EditMenu {
                     title: "Create Issue".to_string(),
@@ -263,19 +266,23 @@ pub async fn handle_active_tab_key(
                             title: format!("Create {} from #{}", pr_suffix, issue.iid),
                             fields: vec![
                                 crate::app::Field::text("Title", title_val),
+                                crate::app::Field::section("Branches"),
                                 crate::app::Field::ref_field("Source Branch", source_branch_val),
                                 crate::app::Field::ref_field(
                                     "Target Branch",
                                     get_default_branch().unwrap_or_else(|| "main".to_string()),
                                 ),
+                                crate::app::Field::section("Details"),
                                 crate::app::Field::multi_select("Labels", labels_val),
                                 crate::app::Field::multi_select("Assignees", assignees_val),
                                 crate::app::Field::multi_select("Reviewers", String::new()),
                                 crate::app::Field::multi_select("Milestone", milestone_val),
+                                crate::app::Field::section("Status"),
                                 crate::app::Field::toggle(
                                     "Status (Draft/Ready)",
                                     "Draft".to_string(),
                                 ),
+                                crate::app::Field::section("Description"),
                                 crate::app::Field::text("Description", description_val),
                             ],
                             selected_idx: 0,

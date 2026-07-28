@@ -122,11 +122,27 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                     }
                     OverlayKind::EditMenu => {
                         if let Some(ref mut menu) = app.edit_menu {
-                            let new = if scroll_down {
-                                (menu.selected_idx + 1).min(menu.fields.len().saturating_sub(1))
+                            let is_new = menu.is_new();
+                            let max = if is_new {
+                                menu.fields.len()
+                            } else {
+                                menu.fields.len().saturating_sub(1)
+                            };
+                            let mut new = if scroll_down {
+                                (menu.selected_idx + 1).min(max)
                             } else {
                                 menu.selected_idx.saturating_sub(1)
                             };
+                            // Skip section headers
+                            while new < menu.fields.len()
+                                && menu.fields[new].kind == crate::app::FieldType::Section
+                            {
+                                if scroll_down {
+                                    new = (new + 1).min(max);
+                                } else {
+                                    new = new.saturating_sub(1);
+                                }
+                            }
                             menu.selected_idx = new;
                             menu.state.select(Some(new));
                         }
@@ -4010,7 +4026,13 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx + 1
                                 };
-                                // Skip the spacer row (index == fields.len())
+                                // Skip section headers and spacer row
+                                while menu.selected_idx < menu.fields.len()
+                                    && menu.fields[menu.selected_idx].kind
+                                        == crate::app::FieldType::Section
+                                {
+                                    menu.selected_idx += 1;
+                                }
                                 if is_new && menu.selected_idx == menu.fields.len() {
                                     menu.selected_idx += 1;
                                 }
@@ -4030,7 +4052,15 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx - 1
                                 };
-                                // Skip the spacer row (index == fields.len())
+                                // Skip section headers
+                                while menu.selected_idx < menu.fields.len()
+                                    && menu.fields[menu.selected_idx].kind
+                                        == crate::app::FieldType::Section
+                                    && menu.selected_idx > 0
+                                {
+                                    menu.selected_idx -= 1;
+                                }
+                                // Skip spacer row
                                 if is_new && menu.selected_idx == menu.fields.len() {
                                     menu.selected_idx = menu.fields.len().saturating_sub(1);
                                 }

@@ -184,6 +184,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         ),
     ];
+    if let Some(Some(group_col)) = app.group_by_column.get(&app.active_tab) {
+        title_spans.push(Span::styled(
+            format!(" {} GROUPED: {} ", icons.label_filtered, group_col),
+            Style::default()
+                .bg(THEME.read().unwrap().blue)
+                .fg(THEME.read().unwrap().bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if app.is_typing_search {
         title_spans.push(Span::styled(
             format!(" {} SEARCHING ", icons.label_searching),
@@ -207,15 +216,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         title_spans.push(Span::styled(
             format!(" {} ", app.search_query),
             Style::default().fg(THEME.read().unwrap().yellow),
-        ));
-    }
-    if let Some(Some(group_col)) = app.group_by_column.get(&app.active_tab) {
-        title_spans.push(Span::styled(
-            format!(" {} GROUPED: {} ", icons.label_filtered, group_col),
-            Style::default()
-                .bg(THEME.read().unwrap().blue)
-                .fg(THEME.read().unwrap().bg)
-                .add_modifier(Modifier::BOLD),
         ));
     }
 

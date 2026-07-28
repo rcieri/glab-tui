@@ -39,6 +39,26 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let label = &f.label;
                 let val = &f.value;
                 let is_selected = i == menu.selected_idx;
+
+                // Section headers: dimmed centered separators
+                if f.kind == crate::app::FieldType::Section {
+                    let available = body.width.saturating_sub(4) as usize;
+                    let pad = (available.saturating_sub(label.len() + 4)) / 2;
+                    let line = format!(
+                        "{:\u{2500}>pad$} {} {:\u{2500}<pad$}",
+                        "",
+                        label,
+                        "",
+                        pad = pad
+                    );
+                    return ListItem::new(Line::from(Span::styled(
+                        line,
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                }
+
                 let item_bg = if is_selected {
                     THEME.read().unwrap().highlight_bg
                 } else {
@@ -83,6 +103,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         val.clone()
                     };
                     match f.kind {
+                        crate::app::FieldType::Section => {} // unreachable — handled above
                         crate::app::FieldType::MultiSelect => {
                             if val == "None" {
                                 val_spans.push(Span::styled(
@@ -201,6 +222,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 }
 
                 let icon = match f.kind {
+                    crate::app::FieldType::Section => "", // unreachable
                     crate::app::FieldType::MultiSelect => icons.check_on.as_str(),
                     crate::app::FieldType::Toggle => icons.radio_on.as_str(),
                     crate::app::FieldType::Date => "\u{f073}",

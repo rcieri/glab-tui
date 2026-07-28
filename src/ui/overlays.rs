@@ -26,7 +26,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let label_width = menu
             .fields
             .iter()
-            .map(|(l, _)| l.len())
+            .map(|f| f.label.len())
             .max()
             .unwrap_or(18)
             .max(18);
@@ -35,7 +35,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .fields
             .iter()
             .enumerate()
-            .map(|(i, (label, val))| {
+            .map(|(i, f)| {
+                let label = &f.label;
+                let val = &f.value;
                 let is_selected = i == menu.selected_idx;
                 let item_bg = if is_selected {
                     THEME.read().unwrap().highlight_bg

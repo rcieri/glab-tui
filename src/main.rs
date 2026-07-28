@@ -2690,7 +2690,7 @@ async fn main() -> Result<()> {
                                         // (no CLI call — iid==0 means this entity is not yet created)
                                         if let Some(ref mut menu) = app.edit_menu {
                                             if let Some(field) = menu.fields.get_mut(field_idx) {
-                                                field.1 = value.clone();
+                                                field.value = value.clone();
                                             }
                                         }
                                     }
@@ -3076,9 +3076,9 @@ async fn main() -> Result<()> {
                                             if let Some(f) = menu
                                                 .fields
                                                 .iter_mut()
-                                                .find(|f| f.0 == "Description")
+                                                .find(|f| f.label == "Description")
                                             {
-                                                f.1 = desc_val.clone();
+                                                f.value = desc_val.clone();
                                             }
                                             let field_idx = menu.selected_idx;
                                             let cursor_idx = desc_val.len();
@@ -3128,9 +3128,9 @@ async fn main() -> Result<()> {
                                             if let Some(f) = menu
                                                 .fields
                                                 .iter_mut()
-                                                .find(|f| f.0 == "Description")
+                                                .find(|f| f.label == "Description")
                                             {
-                                                f.1 = desc_val.clone();
+                                                f.value = desc_val.clone();
                                             }
                                             let field_idx = menu.selected_idx;
                                             let cursor_idx = desc_val.len();
@@ -3245,22 +3245,39 @@ async fn main() -> Result<()> {
                                         app.edit_menu = Some(crate::app::EditMenu {
                                             title: format!("Create {}", pr_suffix),
                                             fields: vec![
-                                                ("Title".to_string(), title_val),
-                                                ("Source Branch".to_string(), source_branch_val),
-                                                (
-                                                    "Target Branch".to_string(),
+                                                crate::app::Field::text("Title", title_val),
+                                                crate::app::Field::ref_field(
+                                                    "Source Branch",
+                                                    source_branch_val,
+                                                ),
+                                                crate::app::Field::ref_field(
+                                                    "Target Branch",
                                                     get_default_branch()
                                                         .unwrap_or_else(|| "main".to_string()),
                                                 ),
-                                                ("Labels".to_string(), labels_val),
-                                                ("Assignees".to_string(), assignees_val),
-                                                ("Reviewers".to_string(), String::new()),
-                                                ("Milestone".to_string(), milestone_val),
-                                                (
-                                                    "Status (Draft/Ready)".to_string(),
+                                                crate::app::Field::multi_select(
+                                                    "Labels", labels_val,
+                                                ),
+                                                crate::app::Field::multi_select(
+                                                    "Assignees",
+                                                    assignees_val,
+                                                ),
+                                                crate::app::Field::multi_select(
+                                                    "Reviewers",
+                                                    String::new(),
+                                                ),
+                                                crate::app::Field::multi_select(
+                                                    "Milestone",
+                                                    milestone_val,
+                                                ),
+                                                crate::app::Field::toggle(
+                                                    "Status (Draft/Ready)",
                                                     "Draft".to_string(),
                                                 ),
-                                                ("Description".to_string(), description_val),
+                                                crate::app::Field::text(
+                                                    "Description",
+                                                    description_val,
+                                                ),
                                             ],
                                             selected_idx: 0,
                                             entity_iid: issue_iid,
@@ -3868,7 +3885,7 @@ async fn main() -> Result<()> {
                                                 if let Some(f) = menu
                                                     .fields
                                                     .iter_mut()
-                                                    .find(|f| f.0 == target_field_name)
+                                                    .find(|f| f.label == target_field_name)
                                                 {
                                                     let display_val = if field_type
                                                         == "confidential"
@@ -3895,7 +3912,7 @@ async fn main() -> Result<()> {
                                                         == "workflow_file"
                                                         && !display_val.is_empty();
 
-                                                    f.1 = display_val.clone();
+                                                    f.value = display_val.clone();
 
                                                     let _ = f; // release borrow before modifying fields
 
@@ -3925,16 +3942,16 @@ async fn main() -> Result<()> {
                                                                 crate::domain::workflow_inputs::parse_workflow_inputs(&yaml_path)
                                                             {
                                                                 menu.workflow_inputs = inputs.clone();
-                                                                menu.fields.retain(|(l, _)| l != "Inputs");
+                                                                menu.fields.retain(|f| f.label != "Inputs");
                                                                 let insert_pos = menu
                                                                     .fields
                                                                     .iter()
-                                                                    .position(|(l, _)| l == "Variables")
+                                                                    .position(|f| f.label == "Variables")
                                                                     .unwrap_or(menu.fields.len());
                                                                 for input in inputs.iter().rev() {
                                                                     let label = format!("Input: {}", input.name);
                                                                     let default_val = input.default.clone().unwrap_or_default();
-                                                                    menu.fields.insert(insert_pos, (label, default_val));
+                                                                    menu.fields.insert(insert_pos, crate::app::Field::text(&label, default_val));
                                                                 }
                                                             }
                                                         }
@@ -4033,44 +4050,44 @@ async fn main() -> Result<()> {
                                         let title = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Title")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Description")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let due_date = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Due Date")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Due Date")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let weight = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Weight")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Weight")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
@@ -4109,50 +4126,50 @@ async fn main() -> Result<()> {
                                         let title = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Title")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let source = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Source Branch")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Source Branch")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let target = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Target Branch")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Target Branch")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let reviewers = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Reviewers")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Reviewers")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Description")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if !source.is_empty() {
@@ -4215,20 +4232,20 @@ async fn main() -> Result<()> {
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if labels.is_empty()
@@ -4297,20 +4314,20 @@ async fn main() -> Result<()> {
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if labels.is_empty()
@@ -4379,26 +4396,26 @@ async fn main() -> Result<()> {
                                         let title = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Title")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Description")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let start_date = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Start Date")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Start Date")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let due_date = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Due Date")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Due Date")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
@@ -4449,52 +4466,56 @@ async fn main() -> Result<()> {
                                         let branch = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Branch / Ref")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Branch / Ref")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let mr = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Merge Request Pipeline")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Merge Request Pipeline")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let variables = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Variables")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Variables")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let inputs = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Inputs")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Inputs")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let workflow = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Workflow File")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Workflow File")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         let var_pairs = parse_key_value_pairs(&variables);
                                         // Collect per-input fields when workflow_dispatch inputs
                                         // were detected; otherwise fall back to the generic
                                         // "Inputs" field.
-                                        let per_input_fields: Vec<&(String, String)> = menu
+                                        let per_input_fields: Vec<&crate::app::Field> = menu
                                             .fields
                                             .iter()
-                                            .filter(|(k, _)| k.starts_with("Input: "))
+                                            .filter(|f| f.label.starts_with("Input: "))
                                             .collect();
                                         let input_pairs: Vec<(String, String)> =
                                             if !per_input_fields.is_empty() {
                                                 per_input_fields
                                                     .iter()
-                                                    .map(|(label, value)| {
-                                                        let name = label
+                                                    .map(|f| {
+                                                        let name = f
+                                                            .label
                                                             .strip_prefix("Input: ")
-                                                            .unwrap_or(label);
-                                                        (name.to_string(), value.trim().to_string())
+                                                            .unwrap_or(&f.label);
+                                                        (
+                                                            name.to_string(),
+                                                            f.value.trim().to_string(),
+                                                        )
                                                     })
                                                     .filter(|(_, v)| !v.is_empty())
                                                     .collect()
@@ -4536,20 +4557,20 @@ async fn main() -> Result<()> {
                                         let tag = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Tag")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Tag")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let name = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Release Name")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Release Name")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Description")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if !tag.is_empty() {
@@ -4589,7 +4610,7 @@ async fn main() -> Result<()> {
 
                                 // Not on submit — act on the currently selected field
                                 let field_name = if menu.selected_idx < menu.fields.len() {
-                                    menu.fields[menu.selected_idx].0.clone()
+                                    menu.fields[menu.selected_idx].label.clone()
                                 } else {
                                     String::new()
                                 };
@@ -4643,7 +4664,7 @@ async fn main() -> Result<()> {
                                             entity_iid == 0 || entity_type.starts_with("new_");
                                         if is_new_entity {
                                             let current_val =
-                                                menu.fields[menu.selected_idx].1.clone();
+                                                menu.fields[menu.selected_idx].value.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             } else {
@@ -4665,7 +4686,7 @@ async fn main() -> Result<()> {
                                             entity_iid == 0 || entity_type.starts_with("new_");
                                         if is_new_entity {
                                             let current_val =
-                                                menu.fields[menu.selected_idx].1.clone();
+                                                menu.fields[menu.selected_idx].value.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             } else {
@@ -4703,7 +4724,7 @@ async fn main() -> Result<()> {
                                             .collect();
                                         if field_type == "pipeline_branch" {
                                             let current_val =
-                                                menu.fields[menu.selected_idx].1.clone();
+                                                menu.fields[menu.selected_idx].value.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             }
@@ -4716,7 +4737,8 @@ async fn main() -> Result<()> {
                                         all_items = get_workflow_files(app.is_github());
                                         is_loading = false;
                                         // Pre-select any already-typed value
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
@@ -4743,7 +4765,8 @@ async fn main() -> Result<()> {
                                             }
                                             is_loading = false;
                                         }
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
@@ -4772,14 +4795,16 @@ async fn main() -> Result<()> {
                                         tags.sort();
                                         all_items = tags;
                                         is_loading = false;
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty()
                                             && field_type != "draft_status"
                                             && field_type != "mr_pipeline"
@@ -4932,7 +4957,7 @@ async fn main() -> Result<()> {
 
                                 if field_name == "Description" {
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
-                                        let raw_val = menu.fields[menu.selected_idx].1.clone();
+                                        let raw_val = menu.fields[menu.selected_idx].value.clone();
                                         if raw_val.trim().is_empty() {
                                             let template_type = if entity_type == "new_mr" {
                                                 "mr"
@@ -4993,7 +5018,7 @@ async fn main() -> Result<()> {
                                     let current_val = if entity_iid == 0
                                         || entity_type.starts_with("new_")
                                     {
-                                        let raw_val = menu.fields[menu.selected_idx].1.clone();
+                                        let raw_val = menu.fields[menu.selected_idx].value.clone();
                                         if raw_val.trim().is_empty() {
                                             let template_type = if entity_type == "new_mr" {
                                                 "mr"
@@ -5053,7 +5078,7 @@ async fn main() -> Result<()> {
                                 if field_name == "Due Date" || field_name == "Start Date" {
                                     let current_val =
                                         if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            menu.fields[menu.selected_idx].1.clone()
+                                            menu.fields[menu.selected_idx].value.clone()
                                         } else {
                                             if entity_type == "issue" {
                                                 app.issues
@@ -5112,7 +5137,7 @@ async fn main() -> Result<()> {
                                 {
                                     let current_val =
                                         if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            menu.fields[menu.selected_idx].1.clone()
+                                            menu.fields[menu.selected_idx].value.clone()
                                         } else {
                                             let field_type = match field_name.as_str() {
                                                 "Title" => "title",

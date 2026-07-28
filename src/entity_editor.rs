@@ -556,21 +556,24 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             let is_github = app.is_github();
             let program = if is_github { "gh" } else { "glab" };
             let mut fields = vec![
-                ("Title".to_string(), issue.title.clone()),
-                ("Labels".to_string(), labels),
-                ("Assignees".to_string(), assignees),
-                ("Milestone".to_string(), milestone),
+                crate::app::Field::text("Title", issue.title.clone()),
+                crate::app::Field::multi_select("Labels", labels),
+                crate::app::Field::multi_select("Assignees", assignees),
+                crate::app::Field::multi_select("Milestone", milestone),
             ];
             if !is_github {
-                fields.push(("Confidential".to_string(), "Toggle/Set".to_string()));
-                fields.push((
-                    "Due Date".to_string(),
+                fields.push(crate::app::Field::toggle(
+                    "Confidential",
+                    "Toggle/Set".to_string(),
+                ));
+                fields.push(crate::app::Field::date(
+                    "Due Date",
                     issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
                 ));
-                fields.push(("Weight".to_string(), "Set".to_string()));
+                fields.push(crate::app::Field::text("Weight", "Set".to_string()));
             }
-            fields.push((
-                "Description".to_string(),
+            fields.push(crate::app::Field::text(
+                "Description",
                 issue.description.clone().unwrap_or_default(),
             ));
 
@@ -624,18 +627,24 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
 
             let is_github = app.is_github();
             let mut fields = vec![
-                ("Title".to_string(), mr.title.clone()),
-                ("Labels".to_string(), labels),
-                ("Assignees".to_string(), assignees),
-                ("Reviewers".to_string(), reviewers),
-                ("Milestone".to_string(), milestone),
+                crate::app::Field::text("Title", mr.title.clone()),
+                crate::app::Field::multi_select("Labels", labels),
+                crate::app::Field::multi_select("Assignees", assignees),
+                crate::app::Field::multi_select("Reviewers", reviewers),
+                crate::app::Field::multi_select("Milestone", milestone),
             ];
             if !is_github {
-                fields.push(("Target Branch".to_string(), mr.target_branch.clone()));
-                fields.push(("Draft Status".to_string(), draft_status.to_string()));
+                fields.push(crate::app::Field::ref_field(
+                    "Target Branch",
+                    mr.target_branch.clone(),
+                ));
+                fields.push(crate::app::Field::toggle(
+                    "Draft Status",
+                    draft_status.to_string(),
+                ));
             }
-            fields.push((
-                "Description".to_string(),
+            fields.push(crate::app::Field::text(
+                "Description",
                 mr.description.clone().unwrap_or_default(),
             ));
 
@@ -658,25 +667,25 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
         if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
             let is_github = app.is_github();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-            let mut fields = vec![("Title".to_string(), milestone.title.clone())];
+            let mut fields = vec![crate::app::Field::text("Title", milestone.title.clone())];
             if !is_github {
-                fields.push((
-                    "Start Date".to_string(),
+                fields.push(crate::app::Field::date(
+                    "Start Date",
                     milestone
                         .start_date
                         .clone()
                         .unwrap_or_else(|| "Set".to_string()),
                 ));
             }
-            fields.push((
-                "Due Date".to_string(),
+            fields.push(crate::app::Field::date(
+                "Due Date",
                 milestone
                     .due_date
                     .clone()
                     .unwrap_or_else(|| "Set".to_string()),
             ));
-            fields.push((
-                "Description".to_string(),
+            fields.push(crate::app::Field::text(
+                "Description",
                 milestone.description.clone().unwrap_or_default(),
             ));
 

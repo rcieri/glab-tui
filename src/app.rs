@@ -323,7 +323,7 @@ impl Tab {
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
-    pub fields: Vec<(String, String)>, // (Label, Value) — TODO: migrate to Vec<Field>
+    pub fields: Vec<Field>,
     pub selected_idx: usize,
     pub entity_iid: u64,
     pub entity_type: String, // "issue", "mr"
@@ -346,7 +346,7 @@ pub enum FieldType {
     Ref,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Field {
     pub label: String,
     pub kind: FieldType,

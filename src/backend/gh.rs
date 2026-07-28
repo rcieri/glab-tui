@@ -1155,7 +1155,7 @@ impl Backend for GhBackend {
                     updated_at: r.updated_at,
                     name: r.workflow_name.unwrap_or_default(),
                     display_title: r.display_title.unwrap_or_default(),
-                    event: r.event.clone().unwrap_or_default(),
+                    event: r.event.as_deref().unwrap_or_default().to_string(),
                     head_sha: r.head_sha.unwrap_or_default(),
                     actor_login: String::new(),
                     duration_seconds: None,

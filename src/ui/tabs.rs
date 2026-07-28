@@ -1304,6 +1304,11 @@ pub(crate) fn render_tab_pipelines(
                 "ID" => vec![item.id().to_string()],
                 "Status" => vec![item.status().to_string()],
                 "Ref" => vec![item.ref_branch().to_string()],
+                "Name" => vec![item.name().to_string()],
+                "Event" => vec![item.event().to_string()],
+                "SHA" => vec![item.head_sha().to_string()],
+                "Actor" => vec![item.actor_login().to_string()],
+                "Created" => vec![item.created_at().unwrap_or_default().to_string()],
                 _ => vec![],
             },
         );
@@ -1713,6 +1718,13 @@ pub(crate) fn render_tab_jobs(
                 "Status" => vec![item.status().to_string()],
                 "Name" => vec![item.name().to_string()],
                 "Matrix" => vec![item.matrix().map(|m| m.to_string()).unwrap_or_default()],
+                "Runner" => vec![item.runner().unwrap_or("-").to_string()],
+                "Needs" => item.needs().to_vec(),
+                "Duration" => vec![
+                    item.duration_seconds()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
+                ],
                 _ => vec![],
             },
         );
@@ -1754,6 +1766,11 @@ pub(crate) fn render_tab_jobs(
                         format!("{} MANUAL", icons.status_manual),
                         THEME.read().unwrap().text_muted,
                         THEME.read().unwrap().inactive_bg,
+                    ),
+                    "preparing" => (
+                        format!("{} PREPARE", icons.status_pending),
+                        THEME.read().unwrap().yellow,
+                        THEME.read().unwrap().yellow_bg,
                     ),
                     _ => (
                         format!("{} UNKNOWN", icons.status_unknown),
@@ -3687,7 +3704,8 @@ pub(crate) fn render_tab_branches(
                 f.render_widget(
                     Paragraph::new(text)
                         .block(preview_block)
-                        .scroll((app.detail_scroll, 0)),
+                        .scroll((app.detail_scroll, 0))
+                        .wrap(ratatui::widgets::Wrap { trim: true }),
                     detail_rect,
                 );
             }
@@ -3928,7 +3946,8 @@ pub(crate) fn render_tab_environments(
                     f.render_widget(
                         Paragraph::new(text)
                             .block(preview_block)
-                            .scroll((app.detail_scroll, 0)),
+                            .scroll((app.detail_scroll, 0))
+                            .wrap(ratatui::widgets::Wrap { trim: true }),
                         detail_rect,
                     );
                 }

@@ -346,7 +346,7 @@ pub enum FieldType {
     Ref,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Field {
     pub label: String,
     pub kind: FieldType,

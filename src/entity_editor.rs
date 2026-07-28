@@ -562,10 +562,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 crate::app::Field::multi_select("Milestone", milestone),
             ];
             if !is_github {
-                fields.push(crate::app::Field::toggle(
-                    "Confidential",
-                    "Set...".to_string(),
-                ));
+                fields.push(crate::app::Field::toggle("Confidential", "No".to_string()));
                 fields.push(crate::app::Field::date(
                     "Due Date",
                     issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
@@ -639,7 +636,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     mr.target_branch.clone(),
                 ));
                 fields.push(crate::app::Field::toggle(
-                    "Draft Status",
+                    "Status (Draft/Ready)",
                     draft_status.to_string(),
                 ));
             }

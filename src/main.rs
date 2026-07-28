@@ -3180,6 +3180,201 @@ async fn main() -> Result<()> {
                                         continue;
                                     }
 
+                                    if field_type == "description_action" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        let choice = selected_val.unwrap_or_default();
+                                        let entity_iid = selector.entity_iid;
+                                        let entity_type = selector.entity_type.clone();
+
+                                        if choice == "Open in Editor" {
+                                            // Get current description from edit menu or entity data
+                                            let current_desc = if entity_iid == 0
+                                                || entity_type.starts_with("new_")
+                                            {
+                                                app.edit_menu
+                                                    .as_ref()
+                                                    .and_then(|m| {
+                                                        m.fields
+                                                            .iter()
+                                                            .find(|f| f.label == "Description")
+                                                            .map(|f| f.value.clone())
+                                                    })
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "issue"
+                                                || entity_type == "edit_issue"
+                                            {
+                                                app.issues
+                                                    .items
+                                                    .iter()
+                                                    .find(|i| i.iid == entity_iid)
+                                                    .and_then(|i| i.description.clone())
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "milestone"
+                                                || entity_type == "edit_milestone"
+                                            {
+                                                app.milestones
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            } else {
+                                                app.mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            };
+                                            if let Some(new_desc) = crate::editor::edit_in_editor(
+                                                &current_desc,
+                                                &mut terminal,
+                                            ) {
+                                                if let Some(ref mut menu) = app.edit_menu {
+                                                    if let Some(f) = menu
+                                                        .fields
+                                                        .iter_mut()
+                                                        .find(|f| f.label == "Description")
+                                                    {
+                                                        f.value = new_desc.clone();
+                                                    }
+                                                }
+                                                // Apply the change to the backend
+                                                let Some(client) = app.gitlab_client.clone() else {
+                                                    continue;
+                                                };
+                                                let project_path = app.project_context.clone();
+                                                let result = if entity_type == "issue"
+                                                    || entity_type == "edit_issue"
+                                                {
+                                                    client
+                                                        .update_issue_description(
+                                                            &project_path,
+                                                            entity_iid,
+                                                            &new_desc,
+                                                        )
+                                                        .await
+                                                } else if entity_type == "milestone"
+                                                    || entity_type == "edit_milestone"
+                                                {
+                                                    crate::domain::milestones::update_milestone(
+                                                        &client,
+                                                        &project_path,
+                                                        entity_iid,
+                                                        &app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default(),
+                                                        &new_desc,
+                                                        app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .and_then(|m| m.start_date.clone())
+                                                            .as_deref(),
+                                                        app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .and_then(|m| m.due_date.clone())
+                                                            .as_deref(),
+                                                    )
+                                                    .await
+                                                } else {
+                                                    client
+                                                        .update_mr_description(
+                                                            &project_path,
+                                                            entity_iid,
+                                                            &new_desc,
+                                                        )
+                                                        .await
+                                                };
+                                                if let Err(e) = result {
+                                                    app.error_message = Some(format!(
+                                                        "Failed to update description: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                        } else {
+                                            // Edit Inline — open TextInput
+                                            let current_val = if entity_iid == 0
+                                                || entity_type.starts_with("new_")
+                                            {
+                                                app.edit_menu
+                                                    .as_ref()
+                                                    .and_then(|m| {
+                                                        m.fields
+                                                            .iter()
+                                                            .find(|f| f.label == "Description")
+                                                            .map(|f| f.value.clone())
+                                                    })
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "issue"
+                                                || entity_type == "edit_issue"
+                                            {
+                                                app.issues
+                                                    .items
+                                                    .iter()
+                                                    .find(|i| i.iid == entity_iid)
+                                                    .and_then(|i| i.description.clone())
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "milestone"
+                                                || entity_type == "edit_milestone"
+                                            {
+                                                app.milestones
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            } else {
+                                                app.mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            };
+                                            let action = if entity_iid == 0
+                                                || entity_type.starts_with("new_")
+                                            {
+                                                crate::app::TextInputAction::EditNewField {
+                                                    field_idx: app
+                                                        .edit_menu
+                                                        .as_ref()
+                                                        .and_then(|m| {
+                                                            m.fields.iter().position(|f| {
+                                                                f.label == "Description"
+                                                            })
+                                                        })
+                                                        .unwrap_or(0),
+                                                }
+                                            } else {
+                                                crate::app::TextInputAction::EditField {
+                                                    entity_iid,
+                                                    entity_type: entity_type.clone(),
+                                                    field_type: "description".to_string(),
+                                                }
+                                            };
+                                            app.text_input = Some(crate::app::TextInput {
+                                                title: " Edit Description ".to_string(),
+                                                value: current_val.clone(),
+                                                cursor_idx: current_val.len(),
+                                                action,
+                                            });
+                                        }
+                                        continue;
+                                    }
+
                                     if field_type == "create_mr" {
                                         let filtered_items = selector.get_filtered_items();
                                         let mut selected_val =
@@ -5067,61 +5262,27 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    let current_val = if entity_iid == 0
-                                        || entity_type.starts_with("new_")
-                                    {
-                                        let raw_val = menu.fields[menu.selected_idx].value.clone();
-                                        if raw_val.trim().is_empty() {
-                                            let template_type = if entity_type == "new_mr" {
-                                                "mr"
-                                            } else {
-                                                "issue"
-                                            };
-                                            get_default_template(template_type).unwrap_or_default()
-                                        } else {
-                                            raw_val
-                                        }
-                                    } else {
-                                        if entity_type == "issue" {
-                                            app.issues
-                                                .items
-                                                .iter()
-                                                .find(|i| i.iid == entity_iid)
-                                                .and_then(|i| i.description.clone())
-                                                .unwrap_or_default()
-                                        } else if entity_type == "milestone" {
-                                            app.milestones
-                                                .items
-                                                .iter()
-                                                .find(|m| m.iid == entity_iid)
-                                                .and_then(|m| m.description.clone())
-                                                .unwrap_or_default()
-                                        } else {
-                                            app.mrs
-                                                .items
-                                                .iter()
-                                                .find(|m| m.iid == entity_iid)
-                                                .and_then(|m| m.description.clone())
-                                                .unwrap_or_default()
-                                        }
-                                    };
-                                    let action =
-                                        if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            crate::app::TextInputAction::EditNewField {
-                                                field_idx: menu.selected_idx,
-                                            }
-                                        } else {
-                                            crate::app::TextInputAction::EditField {
-                                                entity_iid,
-                                                entity_type: entity_type.clone(),
-                                                field_type: "description".to_string(),
-                                            }
-                                        };
-                                    app.text_input = Some(crate::app::TextInput {
+                                    // Show selector: Edit Inline | Open in Editor (handled by description_action)
+                                    app.selector = Some(crate::app::Selector {
                                         title: " Edit Description ".to_string(),
-                                        value: current_val.clone(),
-                                        cursor_idx: current_val.len(),
-                                        action,
+                                        all_items: vec![
+                                            "Edit Inline".to_string(),
+                                            "Open in Editor".to_string(),
+                                        ],
+                                        selected_items: std::collections::HashSet::new(),
+                                        cursor_idx: 0,
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid,
+                                        entity_type: entity_type.clone(),
+                                        field_type: "description_action".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
                                     });
                                     app.edit_menu = Some(menu);
                                     continue;

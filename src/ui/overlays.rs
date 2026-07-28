@@ -283,38 +283,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Vec::new()
         };
 
-        // Determine mnemonics footer text
-        let mut mnemonics = Vec::new();
-        for f in &menu.fields {
-            if f.kind == crate::app::FieldType::Section {
-                continue;
-            }
-            match f.label.as_str() {
-                "Title" => mnemonics.push("t:title"),
-                "Labels" => mnemonics.push("l:labels"),
-                "Assignees" => mnemonics.push("a:assignees"),
-                "Reviewers" => mnemonics.push("r:reviewers"),
-                "Milestone" => mnemonics.push("m:milestone"),
-                "Target Branch" => mnemonics.push("b:branch"),
-                "Confidential" => mnemonics.push("c:conf"),
-                "Due Date" => mnemonics.push("u:due"),
-                "Weight" => mnemonics.push("w:weight"),
-                "Start Date" => mnemonics.push("s:start"),
-                "Status (Draft/Ready)" => mnemonics.push("S:draft"),
-                "Description" => {
-                    mnemonics.push("d:desc");
-                }
-                _ => {}
-            }
-        }
-        mnemonics.push(if is_new_entity {
-            "⏎:submit"
-        } else {
-            "⏎:save"
-        });
-        let mnemonic_line = mnemonics.join("  ");
-
-        // Build layout: fields list, optional desc preview, mnemonics, optional submit
+        // Build layout: fields list, optional desc preview, optional submit
         let desc_height = if has_description {
             (desc_lines.len() as u16 + 2).min(14) // +2 for border, capped at 14 rows
         } else {
@@ -325,7 +294,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         if has_description {
             constraints.push(Constraint::Length(desc_height));
         }
-        constraints.push(Constraint::Length(1)); // mnemonics
         if is_new_entity {
             constraints.push(Constraint::Length(3)); // submit button
         }
@@ -363,20 +331,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 desc_chunk,
             );
         }
-
-        // Mnemonics footer
-        let mnemonics_chunk = chunks[chunk_idx];
-        chunk_idx += 1;
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                mnemonic_line,
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .add_modifier(Modifier::ITALIC),
-            )))
-            .alignment(Alignment::Center),
-            mnemonics_chunk,
-        );
 
         // Submit button (new entities only)
         if is_new_entity {

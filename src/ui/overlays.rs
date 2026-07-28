@@ -42,20 +42,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let val = &f.value;
                 let is_selected = i == menu.selected_idx;
 
-                // Section headers: colored background with centered label
+                // Section headers: full-width colored background bar
                 if f.kind == crate::app::FieldType::Section {
-                    let available = body.width.saturating_sub(4) as usize;
-                    let pad = (available.saturating_sub(label.len() + 6)) / 2;
-                    let line = format!(
-                        "{:\u{2500}>pad$} \u{25CF} {} \u{25CF} {:\u{2500}<pad$}",
-                        "",
-                        label,
-                        "",
-                        pad = pad.saturating_sub(1)
-                    );
+                    let available = body.width.saturating_sub(2) as usize;
+                    let padded = format!("  {} {}  ", "\u{25CF}", label.to_uppercase());
+                    let pad_right = available.saturating_sub(padded.len());
+                    let line = format!("{}{:\u{2500}<pad$}", padded, "", pad = pad_right.max(0));
                     return ListItem::new(Line::from(Span::styled(
                         line,
                         Style::default()
+                            .bg(THEME.read().unwrap().blue_bg)
                             .fg(THEME.read().unwrap().blue)
                             .add_modifier(Modifier::BOLD),
                     )));
@@ -234,60 +230,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     }
                 }
 
-                // Show markdown preview for Description when selected
-                if label == "Description" && !val.is_empty() {
-                    let md_lines = render_markdown(val);
-                    // Limit preview to remaining space below this field, capped at 12 lines
-                    let max_lines = (body.height as usize).saturating_sub(i + 3).min(12);
-                    let wrap_width = (body.width as usize)
-                        .saturating_sub(label_width + 6)
-                        .max(20);
-                    let mut preview: Vec<Line> = Vec::with_capacity(max_lines);
-                    for l in md_lines {
-                        let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
-                        let wrapped = textwrap::wrap(&text, wrap_width);
-                        for chunk in wrapped {
-                            if preview.len() >= max_lines {
-                                break;
-                            }
-                            let default_style = l
-                                .spans
-                                .first()
-                                .map(|s| s.style)
-                                .unwrap_or_default()
-                                .bg(item_bg);
-                            preview
-                                .push(Line::from(Span::styled(chunk.into_owned(), default_style)));
-                        }
-                        if preview.len() >= max_lines {
-                            break;
-                        }
-                    }
-                    let icon = icons.label_details.as_str();
-                    let header = Line::from(vec![
-                        Span::styled(
-                            format!(
-                                " {} {:label_width$} ",
-                                icon,
-                                label,
-                                label_width = label_width
-                            ),
-                            label_style,
-                        ),
-                        Span::styled(format!(" {} \u{25BC}", icons.separator), sep_style),
-                    ]);
-                    let mut combined = vec![header];
-                    for line in preview {
-                        let mut padded = vec![Span::styled(
-                            format!("{:width$}", "", width = label_width + 4),
-                            Style::default().bg(item_bg),
-                        )];
-                        padded.extend(line.spans);
-                        combined.push(Line::from(padded));
-                    }
-                    return ListItem::new(combined).style(Style::default().bg(item_bg));
-                }
-
                 let icon = match f.kind {
                     crate::app::FieldType::Section => "", // unreachable
                     crate::app::FieldType::MultiSelect => icons.check_on.as_str(),
@@ -315,23 +257,131 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             })
             .collect();
 
-        let submit_idx = menu.fields.len() + 1;
+        // Extract description text for inline preview
+        let description_text = menu
+            .fields
+            .iter()
+            .find(|f| f.label == "Description" && !f.value.is_empty())
+            .map(|f| f.value.as_str())
+            .unwrap_or("");
 
-        // Split body: scrollable fields on top, fixed submit at bottom
+        let submit_idx = menu.fields.len() + 1;
+        let has_description = !description_text.is_empty();
+        let desc_lines = if has_description {
+            let md_lines = render_markdown(description_text);
+            let wrap_width = body.width.saturating_sub(6) as usize;
+            let mut wrapped = Vec::new();
+            for l in md_lines {
+                let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                for chunk in textwrap::wrap(&text, wrap_width.max(20)) {
+                    let style = l.spans.first().map(|s| s.style).unwrap_or_default();
+                    wrapped.push(Line::from(Span::styled(chunk.into_owned(), style)));
+                }
+            }
+            wrapped
+        } else {
+            Vec::new()
+        };
+
+        // Determine mnemonics footer text
+        let mut mnemonics = Vec::new();
+        for f in &menu.fields {
+            if f.kind == crate::app::FieldType::Section {
+                continue;
+            }
+            match f.label.as_str() {
+                "Title" => mnemonics.push("t:title"),
+                "Labels" => mnemonics.push("l:labels"),
+                "Assignees" => mnemonics.push("a:assignees"),
+                "Reviewers" => mnemonics.push("r:reviewers"),
+                "Milestone" => mnemonics.push("m:milestone"),
+                "Target Branch" => mnemonics.push("b:branch"),
+                "Confidential" => mnemonics.push("c:conf"),
+                "Due Date" => mnemonics.push("u:due"),
+                "Weight" => mnemonics.push("w:weight"),
+                "Start Date" => mnemonics.push("s:start"),
+                "Status (Draft/Ready)" => mnemonics.push("S:draft"),
+                "Description" => {
+                    mnemonics.push("d:desc");
+                }
+                _ => {}
+            }
+        }
+        mnemonics.push(if is_new_entity {
+            "⏎:submit"
+        } else {
+            "⏎:save"
+        });
+        let mnemonic_line = mnemonics.join("  ");
+
+        // Build layout: fields list, optional desc preview, mnemonics, optional submit
+        let desc_height = if has_description {
+            (desc_lines.len() as u16 + 2).min(14) // +2 for border, capped at 14 rows
+        } else {
+            0
+        };
+
+        let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
+        if has_description {
+            constraints.push(Constraint::Length(desc_height));
+        }
+        constraints.push(Constraint::Length(1)); // mnemonics
         if is_new_entity {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(3)])
-                .split(body);
-            let list = List::new(items).style(Style::default().bg(Color::Reset));
-            let mut state = menu.state.clone();
-            f.render_stateful_widget(list, chunks[0], &mut state);
-            menu.state = state;
-            // Fixed submit at bottom
+            constraints.push(Constraint::Length(3)); // submit button
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(body);
+
+        // Fields list
+        let list = List::new(items).style(Style::default().bg(Color::Reset));
+        let mut state = menu.state.clone();
+        f.render_stateful_widget(list, chunks[0], &mut state);
+        menu.state = state;
+
+        let mut chunk_idx = 1;
+
+        // Description preview
+        if has_description {
+            let desc_chunk = chunks[chunk_idx];
+            chunk_idx += 1;
+            let desc_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(THEME.read().unwrap().text_muted))
+                .title(format!(" {} {} ", icons.label_details, "Description"))
+                .title_style(
+                    Style::default()
+                        .fg(THEME.read().unwrap().text_muted)
+                        .add_modifier(Modifier::BOLD),
+                );
+            f.render_widget(
+                Paragraph::new(desc_lines)
+                    .block(desc_block)
+                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                desc_chunk,
+            );
+        }
+
+        // Mnemonics footer
+        let mnemonics_chunk = chunks[chunk_idx];
+        chunk_idx += 1;
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                mnemonic_line,
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            )))
+            .alignment(Alignment::Center),
+            mnemonics_chunk,
+        );
+
+        // Submit button (new entities only)
+        if is_new_entity {
+            let submit_chunk = chunks[chunk_idx];
             let btn_text = format!(" {} Submit ", icons.check_on);
-            let available = body.width.saturating_sub(6) as usize;
-            let padding = (available.saturating_sub(btn_text.len())) / 2;
-            let padded = format!("   {:pad$}{}{:pad$}   ", "", btn_text, "", pad = padding);
             let is_submit_selected = menu.selected_idx == submit_idx;
             let submit_fg = if is_submit_selected {
                 THEME.read().unwrap().bg
@@ -343,26 +393,21 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             } else {
                 Color::Reset
             };
+            let submit_block = Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(THEME.read().unwrap().text_muted));
             f.render_widget(
                 Paragraph::new(Line::from(vec![Span::styled(
-                    padded,
+                    btn_text,
                     Style::default()
                         .fg(submit_fg)
                         .bg(submit_bg)
                         .add_modifier(Modifier::BOLD),
                 )]))
-                .block(
-                    Block::default()
-                        .borders(Borders::TOP)
-                        .border_style(Style::default().fg(THEME.read().unwrap().text_muted)),
-                ),
-                chunks[1],
+                .block(submit_block)
+                .alignment(Alignment::Center),
+                submit_chunk,
             );
-        } else {
-            let list = List::new(items).style(Style::default().bg(Color::Reset));
-            let mut state = menu.state.clone();
-            f.render_stateful_widget(list, body, &mut state);
-            menu.state = state;
         }
     }
 

@@ -670,8 +670,12 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
         if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
             let is_github = app.is_github();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-            let mut fields = vec![crate::app::Field::text("Title", milestone.title.clone())];
+            let mut fields = vec![
+                crate::app::Field::section("Details"),
+                crate::app::Field::text("Title", milestone.title.clone()),
+            ];
             if !is_github {
+                fields.push(crate::app::Field::section("GitLab Specific"));
                 fields.push(crate::app::Field::date(
                     "Start Date",
                     milestone
@@ -680,6 +684,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                         .unwrap_or_else(|| "Set".to_string()),
                 ));
             }
+            fields.push(crate::app::Field::section("Dates"));
             fields.push(crate::app::Field::date(
                 "Due Date",
                 milestone
@@ -687,6 +692,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     .clone()
                     .unwrap_or_else(|| "Set".to_string()),
             ));
+            fields.push(crate::app::Field::section("Description"));
             fields.push(crate::app::Field::text(
                 "Description",
                 milestone.description.clone().unwrap_or_default(),

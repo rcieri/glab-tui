@@ -3262,6 +3262,7 @@ async fn main() -> Result<()> {
                                             title: format!("Create {}", pr_suffix),
                                             fields: vec![
                                                 crate::app::Field::text("Title", title_val),
+                                                crate::app::Field::section("Branches"),
                                                 crate::app::Field::ref_field(
                                                     "Source Branch",
                                                     source_branch_val,
@@ -3271,6 +3272,7 @@ async fn main() -> Result<()> {
                                                     get_default_branch()
                                                         .unwrap_or_else(|| "main".to_string()),
                                                 ),
+                                                crate::app::Field::section("Details"),
                                                 crate::app::Field::multi_select(
                                                     "Labels", labels_val,
                                                 ),
@@ -3286,10 +3288,12 @@ async fn main() -> Result<()> {
                                                     "Milestone",
                                                     milestone_val,
                                                 ),
+                                                crate::app::Field::section("Status"),
                                                 crate::app::Field::toggle(
                                                     "Status (Draft/Ready)",
                                                     "Draft".to_string(),
                                                 ),
+                                                crate::app::Field::section("Description"),
                                                 crate::app::Field::text(
                                                     "Description",
                                                     description_val,

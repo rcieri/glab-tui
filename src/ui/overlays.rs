@@ -275,12 +275,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let description_text = menu
             .fields
             .iter()
-            .find(|f| f.label == "Description")
+            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
             .map(|f| f.value.as_str())
             .unwrap_or("");
 
         let is_desc_selected = menu.selected_idx < menu.fields.len()
-            && menu.fields[menu.selected_idx].label == "Description";
+            && menu.fields[menu.selected_idx].label == "Description"
+            && menu.fields[menu.selected_idx].kind == crate::app::FieldType::Text;
 
         let submit_idx = menu.fields.len() + 1;
 
@@ -343,14 +344,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .add_modifier(Modifier::BOLD),
             );
 
-        // Layout: fields list, description preview, optional submit
+        // Layout: fields list, description preview, submit
         let desc_height = (desc_lines.len() as u16 + 2).min(14);
 
         let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
         constraints.push(Constraint::Length(desc_height));
-        if is_new_entity {
-            constraints.push(Constraint::Length(3));
-        }
+        constraints.push(Constraint::Length(3)); // always show submit
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -371,10 +370,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             chunks[1],
         );
 
-        // Submit button (new entities only)
-        if is_new_entity {
+        // Submit button
+        {
             let submit_chunk = chunks[2];
-            let btn_text = format!(" {} Submit ", icons.check_on);
+            let btn_text = if is_new_entity {
+                format!(" {} Submit ", icons.check_on)
+            } else {
+                format!(" {} Save ", icons.check_on)
+            };
             let is_submit_selected = menu.selected_idx == submit_idx;
             let submit_fg = if is_submit_selected {
                 THEME.read().unwrap().bg

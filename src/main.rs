@@ -3107,11 +3107,10 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         if let Some(ref mut menu) = app.edit_menu {
-                                            if let Some(f) = menu
-                                                .fields
-                                                .iter_mut()
-                                                .find(|f| f.label == "Description")
-                                            {
+                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            }) {
                                                 f.value = desc_val.clone();
                                             }
                                             let field_idx = menu.selected_idx;
@@ -3159,11 +3158,10 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         if let Some(ref mut menu) = app.edit_menu {
-                                            if let Some(f) = menu
-                                                .fields
-                                                .iter_mut()
-                                                .find(|f| f.label == "Description")
-                                            {
+                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            }) {
                                                 f.value = desc_val.clone();
                                             }
                                             let field_idx = menu.selected_idx;
@@ -3202,7 +3200,7 @@ async fn main() -> Result<()> {
                                                     .and_then(|m| {
                                                         m.fields
                                                             .iter()
-                                                            .find(|f| f.label == "Description")
+                                                            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
                                                             .map(|f| f.value.clone())
                                                     })
                                                     .unwrap_or_default()
@@ -3237,10 +3235,12 @@ async fn main() -> Result<()> {
                                                 &mut terminal,
                                             ) {
                                                 if let Some(ref mut menu) = app.edit_menu {
-                                                    if let Some(f) = menu
-                                                        .fields
-                                                        .iter_mut()
-                                                        .find(|f| f.label == "Description")
+                                                    if let Some(f) =
+                                                        menu.fields.iter_mut().find(|f| {
+                                                            f.label == "Description"
+                                                                && f.kind
+                                                                    == crate::app::FieldType::Text
+                                                        })
                                                     {
                                                         f.value = new_desc.clone();
                                                     }
@@ -3314,7 +3314,7 @@ async fn main() -> Result<()> {
                                                     .and_then(|m| {
                                                         m.fields
                                                             .iter()
-                                                            .find(|f| f.label == "Description")
+                                                            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
                                                             .map(|f| f.value.clone())
                                                     })
                                                     .unwrap_or_default()
@@ -3736,6 +3736,9 @@ async fn main() -> Result<()> {
                                                         });
                                                         continue;
                                                     }
+                                                    // Edit entity: close menu, writes happen on field-level handlers
+                                                    app.edit_menu = None;
+                                                    continue;
                                                 }
                                             }
                                         }
@@ -4354,8 +4357,7 @@ async fn main() -> Result<()> {
                                 let entity_type = menu.entity_kind.legacy_string();
                                 let is_new_entity =
                                     entity_iid == 0 || entity_type.starts_with("new_");
-                                let is_on_submit =
-                                    is_new_entity && menu.selected_idx == menu.fields.len() + 1;
+                                let is_on_submit = menu.selected_idx == menu.fields.len() + 1;
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {
@@ -4368,7 +4370,10 @@ async fn main() -> Result<()> {
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|f| f.label == "Description")
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
                                             .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let labels = menu
@@ -4480,7 +4485,10 @@ async fn main() -> Result<()> {
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|f| f.label == "Description")
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
                                             .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
@@ -4714,7 +4722,10 @@ async fn main() -> Result<()> {
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|f| f.label == "Description")
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
                                             .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let start_date = menu
@@ -4881,7 +4892,10 @@ async fn main() -> Result<()> {
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|f| f.label == "Description")
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
                                             .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
@@ -5533,9 +5547,10 @@ async fn main() -> Result<()> {
                                 if field_name == "Description" {
                                     let entity_iid = menu.entity_iid;
                                     let entity_type = menu.entity_kind.legacy_string();
-                                    let desc = if let Some(f) =
-                                        menu.fields.iter().find(|f| f.label == "Description")
-                                    {
+                                    let desc = if let Some(f) = menu.fields.iter().find(|f| {
+                                        f.label == "Description"
+                                            && f.kind == crate::app::FieldType::Text
+                                    }) {
                                         f.value.clone()
                                     } else {
                                         String::new()
@@ -5545,11 +5560,10 @@ async fn main() -> Result<()> {
                                         crate::editor::edit_in_editor(&desc, &mut terminal)
                                     {
                                         if let Some(menu) = &mut app.edit_menu {
-                                            if let Some(f) = menu
-                                                .fields
-                                                .iter_mut()
-                                                .find(|f| f.label == "Description")
-                                            {
+                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            }) {
                                                 f.value = new_desc;
                                             }
                                         }

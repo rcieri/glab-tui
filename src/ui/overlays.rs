@@ -91,33 +91,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 };
 
                 let mut val_spans = Vec::new();
-                // Description: value shown in markdown preview below — keep list compact
+                // Description: hide value in list — rendered as markdown preview below
                 if label == "Description" {
-                    if val.is_empty() {
-                        val_spans.push(Span::styled(
-                            " Empty",
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_muted)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::ITALIC),
-                        ));
-                    } else {
-                        let chars = val.chars().count();
-                        val_spans.push(Span::styled(
-                            format!(
-                                " {} ",
-                                if chars >= 1000 {
-                                    format!("{:.1}k chars \u{25BC} below", chars as f64 / 1000.0)
-                                } else {
-                                    format!("{} chars \u{25BC} below", chars)
-                                }
-                            ),
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_muted)
-                                .bg(item_bg)
-                                .add_modifier(Modifier::ITALIC),
-                        ));
-                    }
+                    val_spans.push(Span::styled(
+                        " \u{25BC} below",
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .bg(item_bg)
+                            .add_modifier(Modifier::ITALIC),
+                    ));
                 } else if val.is_empty() && f.kind != crate::app::FieldType::Text {
                     val_spans.push(Span::styled(
                         " None",
@@ -230,7 +212,33 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             if is_selected {
                                 style = style.add_modifier(Modifier::BOLD);
                             }
-                            val_spans.push(Span::styled(truncated, style));
+                            // Show cursor for inline-editable Title field when selected
+                            if label == "Title" && is_selected {
+                                let cursor_pos = menu.cursor_pos.min(val.len());
+                                let before = val[..cursor_pos].to_string();
+                                let at_cursor = val
+                                    .chars()
+                                    .nth(cursor_pos)
+                                    .map(|ch| ch.to_string())
+                                    .unwrap_or_else(|| " ".to_string());
+                                let after = if cursor_pos < val.len() {
+                                    val[cursor_pos + at_cursor.len()..].to_string()
+                                } else {
+                                    String::new()
+                                };
+                                val_spans.push(Span::styled(before, style));
+                                val_spans.push(Span::styled(
+                                    if at_cursor.is_empty() {
+                                        " ".to_string()
+                                    } else {
+                                        at_cursor
+                                    },
+                                    Style::default().fg(THEME.read().unwrap().bg).bg(val_fg),
+                                ));
+                                val_spans.push(Span::styled(after, style));
+                            } else {
+                                val_spans.push(Span::styled(truncated, style));
+                            }
                         }
                     }
                 }
@@ -266,13 +274,23 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let description_text = menu
             .fields
             .iter()
-            .find(|f| f.label == "Description" && !f.value.is_empty())
+            .find(|f| f.label == "Description")
             .map(|f| f.value.as_str())
             .unwrap_or("");
 
+        let is_desc_selected = menu.selected_idx < menu.fields.len()
+            && menu.fields[menu.selected_idx].label == "Description";
+
         let submit_idx = menu.fields.len() + 1;
-        let has_description = !description_text.is_empty();
-        let desc_lines = if has_description {
+
+        let desc_lines = if description_text.is_empty() {
+            vec![Line::from(Span::styled(
+                "Empty — type to write, Ctrl+E for editor",
+                Style::default()
+                    .fg(THEME.read().unwrap().text_muted)
+                    .add_modifier(Modifier::ITALIC),
+            ))]
+        } else {
             let md_lines = render_markdown(description_text);
             let wrap_width = body.width.saturating_sub(6) as usize;
             let mut wrapped = Vec::new();
@@ -284,23 +302,53 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 }
             }
             wrapped
-        } else {
-            Vec::new()
         };
 
-        // Layout: fields list, markdown preview, optional submit
-        let desc_height = if has_description {
-            (desc_lines.len() as u16 + 2).min(14) // +2 for border, capped at 14 rows
+        // Show cursor block in preview when Description is selected
+        let desc_lines = if is_desc_selected && !description_text.is_empty() {
+            let cursor_pos = menu.cursor_pos.min(description_text.len());
+            let mut lines = desc_lines;
+            // Blinking cursor indicator appended to first line
+            if let Some(first) = lines.first_mut() {
+                let mut spans: Vec<Span> = first.spans.clone();
+                spans.push(Span::styled(
+                    " \u{258C}",
+                    Style::default()
+                        .fg(THEME.read().unwrap().text_normal)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                ));
+                *first = Line::from(spans);
+            }
+            lines
         } else {
-            0
+            desc_lines
         };
+
+        let desc_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if is_desc_selected {
+                THEME.read().unwrap().border_focused
+            } else {
+                THEME.read().unwrap().border
+            }))
+            .title(format!(" {} {} ", icons.label_details, "Description"))
+            .title_style(
+                Style::default()
+                    .fg(if is_desc_selected {
+                        THEME.read().unwrap().text_normal
+                    } else {
+                        THEME.read().unwrap().text_muted
+                    })
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        // Layout: fields list, description preview, optional submit
+        let desc_height = (desc_lines.len() as u16 + 2).min(14);
 
         let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
-        if has_description {
-            constraints.push(Constraint::Length(desc_height));
-        }
+        constraints.push(Constraint::Length(desc_height));
         if is_new_entity {
-            constraints.push(Constraint::Length(3)); // submit button
+            constraints.push(Constraint::Length(3));
         }
 
         let chunks = Layout::default()
@@ -314,32 +362,17 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_stateful_widget(list, chunks[0], &mut state);
         menu.state = state;
 
-        let mut chunk_idx = 1;
-
-        // Description markdown preview
-        if has_description {
-            let desc_chunk = chunks[chunk_idx];
-            chunk_idx += 1;
-            let desc_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(THEME.read().unwrap().border))
-                .title(format!(" {} {} ", icons.label_details, "Description"))
-                .title_style(
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
-                        .add_modifier(Modifier::BOLD),
-                );
-            f.render_widget(
-                Paragraph::new(desc_lines)
-                    .block(desc_block)
-                    .wrap(ratatui::widgets::Wrap { trim: true }),
-                desc_chunk,
-            );
-        }
+        // Description preview
+        f.render_widget(
+            Paragraph::new(desc_lines)
+                .block(desc_block)
+                .wrap(ratatui::widgets::Wrap { trim: true }),
+            chunks[1],
+        );
 
         // Submit button (new entities only)
         if is_new_entity {
-            let submit_chunk = chunks[chunk_idx];
+            let submit_chunk = chunks[2];
             let btn_text = format!(" {} Submit ", icons.check_on);
             let is_submit_selected = menu.selected_idx == submit_idx;
             let submit_fg = if is_submit_selected {

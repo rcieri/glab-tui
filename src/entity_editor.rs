@@ -691,6 +691,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     s
                 },
                 workflow_inputs: vec![],
+                cursor_pos: 0,
             });
         }
     } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
@@ -779,6 +780,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     s
                 },
                 workflow_inputs: vec![],
+                cursor_pos: 0,
             });
         }
     } else if entity_type == "milestone"
@@ -815,6 +817,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     s
                 },
                 workflow_inputs: vec![],
+                cursor_pos: 0,
             });
         }
     }

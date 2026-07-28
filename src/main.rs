@@ -3521,6 +3521,7 @@ async fn main() -> Result<()> {
                                                 s
                                             },
                                             workflow_inputs: vec![],
+                                            cursor_pos: 0,
                                         });
                                         continue;
                                     }
@@ -4254,6 +4255,14 @@ async fn main() -> Result<()> {
                                     menu.selected_idx += 1;
                                 }
                                 menu.state.select(Some(menu.selected_idx));
+                                // Reset cursor for inline-editable fields
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        menu.cursor_pos =
+                                            menu.fields[menu.selected_idx].value.len();
+                                    }
+                                }
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::Char('k') | KeyCode::Up => {
@@ -4282,6 +4291,54 @@ async fn main() -> Result<()> {
                                     menu.selected_idx = menu.fields.len().saturating_sub(1);
                                 }
                                 menu.state.select(Some(menu.selected_idx));
+                                // Reset cursor for inline-editable fields
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        menu.cursor_pos =
+                                            menu.fields[menu.selected_idx].value.len();
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Left => {
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        menu.cursor_pos = menu.cursor_pos.saturating_sub(1);
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Right => {
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        let max = menu.fields[menu.selected_idx].value.len();
+                                        if menu.cursor_pos < max {
+                                            menu.cursor_pos += 1;
+                                        }
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Home => {
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        menu.cursor_pos = 0;
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::End => {
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        menu.cursor_pos =
+                                            menu.fields[menu.selected_idx].value.len();
+                                    }
+                                }
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::Enter => {
@@ -5432,7 +5489,10 @@ async fn main() -> Result<()> {
                                 };
                                 if field_name == "Title" || field_name == "Description" {
                                     if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                        f.value.pop();
+                                        if menu.cursor_pos > 0 {
+                                            f.value.remove(menu.cursor_pos - 1);
+                                            menu.cursor_pos -= 1;
+                                        }
                                     }
                                 }
                                 app.edit_menu = Some(menu);
@@ -5482,7 +5542,8 @@ async fn main() -> Result<()> {
                                 };
                                 if field_name == "Title" || field_name == "Description" {
                                     if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                        f.value.push(c);
+                                        f.value.insert(menu.cursor_pos, c);
+                                        menu.cursor_pos += 1;
                                     }
                                 }
                                 app.edit_menu = Some(menu);
@@ -5547,7 +5608,7 @@ async fn main() -> Result<()> {
                             // --- Search input mode (real-time) ---
                             _ if diff_view.search_active => {
                                 match key_event.code {
-                                    KeyCode::Enter => {
+                                    KeyCode::Esc => {
                                         diff_view.search_active = false;
                                     }
                                     KeyCode::Backspace => {

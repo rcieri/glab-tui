@@ -399,6 +399,7 @@ pub struct EditMenu {
     pub entity_kind: EditEntityKind,
     pub state: ListState,
     pub workflow_inputs: Vec<WorkflowInput>,
+    pub cursor_pos: usize,
 }
 
 impl EditMenu {

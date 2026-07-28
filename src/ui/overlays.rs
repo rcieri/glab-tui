@@ -93,9 +93,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
                 let mut val_spans = Vec::new();
 
-                // Description: inline markdown preview when selected
+                // Description: always show inline markdown preview
                 if f.kind == crate::app::FieldType::Text && label == "Description" {
-                    if is_selected && !val.is_empty() {
+                    if !val.is_empty() {
                         let md_lines = render_markdown(val);
                         let wrap_width = body.width.saturating_sub(label_width as u16 + 6) as usize;
                         let preview_lines: Vec<Line> = md_lines

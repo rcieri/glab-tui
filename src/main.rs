@@ -3523,6 +3523,7 @@ async fn main() -> Result<()> {
                                             workflow_inputs: vec![],
                                             cursor_pos: 0,
                                             editing: false,
+                                            desc_scroll: 0,
                                         });
                                         continue;
                                     }
@@ -4252,10 +4253,11 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx + 1
                                 };
-                                // Skip section headers and spacer row
+                                // Skip section headers, Description, and spacer row
                                 while menu.selected_idx < menu.fields.len()
-                                    && menu.fields[menu.selected_idx].kind
+                                    && (menu.fields[menu.selected_idx].kind
                                         == crate::app::FieldType::Section
+                                        || menu.fields[menu.selected_idx].label == "Description")
                                 {
                                     menu.selected_idx += 1;
                                 }
@@ -4301,6 +4303,15 @@ async fn main() -> Result<()> {
                                 menu.cursor_pos = menu.fields[target].value.len();
                                 app.edit_menu = Some(menu);
                             }
+                            // J/K: scroll description pane
+                            KeyCode::Char('J') => {
+                                menu.desc_scroll = menu.desc_scroll.saturating_add(1);
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Char('K') => {
+                                menu.desc_scroll = menu.desc_scroll.saturating_sub(1);
+                                app.edit_menu = Some(menu);
+                            }
                             KeyCode::Char('k') | KeyCode::Up => {
                                 let is_new =
                                     menu.entity_iid == 0 || menu.entity_kind.needs_submit();
@@ -4314,10 +4325,11 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx - 1
                                 };
-                                // Skip section headers
+                                // Skip section headers and Description
                                 while menu.selected_idx < menu.fields.len()
-                                    && menu.fields[menu.selected_idx].kind
+                                    && (menu.fields[menu.selected_idx].kind
                                         == crate::app::FieldType::Section
+                                        || menu.fields[menu.selected_idx].label == "Description")
                                     && menu.selected_idx > 0
                                 {
                                     menu.selected_idx -= 1;

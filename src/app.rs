@@ -401,6 +401,7 @@ pub struct EditMenu {
     pub workflow_inputs: Vec<WorkflowInput>,
     pub cursor_pos: usize,
     pub editing: bool,
+    pub desc_scroll: u16,
 }
 
 impl EditMenu {

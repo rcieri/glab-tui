@@ -341,6 +341,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_widget(
             Paragraph::new(desc_lines)
                 .block(desc_block)
+                .scroll((menu.desc_scroll, 0))
                 .wrap(ratatui::widgets::Wrap { trim: true }),
             main_chunks[1],
         );

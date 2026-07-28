@@ -46,6 +46,7 @@ pub async fn handle_active_tab_key(
                     workflow_inputs: vec![],
                     cursor_pos: 0,
                     editing: false,
+                    desc_scroll: 0,
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
@@ -70,6 +71,7 @@ pub async fn handle_active_tab_key(
                         workflow_inputs: vec![],
                         cursor_pos: 0,
                         editing: false,
+                        desc_scroll: 0,
                     });
                 } else if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
@@ -124,6 +126,7 @@ pub async fn handle_active_tab_key(
                             workflow_inputs: vec![],
                             cursor_pos: 0,
                             editing: false,
+                            desc_scroll: 0,
                         });
                     }
                 }
@@ -281,6 +284,7 @@ pub async fn handle_active_tab_key(
                             workflow_inputs: vec![],
                             cursor_pos: 0,
                             editing: false,
+                            desc_scroll: 0,
                         });
                     }
                 }
@@ -369,6 +373,7 @@ pub async fn handle_active_tab_key(
                         workflow_inputs: vec![],
                         cursor_pos: 0,
                         editing: false,
+                        desc_scroll: 0,
                     });
                 } else if let Some(selected_idx) = app.mrs.state.selected() {
                     let filtered = app.filtered_mrs();
@@ -442,6 +447,7 @@ pub async fn handle_active_tab_key(
                             workflow_inputs: vec![],
                             cursor_pos: 0,
                             editing: false,
+                            desc_scroll: 0,
                         });
                     }
                 }
@@ -749,6 +755,7 @@ pub async fn handle_active_tab_key(
                     workflow_inputs: vec![],
                     cursor_pos: 0,
                     editing: false,
+                    desc_scroll: 0,
                 });
             } else if key_event.code == KeyCode::Char('p')
                 || keybinding_matches(
@@ -1358,6 +1365,7 @@ pub async fn handle_active_tab_key(
                     workflow_inputs: vec![],
                     cursor_pos: 0,
                     editing: false,
+                    desc_scroll: 0,
                 });
             }
             _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
@@ -1527,6 +1535,7 @@ pub async fn handle_active_tab_key(
                     workflow_inputs: vec![],
                     cursor_pos: 0,
                     editing: false,
+                    desc_scroll: 0,
                 });
             }
             _ if keybinding_matches(

@@ -290,6 +290,24 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             render_markdown(&desc_value)
         };
 
+        // Show cursor in description when editing
+        let desc_lines = if is_desc_selected && menu.editing && !desc_value.is_empty() {
+            let mut lines = desc_lines;
+            if let Some(first) = lines.first_mut() {
+                let mut spans: Vec<Span> = first.spans.clone();
+                spans.push(Span::styled(
+                    " \u{258C}",
+                    Style::default()
+                        .fg(THEME.read().unwrap().text_normal)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                ));
+                *first = Line::from(spans);
+            }
+            lines
+        } else {
+            desc_lines
+        };
+
         let submit_idx = menu.fields.len() + 1;
 
         // Layout: main content + submit

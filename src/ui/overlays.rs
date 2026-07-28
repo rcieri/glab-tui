@@ -115,15 +115,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             .add_modifier(Modifier::ITALIC),
                     ));
                 } else if !val.is_empty() {
-                    let max_val_width = (body.width.saturating_sub(6) / 2)
-                        .saturating_sub(label_width as u16)
-                        as usize;
-                    let truncated = if val.len() > max_val_width.max(20) {
-                        let cutoff = (max_val_width.max(20)).saturating_sub(3);
-                        format!("{}...", &val[..cutoff.min(val.len())])
-                    } else {
-                        val.clone()
-                    };
+                    let truncated = val.clone();
                     match f.kind {
                         crate::app::FieldType::Section => {}
                         crate::app::FieldType::MultiSelect => {

@@ -37,7 +37,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .fields
             .iter()
             .enumerate()
-            .filter(|(_, f)| f.label.to_uppercase() != "DESCRIPTION")
+            .filter(|(_, f)| {
+                !(f.kind == crate::app::FieldType::Section
+                    && f.label.to_uppercase() == "DESCRIPTION")
+            })
             .map(|(i, f)| {
                 let label = &f.label;
                 let val = &f.value;

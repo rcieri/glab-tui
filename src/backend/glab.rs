@@ -1581,21 +1581,8 @@ impl Backend for GlabBackend {
     // ── Milestones ──
 
     async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>> {
-        let raw = self
-            .run_glab(
-                &[
-                    "milestone",
-                    "list",
-                    "--output",
-                    "json",
-                    "-R",
-                    project,
-                    "--per-page",
-                    &page_size.to_string(),
-                ],
-                "Fetching Milestones",
-            )
-            .await?;
+        let pages = page_size.div_ceil(100).max(1);
+        let mut all: Vec<Milestone> = Vec::new();
         #[derive(Deserialize, Default)]
         struct GiMs {
             #[serde(default)]
@@ -1612,10 +1599,28 @@ impl Backend for GlabBackend {
             #[serde(default)]
             created_at: String,
         }
-        let milestones: Vec<GiMs> = serde_json::from_str(&raw)?;
-        Ok(milestones
-            .into_iter()
-            .map(|m| Milestone {
+        for page in 1..=pages {
+            let page_str = page.to_string();
+            let raw = self
+                .run_glab(
+                    &[
+                        "milestone",
+                        "list",
+                        "--output",
+                        "json",
+                        "-R",
+                        project,
+                        "--page",
+                        &page_str,
+                        "--per-page",
+                        "100",
+                    ],
+                    "Fetching Milestones",
+                )
+                .await?;
+            let milestones: Vec<GiMs> = serde_json::from_str(&raw).unwrap_or_default();
+            let len = milestones.len();
+            all.extend(milestones.into_iter().map(|m| Milestone {
                 id: m.id,
                 iid: m.iid,
                 title: m.title,
@@ -1624,8 +1629,12 @@ impl Backend for GlabBackend {
                 start_date: m.start_date,
                 due_date: m.due_date,
                 created_at: m.created_at,
-            })
-            .collect())
+            }));
+            if len < 100 {
+                break;
+            }
+        }
+        Ok(all)
     }
 
     async fn list_milestone_issues(
@@ -1790,9 +1799,11 @@ impl Backend for GlabBackend {
             project.to_string(),
             "--title".into(),
             title.into(),
-            "--description".into(),
-            description.into(),
         ];
+        if !description.is_empty() {
+            args.push("--description".into());
+            args.push(description.into());
+        }
         if let Some(start) = start_date {
             if !start.is_empty() {
                 args.push("--start-date".into());

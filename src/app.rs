@@ -3371,7 +3371,7 @@ impl App {
             &self.column_filters,
             Tab::Milestones,
             |item, col| match col {
-                "ID" => vec![item.id.to_string()],
+                "ID" => vec![item.iid.to_string()],
                 "Title" => vec![item.title.clone()],
                 "State" => vec![item.state.clone()],
                 _ => vec![],

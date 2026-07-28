@@ -3146,7 +3146,6 @@ pub(crate) fn render_tab_milestones(
             detail_rect,
         );
     } else {
-        let kind = app.kind();
         let mut filtered_milestones = App::filtered_milestones_list(
             &app.milestones.items,
             &app.search_query,
@@ -3172,7 +3171,7 @@ pub(crate) fn render_tab_milestones(
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
-        let cols = Tab::Milestones.columns(kind);
+        let cols = Tab::Milestones.columns(app.kind());
         for col in &cols {
             if app.is_column_visible(Tab::Milestones, col) {
                 header_cells.push(Cell::from(*col));

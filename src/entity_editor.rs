@@ -99,10 +99,7 @@ pub fn apply_field_text_change(
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
-    if entity_type == "milestone"
-        || entity_type == "edit_milestone"
-        || entity_type == "edit_milestone"
-    {
+    if entity_type == "milestone" || entity_type == "edit_milestone" {
         if let Some(item) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
             match field_type {
                 "title" => item.title = value.clone(),

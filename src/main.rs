@@ -1027,6 +1027,10 @@ async fn main() -> Result<()> {
                                     {
                                         let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
                                     } else {
+                                        let _ = tx.send(Event::FetchFailed(
+                                            crate::app::Tab::Milestones,
+                                            format!("Failed to fetch milestone #{} issues", iid),
+                                        ));
                                         let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
                                     }
                                 });
@@ -1261,6 +1265,10 @@ async fn main() -> Result<()> {
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
                     app.status_message = None;
                     app.project_cache.milestones = app.milestones.items.clone();
+                    app.milestone_issues_cache.clear();
+                    app.selected_milestone_issues = None;
+                    app.selected_milestone_iid = None;
+                    app.project_cache.milestone_issues.clear();
                     crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MilestoneDeleted => {
@@ -2938,6 +2946,9 @@ async fn main() -> Result<()> {
                                                     app.milestones.items.clear();
                                                     app.pipeline_jobs.clear();
                                                     app.fetching_pipelines.clear();
+                                                    app.edit_menu = None;
+                                                    app.selected_milestone_issues = None;
+                                                    app.selected_milestone_iid = None;
 
                                                     let cache = crate::utils::cache::load_cache(
                                                         &app.project_context,
@@ -2955,6 +2966,8 @@ async fn main() -> Result<()> {
                                                     app.environments.items = cache.environments;
                                                     app.milestone_issues_cache =
                                                         cache.milestone_issues;
+                                                    app.cached_labels = cache.labels;
+                                                    app.cached_members = cache.members;
 
                                                     let has_any_cached =
                                                         !app.issues.items.is_empty()
@@ -3049,6 +3062,11 @@ async fn main() -> Result<()> {
                                                             client,
                                                             &app.project_context,
                                                             app.active_tab,
+                                                            events.sender(),
+                                                        );
+                                                        spawn_fetch_repo_attributes(
+                                                            &client.clone().muted(),
+                                                            &app.project_context,
                                                             events.sender(),
                                                         );
                                                     }

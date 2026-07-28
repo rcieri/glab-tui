@@ -1759,9 +1759,11 @@ impl Backend for GhBackend {
             format!("repos/{}/milestones/{}", project, milestone_iid),
             "-f".into(),
             format!("title={}", title),
-            "-f".into(),
-            format!("description={}", description),
         ];
+        if !description.is_empty() {
+            args.push("-f".into());
+            args.push(format!("description={}", description));
+        }
         if let Some(due) = due_date {
             if !due.is_empty() {
                 let iso_due = if due.contains('T') {

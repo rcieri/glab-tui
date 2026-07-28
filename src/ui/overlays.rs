@@ -20,6 +20,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     let icons = ICONS.read().unwrap();
     if let Some(menu) = &mut app.edit_menu {
         let is_new_entity = menu.is_new();
+        if is_new_entity && !menu.editing {
+            menu.editing = true;
+            menu.cursor_pos = menu.fields.first().map(|f| f.value.len()).unwrap_or(0);
+        }
         let (body, edit_menu_area) = modal_area(f, &menu.title, 80, 85, 52, 16, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::EditMenu, edit_menu_area));

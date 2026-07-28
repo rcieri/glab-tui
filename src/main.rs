@@ -4273,6 +4273,34 @@ async fn main() -> Result<()> {
                                 }
                                 app.edit_menu = Some(menu);
                             }
+                            // h: jump to left pane (first non-section field)
+                            KeyCode::Char('h') => {
+                                // Find Title or first non-section field
+                                let target = menu
+                                    .fields
+                                    .iter()
+                                    .position(|f| f.kind != crate::app::FieldType::Section)
+                                    .unwrap_or(0);
+                                menu.selected_idx = target;
+                                menu.state.select(Some(target));
+                                menu.cursor_pos = menu.fields[target].value.len();
+                                app.edit_menu = Some(menu);
+                            }
+                            // l: jump to right pane (Description field)
+                            KeyCode::Char('l') => {
+                                let target = menu
+                                    .fields
+                                    .iter()
+                                    .position(|f| {
+                                        f.label == "Description"
+                                            && f.kind == crate::app::FieldType::Text
+                                    })
+                                    .unwrap_or(menu.fields.len().saturating_sub(1));
+                                menu.selected_idx = target;
+                                menu.state.select(Some(target));
+                                menu.cursor_pos = menu.fields[target].value.len();
+                                app.edit_menu = Some(menu);
+                            }
                             KeyCode::Char('k') | KeyCode::Up => {
                                 let is_new =
                                     menu.entity_iid == 0 || menu.entity_kind.needs_submit();

@@ -14,7 +14,6 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
     },
 };
-use textwrap;
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
@@ -288,19 +287,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .add_modifier(Modifier::ITALIC),
             ))]
         } else {
-            let md_lines = render_markdown(&desc_value);
-            let wrap_width = (body.width.saturating_sub(8) / 2).saturating_sub(2) as usize;
-            md_lines
-                .into_iter()
-                .flat_map(|l| {
-                    let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
-                    let style = l.spans.first().map(|s| s.style).unwrap_or_default();
-                    textwrap::wrap(&text, wrap_width.max(20))
-                        .into_iter()
-                        .map(|c| Line::from(Span::styled(c.into_owned(), style)))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
+            render_markdown(&desc_value)
         };
 
         let submit_idx = menu.fields.len() + 1;

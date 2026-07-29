@@ -2457,6 +2457,45 @@ impl App {
         scored_items.into_iter().map(|(item, _)| item).collect()
     }
 
+    /// The string a column contributes to MR sorting.
+    ///
+    /// One function for both sides of the comparator — previously this `match`
+    /// was duplicated across `val_a` and `val_b`, so every new column had to be
+    /// added twice. Values are strings because the comparator falls back to
+    /// numeric ordering when both sides parse as `u64`.
+    fn mr_sort_value(m: &crate::domain::mr::MergeRequest, col: &str) -> String {
+        match col {
+            "State" => m.state.clone(),
+            "Author" => m.author.username.clone(),
+            "Labels" => m.labels.first().cloned().unwrap_or_default(),
+            "Milestone" => m
+                .milestone
+                .as_ref()
+                .map(|ms| ms.title.clone())
+                .unwrap_or_default(),
+            "Assignees" => m
+                .assignees
+                .first()
+                .map(|asg| asg.username.clone())
+                .unwrap_or_default(),
+            "Reviewers" => m
+                .reviewers
+                .first()
+                .map(|rev| rev.username.clone())
+                .unwrap_or_default(),
+            "Status" => {
+                if m.draft {
+                    "Draft".to_string()
+                } else {
+                    "Ready".to_string()
+                }
+            }
+            "ID" => m.iid.to_string(),
+            "Title" => m.title.clone(),
+            _ => String::new(),
+        }
+    }
+
     pub fn filtered_mrs_list<'a>(
         items: &'a [crate::domain::mr::MergeRequest],
         query: &str,
@@ -2471,66 +2510,8 @@ impl App {
         let mut list = Self::filter_mrs_list(items, query, enabled_cols);
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
-                let val_a = match col.as_str() {
-                    "State" => a.state.clone(),
-                    "Author" => a.author.username.clone(),
-                    "Labels" => a.labels.first().cloned().unwrap_or_default(),
-                    "Milestone" => a
-                        .milestone
-                        .as_ref()
-                        .map(|m| m.title.clone())
-                        .unwrap_or_default(),
-                    "Assignees" => a
-                        .assignees
-                        .first()
-                        .map(|asg| asg.username.clone())
-                        .unwrap_or_default(),
-                    "Reviewers" => a
-                        .reviewers
-                        .first()
-                        .map(|rev| rev.username.clone())
-                        .unwrap_or_default(),
-                    "Status" => {
-                        if a.draft {
-                            "Draft".to_string()
-                        } else {
-                            "Ready".to_string()
-                        }
-                    }
-                    "ID" => a.iid.to_string(),
-                    "Title" => a.title.clone(),
-                    _ => String::new(),
-                };
-                let val_b = match col.as_str() {
-                    "State" => b.state.clone(),
-                    "Author" => b.author.username.clone(),
-                    "Labels" => b.labels.first().cloned().unwrap_or_default(),
-                    "Milestone" => b
-                        .milestone
-                        .as_ref()
-                        .map(|m| m.title.clone())
-                        .unwrap_or_default(),
-                    "Assignees" => b
-                        .assignees
-                        .first()
-                        .map(|asg| asg.username.clone())
-                        .unwrap_or_default(),
-                    "Reviewers" => b
-                        .reviewers
-                        .first()
-                        .map(|rev| rev.username.clone())
-                        .unwrap_or_default(),
-                    "Status" => {
-                        if b.draft {
-                            "Draft".to_string()
-                        } else {
-                            "Ready".to_string()
-                        }
-                    }
-                    "ID" => b.iid.to_string(),
-                    "Title" => b.title.clone(),
-                    _ => String::new(),
-                };
+                let val_a = Self::mr_sort_value(a, col.as_str());
+                let val_b = Self::mr_sort_value(b, col.as_str());
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
@@ -5002,5 +4983,131 @@ index 123456..789012 100644
 ";
         let view = DiffView::new(42, diff.to_string());
         assert_eq!(view.file_tree_scroll_offset, 0);
+    }
+
+    fn mr_fixture(
+        iid: u64,
+        state: &str,
+        author: &str,
+        draft: bool,
+        title: &str,
+    ) -> crate::domain::mr::MergeRequest {
+        crate::domain::mr::MergeRequest {
+            iid,
+            title: title.to_string(),
+            state: state.to_string(),
+            labels: vec![],
+            updated_at: "2026-07-29T00:00:00Z".to_string(),
+            author: crate::domain::mr::Author {
+                username: author.to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".to_string(),
+            source_branch: "feature".to_string(),
+            draft,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+        }
+    }
+
+    fn mr_enabled_cols(
+        cols: &[&str],
+    ) -> std::collections::HashMap<Tab, std::collections::HashSet<String>> {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            Tab::MergeRequests,
+            cols.iter().map(|c| c.to_string()).collect(),
+        );
+        m
+    }
+
+    /// iids in the order `filtered_mrs_list` returns them when grouped by `col`.
+    fn sorted_iids(
+        items: &[crate::domain::mr::MergeRequest],
+        col: &str,
+        ascending: bool,
+    ) -> Vec<u64> {
+        let cols = mr_enabled_cols(&["ID", "State", "Author", "Status", "Title"]);
+        App::filtered_mrs_list(items, "", &cols, ascending, &Some(col.to_string()))
+            .iter()
+            .map(|m| m.iid)
+            .collect()
+    }
+
+    #[test]
+    fn sorting_by_author_is_alphabetical() {
+        let items = vec![
+            mr_fixture(1, "opened", "zoe", false, "z"),
+            mr_fixture(2, "opened", "alice", false, "a"),
+            mr_fixture(3, "opened", "mallory", false, "m"),
+        ];
+        assert_eq!(sorted_iids(&items, "Author", true), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn sorting_respects_descending_flag() {
+        let items = vec![
+            mr_fixture(1, "opened", "zoe", false, "z"),
+            mr_fixture(2, "opened", "alice", false, "a"),
+        ];
+        assert_eq!(sorted_iids(&items, "Author", false), vec![1, 2]);
+    }
+
+    #[test]
+    fn sorting_by_id_is_numeric_not_lexicographic() {
+        // The comparator parses both sides as u64 when possible, so 9 < 10.
+        let items = vec![
+            mr_fixture(10, "opened", "a", false, "ten"),
+            mr_fixture(9, "opened", "b", false, "nine"),
+            mr_fixture(100, "opened", "c", false, "hundred"),
+        ];
+        assert_eq!(sorted_iids(&items, "ID", true), vec![9, 10, 100]);
+    }
+
+    #[test]
+    fn sorting_by_status_uses_draft_ready_words() {
+        let items = vec![
+            mr_fixture(1, "opened", "a", false, "ready one"),
+            mr_fixture(2, "opened", "b", true, "draft one"),
+        ];
+        // "Draft" < "Ready" alphabetically.
+        assert_eq!(sorted_iids(&items, "Status", true), vec![2, 1]);
+    }
+
+    #[test]
+    fn sorting_by_title_is_alphabetical() {
+        let items = vec![
+            mr_fixture(1, "opened", "a", false, "beta"),
+            mr_fixture(2, "opened", "b", false, "alpha"),
+        ];
+        assert_eq!(sorted_iids(&items, "Title", true), vec![2, 1]);
+    }
+
+    #[test]
+    fn sorting_by_state_groups_by_state_string() {
+        let items = vec![
+            mr_fixture(1, "opened", "a", false, "x"),
+            mr_fixture(2, "closed", "b", false, "y"),
+            mr_fixture(3, "merged", "c", false, "z"),
+        ];
+        // closed < merged < opened alphabetically.
+        assert_eq!(sorted_iids(&items, "State", true), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn sorting_by_unknown_column_is_stable_noop() {
+        // Unrecognised columns fall through to empty strings, so all compare equal
+        // and the original order is preserved.
+        let items = vec![
+            mr_fixture(3, "opened", "a", false, "x"),
+            mr_fixture(1, "opened", "b", false, "y"),
+            mr_fixture(2, "opened", "c", false, "z"),
+        ];
+        assert_eq!(sorted_iids(&items, "NoSuchColumn", true), vec![3, 1, 2]);
     }
 }

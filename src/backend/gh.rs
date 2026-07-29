@@ -29,6 +29,51 @@ fn normalize_labels(s: &str) -> String {
     s.replace(", ", ",")
 }
 
+/// Map GitHub's list fields onto the host-neutral state structs.
+///
+/// `mergeStateStatus == "BLOCKED"` means blocked by branch protection, NOT a
+/// merge conflict — conflicts come only from `mergeable == "CONFLICTING"`.
+pub fn gh_state_from_fields(
+    review_decision: Option<&str>,
+    mergeable: Option<&str>,
+    merge_state_status: Option<&str>,
+    latest_review_authors: Vec<String>,
+) -> (
+    Option<crate::domain::mr_state::ApprovalState>,
+    Option<crate::domain::mr_state::MergeabilityState>,
+) {
+    use crate::domain::mr_state::{ApprovalState, MergeabilityState};
+
+    let decision = review_decision.unwrap_or_default();
+    let approved = decision.eq_ignore_ascii_case("APPROVED");
+
+    let approval = ApprovalState {
+        approved,
+        // GitHub exposes no approval counts.
+        approvals_left: None,
+        approvals_required: None,
+        approved_by: if approved {
+            latest_review_authors
+        } else {
+            Vec::new()
+        },
+        changes_requested: decision.eq_ignore_ascii_case("CHANGES_REQUESTED"),
+        you_approved: false,
+        // Needs canApprove, which gh pr list does not provide.
+        awaiting_you: false,
+    };
+
+    let merge_raw = mergeable.unwrap_or("UNKNOWN");
+    let state_raw = merge_state_status.unwrap_or("UNKNOWN");
+    let mergeability = MergeabilityState {
+        conflicts: merge_raw.eq_ignore_ascii_case("CONFLICTING"),
+        needs_rebase: state_raw.eq_ignore_ascii_case("BEHIND"),
+        computing: merge_raw.eq_ignore_ascii_case("UNKNOWN"),
+    };
+
+    (Some(approval), Some(mergeability))
+}
+
 pub struct GhBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -510,7 +555,7 @@ impl Backend for GhBackend {
                     "pr",
                     "list",
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus",
                     "-R",
                     project,
                     "--state",
@@ -545,6 +590,14 @@ impl Backend for GhBackend {
             #[serde(default)]
             assignees: Vec<GhLogin>,
             milestone: Option<GhMs>,
+            #[serde(rename = "reviewDecision", default)]
+            review_decision: Option<String>,
+            #[serde(rename = "latestReviews", default)]
+            latest_reviews: Vec<serde_json::Value>,
+            #[serde(default)]
+            mergeable: Option<String>,
+            #[serde(rename = "mergeStateStatus", default)]
+            merge_state_status: Option<String>,
         }
         #[derive(Deserialize)]
         struct GhLogin {
@@ -581,6 +634,23 @@ impl Backend for GhBackend {
                     .into_iter()
                     .map(|a| crate::domain::mr::Assignee { username: a.login })
                     .collect();
+                let latest_review_authors: Vec<String> = gp
+                    .latest_reviews
+                    .iter()
+                    .filter(|r| {
+                        r.get("state")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s.eq_ignore_ascii_case("APPROVED"))
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
+                    .collect();
+                let (approval, mergeability) = gh_state_from_fields(
+                    gp.review_decision.as_deref(),
+                    gp.mergeable.as_deref(),
+                    gp.merge_state_status.as_deref(),
+                    latest_review_authors,
+                );
                 MergeRequest {
                     iid: gp.number,
                     title: gp.title,
@@ -597,8 +667,8 @@ impl Backend for GhBackend {
                     description: gp.body,
                     head_pipeline: None,
                     blocking_discussions_resolved: None,
-                    approval: None,
-                    mergeability: None,
+                    approval,
+                    mergeability,
                 }
             })
             .collect())
@@ -2214,5 +2284,100 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
+    }
+
+    #[test]
+    fn blocked_merge_state_is_not_a_conflict() {
+        // REGRESSION GUARD. Every open PR sampled on ratatui/ratatui was
+        // mergeable=MERGEABLE + mergeStateStatus=BLOCKED, which means blocked
+        // by branch protection. Mapping BLOCKED to "conflict" would show false
+        // conflicts on most GitHub PRs.
+        let (_, merge) = gh_state_from_fields(
+            Some("REVIEW_REQUIRED"),
+            Some("MERGEABLE"),
+            Some("BLOCKED"),
+            vec![],
+        );
+        let m = merge.unwrap();
+        assert!(!m.conflicts);
+        assert!(!m.needs_rebase);
+        assert!(!m.computing);
+    }
+
+    #[test]
+    fn conflicting_maps_to_conflicts() {
+        let (_, merge) = gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![]);
+        assert!(merge.unwrap().conflicts);
+    }
+
+    #[test]
+    fn behind_maps_to_needs_rebase() {
+        let (_, merge) = gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![]);
+        assert!(merge.unwrap().needs_rebase);
+    }
+
+    #[test]
+    fn unknown_mergeable_is_computing_not_failure() {
+        // GitHub computes mergeability asynchronously.
+        let (_, merge) = gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![]);
+        let m = merge.unwrap();
+        assert!(m.computing);
+        assert!(!m.conflicts);
+    }
+
+    #[test]
+    fn absent_mergeable_is_computing() {
+        let (_, merge) = gh_state_from_fields(None, None, None, vec![]);
+        assert!(merge.unwrap().computing);
+    }
+
+    #[test]
+    fn review_decision_approved_maps_to_approved_with_authors() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+        );
+        let a = approval.unwrap();
+        assert!(a.approved);
+        assert_eq!(a.approved_by, vec!["octocat".to_string()]);
+        assert!(!a.changes_requested);
+    }
+
+    #[test]
+    fn review_decision_changes_requested_maps_through() {
+        let (approval, _) = gh_state_from_fields(
+            Some("CHANGES_REQUESTED"),
+            Some("MERGEABLE"),
+            Some("BLOCKED"),
+            vec![],
+        );
+        assert!(approval.unwrap().changes_requested);
+    }
+
+    #[test]
+    fn github_never_sets_counts_or_awaiting_you() {
+        // canApprove has no gh equivalent, so the ● marker is unreachable.
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+        );
+        let a = approval.unwrap();
+        assert_eq!(a.approvals_required, None);
+        assert_eq!(a.approvals_left, None);
+        assert!(!a.awaiting_you);
+    }
+
+    #[test]
+    fn null_review_decision_is_pending_not_unknown() {
+        // A PR with no review yet returns null; that is "pending", and the
+        // axis is still known.
+        let (approval, _) = gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![]);
+        let a = approval.unwrap();
+        assert!(!a.approved);
+        assert!(!a.changes_requested);
     }
 }

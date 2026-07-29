@@ -50,7 +50,23 @@ pub fn spawn_refresh_active_tab(
                 let project_context_for_pipelines = project_context.clone();
                 let tx_for_pipelines = tx.clone();
                 match domain::mr::list_mrs(&client, &project_context, true).await {
-                    Ok(mrs) => {
+                    Ok(mut mrs) => {
+                        // GitHub already populated both axes during list_mrs.
+                        // GitLab needs one bulk GraphQL call for the same iids.
+                        if !client.is_github && !mrs.is_empty() {
+                            let iids: Vec<u64> = mrs.iter().map(|m| m.iid).collect();
+                            // A failure here leaves both axes None, which renders
+                            // as "—". Deliberately not surfaced as an error: on an
+                            // unsupported GitLab this would fire every refresh.
+                            if let Ok(state) = client.list_mr_state(&project_context, &iids).await {
+                                for mr in mrs.iter_mut() {
+                                    if let Some((approval, mergeability)) = state.get(&mr.iid) {
+                                        mr.approval = approval.clone();
+                                        mr.mergeability = mergeability.clone();
+                                    }
+                                }
+                            }
+                        }
                         let _ = tx.send(Event::MrsFetched(mrs));
                         if client_for_pipelines.is_github {
                             tokio::spawn(async move {

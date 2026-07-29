@@ -626,6 +626,12 @@ pub(crate) fn render_tab_merge_requests(
                 }
             };
 
+            let status_styled = format!(
+                "{}{}",
+                status_styled,
+                crate::domain::mr_state::status_flags(m.blocking_discussions_resolved)
+            );
+
             let mut cells = Vec::new();
             if app.is_column_visible(Tab::MergeRequests, "ID") {
                 cells.push(super::helpers::render_fuzzy_cell(

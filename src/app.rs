@@ -2567,11 +2567,10 @@ impl App {
                     .into_iter()
                     .collect(),
                 "State" => vec![item.state.clone()],
-                "Status" => vec![if item.draft {
-                    "Draft".to_string()
-                } else {
-                    "Ready".to_string()
-                }],
+                "Status" => crate::domain::mr_state::status_filter_values(
+                    item.draft,
+                    item.blocking_discussions_resolved,
+                ),
                 "ID" => vec![item.iid.to_string()],
                 "Title" => vec![item.title.clone()],
                 "Approval" => vec![

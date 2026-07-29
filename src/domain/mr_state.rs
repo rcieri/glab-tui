@@ -168,6 +168,36 @@ pub fn mergeable_sort_key(state: Option<&MergeabilityState>) -> u8 {
     }
 }
 
+/// Independent flag glyphs appended to the Status cell's base word.
+///
+/// Each flag occupies its own slot, so `DRAFT` and the flag never displace one
+/// another. Flags append in a fixed order so the cell is stable across
+/// refreshes; later flags must be added to the end, not interleaved.
+pub fn status_flags(blocking_discussions_resolved: Option<bool>) -> String {
+    let mut out = String::new();
+    // Only Some(false) is a problem. Some(true) and None render nothing.
+    if blocking_discussions_resolved == Some(false) {
+        let icons = crate::config::ICONS.read().unwrap();
+        out.push(' ');
+        out.push_str(&icons.flag_unresolved);
+    }
+    out
+}
+
+/// Filter values for the Status column. Returns more than one value when an MR
+/// carries a flag, so the flag is filterable without the base word losing its
+/// own filter value.
+pub fn status_filter_values(
+    draft: bool,
+    blocking_discussions_resolved: Option<bool>,
+) -> Vec<String> {
+    let mut v = vec![if draft { "Draft" } else { "Ready" }.to_string()];
+    if blocking_discussions_resolved == Some(false) {
+        v.push("Unresolved discussions".to_string());
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,5 +538,41 @@ mod tests {
         };
         assert!(mergeable_sort_key(Some(&conflict)) < mergeable_sort_key(Some(&clean)));
         assert!(mergeable_sort_key(Some(&clean)) < mergeable_sort_key(None));
+    }
+
+    // ── status flag strip ──
+
+    #[test]
+    fn unresolved_discussions_produces_a_flag() {
+        assert!(!status_flags(Some(false)).is_empty());
+    }
+
+    #[test]
+    fn resolved_discussions_produce_no_flag() {
+        assert_eq!(status_flags(Some(true)), "");
+    }
+
+    #[test]
+    fn unknown_discussions_produce_no_flag() {
+        // An unknown must not look like a problem.
+        assert_eq!(status_flags(None), "");
+    }
+
+    #[test]
+    fn status_filter_values_include_base_word_only_when_resolved() {
+        assert_eq!(
+            status_filter_values(true, Some(true)),
+            vec!["Draft".to_string()]
+        );
+        assert_eq!(status_filter_values(false, None), vec!["Ready".to_string()]);
+    }
+
+    #[test]
+    fn status_filter_values_include_both_facts_when_unresolved() {
+        // !1471 is draft AND unresolved; a filter on either must match it,
+        // which is what preserves fidelity in the shared column.
+        let v = status_filter_values(true, Some(false));
+        assert!(v.contains(&"Draft".to_string()));
+        assert!(v.contains(&"Unresolved discussions".to_string()));
     }
 }

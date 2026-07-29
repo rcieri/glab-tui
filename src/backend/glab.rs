@@ -1108,7 +1108,7 @@ impl Backend for GlabBackend {
              iid approved approvalsLeft approvalsRequired \
              userPermissions {{ canApprove }} \
              approvedBy {{ nodes {{ username }} }} \
-             reviewers {{ nodes {{ username mergeRequestInteraction {{ reviewState }} }} }} \
+             reviewers {{ nodes {{ mergeRequestInteraction {{ reviewState }} }} }} \
              conflicts shouldBeRebased detailedMergeStatus \
              }} }} }} }}",
             project, iid_list
@@ -2564,6 +2564,18 @@ mod tests {
             "conflicts": true,
             "shouldBeRebased": false,
             "detailedMergeStatus": "CONFLICT"
+          },
+          {
+            "iid": "402",
+            "approved": true,
+            "approvalsLeft": 0,
+            "approvalsRequired": 0,
+            "userPermissions": { "canApprove": false },
+            "approvedBy": { "nodes": [ { "username": "chandler.anderson" } ] },
+            "reviewers": { "nodes": [] },
+            "conflicts": false,
+            "shouldBeRebased": true,
+            "detailedMergeStatus": "NEED_REBASE"
           }
         ] } }
       }
@@ -2622,6 +2634,16 @@ mod tests {
         let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
         let (approval, merge) = map.get(&1448).unwrap();
         assert!(merge.as_ref().unwrap().conflicts);
+        assert!(approval.as_ref().unwrap().approved);
+    }
+
+    #[test]
+    fn needs_rebase_is_read_from_the_boolean_not_the_merge_status() {
+        // !402 is approved AND needs rebase — detailedMergeStatus: NEED_REBASE
+        // must not suppress the approval, mirroring the conflicts case above.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, merge) = map.get(&402).unwrap();
+        assert!(merge.as_ref().unwrap().needs_rebase);
         assert!(approval.as_ref().unwrap().approved);
     }
 

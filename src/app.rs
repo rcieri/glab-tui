@@ -229,6 +229,8 @@ impl Tab {
                     "Title",
                     "Assignees",
                     "Reviewers",
+                    "Approval",
+                    "Mergeable",
                     "Labels",
                 ];
                 if kind.is_github() {
@@ -287,7 +289,15 @@ impl Tab {
                 }
                 cols
             }
-            Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
+            Tab::MergeRequests => vec![
+                "ID",
+                "State",
+                "Status",
+                "Approval",
+                "Mergeable",
+                "Title",
+                "Labels",
+            ],
             Tab::Pipelines => {
                 if kind.is_github() {
                     vec!["Name", "Status", "Event", "Ref"]
@@ -2492,6 +2502,12 @@ impl App {
             }
             "ID" => m.iid.to_string(),
             "Title" => m.title.clone(),
+            "Approval" => {
+                crate::domain::mr_state::approval_sort_key(m.approval.as_ref()).to_string()
+            }
+            "Mergeable" => {
+                crate::domain::mr_state::mergeable_sort_key(m.mergeability.as_ref()).to_string()
+            }
             _ => String::new(),
         }
     }
@@ -2558,6 +2574,28 @@ impl App {
                 }],
                 "ID" => vec![item.iid.to_string()],
                 "Title" => vec![item.title.clone()],
+                "Approval" => vec![
+                    match crate::domain::mr_state::approval_cell(item.approval.as_ref(), false).1 {
+                        crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
+                        crate::domain::mr_state::ApprovalTone::ChangesRequested => {
+                            "Changes requested"
+                        }
+                        crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
+                        crate::domain::mr_state::ApprovalTone::Approved => "Approved",
+                        crate::domain::mr_state::ApprovalTone::Pending => "Pending",
+                    }
+                    .to_string(),
+                ],
+                "Mergeable" => vec![
+                    match crate::domain::mr_state::mergeable_cell(item.mergeability.as_ref()).1 {
+                        crate::domain::mr_state::MergeTone::Unknown => "Unknown",
+                        crate::domain::mr_state::MergeTone::Conflict => "Conflict",
+                        crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
+                        crate::domain::mr_state::MergeTone::Computing => "Checking",
+                        crate::domain::mr_state::MergeTone::Clean => "Mergeable",
+                    }
+                    .to_string(),
+                ],
                 _ => vec![],
             },
         );
@@ -5109,5 +5147,55 @@ index 123456..789012 100644
             mr_fixture(2, "opened", "c", false, "z"),
         ];
         assert_eq!(sorted_iids(&items, "NoSuchColumn", true), vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn mr_columns_include_both_state_columns_on_both_hosts() {
+        for kind in [BackendKind::GitLab, BackendKind::GitHub] {
+            let cols = Tab::MergeRequests.columns(kind);
+            assert!(cols.contains(&"Approval"), "missing Approval for {kind:?}");
+            assert!(
+                cols.contains(&"Mergeable"),
+                "missing Mergeable for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mr_default_columns_show_both_state_columns() {
+        // Default-on, else the feature hides behind Tab -> configure.
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        assert!(cols.contains(&"Approval"));
+        assert!(cols.contains(&"Mergeable"));
+    }
+
+    #[test]
+    fn mr_default_columns_keep_pre_existing_defaults() {
+        // Adding columns must not remove any.
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        for expected in ["ID", "State", "Status", "Title", "Labels"] {
+            assert!(cols.contains(&expected), "lost default column {expected}");
+        }
+    }
+
+    #[test]
+    fn sorting_by_mergeable_puts_conflicts_first() {
+        use crate::domain::mr_state::MergeabilityState;
+        let mut conflicted = mr_fixture(1, "opened", "a", false, "conflicted");
+        conflicted.mergeability = Some(MergeabilityState {
+            conflicts: true,
+            needs_rebase: false,
+            computing: false,
+        });
+        let mut clean = mr_fixture(2, "opened", "b", false, "clean");
+        clean.mergeability = Some(MergeabilityState {
+            conflicts: false,
+            needs_rebase: false,
+            computing: false,
+        });
+        let unknown = mr_fixture(3, "opened", "c", false, "unknown");
+        let items = vec![clean, unknown, conflicted];
+        // conflict(0) < clean(3) < unknown(4)
+        assert_eq!(sorted_iids(&items, "Mergeable", true), vec![1, 2, 3]);
     }
 }

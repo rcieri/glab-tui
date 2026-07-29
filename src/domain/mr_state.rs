@@ -81,28 +81,42 @@ fn format_counts(s: &ApprovalState) -> String {
 
 /// First-match-wins cascade. See the precedence flowchart in the design spec.
 pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String, ApprovalTone) {
+    let icons = crate::config::ICONS.read().unwrap();
     let Some(s) = state else {
         return ("—".to_string(), ApprovalTone::Unknown);
     };
 
     if s.changes_requested {
-        let text = if is_github { "✗ changes" } else { "✗ chg" };
-        return (text.to_string(), ApprovalTone::ChangesRequested);
+        let text = if is_github {
+            format!("{} changes", icons.approval_changes)
+        } else {
+            format!("{} chg", icons.approval_changes)
+        };
+        return (text, ApprovalTone::ChangesRequested);
     }
 
     // GitHub exposes no counts and no canApprove, so it renders words only.
     if is_github {
         if is_attributably_approved(s) {
-            return ("✓ approved".to_string(), ApprovalTone::Approved);
+            return (
+                format!("{} approved", icons.approval_approved),
+                ApprovalTone::Approved,
+            );
         }
         return ("review req".to_string(), ApprovalTone::Pending);
     }
 
     if s.awaiting_you {
-        return (format!("● {}", format_counts(s)), ApprovalTone::AwaitingYou);
+        return (
+            format!("{} {}", icons.approval_pending, format_counts(s)),
+            ApprovalTone::AwaitingYou,
+        );
     }
     if is_attributably_approved(s) {
-        return (format!("✓ {}", format_counts(s)), ApprovalTone::Approved);
+        return (
+            format!("{} {}", icons.approval_approved, format_counts(s)),
+            ApprovalTone::Approved,
+        );
     }
     (format_counts(s), ApprovalTone::Pending)
 }
@@ -111,24 +125,29 @@ pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String,
 /// blocking state and the only one the user cannot fix from the TUI. Known
 /// state outranks `computing`.
 pub fn mergeable_cell(state: Option<&MergeabilityState>) -> (String, MergeTone) {
+    let icons = crate::config::ICONS.read().unwrap();
     let Some(s) = state else {
         return ("—".to_string(), MergeTone::Unknown);
     };
     if s.conflicts {
-        return ("✗ conflict".to_string(), MergeTone::Conflict);
+        return (
+            format!("{} conflict", icons.merge_conflict),
+            MergeTone::Conflict,
+        );
     }
     if s.needs_rebase {
-        return ("⇅ rebase".to_string(), MergeTone::Rebase);
+        return (format!("{} rebase", icons.merge_rebase), MergeTone::Rebase);
     }
     if s.computing {
-        return ("⋯".to_string(), MergeTone::Computing);
+        return (icons.merge_checking.clone(), MergeTone::Computing);
     }
-    ("✓".to_string(), MergeTone::Clean)
+    (icons.merge_clean.clone(), MergeTone::Clean)
 }
 
-/// Sort ordinal: most-blocking first, unknown last. Returned to the table as a
-/// decimal string so the existing comparator's `u64` fast path sorts by state
-/// rather than alphabetically by label.
+/// Sort ordinal: most-blocking first, unknown last. The caller (`App::mr_sort_value`)
+/// stringifies this via `.to_string()` before handing it to the table's sort
+/// comparator, whose `u64` fast path then orders rows by state rather than
+/// alphabetically by label.
 pub fn approval_sort_key(state: Option<&ApprovalState>) -> u8 {
     match approval_cell(state, false).1 {
         ApprovalTone::ChangesRequested => 0,
@@ -155,6 +174,46 @@ mod tests {
 
     fn approved_by(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    // Build expected strings from the same `ICONS` source the render code reads,
+    // rather than duplicating glyph literals here.
+    fn expect_chg() -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} chg", icons.approval_changes)
+    }
+
+    fn expect_approved(counts: &str) -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} {}", icons.approval_approved, counts)
+    }
+
+    fn expect_github_approved() -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} approved", icons.approval_approved)
+    }
+
+    fn expect_awaiting(counts: &str) -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} {}", icons.approval_pending, counts)
+    }
+
+    fn expect_conflict() -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} conflict", icons.merge_conflict)
+    }
+
+    fn expect_rebase() -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} rebase", icons.merge_rebase)
+    }
+
+    fn expect_computing() -> String {
+        crate::config::ICONS.read().unwrap().merge_checking.clone()
+    }
+
+    fn expect_clean() -> String {
+        crate::config::ICONS.read().unwrap().merge_clean.clone()
     }
 
     // ── awaiting_you truth table ──
@@ -210,7 +269,7 @@ mod tests {
             awaiting_you: false,
         };
         let (text, tone) = approval_cell(Some(&s), false);
-        assert_eq!(text, "✗ chg");
+        assert_eq!(text, expect_chg());
         assert_eq!(tone, ApprovalTone::ChangesRequested);
     }
 
@@ -227,7 +286,7 @@ mod tests {
             awaiting_you: false,
         };
         let (text, _) = approval_cell(Some(&s), false);
-        assert_eq!(text, "✓ 2/1");
+        assert_eq!(text, expect_approved("2/1"));
     }
 
     #[test]
@@ -243,7 +302,7 @@ mod tests {
             awaiting_you: false,
         };
         let (text, _) = approval_cell(Some(&s), false);
-        assert_eq!(text, "✓ 1");
+        assert_eq!(text, expect_approved("1"));
     }
 
     #[test]
@@ -276,7 +335,7 @@ mod tests {
             awaiting_you: true,
         };
         let (text, tone) = approval_cell(Some(&s), false);
-        assert_eq!(text, "● 0/1");
+        assert_eq!(text, expect_awaiting("0/1"));
         assert_eq!(tone, ApprovalTone::AwaitingYou);
     }
 
@@ -308,7 +367,7 @@ mod tests {
             awaiting_you: false,
         };
         let (text, _) = approval_cell(Some(&s), true);
-        assert_eq!(text, "✓ approved");
+        assert_eq!(text, expect_github_approved());
     }
 
     #[test]
@@ -343,7 +402,7 @@ mod tests {
             computing: true,
         };
         let (text, tone) = mergeable_cell(Some(&s));
-        assert_eq!(text, "✗ conflict");
+        assert_eq!(text, expect_conflict());
         assert_eq!(tone, MergeTone::Conflict);
     }
 
@@ -356,7 +415,7 @@ mod tests {
             computing: true,
         };
         let (text, tone) = mergeable_cell(Some(&s));
-        assert_eq!(text, "⇅ rebase");
+        assert_eq!(text, expect_rebase());
         assert_eq!(tone, MergeTone::Rebase);
     }
 
@@ -368,7 +427,7 @@ mod tests {
             computing: true,
         };
         let (text, tone) = mergeable_cell(Some(&s));
-        assert_eq!(text, "⋯");
+        assert_eq!(text, expect_computing());
         assert_eq!(tone, MergeTone::Computing);
     }
 
@@ -380,7 +439,7 @@ mod tests {
             computing: false,
         };
         let (text, tone) = mergeable_cell(Some(&s));
-        assert_eq!(text, "✓");
+        assert_eq!(text, expect_clean());
         assert_eq!(tone, MergeTone::Clean);
     }
 

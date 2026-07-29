@@ -595,6 +595,9 @@ impl Backend for GhBackend {
                     draft: gp.is_draft.unwrap_or(false),
                     description: gp.body,
                     head_pipeline: None,
+                    blocking_discussions_resolved: None,
+                    approval: None,
+                    mergeability: None,
                 }
             })
             .collect())
@@ -685,6 +688,9 @@ impl Backend for GhBackend {
             draft: gp.is_draft.unwrap_or(false),
             description: gp.body,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
         })
     }
 

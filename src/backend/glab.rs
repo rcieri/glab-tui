@@ -596,6 +596,8 @@ impl Backend for GlabBackend {
                 description: Option<String>,
                 #[serde(default)]
                 head_pipeline: Option<GiPipeline>,
+                #[serde(default)]
+                blocking_discussions_resolved: Option<bool>,
             }
             #[derive(Deserialize)]
             struct GiAuthor {
@@ -665,6 +667,9 @@ impl Backend for GlabBackend {
                         head_sha: String::new(),
                         actor_login: String::new(),
                     }),
+                    blocking_discussions_resolved: m.blocking_discussions_resolved,
+                    approval: None,
+                    mergeability: None,
                 }
             }));
             if len < per_request {
@@ -711,6 +716,8 @@ impl Backend for GlabBackend {
             description: Option<String>,
             #[serde(default)]
             head_pipeline: Option<GiPipeline>,
+            #[serde(default)]
+            blocking_discussions_resolved: Option<bool>,
         }
         #[derive(Deserialize)]
         struct GiAuthor {
@@ -778,6 +785,9 @@ impl Backend for GlabBackend {
                 head_sha: String::new(),
                 actor_login: String::new(),
             }),
+            blocking_discussions_resolved: m.blocking_discussions_resolved,
+            approval: None,
+            mergeability: None,
         })
     }
 

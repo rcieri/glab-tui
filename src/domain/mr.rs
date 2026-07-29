@@ -43,6 +43,18 @@ pub struct MergeRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub head_pipeline: Option<crate::domain::pipelines::Pipeline>,
+    /// From `blocking_discussions_resolved` in the GitLab list response.
+    /// `None` on GitHub, which has no equivalent list field.
+    /// Deliberately NOT inside `MergeabilityState`: it comes free from REST,
+    /// so it must survive a GraphQL outage.
+    #[serde(default)]
+    pub blocking_discussions_resolved: Option<bool>,
+    /// Populated after the list fetch. `None` means unknown, never "unapproved".
+    #[serde(default)]
+    pub approval: Option<crate::domain::mr_state::ApprovalState>,
+    /// Populated after the list fetch. `None` means unknown, never "clean".
+    #[serde(default)]
+    pub mergeability: Option<crate::domain::mr_state::MergeabilityState>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -146,4 +158,44 @@ pub async fn list_mr_notes(
         .backend
         .list_mr_notes(project_path, mr_iid, client.page_size)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Trimmed from a real `glab mr list --output json` response.
+    const GLAB_MR_JSON: &str = r#"{
+        "iid": 1471,
+        "title": "wire up webhooks",
+        "state": "opened",
+        "updated_at": "2026-07-29T15:11:38.322Z",
+        "author": { "username": "chandler.anderson" },
+        "milestone": null,
+        "target_branch": "main",
+        "draft": false,
+        "description": null,
+        "blocking_discussions_resolved": false
+    }"#;
+
+    #[test]
+    fn deserializes_blocking_discussions_resolved_from_glab_list() {
+        let mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
+        assert_eq!(mr.blocking_discussions_resolved, Some(false));
+    }
+
+    #[test]
+    fn state_axes_default_to_none_when_absent() {
+        let mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
+        assert!(mr.approval.is_none());
+        assert!(mr.mergeability.is_none());
+    }
+
+    #[test]
+    fn missing_discussions_field_is_none_not_false() {
+        // GitHub's mapping never sets it; unknown must not read as a problem.
+        let json = GLAB_MR_JSON.replace(",\n        \"blocking_discussions_resolved\": false", "");
+        let mr: MergeRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(mr.blocking_discussions_resolved, None);
+    }
 }

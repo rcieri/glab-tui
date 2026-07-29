@@ -4275,6 +4275,9 @@ mod tests {
             milestone: None,
             description: None,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -4292,6 +4295,9 @@ mod tests {
             milestone: None,
             description: None,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
         };
 
         let mr_ready = MergeRequest {
@@ -4309,6 +4315,9 @@ mod tests {
             milestone: None,
             description: None,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];

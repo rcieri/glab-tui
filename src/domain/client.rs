@@ -579,23 +579,12 @@ pub async fn get_project_context() -> Result<String> {
         return Ok("unknown/unknown".to_string());
     }
 
-    let url = String::from_utf8(output.stdout)?.trim().to_string();
+    let url = String::from_utf8(output.stdout)?;
 
-    // Parse url to extract namespace/repo
-    let path = if url.starts_with("git@") {
-        url.split(':').nth(1).unwrap_or("unknown/unknown")
-    } else if url.starts_with("http") {
-        let parts: Vec<&str> = url.split('/').collect();
-        if parts.len() >= 2 {
-            let p = format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]);
-            return Ok(p.trim_end_matches(".git").to_string());
-        }
-        "unknown/unknown"
-    } else {
-        "unknown/unknown"
-    };
-
-    Ok(path.trim_end_matches(".git").to_string())
+    // Parse the remote URL to extract the full namespace/repo path,
+    // preserving any GitLab subgroups (e.g. `group/subgroup/project`).
+    Ok(crate::git_helpers::parse_project_path_from_remote_url(&url)
+        .unwrap_or_else(|| "unknown/unknown".to_string()))
 }
 
 #[cfg(test)]

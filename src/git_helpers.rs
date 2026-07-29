@@ -1,3 +1,42 @@
+/// Parses a git remote URL into a GitLab/GitHub project path
+/// (e.g. `"group/subgroup/project"`), preserving *all* subgroups.
+///
+/// Naively taking the last two `/`-separated segments of an HTTP(S) remote
+/// truncates any GitLab project that lives under one or more subgroups
+/// (e.g. `https://gitlab.example.com/group/subgroup/project.git` would be
+/// misread as `subgroup/project`, which does not exist on the server and
+/// causes every API call to 404). This function keeps the full path after
+/// the host instead.
+///
+/// Supports:
+/// - SSH shorthand: `git@host:group/subgroup/project.git`
+/// - SSH URL: `ssh://git@host[:port]/group/subgroup/project.git`
+/// - HTTP(S): `https://host[:port]/group/subgroup/project.git`
+pub fn parse_project_path_from_remote_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return None;
+    }
+
+    let path = if let Some(rest) = url.strip_prefix("git@") {
+        // git@host:group/subgroup/project.git
+        rest.split_once(':').map(|(_, path)| path)
+    } else if let Some(rest) = url
+        .strip_prefix("ssh://")
+        .or_else(|| url.strip_prefix("http://"))
+        .or_else(|| url.strip_prefix("https://"))
+    {
+        // Strip the "user@host[:port]" portion; keep everything after the
+        // first '/' as the (possibly multi-segment) project path.
+        rest.split_once('/').map(|(_, path)| path)
+    } else {
+        None
+    };
+
+    path.map(|p| p.trim_end_matches(".git").trim_matches('/').to_string())
+        .filter(|p| !p.is_empty())
+}
+
 pub fn get_current_branch() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["symbolic-ref", "--short", "HEAD"])
@@ -154,5 +193,98 @@ pub fn get_workflow_files(is_github: bool) -> Vec<String> {
             .collect();
         files.sort();
         files
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_simple_https_remote() {
+        assert_eq!(
+            parse_project_path_from_remote_url("https://github.com/rcieri/glab-tui.git"),
+            Some("rcieri/glab-tui".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_https_remote_with_nested_subgroups() {
+        assert_eq!(
+            parse_project_path_from_remote_url(
+                "https://onl-nfv-git.osc.tac.net/cloudhealth/exporters/bigip-ndal.git"
+            ),
+            Some("cloudhealth/exporters/bigip-ndal".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_https_remote_with_deeply_nested_subgroups() {
+        assert_eq!(
+            parse_project_path_from_remote_url("https://gitlab.example.com/a/b/c/d/project.git"),
+            Some("a/b/c/d/project".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_https_remote_without_dot_git_suffix() {
+        assert_eq!(
+            parse_project_path_from_remote_url("https://gitlab.com/group/subgroup/project"),
+            Some("group/subgroup/project".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_https_remote_with_port() {
+        assert_eq!(
+            parse_project_path_from_remote_url(
+                "https://gitlab.example.com:8443/group/sub/project.git"
+            ),
+            Some("group/sub/project".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_ssh_shorthand_remote() {
+        assert_eq!(
+            parse_project_path_from_remote_url("git@github.com:rcieri/glab-tui.git"),
+            Some("rcieri/glab-tui".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_ssh_shorthand_remote_with_nested_subgroups() {
+        assert_eq!(
+            parse_project_path_from_remote_url(
+                "git@onl-nfv-git.osc.tac.net:cloudhealth/exporters/bigip-ndal.git"
+            ),
+            Some("cloudhealth/exporters/bigip-ndal".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_ssh_url_remote() {
+        assert_eq!(
+            parse_project_path_from_remote_url(
+                "ssh://git@gitlab.example.com/group/sub/project.git"
+            ),
+            Some("group/sub/project".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_ssh_url_remote_with_port() {
+        assert_eq!(
+            parse_project_path_from_remote_url(
+                "ssh://git@gitlab.example.com:2222/group/sub/project.git"
+            ),
+            Some("group/sub/project".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_for_empty_or_unrecognized_url() {
+        assert_eq!(parse_project_path_from_remote_url(""), None);
+        assert_eq!(parse_project_path_from_remote_url("not-a-url"), None);
     }
 }

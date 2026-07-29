@@ -12,6 +12,7 @@ use crate::event::Event;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashMap;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -31,6 +32,162 @@ fn normalize_labels(s: &str) -> String {
 /// Number of `--per-page per_request` calls needed to cover a `page_size` item budget.
 fn page_count(page_size: usize, per_request: usize) -> usize {
     page_size.div_ceil(per_request.max(1)).max(1)
+}
+
+/// The project path originates from `git remote get-url` and is interpolated
+/// into a GraphQL query string, so it must be constrained before use.
+/// Permits only the characters that legitimately appear in a GitLab path.
+pub fn validate_project_path(path: &str) -> anyhow::Result<()> {
+    if path.is_empty() {
+        anyhow::bail!("empty project path");
+    }
+    let ok = path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'));
+    if !ok {
+        anyhow::bail!("project path contains unsupported characters: {}", path);
+    }
+    Ok(())
+}
+
+/// Parse the bulk MR-state GraphQL response.
+///
+/// A top-level `errors` array is a hard error: GraphQL is all-or-nothing, so a
+/// single unknown field yields no data at all, and that must not be mistaken
+/// for "this project has no approval state".
+pub fn parse_mr_state_response(
+    json: &str,
+) -> anyhow::Result<
+    HashMap<
+        u64,
+        (
+            Option<crate::domain::mr_state::ApprovalState>,
+            Option<crate::domain::mr_state::MergeabilityState>,
+        ),
+    >,
+> {
+    use crate::domain::mr_state::{
+        ApprovalState, MergeabilityState, derive_awaiting_you, is_transient_merge_status,
+    };
+
+    let root: serde_json::Value = serde_json::from_str(json)?;
+
+    if let Some(errors) = root.get("errors").and_then(|e| e.as_array()) {
+        let first = errors
+            .first()
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown GraphQL error");
+        anyhow::bail!("GraphQL error: {}", first);
+    }
+
+    let data = root
+        .get("data")
+        .ok_or_else(|| anyhow::anyhow!("GraphQL response has no data"))?;
+
+    let current_user = data
+        .get("currentUser")
+        .and_then(|u| u.get("username"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let nodes = data
+        .get("project")
+        .and_then(|p| p.get("mergeRequests"))
+        .and_then(|m| m.get("nodes"))
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out = HashMap::new();
+    for node in nodes {
+        // GraphQL returns iid as a string. A malformed one drops that row only.
+        let Some(iid) = node
+            .get("iid")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            continue;
+        };
+
+        let approved = node
+            .get("approved")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let approved_by: Vec<String> = node
+            .get("approvedBy")
+            .and_then(|a| a.get("nodes"))
+            .and_then(|n| n.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|u| u.get("username")?.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let can_approve = node
+            .get("userPermissions")
+            .and_then(|p| p.get("canApprove"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Per-reviewer reviewState, NOT detailedMergeStatus: the latter is
+        // precedence-ordered and masks this.
+        let changes_requested = node
+            .get("reviewers")
+            .and_then(|r| r.get("nodes"))
+            .and_then(|n| n.as_array())
+            .map(|arr| {
+                arr.iter().any(|r| {
+                    r.get("mergeRequestInteraction")
+                        .and_then(|i| i.get("reviewState"))
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.eq_ignore_ascii_case("REQUESTED_CHANGES"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+
+        let you_approved =
+            !current_user.is_empty() && approved_by.iter().any(|u| *u == current_user);
+
+        let approval = ApprovalState {
+            approved,
+            approvals_left: node
+                .get("approvalsLeft")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
+            approvals_required: node
+                .get("approvalsRequired")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
+            approved_by,
+            changes_requested,
+            you_approved,
+            awaiting_you: derive_awaiting_you(can_approve, you_approved, approved),
+        };
+
+        let raw_status = node
+            .get("detailedMergeStatus")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        let mergeability = MergeabilityState {
+            conflicts: node
+                .get("conflicts")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            needs_rebase: node
+                .get("shouldBeRebased")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            computing: is_transient_merge_status(raw_status),
+        };
+
+        out.insert(iid, (Some(approval), Some(mergeability)));
+    }
+    Ok(out)
 }
 
 pub struct GlabBackend {
@@ -915,6 +1072,54 @@ impl Backend for GlabBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn list_mr_state(
+        &self,
+        project: &str,
+        iids: &[u64],
+    ) -> Result<
+        HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    > {
+        if iids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        validate_project_path(project)?;
+
+        // Query the exact iids the list returned, so there is no pagination drift.
+        let iid_list = iids
+            .iter()
+            .map(|i| format!("\"{}\"", i))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // Only fields verified present on the reference instance. GraphQL is
+        // all-or-nothing: one unknown field blanks both axes.
+        let query = format!(
+            "query {{ currentUser {{ username }} \
+             project(fullPath: \"{}\") {{ \
+             mergeRequests(iids: [{}]) {{ nodes {{ \
+             iid approved approvalsLeft approvalsRequired \
+             userPermissions {{ canApprove }} \
+             approvedBy {{ nodes {{ username }} }} \
+             reviewers {{ nodes {{ username mergeRequestInteraction {{ reviewState }} }} }} \
+             conflicts shouldBeRebased detailedMergeStatus \
+             }} }} }} }}",
+            project, iid_list
+        );
+
+        let query_arg = format!("query={}", query);
+        let raw = self
+            .run_glab(&["api", "graphql", "-f", &query_arg], "FETCHING MR STATE")
+            .await?;
+
+        parse_mr_state_response(&raw)
     }
 
     async fn merge_mr(
@@ -2291,5 +2496,155 @@ mod tests {
         // per_request = 0 must not panic (div_ceil would); clamped to 1 item per
         // request, so a 100-item budget needs 100 requests.
         assert_eq!(page_count(100, 0), 100);
+    }
+
+    // ── project path validation (GraphQL injection guard) ──
+
+    #[test]
+    fn accepts_normal_project_paths() {
+        assert!(validate_project_path("excalibur/mvp").is_ok());
+        assert!(validate_project_path("dev/cbr/salesforce/salesforce").is_ok());
+        assert!(validate_project_path("group/sub-group/pro_ject.42").is_ok());
+    }
+
+    #[test]
+    fn rejects_graphql_significant_characters() {
+        // The path comes from `git remote get-url`, so it is untrusted input
+        // interpolated into a query string.
+        for bad in ["a\"b", "a{b", "a}b", "a\\b", "a\nb", "a b", ""] {
+            assert!(
+                validate_project_path(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    // ── GraphQL response parsing ──
+
+    /// Captured from the live instance: dev/cbr/salesforce/salesforce.
+    const GRAPHQL_OK: &str = r#"{
+      "data": {
+        "currentUser": { "username": "chandler.anderson" },
+        "project": { "mergeRequests": { "nodes": [
+          {
+            "iid": "5281",
+            "approved": true,
+            "approvalsLeft": 0,
+            "approvalsRequired": 0,
+            "userPermissions": { "canApprove": true },
+            "approvedBy": { "nodes": [ { "username": "julien.carmignani" } ] },
+            "reviewers": { "nodes": [ { "username": "julien.carmignani",
+                "mergeRequestInteraction": { "reviewState": "APPROVED" } } ] },
+            "conflicts": false,
+            "shouldBeRebased": false,
+            "detailedMergeStatus": "UNCHECKED"
+          },
+          {
+            "iid": "5279",
+            "approved": false,
+            "approvalsLeft": 1,
+            "approvalsRequired": 1,
+            "userPermissions": { "canApprove": false },
+            "approvedBy": { "nodes": [] },
+            "reviewers": { "nodes": [ { "username": "julien.carmignani",
+                "mergeRequestInteraction": { "reviewState": "REQUESTED_CHANGES" } } ] },
+            "conflicts": false,
+            "shouldBeRebased": false,
+            "detailedMergeStatus": "REQUESTED_CHANGES"
+          },
+          {
+            "iid": "1448",
+            "approved": true,
+            "approvalsLeft": 0,
+            "approvalsRequired": 1,
+            "userPermissions": { "canApprove": false },
+            "approvedBy": { "nodes": [ { "username": "ozgur.gurkan" },
+                                       { "username": "chandler.anderson" } ] },
+            "reviewers": { "nodes": [] },
+            "conflicts": true,
+            "shouldBeRebased": false,
+            "detailedMergeStatus": "CONFLICT"
+          }
+        ] } }
+      }
+    }"#;
+
+    #[test]
+    fn parses_approval_counts_and_approvers() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, _) = map.get(&1448).unwrap();
+        let a = approval.as_ref().unwrap();
+        assert!(a.approved);
+        assert_eq!(a.approvals_required, Some(1));
+        assert_eq!(a.approved_by.len(), 2);
+    }
+
+    #[test]
+    fn derives_you_approved_from_current_user() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        // chandler.anderson is in !1448's approvedBy.
+        assert!(map.get(&1448).unwrap().0.as_ref().unwrap().you_approved);
+        // ...and not in !5281's.
+        assert!(!map.get(&5281).unwrap().0.as_ref().unwrap().you_approved);
+    }
+
+    #[test]
+    fn awaiting_you_is_false_for_satisfied_mr_you_can_still_approve() {
+        // !5281: canApprove true, you_approved false, but approved true.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(!map.get(&5281).unwrap().0.as_ref().unwrap().awaiting_you);
+    }
+
+    #[test]
+    fn changes_requested_comes_from_reviewer_review_state() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(
+            map.get(&5279)
+                .unwrap()
+                .0
+                .as_ref()
+                .unwrap()
+                .changes_requested
+        );
+        assert!(
+            !map.get(&1448)
+                .unwrap()
+                .0
+                .as_ref()
+                .unwrap()
+                .changes_requested
+        );
+    }
+
+    #[test]
+    fn conflicts_are_read_from_the_boolean_not_the_merge_status() {
+        // !1448 is approved AND conflicted — the two axes must not interfere.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, merge) = map.get(&1448).unwrap();
+        assert!(merge.as_ref().unwrap().conflicts);
+        assert!(approval.as_ref().unwrap().approved);
+    }
+
+    #[test]
+    fn transient_merge_status_sets_computing() {
+        // !5281 reports UNCHECKED.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(map.get(&5281).unwrap().1.as_ref().unwrap().computing);
+        assert!(!map.get(&1448).unwrap().1.as_ref().unwrap().computing);
+    }
+
+    #[test]
+    fn graphql_errors_response_is_an_error_not_empty_data() {
+        // One unknown field fails the whole query; must not look like "no state".
+        let body = r#"{"errors":[{"message":"Field 'x' doesn't exist on type 'MergeRequest'"}]}"#;
+        assert!(parse_mr_state_response(body).is_err());
+    }
+
+    #[test]
+    fn unparseable_iid_skips_that_row_only() {
+        let body = GRAPHQL_OK.replace("\"iid\": \"5279\"", "\"iid\": \"not-a-number\"");
+        let map = parse_mr_state_response(&body).unwrap();
+        assert!(!map.contains_key(&5279));
+        assert!(map.contains_key(&1448), "other rows must survive");
     }
 }

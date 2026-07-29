@@ -12,6 +12,7 @@ use crate::event::Event;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashMap;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -807,6 +808,24 @@ impl Backend for GhBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn list_mr_state(
+        &self,
+        _project: &str,
+        _iids: &[u64],
+    ) -> Result<
+        HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    > {
+        // GitHub state rides on the existing `gh pr list --json` call instead
+        // (see list_mrs), so there is nothing extra to fetch here.
+        Ok(HashMap::new())
     }
 
     async fn merge_mr(

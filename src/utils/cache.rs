@@ -198,20 +198,8 @@ fn get_project_context_for_path(repo_path: &str) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let path = if url.starts_with("git@") {
-        url.split(':').nth(1).unwrap_or("").to_string()
-    } else if url.starts_with("http") {
-        let parts: Vec<&str> = url.split('/').collect();
-        if parts.len() >= 2 {
-            format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
-        } else {
-            return None;
-        }
-    } else {
-        return None;
-    };
-    Some(path.trim_end_matches(".git").to_string())
+    let url = String::from_utf8_lossy(&output.stdout);
+    crate::git_helpers::parse_project_path(&url)
 }
 
 pub fn is_git_repo(path: &str) -> bool {

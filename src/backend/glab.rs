@@ -1347,11 +1347,11 @@ impl Backend for GlabBackend {
             args.push("--branch".into());
             args.push(branch.into());
         }
-        if mr {
+        if mr && variables.is_empty() && inputs.is_empty() {
             args.push("--mr".into());
         }
         for (k, v) in variables {
-            args.push("--variable".into());
+            args.push("--variables".into());
             args.push(format!("{}:{}", k, v));
         }
         for (k, v) in inputs {

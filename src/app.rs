@@ -2512,6 +2512,59 @@ impl App {
         }
     }
 
+    /// The filter values a column contributes for one MR.
+    ///
+    /// Returns several values when an MR carries more than one independent fact —
+    /// a draft MR with unresolved discussions yields both "Draft" and
+    /// "Unresolved discussions", so each is independently filterable.
+    ///
+    /// One function for BOTH filter call sites: `filtered_mrs` (which decides
+    /// whether an MR matches an active filter) and `collect_unique_column_values`
+    /// (which populates the picker's selectable options). They previously drifted,
+    /// leaving values that matched but could never be selected.
+    fn mr_filter_values(m: &crate::domain::mr::MergeRequest, col: &str) -> Vec<String> {
+        match col {
+            "Labels" => m.labels.clone(),
+            "Assignees" => m.assignees.iter().map(|a| a.username.clone()).collect(),
+            "Reviewers" => m.reviewers.iter().map(|r| r.username.clone()).collect(),
+            "Author" => vec![m.author.username.clone()],
+            "Milestone" => m
+                .milestone
+                .as_ref()
+                .map(|ms| ms.title.clone())
+                .into_iter()
+                .collect(),
+            "State" => vec![m.state.clone()],
+            "Status" => crate::domain::mr_state::status_filter_values(
+                m.draft,
+                m.blocking_discussions_resolved,
+            ),
+            "ID" => vec![m.iid.to_string()],
+            "Title" => vec![m.title.clone()],
+            "Approval" => vec![
+                match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
+                    crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
+                    crate::domain::mr_state::ApprovalTone::ChangesRequested => "Changes requested",
+                    crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
+                    crate::domain::mr_state::ApprovalTone::Approved => "Approved",
+                    crate::domain::mr_state::ApprovalTone::Pending => "Pending",
+                }
+                .to_string(),
+            ],
+            "Mergeable" => vec![
+                match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
+                    crate::domain::mr_state::MergeTone::Unknown => "Unknown",
+                    crate::domain::mr_state::MergeTone::Conflict => "Conflict",
+                    crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
+                    crate::domain::mr_state::MergeTone::Computing => "Checking",
+                    crate::domain::mr_state::MergeTone::Clean => "Mergeable",
+                }
+                .to_string(),
+            ],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_mrs_list<'a>(
         items: &'a [crate::domain::mr::MergeRequest],
         query: &str,
@@ -2555,48 +2608,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::MergeRequests,
-            |item, col| match col {
-                "Labels" => item.labels.clone(),
-                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
-                "Reviewers" => item.reviewers.iter().map(|r| r.username.clone()).collect(),
-                "Author" => vec![item.author.username.clone()],
-                "Milestone" => item
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .into_iter()
-                    .collect(),
-                "State" => vec![item.state.clone()],
-                "Status" => crate::domain::mr_state::status_filter_values(
-                    item.draft,
-                    item.blocking_discussions_resolved,
-                ),
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                "Approval" => vec![
-                    match crate::domain::mr_state::approval_cell(item.approval.as_ref(), false).1 {
-                        crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
-                        crate::domain::mr_state::ApprovalTone::ChangesRequested => {
-                            "Changes requested"
-                        }
-                        crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
-                        crate::domain::mr_state::ApprovalTone::Approved => "Approved",
-                        crate::domain::mr_state::ApprovalTone::Pending => "Pending",
-                    }
-                    .to_string(),
-                ],
-                "Mergeable" => vec![
-                    match crate::domain::mr_state::mergeable_cell(item.mergeability.as_ref()).1 {
-                        crate::domain::mr_state::MergeTone::Unknown => "Unknown",
-                        crate::domain::mr_state::MergeTone::Conflict => "Conflict",
-                        crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
-                        crate::domain::mr_state::MergeTone::Computing => "Checking",
-                        crate::domain::mr_state::MergeTone::Clean => "Mergeable",
-                    }
-                    .to_string(),
-                ],
-                _ => vec![],
-            },
+            |item, col| Self::mr_filter_values(item, col),
         );
         list
     }
@@ -3466,47 +3478,8 @@ impl App {
             }
             Tab::MergeRequests => {
                 for item in &self.mrs.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.iid.to_string());
-                        }
-                        "State" => {
-                            values.insert(item.state.clone());
-                        }
-                        "Status" => {
-                            values.insert(if item.draft {
-                                "Draft".to_string()
-                            } else {
-                                "Ready".to_string()
-                            });
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "Labels" => {
-                            for l in &item.labels {
-                                values.insert(l.clone());
-                            }
-                        }
-                        "Assignees" => {
-                            for a in &item.assignees {
-                                values.insert(a.username.clone());
-                            }
-                        }
-                        "Reviewers" => {
-                            for r in &item.reviewers {
-                                values.insert(r.username.clone());
-                            }
-                        }
-                        "Author" => {
-                            values.insert(item.author.username.clone());
-                        }
-                        "Milestone" => {
-                            if let Some(m) = &item.milestone {
-                                values.insert(m.title.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::mr_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
@@ -5196,5 +5169,85 @@ index 123456..789012 100644
         let items = vec![clean, unknown, conflicted];
         // conflict(0) < clean(3) < unknown(4)
         assert_eq!(sorted_iids(&items, "Mergeable", true), vec![1, 2, 3]);
+    }
+
+    // ── MR filter picker options (collect_unique_column_values) ──
+    //
+    // filtered_mrs (matching) and collect_unique_column_values (picker options)
+    // are two separate call sites over the same data; they previously drifted,
+    // leaving values that matched an active filter but could never be selected
+    // from the picker. mr_filter_values is now the single source both call.
+
+    #[test]
+    fn collect_unique_column_values_status_includes_unresolved_discussions_flag() {
+        let mut draft_unresolved = mr_fixture(1, "opened", "a", true, "draft with unresolved");
+        draft_unresolved.blocking_discussions_resolved = Some(false);
+        let mut app = App::default();
+        app.mrs.items = vec![draft_unresolved];
+
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Status");
+
+        assert!(values.contains(&"Draft".to_string()));
+        assert!(values.contains(&"Unresolved discussions".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_column_values_approval_offers_tone_label() {
+        use crate::domain::mr_state::ApprovalState;
+        let mut approved = mr_fixture(1, "opened", "a", false, "approved");
+        approved.approval = Some(ApprovalState {
+            approved: true,
+            approvals_left: Some(0),
+            approvals_required: Some(1),
+            approved_by: vec!["chandler.anderson".to_string()],
+            changes_requested: false,
+            you_approved: true,
+            awaiting_you: false,
+        });
+        let mut app = App::default();
+        app.mrs.items = vec![approved];
+
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Approval");
+
+        assert!(values.contains(&"Approved".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_column_values_mergeable_offers_conflict_label() {
+        use crate::domain::mr_state::MergeabilityState;
+        let mut conflicted = mr_fixture(1, "opened", "a", false, "conflicted");
+        conflicted.mergeability = Some(MergeabilityState {
+            conflicts: true,
+            needs_rebase: false,
+            computing: false,
+        });
+        let mut app = App::default();
+        app.mrs.items = vec![conflicted];
+
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Mergeable");
+
+        assert!(values.contains(&"Conflict".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_column_values_agrees_with_mr_filter_values() {
+        // The invariant that broke: every value the matching side (mr_filter_values)
+        // would accept for an MR must also be offered by the picker side
+        // (collect_unique_column_values), or a user can never select it.
+        let mut draft_unresolved = mr_fixture(1, "opened", "a", true, "draft with unresolved");
+        draft_unresolved.blocking_discussions_resolved = Some(false);
+        let mut app = App::default();
+        app.mrs.items = vec![draft_unresolved];
+
+        for col in ["Status", "Approval", "Mergeable"] {
+            let offered = app.collect_unique_column_values(Tab::MergeRequests, col);
+            let expected = App::mr_filter_values(&app.mrs.items[0], col);
+            for v in expected {
+                assert!(
+                    offered.contains(&v),
+                    "column {col}: {v} matches via mr_filter_values but is not offered by collect_unique_column_values"
+                );
+            }
+        }
     }
 }

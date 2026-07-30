@@ -927,13 +927,13 @@ pub(crate) fn render_tab_merge_requests(
             header_cells.push(Cell::from(
                 Line::from("Approval").alignment(Alignment::Center),
             ));
-            widths.push(Constraint::Length(12));
+            widths.push(col_w(content_area.width, 12));
         }
         if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
             header_cells.push(Cell::from(
                 Line::from("Mergeable").alignment(Alignment::Center),
             ));
-            widths.push(Constraint::Length(13));
+            widths.push(col_w(content_area.width, 13));
         }
         if app.is_column_visible(Tab::MergeRequests, "Labels") {
             header_cells.push(Cell::from("Labels"));

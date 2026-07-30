@@ -2459,6 +2459,16 @@ impl App {
                     check_match(&format!("@{}", reviewer.username));
                 }
             }
+            if enabled_cols.contains("Approval") {
+                for value in Self::mr_filter_values(item, "Approval") {
+                    check_match(&value);
+                }
+            }
+            if enabled_cols.contains("Mergeable") {
+                for value in Self::mr_filter_values(item, "Mergeable") {
+                    check_match(&value);
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((item, score));
@@ -4337,6 +4347,36 @@ mod tests {
         assert_eq!(filtered_open[0].iid, 1);
         assert_eq!(filtered_open[1].iid, 2);
         assert_eq!(filtered_open[2].iid, 3);
+    }
+
+    #[test]
+    fn search_matches_conflicting_mr_when_mergeable_column_enabled() {
+        let mut mr = mr_fixture(1, "opened", "alice", false, "unrelated title");
+        mr.mergeability = Some(crate::domain::mr_state::MergeabilityState {
+            conflicts: true,
+            needs_rebase: false,
+            computing: false,
+        });
+        let items = vec![mr];
+
+        let with_mergeable: std::collections::HashSet<String> = ["ID", "Title", "Mergeable"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let matched = App::filter_mrs_list(&items, "conflict", &with_mergeable);
+        assert_eq!(
+            matched.len(),
+            1,
+            "expected the conflicting MR to match a 'conflict' search when Mergeable is enabled"
+        );
+
+        let without_mergeable: std::collections::HashSet<String> =
+            ["ID", "Title"].iter().map(|s| s.to_string()).collect();
+        let unmatched = App::filter_mrs_list(&items, "conflict", &without_mergeable);
+        assert!(
+            unmatched.is_empty(),
+            "the column gate should suppress the match when Mergeable is disabled"
+        );
     }
 
     #[test]

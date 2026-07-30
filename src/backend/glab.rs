@@ -34,6 +34,29 @@ fn page_count(page_size: usize, per_request: usize) -> usize {
     page_size.div_ceil(per_request.max(1)).max(1)
 }
 
+/// GitLab's `mergeRequests(iids: [...])` GraphQL connection caps results at
+/// 100 nodes when no `first:` argument is given. `page_size` (src/config.rs)
+/// is user-configurable above that, so a single query can silently drop MRs
+/// past the 100th — they'd render "—" on both axes with no error. Chunk so
+/// no single query can exceed the cap.
+const MR_STATE_QUERY_BATCH_SIZE: usize = 100;
+
+/// Split `iids` into batches of at most `batch_size`, preserving order.
+fn chunk_iids(iids: &[u64], batch_size: usize) -> Vec<&[u64]> {
+    if batch_size == 0 {
+        return vec![iids];
+    }
+    iids.chunks(batch_size).collect()
+}
+
+type MrStateMap = HashMap<
+    u64,
+    (
+        Option<crate::domain::mr_state::ApprovalState>,
+        Option<crate::domain::mr_state::MergeabilityState>,
+    ),
+>;
+
 /// The project path originates from `git remote get-url` and is interpolated
 /// into a GraphQL query string, so it must be constrained before use.
 /// Permits only the characters that legitimately appear in a GitLab path.
@@ -55,17 +78,7 @@ pub fn validate_project_path(path: &str) -> anyhow::Result<()> {
 /// A top-level `errors` array is a hard error: GraphQL is all-or-nothing, so a
 /// single unknown field yields no data at all, and that must not be mistaken
 /// for "this project has no approval state".
-pub fn parse_mr_state_response(
-    json: &str,
-) -> anyhow::Result<
-    HashMap<
-        u64,
-        (
-            Option<crate::domain::mr_state::ApprovalState>,
-            Option<crate::domain::mr_state::MergeabilityState>,
-        ),
-    >,
-> {
+pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
     use crate::domain::mr_state::{
         ApprovalState, MergeabilityState, derive_awaiting_you, is_transient_merge_status,
     };
@@ -235,6 +248,40 @@ impl GlabBackend {
             }
             anyhow::bail!("glab command failed: {}", err_msg)
         }
+    }
+
+    /// Fetch approval/mergeability state for one batch of iids (at most
+    /// `MR_STATE_QUERY_BATCH_SIZE`, to stay under GitLab's 100-node
+    /// connection cap — see `list_mr_state`).
+    async fn fetch_mr_state_batch(&self, project: &str, iids: &[u64]) -> Result<MrStateMap> {
+        // Query the exact iids the list returned, so there is no pagination drift.
+        let iid_list = iids
+            .iter()
+            .map(|i| format!("\"{}\"", i))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // Only fields verified present on the reference instance. GraphQL is
+        // all-or-nothing: one unknown field blanks both axes.
+        let query = format!(
+            "query {{ currentUser {{ username }} \
+             project(fullPath: \"{}\") {{ \
+             mergeRequests(iids: [{}]) {{ nodes {{ \
+             iid approved approvalsLeft approvalsRequired \
+             userPermissions {{ canApprove }} \
+             approvedBy {{ nodes {{ username }} }} \
+             reviewers {{ nodes {{ mergeRequestInteraction {{ reviewState }} }} }} \
+             conflicts shouldBeRebased detailedMergeStatus \
+             }} }} }} }}",
+            project, iid_list
+        );
+
+        let query_arg = format!("query={}", query);
+        let raw = self
+            .run_glab(&["api", "graphql", "-f", &query_arg], "FETCHING MR STATE")
+            .await?;
+
+        parse_mr_state_response(&raw)
     }
 }
 
@@ -1092,52 +1139,38 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn list_mr_state(
-        &self,
-        project: &str,
-        iids: &[u64],
-    ) -> Result<
-        HashMap<
-            u64,
-            (
-                Option<crate::domain::mr_state::ApprovalState>,
-                Option<crate::domain::mr_state::MergeabilityState>,
-            ),
-        >,
-    > {
+    async fn list_mr_state(&self, project: &str, iids: &[u64]) -> Result<MrStateMap> {
         if iids.is_empty() {
             return Ok(HashMap::new());
         }
         validate_project_path(project)?;
 
-        // Query the exact iids the list returned, so there is no pagination drift.
-        let iid_list = iids
-            .iter()
-            .map(|i| format!("\"{}\"", i))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let mut merged = HashMap::new();
+        let mut last_err = None;
+        let mut any_batch_succeeded = false;
 
-        // Only fields verified present on the reference instance. GraphQL is
-        // all-or-nothing: one unknown field blanks both axes.
-        let query = format!(
-            "query {{ currentUser {{ username }} \
-             project(fullPath: \"{}\") {{ \
-             mergeRequests(iids: [{}]) {{ nodes {{ \
-             iid approved approvalsLeft approvalsRequired \
-             userPermissions {{ canApprove }} \
-             approvedBy {{ nodes {{ username }} }} \
-             reviewers {{ nodes {{ mergeRequestInteraction {{ reviewState }} }} }} \
-             conflicts shouldBeRebased detailedMergeStatus \
-             }} }} }} }}",
-            project, iid_list
-        );
+        for batch in chunk_iids(iids, MR_STATE_QUERY_BATCH_SIZE) {
+            match self.fetch_mr_state_batch(project, batch).await {
+                Ok(state) => {
+                    any_batch_succeeded = true;
+                    merged.extend(state);
+                }
+                Err(e) => last_err = Some(e),
+            }
+        }
 
-        let query_arg = format!("query={}", query);
-        let raw = self
-            .run_glab(&["api", "graphql", "-f", &query_arg], "FETCHING MR STATE")
-            .await?;
+        // A failed batch shouldn't poison the batches that did succeed — the
+        // caller (src/fetch.rs) already degrades a missing entry to "—" per
+        // row. But if every batch failed, surface the error rather than
+        // returning a suspiciously-empty `Ok(HashMap::new())`, which the
+        // caller cannot distinguish from "no MRs had state".
+        if !any_batch_succeeded {
+            if let Some(e) = last_err {
+                return Err(e);
+            }
+        }
 
-        parse_mr_state_response(&raw)
+        Ok(merged)
     }
 
     async fn merge_mr(
@@ -2483,6 +2516,29 @@ impl Backend for GlabBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── iid batching (GraphQL 100-node connection cap) ──
+
+    #[test]
+    fn chunk_iids_splits_250_into_100_100_50() {
+        let iids: Vec<u64> = (1..=250).collect();
+        let batches = chunk_iids(&iids, 100);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].len(), 100);
+        assert_eq!(batches[1].len(), 100);
+        assert_eq!(batches[2].len(), 50);
+        // Order and identity are preserved across the split.
+        assert_eq!(batches[0][0], 1);
+        assert_eq!(batches[2][49], 250);
+    }
+
+    #[test]
+    fn chunk_iids_keeps_exactly_100_as_a_single_batch() {
+        let iids: Vec<u64> = (1..=100).collect();
+        let batches = chunk_iids(&iids, 100);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].len(), 100);
+    }
 
     #[test]
     fn test_strip_ats() {

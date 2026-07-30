@@ -468,10 +468,11 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.revoke_mr,
-                            key_event,
-                        ) =>
+                        _ if key_event.code == KeyCode::Char('A')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.revoke_mr,
+                                key_event,
+                            ) =>
                         {
                             let is_github = app
                                 .gitlab_client
@@ -487,10 +488,11 @@ pub async fn handle_active_tab_key(
                                     Some(crate::app::ConfirmAction::RevokeMr(mr_iid));
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.rebase_mr,
-                            key_event,
-                        ) =>
+                        _ if key_event.code == KeyCode::Char('R')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.rebase_mr,
+                                key_event,
+                            ) =>
                         {
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {

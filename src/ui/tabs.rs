@@ -1155,12 +1155,15 @@ pub(crate) fn render_tab_merge_requests(
                     ]));
                 }
 
-                // Threads — spells out what the Status flag means. Shown only
-                // when genuinely unresolved.
+                // Blocking — spells out what the Status flag means. Shown only
+                // when genuinely unresolved. Distinct from the pre-existing
+                // "Threads:" line further below, which counts resolvable
+                // threads once notes are fetched; this measures GitLab's
+                // blocking-discussions flag, available immediately.
                 if mr.blocking_discussions_resolved == Some(false) {
                     text.push(Line::from(vec![
                         Span::styled(
-                            "Threads:   ",
+                            "Blocking:  ",
                             Style::default().fg(THEME.read().unwrap().text_muted),
                         ),
                         Span::styled(

@@ -880,6 +880,13 @@ impl Backend for GhBackend {
         Ok(())
     }
 
+    async fn revoke_mr(&self, _project: &str, _iid: u64) -> Result<()> {
+        // `gh pr review` has no revoke flag. The only path is the review
+        // dismissal API, which needs a review-ID lookup and write permission,
+        // so it is deliberately out of scope.
+        anyhow::bail!("Revoking approval isn't supported on GitHub")
+    }
+
     async fn list_mr_state(
         &self,
         _project: &str,

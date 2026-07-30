@@ -1787,6 +1787,7 @@ pub enum ConfirmAction {
     CloseIssue(u64),       // issue iid
     CloseMr(u64),          // mr iid
     MergeMr(u64),          // mr iid
+    RevokeMr(u64),         // mr iid
     SubmitReview(u64),     // mr iid
 }
 

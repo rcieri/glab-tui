@@ -696,6 +696,8 @@ pub struct KeybindingMrs {
     pub create_mr: String,
     #[serde(default)]
     pub approve_mr: String,
+    #[serde(default = "def_revoke_mr")]
+    pub revoke_mr: String,
     #[serde(default)]
     pub merge_mr: String,
     #[serde(default)]
@@ -876,6 +878,7 @@ keybind_defaults! {
     def_create_mr = "n",
     def_select_mr = "Space",
     def_approve_mr = "a",
+    def_revoke_mr = "A",
     def_merge_mr = "m",
     def_toggle_draft = "s",
     def_view_diff = "v",
@@ -951,6 +954,7 @@ impl Default for KeybindingMrs {
         Self {
             create_mr: def_create_mr(),
             approve_mr: def_approve_mr(),
+            revoke_mr: def_revoke_mr(),
             merge_mr: def_merge_mr(),
             toggle_draft: def_toggle_draft(),
             view_diff: def_view_diff(),
@@ -1254,6 +1258,7 @@ delete_entity = "d"
 create_mr = "n"
 select_mr = "Space"
 approve_mr = "a"
+revoke_mr = "A"
 merge_mr = "m"
 toggle_draft = "s"
 view_diff = "v"
@@ -1684,6 +1689,14 @@ pub fn reload_theme() {
     }
 }
 
+pub fn set_theme_preset(name: &str) {
+    if let Some(preset) = Theme::preset(name) {
+        if let Ok(mut theme) = THEME.write() {
+            *theme = preset;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1722,12 +1735,34 @@ page_size = 250
         assert_eq!(cfg.api_per_page, 100);
         assert_eq!(cfg.page_size, 250);
     }
-}
 
-pub fn set_theme_preset(name: &str) {
-    if let Some(preset) = Theme::preset(name) {
-        if let Ok(mut theme) = THEME.write() {
-            *theme = preset;
+    #[test]
+    fn revoke_mr_defaults_to_shift_a() {
+        let cfg = Config::default();
+        assert_eq!(cfg.keybindings.mrs.revoke_mr, "A");
+    }
+
+    #[test]
+    fn mr_keybindings_do_not_collide() {
+        let cfg = Config::default();
+        let m = &cfg.keybindings.mrs;
+        let bindings = [
+            &m.create_mr,
+            &m.approve_mr,
+            &m.revoke_mr,
+            &m.merge_mr,
+            &m.toggle_draft,
+            &m.view_diff,
+            &m.view_related_pipelines,
+            &m.edit_entity,
+            &m.close_entity,
+            &m.reopen_entity,
+            &m.delete_entity,
+        ];
+        for (i, a) in bindings.iter().enumerate() {
+            for b in bindings.iter().skip(i + 1) {
+                assert_ne!(a, b, "duplicate MR keybinding: {a}");
+            }
         }
     }
 }

@@ -684,6 +684,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.revoke_mr)),
+                action: "Revoke your approval (GitLab only)",
+            },
+            Shortcut {
+                category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.merge_mr)),
                 action: "Merge selected MR (configure squash/delete)",
             },
@@ -1822,6 +1827,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     format!("Are you sure you want to merge {mr_short} #{}?", iid),
                 )
             }
+            crate::app::ConfirmAction::RevokeMr(iid) => (
+                format!(" {} Revoke Approval? ", icons.action_review),
+                format!(
+                    "Are you sure you want to revoke your approval on MR #{}?",
+                    iid
+                ),
+            ),
             crate::app::ConfirmAction::SubmitReview(_) => (
                 format!(" {} Submit Review? ", icons.action_review),
                 "You have pending draft comments. Would you like to submit your review now?"

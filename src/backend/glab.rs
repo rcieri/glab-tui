@@ -1074,6 +1074,15 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
+    async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_glab(
+            &["mr", "revoke", &iid.to_string(), "-R", project],
+            "REVOKING MR APPROVAL",
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn list_mr_state(
         &self,
         project: &str,

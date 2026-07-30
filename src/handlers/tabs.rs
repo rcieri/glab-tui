@@ -469,6 +469,25 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         _ if keybinding_matches(
+                            &app.config.keybindings.mrs.revoke_mr,
+                            key_event,
+                        ) =>
+                        {
+                            let is_github = app
+                                .gitlab_client
+                                .as_ref()
+                                .map(|c| c.is_github)
+                                .unwrap_or(false);
+                            if is_github {
+                                app.error_message =
+                                    Some("Revoking approval isn't supported on GitHub".to_string());
+                                app.error_message_at = Some(std::time::Instant::now());
+                            } else {
+                                app.confirm_popup =
+                                    Some(crate::app::ConfirmAction::RevokeMr(mr_iid));
+                            }
+                        }
+                        _ if keybinding_matches(
                             &app.config.keybindings.mrs.merge_mr,
                             key_event,
                         ) =>

@@ -887,6 +887,22 @@ impl Backend for GhBackend {
         anyhow::bail!("Revoking approval isn't supported on GitHub")
     }
 
+    async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &[
+                "pr",
+                "update-branch",
+                &iid.to_string(),
+                "-R",
+                project,
+                "--rebase",
+            ],
+            "REBASING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn list_mr_state(
         &self,
         _project: &str,

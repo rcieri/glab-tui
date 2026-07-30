@@ -1083,6 +1083,15 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
+    async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_glab(
+            &["mr", "rebase", &iid.to_string(), "-R", project],
+            "REBASING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn list_mr_state(
         &self,
         project: &str,

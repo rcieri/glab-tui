@@ -364,6 +364,8 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `n` | Create MR from issue ID (prompts for issue IID) | `create_mr` |
 | `e` | Open edit menu for selected MR (opens bulk edit menu when multiple are selected) | `edit_entity` |
 | `a` | Approve selected MR | `approve_mr` |
+| `A` | Revoke your approval *(GitLab only)* | `revoke_mr` |
+| `R` | Rebase source branch onto target | `rebase_mr` |
 | `m` | Merge selected MR (squash + remove source branch) | `merge_mr` |
 | `v` | View diff of selected MR in terminal | `view_diff` |
 | `P` | View related pipelines from MR detail | `view_related_pipelines` |

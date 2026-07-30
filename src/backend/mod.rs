@@ -137,6 +137,8 @@ pub trait Backend: Send + Sync {
     async fn approve_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Revoke your own approval. GitLab only — see the GhBackend impl.
     async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()>;
+    /// Rebase the source branch onto the target. Supported on both hosts.
+    async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn merge_mr(
         &self,
         project: &str,

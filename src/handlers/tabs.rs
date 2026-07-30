@@ -488,6 +488,31 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         _ if keybinding_matches(
+                            &app.config.keybindings.mrs.rebase_mr,
+                            key_event,
+                        ) =>
+                        {
+                            use crate::domain::mr_state::{RebaseGate, rebase_gate};
+                            match rebase_gate(mr.mergeability.as_ref()) {
+                                RebaseGate::Allowed => {
+                                    app.confirm_popup =
+                                        Some(crate::app::ConfirmAction::RebaseMr(mr_iid));
+                                }
+                                RebaseGate::ResolveLocally => {
+                                    app.error_message = Some(
+                                        "Resolve conflicts locally; rebase can't fix them"
+                                            .to_string(),
+                                    );
+                                    app.error_message_at = Some(std::time::Instant::now());
+                                }
+                                RebaseGate::NotNeeded => {
+                                    app.error_message =
+                                        Some("This MR doesn't need a rebase".to_string());
+                                    app.error_message_at = Some(std::time::Instant::now());
+                                }
+                            }
+                        }
+                        _ if keybinding_matches(
                             &app.config.keybindings.mrs.merge_mr,
                             key_event,
                         ) =>

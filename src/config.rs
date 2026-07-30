@@ -698,6 +698,8 @@ pub struct KeybindingMrs {
     pub approve_mr: String,
     #[serde(default = "def_revoke_mr")]
     pub revoke_mr: String,
+    #[serde(default = "def_rebase_mr")]
+    pub rebase_mr: String,
     #[serde(default)]
     pub merge_mr: String,
     #[serde(default)]
@@ -879,6 +881,7 @@ keybind_defaults! {
     def_select_mr = "Space",
     def_approve_mr = "a",
     def_revoke_mr = "A",
+    def_rebase_mr = "R",
     def_merge_mr = "m",
     def_toggle_draft = "s",
     def_view_diff = "v",
@@ -955,6 +958,7 @@ impl Default for KeybindingMrs {
             create_mr: def_create_mr(),
             approve_mr: def_approve_mr(),
             revoke_mr: def_revoke_mr(),
+            rebase_mr: def_rebase_mr(),
             merge_mr: def_merge_mr(),
             toggle_draft: def_toggle_draft(),
             view_diff: def_view_diff(),
@@ -1259,6 +1263,7 @@ create_mr = "n"
 select_mr = "Space"
 approve_mr = "a"
 revoke_mr = "A"
+rebase_mr = "R"
 merge_mr = "m"
 toggle_draft = "s"
 view_diff = "v"
@@ -1740,6 +1745,12 @@ page_size = 250
     fn revoke_mr_defaults_to_shift_a() {
         let cfg = Config::default();
         assert_eq!(cfg.keybindings.mrs.revoke_mr, "A");
+    }
+
+    #[test]
+    fn rebase_mr_defaults_to_shift_r() {
+        let cfg = Config::default();
+        assert_eq!(cfg.keybindings.mrs.rebase_mr, "R");
     }
 
     #[test]

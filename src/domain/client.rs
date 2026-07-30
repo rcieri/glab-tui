@@ -160,6 +160,10 @@ impl GitlabClient {
         self.backend.revoke_mr(project, iid).await
     }
 
+    pub async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.rebase_mr(project, iid).await
+    }
+
     pub async fn list_mr_state(
         &self,
         project: &str,

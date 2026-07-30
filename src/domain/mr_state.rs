@@ -158,6 +158,25 @@ pub fn approval_sort_key(state: Option<&ApprovalState>) -> u8 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebaseGate {
+    Allowed,
+    /// Rebase cannot resolve a conflict — that needs local work.
+    ResolveLocally,
+    NotNeeded,
+}
+
+/// Whether `R` should act, refuse, or no-op, so the action matches what the
+/// Mergeable column shows. Kept pure and separate from the handler so the
+/// decision is unit-testable.
+pub fn rebase_gate(state: Option<&MergeabilityState>) -> RebaseGate {
+    match state {
+        Some(s) if s.conflicts => RebaseGate::ResolveLocally,
+        Some(s) if s.needs_rebase => RebaseGate::Allowed,
+        _ => RebaseGate::NotNeeded,
+    }
+}
+
 pub fn mergeable_sort_key(state: Option<&MergeabilityState>) -> u8 {
     match mergeable_cell(state).1 {
         MergeTone::Conflict => 0,
@@ -574,5 +593,49 @@ mod tests {
         let v = status_filter_values(true, Some(false));
         assert!(v.contains(&"Draft".to_string()));
         assert!(v.contains(&"Unresolved discussions".to_string()));
+    }
+
+    // ── rebase gate ──
+
+    #[test]
+    fn rebase_allowed_when_behind_target() {
+        let s = MergeabilityState {
+            conflicts: false,
+            needs_rebase: true,
+            computing: false,
+        };
+        assert_eq!(rebase_gate(Some(&s)), RebaseGate::Allowed);
+    }
+
+    #[test]
+    fn rebase_refused_on_conflicts() {
+        // Rebase cannot resolve a conflict; that needs local work.
+        let s = MergeabilityState {
+            conflicts: true,
+            needs_rebase: true,
+            computing: false,
+        };
+        assert_eq!(rebase_gate(Some(&s)), RebaseGate::ResolveLocally);
+    }
+
+    #[test]
+    fn rebase_not_needed_when_clean() {
+        let s = MergeabilityState {
+            conflicts: false,
+            needs_rebase: false,
+            computing: false,
+        };
+        assert_eq!(rebase_gate(Some(&s)), RebaseGate::NotNeeded);
+    }
+
+    #[test]
+    fn rebase_not_needed_while_computing_or_unknown() {
+        let s = MergeabilityState {
+            conflicts: false,
+            needs_rebase: false,
+            computing: true,
+        };
+        assert_eq!(rebase_gate(Some(&s)), RebaseGate::NotNeeded);
+        assert_eq!(rebase_gate(None), RebaseGate::NotNeeded);
     }
 }

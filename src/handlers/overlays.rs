@@ -230,6 +230,20 @@ pub fn handle_confirm_popup(
                             ));
                         });
                     }
+                    crate::app::ConfirmAction::RebaseMr(iid) => {
+                        let Some(client) = app.gitlab_client.clone() else {
+                            return true;
+                        };
+                        let project_path = app.project_context.clone();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client.rebase_mr(&project_path, iid).await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
                     crate::app::ConfirmAction::SubmitReview(mr_iid) => {
                         app.selector = Some(crate::app::Selector {
                             title: " Submit Pull Request Review ".to_string(),

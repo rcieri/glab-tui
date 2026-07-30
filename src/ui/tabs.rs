@@ -1052,6 +1052,124 @@ pub(crate) fn render_tab_merge_requests(
                     ),
                     Span::styled(reviewers, Style::default().fg(THEME.read().unwrap().blue)),
                 ]));
+
+                // Approval — omitted entirely when unknown, so a failed fetch
+                // never reads as "not approved".
+                if let Some(ap) = mr.approval.as_ref() {
+                    let (label, color) = if ap.changes_requested {
+                        (
+                            format!("{} Changes requested", icons.approval_changes),
+                            THEME.read().unwrap().red,
+                        )
+                    } else if ap.awaiting_you {
+                        let counts = match ap.approvals_required {
+                            Some(r) if r > 0 => format!("{}/{}", ap.approved_by.len(), r),
+                            _ => ap.approved_by.len().to_string(),
+                        };
+                        (
+                            format!("{} Needs approval ({})", icons.approval_pending, counts),
+                            THEME.read().unwrap().yellow,
+                        )
+                    } else if ap.approved && !ap.approved_by.is_empty() {
+                        let counts = match ap.approvals_required {
+                            Some(r) if r > 0 => format!(" ({}/{})", ap.approved_by.len(), r),
+                            _ => format!(" ({})", ap.approved_by.len()),
+                        };
+                        (
+                            format!("{} Approved{}", icons.approval_approved, counts),
+                            THEME.read().unwrap().green,
+                        )
+                    } else {
+                        (
+                            "Pending approval".to_string(),
+                            THEME.read().unwrap().text_muted,
+                        )
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Approval:  ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(label, Style::default().fg(color)),
+                    ]));
+
+                    let approvers = if ap.approved_by.is_empty() {
+                        "—".to_string()
+                    } else {
+                        ap.approved_by
+                            .iter()
+                            .map(|u| format!("@{}", u))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            " approved by ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(approvers, Style::default().fg(THEME.read().unwrap().blue)),
+                    ]));
+
+                    if ap.you_approved {
+                        text.push(Line::from(vec![Span::styled(
+                            format!(" you: {} you approved this", icons.approval_approved),
+                            Style::default().fg(THEME.read().unwrap().green),
+                        )]));
+                    } else if ap.awaiting_you {
+                        text.push(Line::from(vec![Span::styled(
+                            format!(" you: {} your approval is needed", icons.approval_pending),
+                            Style::default().fg(THEME.read().unwrap().yellow),
+                        )]));
+                    }
+                }
+
+                // Mergeable — likewise omitted when unknown.
+                if let Some(mg) = mr.mergeability.as_ref() {
+                    let (label, color) = if mg.conflicts {
+                        (
+                            format!("{} Merge conflicts", icons.merge_conflict),
+                            THEME.read().unwrap().red,
+                        )
+                    } else if mg.needs_rebase {
+                        (
+                            format!("{} Behind target — needs rebase", icons.merge_rebase),
+                            THEME.read().unwrap().yellow,
+                        )
+                    } else if mg.computing {
+                        (
+                            format!("{} Checking…", icons.merge_checking),
+                            THEME.read().unwrap().text_muted,
+                        )
+                    } else {
+                        (
+                            format!("{} No conflicts", icons.merge_clean),
+                            THEME.read().unwrap().green,
+                        )
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Mergeable: ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(label, Style::default().fg(color)),
+                    ]));
+                }
+
+                // Threads — spells out what the Status flag means. Shown only
+                // when genuinely unresolved.
+                if mr.blocking_discussions_resolved == Some(false) {
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Threads:   ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            format!("{} unresolved discussions", icons.flag_unresolved),
+                            Style::default().fg(THEME.read().unwrap().red),
+                        ),
+                    ]));
+                }
+
                 text.push(Line::from(vec![
                     Span::styled(
                         "Milestone: ",

@@ -1745,23 +1745,28 @@ page_size = 250
     #[test]
     fn mr_keybindings_do_not_collide() {
         let cfg = Config::default();
-        let m = &cfg.keybindings.mrs;
-        let bindings = [
-            &m.create_mr,
-            &m.approve_mr,
-            &m.revoke_mr,
-            &m.merge_mr,
-            &m.toggle_draft,
-            &m.view_diff,
-            &m.view_related_pipelines,
-            &m.edit_entity,
-            &m.close_entity,
-            &m.reopen_entity,
-            &m.delete_entity,
-        ];
-        for (i, a) in bindings.iter().enumerate() {
-            for b in bindings.iter().skip(i + 1) {
-                assert_ne!(a, b, "duplicate MR keybinding: {a}");
+
+        // Enumerate fields via the struct's own `Serialize` impl instead of a
+        // hand-maintained array: a manually listed array silently excludes
+        // whatever field the author forgot to add (this happened once
+        // already -- `select_mr` was missing), so a newly added
+        // `KeybindingMrs` field is picked up automatically here with no
+        // extra step required.
+        let value = serde_json::to_value(&cfg.keybindings.mrs).expect("serialize KeybindingMrs");
+        let fields = value
+            .as_object()
+            .expect("KeybindingMrs serializes to a JSON object");
+        assert!(!fields.is_empty(), "KeybindingMrs serialized to no fields");
+
+        let mut seen: HashMap<&str, &str> = HashMap::new();
+        for (field, binding) in fields {
+            let binding = binding
+                .as_str()
+                .expect("every KeybindingMrs field is a string");
+            if let Some(other_field) = seen.insert(binding, field) {
+                panic!(
+                    "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
+                );
             }
         }
     }

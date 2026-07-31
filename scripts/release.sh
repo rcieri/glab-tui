@@ -43,6 +43,10 @@ preflight() {
   require ffmpeg "apt install ffmpeg / brew install ffmpeg"
   require unzip "apt install unzip"
   gh auth status >/dev/null 2>&1 || die "not authenticated with gh; run 'gh auth login' first"
+  for repo in rcieri/homebrew-glab-tui rcieri/scoop-glab-tui; do
+    gh api "repos/$repo" --jq '.permissions.push' | grep -q true || \
+      die "no push access to $repo; grant your token write permission"
+  done
   fc-list 2>/dev/null | grep -qi "JetBrainsMono.*Nerd" || \
     die "JetBrainsMono Nerd Font not installed (download from https://github.com/ryanoasis/nerd-fonts)"
 }

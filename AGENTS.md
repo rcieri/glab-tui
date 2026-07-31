@@ -314,12 +314,12 @@ Releases are prepared, documented, and distributed from a maintainer's machine v
 
 Run `scripts/release.sh [patch|minor|major]` (default `patch`) and the script walks the full release:
 
-1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, and JetBrainsMono Nerd Font; exits non-zero with a clear message if a prerequisite is missing.
+1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, JetBrainsMono Nerd Font, and push access to both manifest repos (`rcieri/homebrew-glab-tui`, `rcieri/scoop-glab-tui`); exits non-zero with a clear message if a prerequisite is missing.
 2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
 3. **Review gate** — pauses for the maintainer to review the PR (CI checks run in the background); the script continues on Enter.
 4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 5-target binary matrix and uploads them to the GitHub release.
 5. **Wait for build** — polls until all 5 release assets exist (timeout: `RELEASE_WAIT_MIN`, default 45 min).
-6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest.
+6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest. The manifest repos' scheduled auto-updaters have been removed; this local sync is the only update path.
 7. **Publish** — pushes the Docker image to GHCR and publishes the crate to crates.io.
 
 Model override for the opencode steps: set `OPENCODE_MODEL` (e.g. `opencode-go/deepseek-v4-flash`).

@@ -1203,21 +1203,43 @@ pub(crate) fn render_tab_merge_requests(
                     ]));
                 }
 
-                // Blocking — spells out what the Status flag means. Shown only
-                // when genuinely unresolved. Distinct from the pre-existing
-                // "Threads:" line further below, which counts resolvable
-                // threads once notes are fetched; this measures GitLab's
-                // blocking-discussions flag, available immediately.
-                if mr.blocking_discussions_resolved == Some(false) {
+                // One Threads line. The blocking flag is always available; the
+                // count only after the diff has been fetched for this MR.
+                let count = if Some(mr.iid) == app.last_fetched_mr_iid {
+                    Some(app.unresolved_threads_count())
+                } else {
+                    None
+                };
+                if let Some(resolved) = mr.blocking_discussions_resolved {
+                    let icons = crate::config::ICONS.read().unwrap();
+                    let (threads_text, threads_color) = match (resolved, count) {
+                        (false, None) => (
+                            format!("{} blocking merge", icons.flag_unresolved),
+                            THEME.read().unwrap().red,
+                        ),
+                        (false, Some(n)) => (
+                            format!("{} {} open, blocking merge", icons.flag_unresolved, n),
+                            THEME.read().unwrap().red,
+                        ),
+                        (true, None) => (
+                            format!("{} none blocking", icons.merge_clean),
+                            THEME.read().unwrap().green,
+                        ),
+                        (true, Some(0)) => (
+                            format!("{} all resolved", icons.merge_clean),
+                            THEME.read().unwrap().green,
+                        ),
+                        (true, Some(n)) => (
+                            format!("{} {} open, none blocking", icons.merge_clean, n),
+                            THEME.read().unwrap().green,
+                        ),
+                    };
                     text.push(Line::from(vec![
                         Span::styled(
-                            "Blocking:  ",
+                            "Threads:   ",
                             Style::default().fg(THEME.read().unwrap().text_muted),
                         ),
-                        Span::styled(
-                            format!("{} unresolved discussions", icons.flag_unresolved),
-                            Style::default().fg(THEME.read().unwrap().red),
-                        ),
+                        Span::styled(threads_text, Style::default().fg(threads_color)),
                     ]));
                 }
 
@@ -1368,25 +1390,6 @@ pub(crate) fn render_tab_merge_requests(
                             ),
                         ]));
                     }
-                }
-                if Some(mr.iid) == app.last_fetched_mr_iid {
-                    let unresolved_count = app.unresolved_threads_count();
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Threads:   ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            format!("{} unresolved", unresolved_count),
-                            Style::default()
-                                .fg(if unresolved_count > 0 {
-                                    THEME.read().unwrap().red
-                                } else {
-                                    THEME.read().unwrap().green
-                                })
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
                 }
                 text.push(Line::from(""));
                 let mut label_spans = vec![Span::styled(

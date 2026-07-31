@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-// Can be removed once later tasks (Task 7+) consume these functions.
-
 use serde::{Deserialize, Serialize};
 
 /// One merge request's workflow status, in GitLab's vocabulary.
@@ -38,18 +35,6 @@ pub struct WorkflowInputs<'a> {
     pub you_approved: bool,
     /// You submitted any review — approved OR requested changes.
     pub you_reviewed: bool,
-}
-
-impl WorkflowStatus {
-    /// The three statuses GitLab counts toward your review total.
-    pub fn is_active(self) -> bool {
-        matches!(
-            self,
-            WorkflowStatus::ReturnedToYou
-                | WorkflowStatus::ReviewRequested
-                | WorkflowStatus::YourMergeRequest
-        )
-    }
 }
 
 /// First-match cascade. Returns `None` only when the answer is unknowable —
@@ -106,43 +91,51 @@ pub fn workflow_sort_key(s: Option<WorkflowStatus>) -> u8 {
     }
 }
 
+/// The (glyph, word) pair for each of the six real statuses — the single
+/// source both `workflow_cell` and `workflow_icon` build on, so a
+/// same-variant icon swap in one can never silently diverge from the other.
+/// `NotYours` returns `None`: it has no glyph or word of its own (both
+/// callers render it as blank, not through this match), which is why it is
+/// excluded here rather than given an empty pair.
+fn workflow_icon_and_word(s: WorkflowStatus) -> Option<(String, &'static str)> {
+    let icons = crate::config::ICONS.read().unwrap();
+    Some(match s {
+        WorkflowStatus::ReturnedToYou => (icons.workflow_returned.clone(), "Returned"),
+        WorkflowStatus::ReviewRequested => (icons.workflow_review.clone(), "Review req"),
+        WorkflowStatus::YourMergeRequest => (icons.workflow_yours.clone(), "Yours"),
+        WorkflowStatus::ApprovedByYou => (icons.workflow_approved.clone(), "Approved"),
+        WorkflowStatus::ApprovedByOthers => (icons.workflow_approved_others.clone(), "by others"),
+        WorkflowStatus::Inactive => (icons.workflow_inactive.clone(), "Inactive"),
+        WorkflowStatus::NotYours => return None,
+    })
+}
+
 /// Abbreviated cell text. Full wording lives in the Details pane, because
 /// "Returned to you" is 16 chars and the column clamps to 10 below 90 columns.
 pub fn workflow_cell(s: Option<WorkflowStatus>) -> String {
-    let icons = crate::config::ICONS.read().unwrap();
     match s {
-        Some(WorkflowStatus::ReturnedToYou) => format!("{} Returned", icons.workflow_returned),
-        Some(WorkflowStatus::ReviewRequested) => {
-            format!("{} Review req", icons.workflow_review)
-        }
-        Some(WorkflowStatus::YourMergeRequest) => format!("{} Yours", icons.workflow_yours),
-        Some(WorkflowStatus::ApprovedByYou) => format!("{} Approved", icons.workflow_approved),
-        Some(WorkflowStatus::ApprovedByOthers) => {
-            format!("{} by others", icons.workflow_approved_others)
-        }
-        Some(WorkflowStatus::Inactive) => format!("{} Inactive", icons.workflow_inactive),
         // Known "not yours" renders blank so the 24-of-33 common case stays quiet.
         Some(WorkflowStatus::NotYours) => String::new(),
         // Unknown is visibly distinct from blank.
         None => "—".to_string(),
+        Some(status) => match workflow_icon_and_word(status) {
+            Some((icon, word)) => format!("{icon} {word}"),
+            None => String::new(),
+        },
     }
 }
 
 /// Just the glyph `workflow_cell` prefixes its text with, for the Details
 /// pane — which spells out the full label separately instead of clamping
 /// icon and text together like the table column does. Reads from the same
-/// `ICONS` fields as `workflow_cell` so the two can never disagree on which
-/// glyph a status gets.
+/// `workflow_icon_and_word` match as `workflow_cell` so the two can never
+/// disagree on which glyph a status gets.
 pub fn workflow_icon(s: Option<WorkflowStatus>) -> String {
-    let icons = crate::config::ICONS.read().unwrap();
     match s {
-        Some(WorkflowStatus::ReturnedToYou) => icons.workflow_returned.clone(),
-        Some(WorkflowStatus::ReviewRequested) => icons.workflow_review.clone(),
-        Some(WorkflowStatus::YourMergeRequest) => icons.workflow_yours.clone(),
-        Some(WorkflowStatus::ApprovedByYou) => icons.workflow_approved.clone(),
-        Some(WorkflowStatus::ApprovedByOthers) => icons.workflow_approved_others.clone(),
-        Some(WorkflowStatus::Inactive) => icons.workflow_inactive.clone(),
-        Some(WorkflowStatus::NotYours) | None => String::new(),
+        Some(status) => workflow_icon_and_word(status)
+            .map(|(icon, _)| icon)
+            .unwrap_or_default(),
+        None => String::new(),
     }
 }
 
@@ -164,7 +157,16 @@ pub fn workflow_label(s: Option<WorkflowStatus>) -> Option<&'static str> {
 ///
 /// `None` at the call site means *unknown* (fetch failed or unsupported),
 /// never "unapproved" — see `approval_cell`.
+///
+/// Container-level `#[serde(default)]`: deserializing a cache written before
+/// a field existed on this struct (e.g. `you_reviewed`, added later) must not
+/// fail. Without this, `load_cache`'s `serde_json::from_str` returns `Err`
+/// for a *missing field*, which `load_cache` swallows into
+/// `ProjectCache::default()` — silently discarding the entire cache, not
+/// just this field: issues, pipelines, runners, releases, todos, milestones,
+/// branches, and environments all vanish with it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ApprovalState {
     pub approved: bool,
     /// `None` on GitHub, which exposes no approval counts.
@@ -186,7 +188,12 @@ pub struct ApprovalState {
 
 /// Merge readiness for one merge request. Independent of `ApprovalState`:
 /// an MR can be approved *and* conflicted at the same time.
+///
+/// Container-level `#[serde(default)]` for the same reason as
+/// `ApprovalState`: a future field added here must not turn a missing-field
+/// error into a silently discarded cache.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MergeabilityState {
     pub conflicts: bool,
     pub needs_rebase: bool,
@@ -351,6 +358,56 @@ pub fn mergeable_sort_key(state: Option<&MergeabilityState>) -> u8 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadsTone {
+    Blocking,
+    Clean,
+}
+
+/// The Details pane's single `Threads:` line, merging two signals that
+/// arrive at different times: whether unresolved threads block the merge
+/// (`resolved`, always known once the MR list loads) and how many are
+/// unresolved (`count`, known only after this MR's diff has been fetched).
+/// `None` when `resolved` itself is unknown — GitLab always has it; GitHub
+/// never does (see the call site in `ui/tabs.rs`, which explains why no
+/// GitHub-side count is substituted instead).
+///
+/// A count of zero cannot *sharpen* a blocking claim, only contradict it —
+/// `blocking` with a zero count is a stale-count artifact (the list flag
+/// hadn't caught up with freshly-fetched notes), not evidence of zero open
+/// threads while still blocking. So `(false, Some(0))` collapses into the
+/// same wording as `(false, None)` rather than rendering the self-contradictory
+/// "0 open, blocking merge".
+pub fn threads_line_text(
+    resolved: Option<bool>,
+    count: Option<usize>,
+    icons: &crate::config::Icons,
+) -> Option<(String, ThreadsTone)> {
+    let resolved = resolved?;
+    Some(match (resolved, count) {
+        (false, None) | (false, Some(0)) => (
+            format!("{} blocking merge", icons.flag_unresolved),
+            ThreadsTone::Blocking,
+        ),
+        (false, Some(n)) => (
+            format!("{} {} open, blocking merge", icons.flag_unresolved, n),
+            ThreadsTone::Blocking,
+        ),
+        (true, None) => (
+            format!("{} none blocking", icons.merge_clean),
+            ThreadsTone::Clean,
+        ),
+        (true, Some(0)) => (
+            format!("{} all resolved", icons.merge_clean),
+            ThreadsTone::Clean,
+        ),
+        (true, Some(n)) => (
+            format!("{} {} open, none blocking", icons.merge_clean, n),
+            ThreadsTone::Clean,
+        ),
+    })
+}
+
 /// Independent flag glyphs appended to the Status cell's base word.
 ///
 /// Each flag occupies its own slot, so `DRAFT` and the flag never displace one
@@ -384,6 +441,50 @@ pub fn status_filter_values(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── cache backward-compatibility ──
+
+    #[test]
+    fn approval_state_missing_new_fields_deserializes_with_defaults() {
+        // Regression guard: without a container-level `#[serde(default)]`,
+        // deserializing a cache written before `you_reviewed` (or
+        // `current_user`) existed on this struct fails with "missing field",
+        // and `load_cache` silently swallows that into
+        // `ProjectCache::default()` — discarding not just this field but the
+        // entire cache (issues, pipelines, runners, releases, todos,
+        // milestones, branches, environments all vanish with it).
+        let json = r#"{
+            "approved": true,
+            "approvals_left": null,
+            "approvals_required": null,
+            "approved_by": ["someone"],
+            "changes_requested": false,
+            "you_approved": false,
+            "awaiting_you": false
+        }"#;
+
+        let state: ApprovalState =
+            serde_json::from_str(json).expect("must deserialize despite missing fields");
+
+        assert!(!state.you_reviewed);
+        assert_eq!(state.current_user, None);
+        // Fields that were present must still round-trip correctly, so this
+        // isn't just falling back to a blanket default.
+        assert!(state.approved);
+        assert_eq!(state.approved_by, vec!["someone".to_string()]);
+    }
+
+    #[test]
+    fn mergeability_state_missing_fields_deserializes_with_defaults() {
+        let json = r#"{"conflicts": true}"#;
+
+        let state: MergeabilityState =
+            serde_json::from_str(json).expect("must deserialize despite missing fields");
+
+        assert!(state.conflicts);
+        assert!(!state.needs_rebase);
+        assert!(!state.computing);
+    }
 
     fn approved_by(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
@@ -1035,5 +1136,72 @@ mod tests {
             by_others, mine,
             "ApprovedByOthers must not share ApprovedByYou's icon"
         );
+    }
+
+    // ── threads line (Details pane matrix) ──
+
+    fn icons() -> crate::config::Icons {
+        crate::config::ICONS.read().unwrap().clone()
+    }
+
+    #[test]
+    fn threads_line_unknown_flag_is_omitted() {
+        assert_eq!(threads_line_text(None, None, &icons()), None);
+        assert_eq!(threads_line_text(None, Some(3), &icons()), None);
+    }
+
+    #[test]
+    fn threads_line_blocking_with_unknown_count() {
+        let (text, tone) = threads_line_text(Some(false), None, &icons()).unwrap();
+        assert_eq!(text, format!("{} blocking merge", icons().flag_unresolved));
+        assert_eq!(tone, ThreadsTone::Blocking);
+    }
+
+    #[test]
+    fn threads_line_blocking_with_known_count() {
+        let (text, tone) = threads_line_text(Some(false), Some(3), &icons()).unwrap();
+        assert_eq!(
+            text,
+            format!("{} 3 open, blocking merge", icons().flag_unresolved)
+        );
+        assert_eq!(tone, ThreadsTone::Blocking);
+    }
+
+    #[test]
+    fn threads_line_blocking_with_zero_count_collapses_to_unknown_wording() {
+        // The bug this guards: a stale `blocking` flag alongside a
+        // freshly-fetched zero count must not render the self-contradictory
+        // "0 open, blocking merge" — a zero count can only contradict a
+        // blocking claim, never sharpen it, so this must render identically
+        // to the unknown-count row.
+        let with_zero = threads_line_text(Some(false), Some(0), &icons()).unwrap();
+        let unknown = threads_line_text(Some(false), None, &icons()).unwrap();
+        assert_eq!(with_zero, unknown);
+    }
+
+    #[test]
+    fn threads_line_clean_with_unknown_count() {
+        let (text, tone) = threads_line_text(Some(true), None, &icons()).unwrap();
+        assert_eq!(text, format!("{} none blocking", icons().merge_clean));
+        assert_eq!(tone, ThreadsTone::Clean);
+    }
+
+    #[test]
+    fn threads_line_clean_with_zero_count() {
+        let (text, tone) = threads_line_text(Some(true), Some(0), &icons()).unwrap();
+        assert_eq!(text, format!("{} all resolved", icons().merge_clean));
+        assert_eq!(tone, ThreadsTone::Clean);
+    }
+
+    #[test]
+    fn threads_line_clean_with_positive_count() {
+        // The row that justifies keeping both signals separate: threads are
+        // open but not required to be resolved, so they do not block.
+        let (text, tone) = threads_line_text(Some(true), Some(3), &icons()).unwrap();
+        assert_eq!(
+            text,
+            format!("{} 3 open, none blocking", icons().merge_clean)
+        );
+        assert_eq!(tone, ThreadsTone::Clean);
     }
 }

@@ -773,7 +773,7 @@ pub(crate) fn render_tab_merge_requests(
                     is_selected,
                     is_checked,
                     Style::default().fg(color),
-                    Alignment::Left,
+                    Alignment::Center,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Labels") {
@@ -962,7 +962,9 @@ pub(crate) fn render_tab_merge_requests(
             widths.push(col_w(content_area.width, 13));
         }
         if app.is_column_visible(Tab::MergeRequests, "Workflow") {
-            header_cells.push(Cell::from("Workflow"));
+            header_cells.push(Cell::from(
+                Line::from("Workflow").alignment(Alignment::Center),
+            ));
             widths.push(col_w(content_area.width, 13));
         }
         if app.is_column_visible(Tab::MergeRequests, "Labels") {
@@ -1203,36 +1205,32 @@ pub(crate) fn render_tab_merge_requests(
                     ]));
                 }
 
-                // One Threads line. The blocking flag is always available; the
-                // count only after the diff has been fetched for this MR.
+                // One Threads line. The blocking flag is always available on
+                // GitLab; the count only after the diff has been fetched for
+                // this MR. GitHub deliberately omits this line entirely:
+                // `blocking_discussions_resolved` has no GitHub equivalent
+                // (always `None` there), and no GitHub-side count can stand
+                // in for it — `list_mr_notes` hard-codes `resolved:
+                // Some(false)` for every review comment, so
+                // `unresolved_threads_count()` on GitHub counts *all*
+                // threads, not unresolved ones. Rendering that as a threads
+                // status would be a confidently wrong number, which is worse
+                // than an absent line. (Spec: the design's Threads matrix was
+                // written assuming the flag was universally available; this
+                // omission is the corrected behavior, not a gap to fill.)
                 let count = if Some(mr.iid) == app.last_fetched_mr_iid {
                     Some(app.unresolved_threads_count())
                 } else {
                     None
                 };
-                if let Some(resolved) = mr.blocking_discussions_resolved {
-                    let icons = crate::config::ICONS.read().unwrap();
-                    let (threads_text, threads_color) = match (resolved, count) {
-                        (false, None) => (
-                            format!("{} blocking merge", icons.flag_unresolved),
-                            THEME.read().unwrap().red,
-                        ),
-                        (false, Some(n)) => (
-                            format!("{} {} open, blocking merge", icons.flag_unresolved, n),
-                            THEME.read().unwrap().red,
-                        ),
-                        (true, None) => (
-                            format!("{} none blocking", icons.merge_clean),
-                            THEME.read().unwrap().green,
-                        ),
-                        (true, Some(0)) => (
-                            format!("{} all resolved", icons.merge_clean),
-                            THEME.read().unwrap().green,
-                        ),
-                        (true, Some(n)) => (
-                            format!("{} {} open, none blocking", icons.merge_clean, n),
-                            THEME.read().unwrap().green,
-                        ),
+                if let Some((threads_text, tone)) = crate::domain::mr_state::threads_line_text(
+                    mr.blocking_discussions_resolved,
+                    count,
+                    &icons,
+                ) {
+                    let threads_color = match tone {
+                        crate::domain::mr_state::ThreadsTone::Blocking => THEME.read().unwrap().red,
+                        crate::domain::mr_state::ThreadsTone::Clean => THEME.read().unwrap().green,
                     };
                     text.push(Line::from(vec![
                         Span::styled(

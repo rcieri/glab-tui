@@ -270,6 +270,8 @@ Write the file RELEASE_NOTES.md matching the same format:
 - Title \"## What's Changed\"
 - Sections: ### Added / ### Fixed / ### Changed / ### Dependencies
 - Entries start with bolded headline: \`- **Name** — Description with references (#123).\`
+- Attribute each entry to its contributor by appending \"(thanks @username)\" where the author can be determined from the PR/commit metadata (e.g. \`- **Name** — Description (#123) — thanks @username\`).
+- End with a \`**Contributors**\` section listing every contributor since $prev_tag as a markdown list of \`@username\` handles, ordered by number of contributions.
 - End with: \`**Full Changelog**: https://github.com/rcieri/glab-tui/compare/$prev_tag...$NEW_TAG\`
 
 Use the content from CHANGELOG.md for the current version as the source material."

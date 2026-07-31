@@ -605,6 +605,7 @@ src/
 ├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
 ├── event.rs         # Async event handler (keyboard, tick, async data events)
 ├── fetch.rs         # Per-tab data-fetching dispatch
+├── git_helpers.rs   # Git remote parsing, current branch, workflow file detection
 ├── editor.rs        # External editor integration ($EDITOR)
 ├── entity_editor.rs # Edit-menu field change logic
 ├── templates.rs     # Default issue/MR/PR description templates

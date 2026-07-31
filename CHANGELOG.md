@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1] - 2026-07-31
+
+### Fixed
+- **Nested GitLab subgroups** — Remote project paths are now parsed by a shared `git_helpers::parse_project_path` that preserves the full namespace path instead of truncating to the last two segments. Projects in nested subgroup namespaces (e.g. `group/subgroup/project`) on self-hosted GitLab no longer fail with "Project Not Found"; the parser also handles `ssh://` URLs, explicit ports, and embedded credentials, and the offline cache is keyed identically (#256).
+- **Review submission popup** — Submitting a review with pending draft comments now uses the standard confirmation popup with styled `[ YES ]` / `[ NO ]` buttons (`h`/`l` to toggle, `Enter`/`y` to confirm, `n`/`Esc` to cancel) instead of the bare `y`/`n` keybinds, consistent with every other destructive action (#247, #248).
+- **Pipeline creation with variables** — Fixed the `glab ci run` flag name (`--variable` → `--variables`) and stopped passing `--mr` when custom variables or `workflow_dispatch` inputs are set, so pipelines triggered with variables/inputs now run correctly (#258).
+- **Release build caching** — `rust-cache` is skipped on release tag builds to avoid restoring stale caches, and the git identity is configured before the Homebrew/Scoop manifest commits (#260, #264).
+
+### Changed
+- **Local-first release orchestration** — All release automation consolidated into a single `scripts/release.sh` orchestrator: preflight checks, version bump, doc and demo-GIF regeneration via headless `opencode`, a `chore: prepare release` PR with a review gate, squash-merge and tag, release build wait, release notes with contributor attribution, Homebrew/Scoop manifest sync, GHCR image push, and crates.io publish. The `prepare-release` and `post-release` workflows were removed; `release.yml` now only builds the cross-platform binary matrix.
+- **CI hardening** — All third-party GitHub Actions pinned to commit SHAs (versions kept as comments for update tooling) so no step can be re-pointed to unreviewed code; `dtolnay/rust-toolchain` now takes an explicit `toolchain` input (#250).
+- **Filtering & keybinding documentation** — README expanded with a Filtering, Grouping & Columns walkthrough and complete per-tab keybinding tables (including the remappable `config.toml` key for every binding); the in-app `?` help overlay surfaces the configure/filter workflow, and stale shortcuts (pipeline artifact download, milestone `J`/`K`) were removed (#261).
+- **Dead code removal** — Removed the unused `KeybindingPipelines.download_artifact` config key (no handler exists; `d` cancels) and the never-invoked `handle_entity_update` function along with its now-unused imports (#261).
+- **Demo GIFs** — Restored the original higher-quality demo recordings, reverting the earlier GIF compression.
+
+---
+
 ## [0.8.0] - 2026-07-26
 
 ### Added

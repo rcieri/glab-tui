@@ -821,6 +821,10 @@ async fn main() -> Result<()> {
     app.project_cache = cache.clone();
     app.issues.items = cache.issues;
     app.mrs.items = cache.mrs;
+    // workflow is #[serde(skip)] — cached rows arrive with it unset even
+    // though the approval state it derives from was persisted and just
+    // loaded above.
+    crate::fetch::derive_workflow(&mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
     app.runners.items = cache.runners;
     app.releases.items = cache.releases;
@@ -2952,6 +2956,11 @@ async fn main() -> Result<()> {
                                                     app.project_cache = cache.clone();
                                                     app.issues.items = cache.issues;
                                                     app.mrs.items = cache.mrs;
+                                                    // workflow is #[serde(skip)] — see the
+                                                    // comment at the startup cache load.
+                                                    crate::fetch::derive_workflow(
+                                                        &mut app.mrs.items,
+                                                    );
                                                     app.pipelines.items = cache.pipelines;
                                                     app.runners.items = cache.runners;
                                                     app.releases.items = cache.releases;

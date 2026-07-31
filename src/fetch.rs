@@ -3,6 +3,99 @@ use crate::domain;
 use crate::event::Event;
 use crate::git_helpers::get_current_branch;
 
+/// Derive `workflow` for every MR in place.
+///
+/// Called from three sites: the live fetch path below, and both cache-load
+/// paths in `main.rs`. `workflow` is `#[serde(skip)]` (it is a derived value,
+/// never persisted), so an `MergeRequest` deserialized straight from the
+/// on-disk cache always arrives with `workflow: None` — even though
+/// `approval`, which the cascade reads from, *is* persisted and survives the
+/// round trip. Without calling this after a cache load, a permanently
+/// offline session would show real cached Approval/Mergeable values next to
+/// a uniformly `—` Workflow column, which reads as "could not determine"
+/// when the data to determine it was sitting right there.
+pub fn derive_workflow(mrs: &mut [crate::domain::mr::MergeRequest]) {
+    for mr in mrs.iter_mut() {
+        let ap = mr.approval.as_ref();
+        let assignees: Vec<String> = mr.assignees.iter().map(|a| a.username.clone()).collect();
+        let reviewers: Vec<String> = mr.reviewers.iter().map(|r| r.username.clone()).collect();
+        mr.workflow =
+            crate::domain::mr_state::workflow_status(&crate::domain::mr_state::WorkflowInputs {
+                current_user: ap.and_then(|a| a.current_user.as_deref()),
+                author: &mr.author.username,
+                assignees: &assignees,
+                reviewers: &reviewers,
+                changes_requested: ap.map(|a| a.changes_requested).unwrap_or(false),
+                approved: ap.map(|a| a.approved).unwrap_or(false),
+                you_approved: ap.map(|a| a.you_approved).unwrap_or(false),
+                you_reviewed: ap.map(|a| a.you_reviewed).unwrap_or(false),
+            });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::mr::{Author, MergeRequest};
+    use crate::domain::mr_state::{ApprovalState, WorkflowStatus};
+
+    fn mr_fixture(iid: u64, author: &str, approval: Option<ApprovalState>) -> MergeRequest {
+        MergeRequest {
+            iid,
+            title: format!("mr {iid}"),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            author: Author {
+                username: author.to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".to_string(),
+            source_branch: "feature".to_string(),
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval,
+            mergeability: None,
+            workflow: None,
+        }
+    }
+
+    #[test]
+    fn derive_workflow_fills_in_a_status_from_cached_approval_state() {
+        // The cache-load regression: `workflow` is `#[serde(skip)]`, so a
+        // deserialized MR always arrives with `workflow: None`, even when
+        // its `approval` (which the cascade reads) survived the round trip
+        // intact. This must not stay `—` forever offline.
+        let mut mrs = vec![mr_fixture(
+            1,
+            "chandler.anderson",
+            Some(ApprovalState {
+                current_user: Some("chandler.anderson".to_string()),
+                ..Default::default()
+            }),
+        )];
+
+        derive_workflow(&mut mrs);
+
+        assert_eq!(mrs[0].workflow, Some(WorkflowStatus::YourMergeRequest));
+    }
+
+    #[test]
+    fn derive_workflow_leaves_none_when_approval_state_is_unknown() {
+        // No `approval` means no `current_user`, so the cascade is
+        // unanswerable and must stay `None` — never a guessed status.
+        let mut mrs = vec![mr_fixture(2, "someone", None)];
+
+        derive_workflow(&mut mrs);
+
+        assert_eq!(mrs[0].workflow, None);
+    }
+}
+
 pub fn spawn_fetch_repo_attributes(
     client: &domain::client::GitlabClient,
     project_context: &str,
@@ -69,27 +162,7 @@ pub fn spawn_refresh_active_tab(
                         }
                         // Derive the workflow status once the approval state
                         // is merged, since the cascade reads from it.
-                        for mr in mrs.iter_mut() {
-                            let ap = mr.approval.as_ref();
-                            let assignees: Vec<String> =
-                                mr.assignees.iter().map(|a| a.username.clone()).collect();
-                            let reviewers: Vec<String> =
-                                mr.reviewers.iter().map(|r| r.username.clone()).collect();
-                            mr.workflow = crate::domain::mr_state::workflow_status(
-                                &crate::domain::mr_state::WorkflowInputs {
-                                    current_user: ap.and_then(|a| a.current_user.as_deref()),
-                                    author: &mr.author.username,
-                                    assignees: &assignees,
-                                    reviewers: &reviewers,
-                                    changes_requested: ap
-                                        .map(|a| a.changes_requested)
-                                        .unwrap_or(false),
-                                    approved: ap.map(|a| a.approved).unwrap_or(false),
-                                    you_approved: ap.map(|a| a.you_approved).unwrap_or(false),
-                                    you_reviewed: ap.map(|a| a.you_reviewed).unwrap_or(false),
-                                },
-                            );
-                        }
+                        derive_workflow(&mut mrs);
                         let _ = tx.send(Event::MrsFetched(mrs));
                         if client_for_pipelines.is_github {
                             tokio::spawn(async move {

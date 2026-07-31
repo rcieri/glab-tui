@@ -1,5 +1,13 @@
 # glab-tui
 
+```
+ ______     __         ______     ______     ______   __  __     __
+/\  ___\   /\ \       /\  __ \   /\  == \   /\__  _\ /\ \/\ \   /\ \
+\ \ \__ \  \ \ \____  \ \  __ \  \ \  __<   \/_/\ \/ \ \ \_\ \  \ \ \
+ \ \_____\  \ \_____\  \ \_\ \_\  \ \_____\    \ \_\  \ \_____\  \ \_\
+  \/_____/   \/_____/   \/_/\/_/   \/_____/     \/_/   \/_____/   \/_/
+```
+
 A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](https://gitlab.com/gitlab-org/cli) and [`gh`](https://cli.github.com/). Browse issues, pull requests / merge requests, pipelines, runners, and releases without leaving your terminal.
 
 ---

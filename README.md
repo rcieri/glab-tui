@@ -1,7 +1,7 @@
 # glab-tui <img src="assets/terminal_trove_tool_of_the_week_green_on_black_bg.png" alt="Terminal Trove — Tool of the Week" width="180" align="right">
 
 <p align="center">
-<img src="assets/glab-tui-banner.svg" alt="glab-tui" width="560">
+<img src="assets/glab-tui-banner-v2.svg" alt="glab-tui" width="560">
 </p>
 
 A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](https://gitlab.com/gitlab-org/cli) and [`gh`](https://cli.github.com/). Browse issues, pull requests / merge requests, pipelines, runners, and releases without leaving your terminal.

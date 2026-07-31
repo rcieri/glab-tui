@@ -1083,6 +1083,26 @@ pub(crate) fn render_tab_merge_requests(
                     Span::styled(reviewers, Style::default().fg(THEME.read().unwrap().blue)),
                 ]));
 
+                // Workflow — omitted entirely for `NotYours` and unknown, so
+                // MRs with no relation to you (and failed/unsupported
+                // fetches) show nothing rather than a misleading status.
+                if let Some(label) = crate::domain::mr_state::workflow_label(mr.workflow) {
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Workflow:  ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            format!(
+                                "{} {}",
+                                crate::domain::mr_state::workflow_icon(mr.workflow),
+                                label
+                            ),
+                            Style::default().fg(THEME.read().unwrap().text_normal),
+                        ),
+                    ]));
+                }
+
                 // Approval — omitted entirely when unknown, so a failed fetch
                 // never reads as "not approved".
                 if let Some(ap) = mr.approval.as_ref() {
@@ -1117,40 +1137,38 @@ pub(crate) fn render_tab_merge_requests(
                     };
                     text.push(Line::from(vec![
                         Span::styled(
-                            "Approval:  ",
+                            "Approvals: ",
                             Style::default().fg(THEME.read().unwrap().text_muted),
                         ),
                         Span::styled(label, Style::default().fg(color)),
                     ]));
 
+                    // The "your approval is needed" case is already carried
+                    // by the Approvals: value above (it reads
+                    // "Needs approval (0/1)" when `awaiting_you`), so no
+                    // separate marker is needed for it here.
                     let approvers = if ap.approved_by.is_empty() {
                         "—".to_string()
                     } else {
                         ap.approved_by
                             .iter()
-                            .map(|u| format!("@{}", u))
+                            .map(|u| {
+                                if ap.current_user.as_deref() == Some(u.as_str()) {
+                                    format!("@{} (you)", u)
+                                } else {
+                                    format!("@{}", u)
+                                }
+                            })
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
                     text.push(Line::from(vec![
                         Span::styled(
-                            " approved by ",
+                            "Approvers: ",
                             Style::default().fg(THEME.read().unwrap().text_muted),
                         ),
                         Span::styled(approvers, Style::default().fg(THEME.read().unwrap().blue)),
                     ]));
-
-                    if ap.you_approved {
-                        text.push(Line::from(vec![Span::styled(
-                            format!(" you: {} you approved this", icons.approval_approved),
-                            Style::default().fg(THEME.read().unwrap().green),
-                        )]));
-                    } else if ap.awaiting_you {
-                        text.push(Line::from(vec![Span::styled(
-                            format!(" you: {} your approval is needed", icons.approval_pending),
-                            Style::default().fg(THEME.read().unwrap().yellow),
-                        )]));
-                    }
                 }
 
                 // Mergeable — likewise omitted when unknown.

@@ -128,6 +128,24 @@ pub fn workflow_cell(s: Option<WorkflowStatus>) -> String {
     }
 }
 
+/// Just the glyph `workflow_cell` prefixes its text with, for the Details
+/// pane — which spells out the full label separately instead of clamping
+/// icon and text together like the table column does. Reads from the same
+/// `ICONS` fields as `workflow_cell` so the two can never disagree on which
+/// glyph a status gets.
+pub fn workflow_icon(s: Option<WorkflowStatus>) -> String {
+    let icons = crate::config::ICONS.read().unwrap();
+    match s {
+        Some(WorkflowStatus::ReturnedToYou) => icons.workflow_returned.clone(),
+        Some(WorkflowStatus::ReviewRequested) => icons.workflow_review.clone(),
+        Some(WorkflowStatus::YourMergeRequest) => icons.workflow_yours.clone(),
+        Some(WorkflowStatus::ApprovedByYou) => icons.workflow_approved.clone(),
+        Some(WorkflowStatus::ApprovedByOthers) => icons.workflow_approved_others.clone(),
+        Some(WorkflowStatus::Inactive) => icons.workflow_inactive.clone(),
+        Some(WorkflowStatus::NotYours) | None => String::new(),
+    }
+}
+
 /// GitLab's full wording, for the Details pane and filter values.
 /// `None` for both `NotYours` and unknown — neither gets a Details line.
 pub fn workflow_label(s: Option<WorkflowStatus>) -> Option<&'static str> {
@@ -982,6 +1000,26 @@ mod tests {
         );
         assert_eq!(workflow_label(Some(WorkflowStatus::NotYours)), None);
         assert_eq!(workflow_label(None), None);
+    }
+
+    #[test]
+    fn icon_is_nonempty_for_every_active_or_inactive_status_and_empty_for_not_yours_or_unknown() {
+        use WorkflowStatus::*;
+        for status in [
+            ReturnedToYou,
+            ReviewRequested,
+            YourMergeRequest,
+            ApprovedByYou,
+            ApprovedByOthers,
+            Inactive,
+        ] {
+            assert!(
+                !workflow_icon(Some(status)).is_empty(),
+                "{status:?} must have a glyph"
+            );
+        }
+        assert_eq!(workflow_icon(Some(NotYours)), "");
+        assert_eq!(workflow_icon(None), "");
     }
 
     #[test]

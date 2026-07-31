@@ -28,6 +28,11 @@ fn normalize_labels(s: &str) -> String {
     s.replace(", ", ",")
 }
 
+/// Number of `--per-page per_request` calls needed to cover a `page_size` item budget.
+fn page_count(page_size: usize, per_request: usize) -> usize {
+    page_size.div_ceil(per_request.max(1)).max(1)
+}
+
 pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -97,11 +102,13 @@ impl Backend for GlabBackend {
         project: &str,
         show_closed: bool,
         page_size: usize,
+        per_request: usize,
     ) -> Result<Vec<Issue>> {
-        let pages = page_size.div_ceil(100).max(1);
+        let pages = page_count(page_size, per_request);
         let mut all: Vec<Issue> = Vec::new();
         for page in 1..=pages {
             let page_str = page.to_string();
+            let per_request_str = per_request.to_string();
             let raw = self
                 .run_glab(
                     &if show_closed {
@@ -116,7 +123,7 @@ impl Backend for GlabBackend {
                             "--page",
                             &page_str,
                             "--per-page",
-                            "100",
+                            &per_request_str,
                         ]
                     } else {
                         vec![
@@ -129,7 +136,7 @@ impl Backend for GlabBackend {
                             "--page",
                             &page_str,
                             "--per-page",
-                            "100",
+                            &per_request_str,
                         ]
                     },
                     "Fetching Issues",
@@ -196,7 +203,7 @@ impl Backend for GlabBackend {
                     due_date: i.due_date,
                 }
             }));
-            if len < 100 {
+            if len < per_request {
                 break;
             }
         }
@@ -527,11 +534,13 @@ impl Backend for GlabBackend {
         project: &str,
         show_closed: bool,
         page_size: usize,
+        per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
-        let pages = page_size.div_ceil(100).max(1);
+        let pages = page_count(page_size, per_request);
         let mut all: Vec<MergeRequest> = Vec::new();
         for page in 1..=pages {
             let page_str = page.to_string();
+            let per_request_str = per_request.to_string();
             let raw = self
                 .run_glab(
                     &if show_closed {
@@ -546,7 +555,7 @@ impl Backend for GlabBackend {
                             "--page",
                             &page_str,
                             "--per-page",
-                            "100",
+                            &per_request_str,
                         ]
                     } else {
                         vec![
@@ -559,7 +568,7 @@ impl Backend for GlabBackend {
                             "--page",
                             &page_str,
                             "--per-page",
-                            "100",
+                            &per_request_str,
                         ]
                     },
                     "Fetching MRs",
@@ -658,7 +667,7 @@ impl Backend for GlabBackend {
                     }),
                 }
             }));
-            if len < 100 {
+            if len < per_request {
                 break;
             }
         }
@@ -1192,8 +1201,13 @@ impl Backend for GlabBackend {
 
     // ── Pipelines ──
 
-    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
-        let pages = page_size.div_ceil(100).max(1);
+    async fn list_pipelines(
+        &self,
+        project: &str,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Pipeline>> {
+        let pages = page_count(page_size, per_request);
         let mut all: Vec<Pipeline> = Vec::new();
         for page in 1..=pages {
             let raw = self
@@ -1208,7 +1222,7 @@ impl Backend for GlabBackend {
                         "--page",
                         &page.to_string(),
                         "--per-page",
-                        "100",
+                        &per_request.to_string(),
                     ],
                     "Fetching Pipelines",
                 )
@@ -1234,7 +1248,7 @@ impl Backend for GlabBackend {
                 head_sha: String::new(),
                 actor_login: String::new(),
             }));
-            if len < 100 {
+            if len < per_request {
                 break;
             }
         }
@@ -2252,5 +2266,20 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
+    }
+
+    #[test]
+    fn test_page_count_arithmetic() {
+        // page_count() is what list_issues, list_mrs, and list_pipelines call to decide
+        // how many `--per-page per_request` requests to issue for a given total item
+        // budget. Exercising it directly (rather than re-deriving the formula inline)
+        // means a regression to the hard-coded `div_ceil(100)` this replaced would fail
+        // this test.
+        assert_eq!(page_count(100, 20), 5);
+        assert_eq!(page_count(100, 100), 1);
+        assert_eq!(page_count(250, 100), 3);
+        // per_request = 0 must not panic (div_ceil would); clamped to 1 item per
+        // request, so a 100-item budget needs 100 requests.
+        assert_eq!(page_count(100, 0), 100);
     }
 }

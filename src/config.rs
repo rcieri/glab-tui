@@ -1089,6 +1089,10 @@ fn def_page_size() -> usize {
     100
 }
 
+fn def_api_per_page() -> usize {
+    100
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1116,6 +1120,8 @@ pub struct Config {
     pub keybindings: KeybindingConfig,
     #[serde(default = "def_page_size")]
     pub page_size: usize,
+    #[serde(default = "def_api_per_page")]
+    pub api_per_page: usize,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
     pub issues: PaneConfig,
@@ -1139,6 +1145,7 @@ impl Default for Config {
             theme: ThemeOverrides::default(),
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
+            api_per_page: def_api_per_page(),
             disabled_tabs: None,
             ui: UiConfig::default(),
             issues: PaneConfig::default(),
@@ -1162,6 +1169,11 @@ impl Config {
         let _ = std::fs::create_dir_all(&path);
         path.push("config.toml");
         path
+    }
+
+    /// Per-request page size, clamped to GitLab's accepted `per_page` range.
+    pub fn api_per_page_clamped(&self) -> usize {
+        self.api_per_page.clamp(1, 100)
     }
 
     fn generate_default_toml() -> String {
@@ -1653,6 +1665,46 @@ impl Config {
 pub fn reload_theme() {
     if let Ok(mut theme) = THEME.write() {
         *theme = Config::load().resolve_theme();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_per_page_clamped_bounds_to_gitlab_range() {
+        let mut cfg = Config::default();
+
+        cfg.api_per_page = 0;
+        assert_eq!(cfg.api_per_page_clamped(), 1);
+
+        cfg.api_per_page = 250;
+        assert_eq!(cfg.api_per_page_clamped(), 100);
+
+        cfg.api_per_page = 20;
+        assert_eq!(cfg.api_per_page_clamped(), 20);
+
+        cfg.api_per_page = 100;
+        assert_eq!(cfg.api_per_page_clamped(), 100);
+    }
+
+    #[test]
+    fn api_per_page_defaults_to_100() {
+        assert_eq!(Config::default().api_per_page, 100);
+    }
+
+    #[test]
+    fn config_toml_missing_api_per_page_deserializes_to_default() {
+        // Mirrors an old config.toml written before `api_per_page` existed --
+        // omitting the field must not fail to parse, and must fall back to 100.
+        let toml_str = r#"
+page_size = 250
+"#;
+        let cfg: Config =
+            toml::from_str(toml_str).expect("config.toml without api_per_page must still parse");
+        assert_eq!(cfg.api_per_page, 100);
+        assert_eq!(cfg.page_size, 250);
     }
 }
 

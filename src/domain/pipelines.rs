@@ -147,7 +147,7 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
 pub async fn list_pipelines(client: &GitlabClient, project_path: &str) -> Result<Vec<Pipeline>> {
     client
         .backend
-        .list_pipelines(project_path, client.page_size)
+        .list_pipelines(project_path, client.page_size, client.api_per_page)
         .await
 }
 

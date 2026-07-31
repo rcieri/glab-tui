@@ -104,7 +104,7 @@ fn workflow_icon_and_word(s: WorkflowStatus) -> Option<(String, &'static str)> {
         WorkflowStatus::ReviewRequested => (icons.workflow_review.clone(), "Review req"),
         WorkflowStatus::YourMergeRequest => (icons.workflow_yours.clone(), "Yours"),
         WorkflowStatus::ApprovedByYou => (icons.workflow_approved.clone(), "Approved"),
-        WorkflowStatus::ApprovedByOthers => (icons.workflow_approved_others.clone(), "by others"),
+        WorkflowStatus::ApprovedByOthers => (icons.workflow_approved_others.clone(), "By others"),
         WorkflowStatus::Inactive => (icons.workflow_inactive.clone(), "Inactive"),
         WorkflowStatus::NotYours => return None,
     })
@@ -386,7 +386,7 @@ pub fn threads_line_text(
     let resolved = resolved?;
     Some(match (resolved, count) {
         (false, None) | (false, Some(0)) => (
-            format!("{} blocking merge", icons.flag_unresolved),
+            format!("{} Blocking merge", icons.flag_unresolved),
             ThreadsTone::Blocking,
         ),
         (false, Some(n)) => (
@@ -394,15 +394,15 @@ pub fn threads_line_text(
             ThreadsTone::Blocking,
         ),
         (true, None) => (
-            format!("{} none blocking", icons.merge_clean),
+            format!("{} Not blocking", icons.merge_clean),
             ThreadsTone::Clean,
         ),
         (true, Some(0)) => (
-            format!("{} all resolved", icons.merge_clean),
+            format!("{} All resolved", icons.merge_clean),
             ThreadsTone::Clean,
         ),
         (true, Some(n)) => (
-            format!("{} {} open, none blocking", icons.merge_clean, n),
+            format!("{} {} open, not blocking", icons.merge_clean, n),
             ThreadsTone::Clean,
         ),
     })
@@ -1153,7 +1153,7 @@ mod tests {
     #[test]
     fn threads_line_blocking_with_unknown_count() {
         let (text, tone) = threads_line_text(Some(false), None, &icons()).unwrap();
-        assert_eq!(text, format!("{} blocking merge", icons().flag_unresolved));
+        assert_eq!(text, format!("{} Blocking merge", icons().flag_unresolved));
         assert_eq!(tone, ThreadsTone::Blocking);
     }
 
@@ -1182,14 +1182,14 @@ mod tests {
     #[test]
     fn threads_line_clean_with_unknown_count() {
         let (text, tone) = threads_line_text(Some(true), None, &icons()).unwrap();
-        assert_eq!(text, format!("{} none blocking", icons().merge_clean));
+        assert_eq!(text, format!("{} Not blocking", icons().merge_clean));
         assert_eq!(tone, ThreadsTone::Clean);
     }
 
     #[test]
     fn threads_line_clean_with_zero_count() {
         let (text, tone) = threads_line_text(Some(true), Some(0), &icons()).unwrap();
-        assert_eq!(text, format!("{} all resolved", icons().merge_clean));
+        assert_eq!(text, format!("{} All resolved", icons().merge_clean));
         assert_eq!(tone, ThreadsTone::Clean);
     }
 
@@ -1200,7 +1200,7 @@ mod tests {
         let (text, tone) = threads_line_text(Some(true), Some(3), &icons()).unwrap();
         assert_eq!(
             text,
-            format!("{} 3 open, none blocking", icons().merge_clean)
+            format!("{} 3 open, not blocking", icons().merge_clean)
         );
         assert_eq!(tone, ThreadsTone::Clean);
     }

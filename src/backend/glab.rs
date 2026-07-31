@@ -13,8 +13,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::JoinSet;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -235,6 +238,156 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
     Ok(out)
 }
 
+/// Maximum `glab` subprocesses in flight for one paged fetch.
+const MAX_CONCURRENT_REQUESTS: usize = 8;
+
+/// Run one `glab` invocation and log it to the terminal pane.
+///
+/// Free-standing rather than a method so its future is `'static` and can be
+/// spawned: `tx` is the only state a command needs from `GlabBackend`.
+async fn run_glab_command(
+    tx: Option<UnboundedSender<Event>>,
+    args: Vec<String>,
+    desc: String,
+) -> Result<String> {
+    let label = desc.to_uppercase();
+    let cmd_str = format!("glab {}", args.join(" "));
+
+    let output = Command::new("glab")
+        .args(&args)
+        .output()
+        .await
+        .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
+
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    if output.status.success() {
+        let s = String::from_utf8(output.stdout)?;
+        if let Some(ref tx) = tx {
+            let _ = tx.send(Event::TerminalCommandLogged {
+                timestamp,
+                command: format!("{}: {}", label, cmd_str),
+                status: "Success".to_string(),
+            });
+        }
+        Ok(s)
+    } else {
+        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if let Some(ref tx) = tx {
+            let _ = tx.send(Event::TerminalCommandLogged {
+                timestamp,
+                command: format!("{}: {}", label, cmd_str),
+                status: format!("Failed: {}", err_msg),
+            });
+        }
+        anyhow::bail!("glab command failed: {}", err_msg)
+    }
+}
+
+/// Issue every request concurrently and return each response paired with the
+/// index of the request that produced it, in ascending index order.
+///
+/// At most `MAX_CONCURRENT_REQUESTS` subprocesses run at once; beyond that the
+/// fetch degrades to waves rather than a subprocess storm. A task that panics
+/// or is cancelled yields an `Err` for its index rather than a silently
+/// missing response, so no caller can mistake it for a short page.
+async fn run_glab_concurrent(
+    tx: Option<UnboundedSender<Event>>,
+    requests: Vec<Vec<String>>,
+    desc: &str,
+) -> Vec<(usize, Result<String>)> {
+    let total = requests.len();
+    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
+    let mut tasks = JoinSet::new();
+
+    for (index, args) in requests.into_iter().enumerate() {
+        let tx = tx.clone();
+        let desc = desc.to_string();
+        let permits = Arc::clone(&permits);
+        tasks.spawn(async move {
+            // Held until the request finishes, so the permit — not the number
+            // of spawned tasks — bounds the subprocesses in flight.
+            let _permit = permits.acquire_owned().await;
+            (index, run_glab_command(tx, args, desc).await)
+        });
+    }
+
+    let mut slots: Vec<Option<Result<String>>> = (0..total).map(|_| None).collect();
+    let mut join_failure: Option<String> = None;
+    while let Some(joined) = tasks.join_next().await {
+        match joined {
+            Ok((index, response)) => slots[index] = Some(response),
+            // A panicked or cancelled task never reports its index; the empty
+            // slot it leaves behind is filled in below.
+            Err(e) => join_failure = Some(e.to_string()),
+        }
+    }
+
+    slots
+        .into_iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            let response = slot.unwrap_or_else(|| {
+                let cause = join_failure
+                    .clone()
+                    .unwrap_or_else(|| "task did not complete".to_string());
+                Err(anyhow::anyhow!("request {} failed: {}", index + 1, cause))
+            });
+            (index, response)
+        })
+        .collect()
+}
+
+/// Assemble indexed responses into index order, failing on the first error.
+///
+/// Mirrors the `?` the sequential page loops used: one failed page fails the
+/// whole fetch, because rendering a silently truncated list is worse than an
+/// error. Sorting first means the surfaced error is the lowest-indexed
+/// failure, not whichever task happened to lose the race.
+fn ordered_or_first_error<T>(mut results: Vec<(usize, Result<T>)>) -> Result<Vec<T>> {
+    results.sort_by_key(|(index, _)| *index);
+    let mut ordered = Vec::with_capacity(results.len());
+    for (_, result) in results {
+        ordered.push(result?);
+    }
+    Ok(ordered)
+}
+
+/// Merge indexed batch results, tolerating partial failure.
+///
+/// A failed batch shouldn't poison the batches that did succeed — the caller
+/// (src/fetch.rs) already degrades a missing entry to "—" per row. But if every
+/// batch failed, surface the error rather than returning a suspiciously-empty
+/// `Ok(HashMap::new())`, which the caller cannot distinguish from "no MRs had
+/// state". Sorting first keeps both which error surfaces and which duplicate
+/// key wins tied to batch order rather than completion order.
+fn merge_tolerating_partial_failure(
+    mut results: Vec<(usize, Result<MrStateMap>)>,
+) -> Result<MrStateMap> {
+    results.sort_by_key(|(index, _)| *index);
+
+    let mut merged = HashMap::new();
+    let mut last_err = None;
+    let mut any_batch_succeeded = false;
+
+    for (_, result) in results {
+        match result {
+            Ok(state) => {
+                any_batch_succeeded = true;
+                merged.extend(state);
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    if !any_batch_succeeded {
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+    }
+
+    Ok(merged)
+}
+
 pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -249,43 +402,18 @@ impl GlabBackend {
     }
 
     async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
-        let label = desc.to_uppercase();
-        let cmd_str = format!("glab {}", args.join(" "));
-
-        let output = Command::new("glab")
-            .args(args)
-            .output()
-            .await
-            .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
-
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        if output.status.success() {
-            let s = String::from_utf8(output.stdout)?;
-            if let Some(ref tx) = self.tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: "Success".to_string(),
-                });
-            }
-            Ok(s)
-        } else {
-            let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if let Some(ref tx) = self.tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", err_msg),
-                });
-            }
-            anyhow::bail!("glab command failed: {}", err_msg)
-        }
+        run_glab_command(
+            self.tx.clone(),
+            args.iter().map(|a| (*a).to_string()).collect(),
+            desc.to_string(),
+        )
+        .await
     }
 
-    /// Fetch approval/mergeability state for one batch of iids (at most
-    /// `MR_STATE_QUERY_BATCH_SIZE`, to stay under GitLab's 100-node
-    /// connection cap — see `list_mr_state`).
-    async fn fetch_mr_state_batch(&self, project: &str, iids: &[u64]) -> Result<MrStateMap> {
+    /// Build the `glab` arguments that fetch approval/mergeability state for
+    /// one batch of iids (at most `MR_STATE_QUERY_BATCH_SIZE`, to stay under
+    /// GitLab's 100-node connection cap — see `list_mr_state`).
+    fn mr_state_batch_args(project: &str, iids: &[u64]) -> Vec<String> {
         // Query the exact iids the list returned, so there is no pagination drift.
         let iid_list = iids
             .iter()
@@ -308,12 +436,12 @@ impl GlabBackend {
             project, iid_list
         );
 
-        let query_arg = format!("query={}", query);
-        let raw = self
-            .run_glab(&["api", "graphql", "-f", &query_arg], "FETCHING MR STATE")
-            .await?;
-
-        parse_mr_state_response(&raw)
+        vec![
+            "api".to_string(),
+            "graphql".to_string(),
+            "-f".to_string(),
+            format!("query={}", query),
+        ]
     }
 }
 
@@ -341,43 +469,37 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<Issue>> {
         let pages = page_count(page_size, per_request);
+        // Every page is issued at once, so there is no last-page detection to
+        // stop early on: a repo with fewer issues than the budget pays for a
+        // few requests that come back empty, which merge harmlessly. That is
+        // the price of not serialising the round trips, and at the default
+        // `api_per_page = 100` it is still a single request.
+        let requests: Vec<Vec<String>> = (1..=pages)
+            .map(|page| {
+                let mut args: Vec<String> = vec![
+                    "issue".to_string(),
+                    "list".to_string(),
+                    "--output".to_string(),
+                    "json".to_string(),
+                    "-R".to_string(),
+                    project.to_string(),
+                ];
+                if show_closed {
+                    args.push("--all".to_string());
+                }
+                args.push("--page".to_string());
+                args.push(page.to_string());
+                args.push("--per-page".to_string());
+                args.push(per_request.to_string());
+                args
+            })
+            .collect();
+        let responses = ordered_or_first_error(
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching Issues").await,
+        )?;
+
         let mut all: Vec<Issue> = Vec::new();
-        for page in 1..=pages {
-            let page_str = page.to_string();
-            let per_request_str = per_request.to_string();
-            let raw = self
-                .run_glab(
-                    &if show_closed {
-                        vec![
-                            "issue",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--all",
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    } else {
-                        vec![
-                            "issue",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    },
-                    "Fetching Issues",
-                )
-                .await?;
+        for raw in responses {
             #[derive(Deserialize)]
             struct GiIssue {
                 iid: u64,
@@ -412,7 +534,6 @@ impl Backend for GlabBackend {
                 username: String,
             }
             let issues: Vec<GiIssue> = serde_json::from_str(&raw).unwrap_or_default();
-            let len = issues.len();
             all.extend(issues.into_iter().map(|i| {
                 Issue {
                     iid: i.iid,
@@ -439,9 +560,6 @@ impl Backend for GlabBackend {
                     due_date: i.due_date,
                 }
             }));
-            if len < per_request {
-                break;
-            }
         }
         Ok(all)
     }
@@ -773,43 +891,39 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
         let pages = page_count(page_size, per_request);
+        // Every page is issued at once, so there is no last-page detection to
+        // stop early on: a repo with fewer MRs than the budget pays for a few
+        // requests that come back empty, which merge harmlessly. That is the
+        // price of not serialising the round trips, and at the default
+        // `api_per_page = 100` it is still a single request.
+        let requests: Vec<Vec<String>> = (1..=pages)
+            .map(|page| {
+                let mut args: Vec<String> = vec![
+                    "mr".to_string(),
+                    "list".to_string(),
+                    "--output".to_string(),
+                    "json".to_string(),
+                    "-R".to_string(),
+                    project.to_string(),
+                ];
+                if show_closed {
+                    args.push("--all".to_string());
+                }
+                args.push("--page".to_string());
+                args.push(page.to_string());
+                args.push("--per-page".to_string());
+                args.push(per_request.to_string());
+                args
+            })
+            .collect();
+        // Pages are merged in page order, not completion order: the MR table's
+        // row order is this list's order.
+        let responses = ordered_or_first_error(
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching MRs").await,
+        )?;
+
         let mut all: Vec<MergeRequest> = Vec::new();
-        for page in 1..=pages {
-            let page_str = page.to_string();
-            let per_request_str = per_request.to_string();
-            let raw = self
-                .run_glab(
-                    &if show_closed {
-                        vec![
-                            "mr",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--all",
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    } else {
-                        vec![
-                            "mr",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    },
-                    "Fetching MRs",
-                )
-                .await?;
+        for raw in responses {
             #[derive(Deserialize)]
             struct GiMr {
                 iid: u64,
@@ -860,7 +974,6 @@ impl Backend for GlabBackend {
                 updated_at: String,
             }
             let mrs: Vec<GiMr> = serde_json::from_str(&raw).unwrap_or_default();
-            let len = mrs.len();
             all.extend(mrs.into_iter().map(|m| {
                 MergeRequest {
                     iid: m.iid,
@@ -909,9 +1022,6 @@ impl Backend for GlabBackend {
                     workflow: None,
                 }
             }));
-            if len < per_request {
-                break;
-            }
         }
         Ok(all)
     }
@@ -1179,32 +1289,21 @@ impl Backend for GlabBackend {
         }
         validate_project_path(project)?;
 
-        let mut merged = HashMap::new();
-        let mut last_err = None;
-        let mut any_batch_succeeded = false;
+        let requests: Vec<Vec<String>> = chunk_iids(iids, MR_STATE_QUERY_BATCH_SIZE)
+            .into_iter()
+            .map(|batch| Self::mr_state_batch_args(project, batch))
+            .collect();
 
-        for batch in chunk_iids(iids, MR_STATE_QUERY_BATCH_SIZE) {
-            match self.fetch_mr_state_batch(project, batch).await {
-                Ok(state) => {
-                    any_batch_succeeded = true;
-                    merged.extend(state);
-                }
-                Err(e) => last_err = Some(e),
-            }
-        }
+        let parsed: Vec<(usize, Result<MrStateMap>)> =
+            run_glab_concurrent(self.tx.clone(), requests, "FETCHING MR STATE")
+                .await
+                .into_iter()
+                .map(|(index, raw)| (index, raw.and_then(|r| parse_mr_state_response(&r))))
+                .collect();
 
-        // A failed batch shouldn't poison the batches that did succeed — the
-        // caller (src/fetch.rs) already degrades a missing entry to "—" per
-        // row. But if every batch failed, surface the error rather than
-        // returning a suspiciously-empty `Ok(HashMap::new())`, which the
-        // caller cannot distinguish from "no MRs had state".
-        if !any_batch_succeeded {
-            if let Some(e) = last_err {
-                return Err(e);
-            }
-        }
-
-        Ok(merged)
+        // Unlike the paged list fetches, a single failed batch must not fail
+        // the whole call — see `merge_tolerating_partial_failure`.
+        merge_tolerating_partial_failure(parsed)
     }
 
     async fn merge_mr(
@@ -1508,25 +1607,33 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<Pipeline>> {
         let pages = page_count(page_size, per_request);
+        // Every page is issued at once, so there is no last-page detection to
+        // stop early on: a repo with fewer pipelines than the budget pays for
+        // a few requests that come back empty, which merge harmlessly. That is
+        // the price of not serialising the round trips, and at the default
+        // `api_per_page = 100` it is still a single request.
+        let requests: Vec<Vec<String>> = (1..=pages)
+            .map(|page| {
+                vec![
+                    "ci".to_string(),
+                    "list".to_string(),
+                    "--output".to_string(),
+                    "json".to_string(),
+                    "-R".to_string(),
+                    project.to_string(),
+                    "--page".to_string(),
+                    page.to_string(),
+                    "--per-page".to_string(),
+                    per_request.to_string(),
+                ]
+            })
+            .collect();
+        let responses = ordered_or_first_error(
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipelines").await,
+        )?;
+
         let mut all: Vec<Pipeline> = Vec::new();
-        for page in 1..=pages {
-            let raw = self
-                .run_glab(
-                    &[
-                        "ci",
-                        "list",
-                        "--output",
-                        "json",
-                        "-R",
-                        project,
-                        "--page",
-                        &page.to_string(),
-                        "--per-page",
-                        &per_request.to_string(),
-                    ],
-                    "Fetching Pipelines",
-                )
-                .await?;
+        for raw in responses {
             #[derive(Deserialize)]
             struct GiPipe {
                 id: u64,
@@ -1536,7 +1643,6 @@ impl Backend for GlabBackend {
                 updated_at: String,
             }
             let pipes: Vec<GiPipe> = serde_json::from_str(&raw).unwrap_or_default();
-            let len = pipes.len();
             all.extend(pipes.into_iter().map(|p| Pipeline {
                 id: p.id,
                 status: p.status,
@@ -1548,9 +1654,6 @@ impl Backend for GlabBackend {
                 head_sha: String::new(),
                 actor_login: String::new(),
             }));
-            if len < per_request {
-                break;
-            }
         }
         Ok(all)
     }
@@ -2572,6 +2675,118 @@ mod tests {
         let batches = chunk_iids(&iids, 100);
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].len(), 100);
+    }
+
+    // ── assembling concurrently-fetched pages (fail-fast) ──
+
+    #[test]
+    fn ordered_or_first_error_assembles_out_of_order_completions_by_index() {
+        // JoinSet yields completions in arbitrary order, but the MR table's
+        // row order is page order, so assembly must re-sort.
+        let results: Vec<(usize, Result<&str>)> =
+            vec![(2, Ok("page 3")), (0, Ok("page 1")), (1, Ok("page 2"))];
+
+        let ordered = ordered_or_first_error(results).expect("every page succeeded");
+
+        assert_eq!(ordered, vec!["page 1", "page 2", "page 3"]);
+    }
+
+    #[test]
+    fn ordered_or_first_error_fails_when_one_page_fails() {
+        // Rendering a subset of MRs as though it were complete is worse than
+        // an error, so a single failure fails the whole fetch.
+        let results: Vec<(usize, Result<&str>)> = vec![
+            (0, Ok("page 1")),
+            (1, Err(anyhow::anyhow!("page 2 was truncated"))),
+            (2, Ok("page 3")),
+        ];
+
+        let err = ordered_or_first_error(results).expect_err("a failed page fails the fetch");
+
+        assert!(err.to_string().contains("page 2 was truncated"));
+    }
+
+    #[test]
+    fn ordered_or_first_error_reports_the_lowest_indexed_failure() {
+        // Which error surfaces must not depend on which request lost the race.
+        let results: Vec<(usize, Result<&str>)> = vec![
+            (2, Err(anyhow::anyhow!("page 3 was truncated"))),
+            (1, Err(anyhow::anyhow!("page 2 was truncated"))),
+            (0, Ok("page 1")),
+        ];
+
+        let err = ordered_or_first_error(results).expect_err("a failed page fails the fetch");
+
+        assert!(err.to_string().contains("page 2 was truncated"));
+    }
+
+    #[test]
+    fn ordered_or_first_error_merges_empty_and_short_pages_in_index_order() {
+        // Requesting all pages unconditionally means trailing pages can come
+        // back empty; they must merge without erroring or duplicating.
+        let results: Vec<(usize, Result<Vec<u64>>)> =
+            vec![(2, Ok(vec![])), (1, Ok(vec![4])), (0, Ok(vec![1, 2, 3]))];
+
+        let merged: Vec<u64> = ordered_or_first_error(results)
+            .expect("empty pages are successful responses")
+            .into_iter()
+            .flatten()
+            .collect();
+
+        assert_eq!(merged, vec![1, 2, 3, 4]);
+    }
+
+    // ── merging concurrently-fetched MR-state batches (tolerate partial) ──
+
+    fn mr_state_for(iid: u64) -> MrStateMap {
+        let mut state: MrStateMap = HashMap::new();
+        state.insert(iid, (None, None));
+        state
+    }
+
+    #[test]
+    fn merge_tolerating_partial_failure_keeps_the_batches_that_succeeded() {
+        // src/fetch.rs degrades a missing entry to "—" per row, so one bad
+        // batch must not discard the state the others returned.
+        let results: Vec<(usize, Result<MrStateMap>)> = vec![
+            (1, Err(anyhow::anyhow!("batch 2 was truncated"))),
+            (0, Ok(mr_state_for(7))),
+            (2, Ok(mr_state_for(9))),
+        ];
+
+        let merged =
+            merge_tolerating_partial_failure(results).expect("successful batches still count");
+
+        assert_eq!(merged.len(), 2);
+        assert!(merged.contains_key(&7));
+        assert!(merged.contains_key(&9));
+    }
+
+    #[test]
+    fn merge_tolerating_partial_failure_errors_when_every_batch_failed() {
+        // An empty map here is indistinguishable from "no MRs had state".
+        let results: Vec<(usize, Result<MrStateMap>)> = vec![
+            (1, Err(anyhow::anyhow!("batch 2 was truncated"))),
+            (0, Err(anyhow::anyhow!("batch 1 was truncated"))),
+        ];
+
+        let err = merge_tolerating_partial_failure(results)
+            .expect_err("a total failure must not look like an empty result");
+
+        // The last batch in batch order, not whichever finished last.
+        assert!(err.to_string().contains("batch 2 was truncated"));
+    }
+
+    #[test]
+    fn merge_tolerating_partial_failure_treats_an_empty_batch_as_a_success() {
+        // An empty response is a successful batch, not a failure, so it must
+        // not push the merge onto the "every batch failed" path.
+        let results: Vec<(usize, Result<MrStateMap>)> = vec![(0, Ok(HashMap::new()))];
+
+        let merged = merge_tolerating_partial_failure(results)
+            .expect("an empty batch is a success, not a failure");
+
+        assert!(merged.is_empty());
     }
 
     #[test]

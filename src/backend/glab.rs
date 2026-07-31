@@ -165,6 +165,32 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
         let you_approved =
             !current_user.is_empty() && approved_by.iter().any(|u| *u == current_user);
 
+        // Your own review state, matched by username. Someone else having
+        // reviewed must not set this.
+        let you_reviewed = !current_user.is_empty()
+            && (approved_by.iter().any(|u| *u == current_user)
+                || node
+                    .get("reviewers")
+                    .and_then(|r| r.get("nodes"))
+                    .and_then(|n| n.as_array())
+                    .map(|arr| {
+                        arr.iter().any(|r| {
+                            let is_me = r
+                                .get("username")
+                                .and_then(|u| u.as_str())
+                                .map(|u| u == current_user)
+                                .unwrap_or(false);
+                            let reviewed = r
+                                .get("mergeRequestInteraction")
+                                .and_then(|i| i.get("reviewState"))
+                                .and_then(|s| s.as_str())
+                                .map(|s| !s.eq_ignore_ascii_case("UNREVIEWED"))
+                                .unwrap_or(false);
+                            is_me && reviewed
+                        })
+                    })
+                    .unwrap_or(false));
+
         let approval = ApprovalState {
             approved,
             approvals_left: node
@@ -179,6 +205,12 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
             changes_requested,
             you_approved,
             awaiting_you: derive_awaiting_you(can_approve, you_approved, approved),
+            current_user: if current_user.is_empty() {
+                None
+            } else {
+                Some(current_user.clone())
+            },
+            you_reviewed,
         };
 
         let raw_status = node
@@ -270,7 +302,7 @@ impl GlabBackend {
              iid approved approvalsLeft approvalsRequired \
              userPermissions {{ canApprove }} \
              approvedBy {{ nodes {{ username }} }} \
-             reviewers {{ nodes {{ mergeRequestInteraction {{ reviewState }} }} }} \
+             reviewers {{ nodes {{ username mergeRequestInteraction {{ reviewState }} }} }} \
              conflicts shouldBeRebased detailedMergeStatus \
              }} }} }} }}",
             project, iid_list
@@ -2742,5 +2774,81 @@ mod tests {
         let map = parse_mr_state_response(&body).unwrap();
         assert!(!map.contains_key(&5279));
         assert!(map.contains_key(&1448), "other rows must survive");
+    }
+
+    #[test]
+    fn parses_current_user_onto_every_state() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, _) = map.get(&1448).unwrap();
+        assert_eq!(
+            approval.as_ref().unwrap().current_user.as_deref(),
+            Some("chandler.anderson")
+        );
+    }
+
+    #[test]
+    fn you_reviewed_is_true_when_your_review_state_is_present() {
+        // !1448's approvedBy contains chandler.anderson, so you reviewed it.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(map.get(&1448).unwrap().0.as_ref().unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn you_reviewed_is_false_when_you_are_an_unreviewed_reviewer() {
+        // A reviewer entry for the current user with reviewState UNREVIEWED.
+        let body = r#"{
+          "data": {
+            "currentUser": { "username": "chandler.anderson" },
+            "project": { "mergeRequests": { "nodes": [
+              {
+                "iid": "9001",
+                "approved": false,
+                "approvalsLeft": 1,
+                "approvalsRequired": 1,
+                "userPermissions": { "canApprove": true },
+                "approvedBy": { "nodes": [] },
+                "reviewers": { "nodes": [
+                  { "username": "chandler.anderson",
+                    "mergeRequestInteraction": { "reviewState": "UNREVIEWED" } }
+                ] },
+                "conflicts": false,
+                "shouldBeRebased": false,
+                "detailedMergeStatus": "NOT_APPROVED"
+              }
+            ] } }
+          }
+        }"#;
+        let map = parse_mr_state_response(body).unwrap();
+        assert!(!map.get(&9001).unwrap().0.as_ref().unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn you_reviewed_ignores_other_peoples_review_state() {
+        // Regression guard for restoring `username` in the reviewers
+        // subselection: someone ELSE having reviewed must not set your flag.
+        let body = r#"{
+          "data": {
+            "currentUser": { "username": "chandler.anderson" },
+            "project": { "mergeRequests": { "nodes": [
+              {
+                "iid": "9002",
+                "approved": false,
+                "approvalsLeft": 1,
+                "approvalsRequired": 1,
+                "userPermissions": { "canApprove": true },
+                "approvedBy": { "nodes": [] },
+                "reviewers": { "nodes": [
+                  { "username": "someone.else",
+                    "mergeRequestInteraction": { "reviewState": "REQUESTED_CHANGES" } }
+                ] },
+                "conflicts": false,
+                "shouldBeRebased": false,
+                "detailedMergeStatus": "NOT_APPROVED"
+              }
+            ] } }
+          }
+        }"#;
+        let map = parse_mr_state_response(body).unwrap();
+        assert!(!map.get(&9002).unwrap().0.as_ref().unwrap().you_reviewed);
     }
 }

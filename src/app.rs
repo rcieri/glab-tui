@@ -5245,6 +5245,7 @@ index 123456..789012 100644
             changes_requested: false,
             you_approved: true,
             awaiting_you: false,
+            ..Default::default()
         });
         let mut app = App::default();
         app.mrs.items = vec![approved];

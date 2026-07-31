@@ -61,6 +61,10 @@ pub fn gh_state_from_fields(
         you_approved: false,
         // Needs canApprove, which gh pr list does not provide.
         awaiting_you: false,
+        // Task 3 populates the current user and derives you_reviewed for
+        // GitHub; gh pr list does not yet surface either here.
+        current_user: None,
+        you_reviewed: false,
     };
 
     let merge_raw = mergeable.unwrap_or("UNKNOWN");

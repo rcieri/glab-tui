@@ -157,6 +157,12 @@ pub struct ApprovalState {
     pub changes_requested: bool,
     pub you_approved: bool,
     pub awaiting_you: bool,
+    /// The authenticated user, carried alongside the flags derived from them
+    /// so the workflow cascade has one input struct. `None` when unknown.
+    pub current_user: Option<String>,
+    /// You submitted any review on this MR — approved OR requested changes.
+    /// Distinct from `you_approved`: you can request changes without approving.
+    pub you_reviewed: bool,
 }
 
 /// Merge readiness for one merge request. Independent of `ApprovalState`:
@@ -417,6 +423,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: derive_awaiting_you(true, false, true),
+            ..Default::default()
         };
         assert!(!s.awaiting_you);
     }
@@ -455,6 +462,7 @@ mod tests {
             changes_requested: true,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
         assert_eq!(text, expect_chg());
@@ -472,6 +480,7 @@ mod tests {
             changes_requested: false,
             you_approved: true,
             awaiting_you: false,
+            ..Default::default()
         };
         let (text, _) = approval_cell(Some(&s), false);
         assert_eq!(text, expect_approved("2/1"));
@@ -488,6 +497,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         let (text, _) = approval_cell(Some(&s), false);
         assert_eq!(text, expect_approved("1"));
@@ -504,6 +514,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
         assert_ne!(tone, ApprovalTone::Approved);
@@ -521,6 +532,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: true,
+            ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
         assert_eq!(text, expect_awaiting("0/1"));
@@ -537,6 +549,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
         assert_eq!(text, "1/2");
@@ -553,6 +566,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         let (text, _) = approval_cell(Some(&s), true);
         assert_eq!(text, expect_github_approved());
@@ -568,6 +582,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         let (text, _) = approval_cell(Some(&s), true);
         assert_eq!(text, "review req");
@@ -668,6 +683,7 @@ mod tests {
             changes_requested: true,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         let approved = ApprovalState {
             approved: true,
@@ -677,6 +693,7 @@ mod tests {
             changes_requested: false,
             you_approved: false,
             awaiting_you: false,
+            ..Default::default()
         };
         assert!(approval_sort_key(Some(&changes)) < approval_sort_key(Some(&approved)));
         assert!(approval_sort_key(Some(&approved)) < approval_sort_key(None));

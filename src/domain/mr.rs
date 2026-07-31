@@ -55,6 +55,10 @@ pub struct MergeRequest {
     /// Populated after the list fetch. `None` means unknown, never "clean".
     #[serde(default)]
     pub mergeability: Option<crate::domain::mr_state::MergeabilityState>,
+    /// Derived after the state fetch, never deserialized. `None` means the
+    /// status could not be determined — distinct from `Some(NotYours)`.
+    #[serde(skip)]
+    pub workflow: Option<crate::domain::mr_state::WorkflowStatus>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

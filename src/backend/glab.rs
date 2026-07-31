@@ -906,6 +906,7 @@ impl Backend for GlabBackend {
                     blocking_discussions_resolved: m.blocking_discussions_resolved,
                     approval: None,
                     mergeability: None,
+                    workflow: None,
                 }
             }));
             if len < per_request {
@@ -1024,6 +1025,7 @@ impl Backend for GlabBackend {
             blocking_discussions_resolved: m.blocking_discussions_resolved,
             approval: None,
             mergeability: None,
+            workflow: None,
         })
     }
 

@@ -67,6 +67,29 @@ pub fn spawn_refresh_active_tab(
                                 }
                             }
                         }
+                        // Derive the workflow status once the approval state
+                        // is merged, since the cascade reads from it.
+                        for mr in mrs.iter_mut() {
+                            let ap = mr.approval.as_ref();
+                            let assignees: Vec<String> =
+                                mr.assignees.iter().map(|a| a.username.clone()).collect();
+                            let reviewers: Vec<String> =
+                                mr.reviewers.iter().map(|r| r.username.clone()).collect();
+                            mr.workflow = crate::domain::mr_state::workflow_status(
+                                &crate::domain::mr_state::WorkflowInputs {
+                                    current_user: ap.and_then(|a| a.current_user.as_deref()),
+                                    author: &mr.author.username,
+                                    assignees: &assignees,
+                                    reviewers: &reviewers,
+                                    changes_requested: ap
+                                        .map(|a| a.changes_requested)
+                                        .unwrap_or(false),
+                                    approved: ap.map(|a| a.approved).unwrap_or(false),
+                                    you_approved: ap.map(|a| a.you_approved).unwrap_or(false),
+                                    you_reviewed: ap.map(|a| a.you_reviewed).unwrap_or(false),
+                                },
+                            );
+                        }
                         let _ = tx.send(Event::MrsFetched(mrs));
                         if client_for_pipelines.is_github {
                             tokio::spawn(async move {

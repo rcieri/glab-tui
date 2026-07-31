@@ -4281,6 +4281,7 @@ mod tests {
             blocking_discussions_resolved: None,
             approval: None,
             mergeability: None,
+            workflow: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -4301,6 +4302,7 @@ mod tests {
             blocking_discussions_resolved: None,
             approval: None,
             mergeability: None,
+            workflow: None,
         };
 
         let mr_ready = MergeRequest {
@@ -4321,6 +4323,7 @@ mod tests {
             blocking_discussions_resolved: None,
             approval: None,
             mergeability: None,
+            workflow: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
@@ -5064,6 +5067,7 @@ index 123456..789012 100644
             blocking_discussions_resolved: None,
             approval: None,
             mergeability: None,
+            workflow: None,
         }
     }
 

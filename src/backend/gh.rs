@@ -748,6 +748,7 @@ impl Backend for GhBackend {
                     blocking_discussions_resolved: None,
                     approval,
                     mergeability,
+                    workflow: None,
                 }
             })
             .collect())
@@ -843,6 +844,7 @@ impl Backend for GhBackend {
             blocking_discussions_resolved: None,
             approval: None,
             mergeability: None,
+            workflow: None,
         })
     }
 

@@ -665,14 +665,12 @@ Unit tests live in several modules:
 Releases are prepared and distributed from a maintainer's machine; CI only builds the cross-platform release binaries.
 
 ```sh
-scripts/release/prepare.sh patch|minor|major   # bump version, regenerate docs + demo GIFs, open a PR
-# review and merge the PR, then:
-git tag vX.Y.Z && git push origin vX.Y.Z        # CI builds binaries + GitHub release
-scripts/release/post.sh vX.Y.Z                 # release notes + Homebrew formula + Scoop manifest
-scripts/release/publish.sh vX.Y.Z               # Docker image + crates.io
+scripts/release.sh [patch|minor|major]   # default: patch
 ```
 
-Prerequisites: `gh` (authenticated), `opencode`, `cargo`/`docker` for publishing, and `vhs`/`ttyd`/`ffmpeg`/JetBrainsMono Nerd Font for the demo recordings. Each script fails fast with a clear message when a prerequisite is missing.
+`scripts/release.sh` walks the whole release in one pass: it bumps the crate version, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` and the demo GIFs via a headless `opencode run`, opens a `chore: prepare release vX.Y.Z` PR, pauses for you to review it, squash-merges it, tags and pushes the version, waits for the CI release build, then writes the release notes and pushes the Homebrew formula, Scoop manifest, Docker image, and crate.
+
+Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final publish step), `jq`, and `vhs`/`ttyd`/`ffmpeg`/JetBrainsMono Nerd Font for the demo recordings. The script fails fast with a clear message when a prerequisite is missing.
 
 ---
 

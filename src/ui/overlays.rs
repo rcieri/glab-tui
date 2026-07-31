@@ -556,7 +556,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Global & Nav",
                 key: d(format!("{}", app.config.keybindings.global.configure)),
-                action: "Toggle columns config popup",
+                action: "Toggle columns config popup (filter / group / sort)",
             },
             Shortcut {
                 category: "Global & Nav",
@@ -756,14 +756,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Pipelines",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.pipelines.download_artifact
-                )),
-                action: "Download pipeline artifact",
-            },
-            Shortcut {
-                category: "Pipelines",
                 key: s("Space"),
                 action: "Check / uncheck pipeline for bulk retry",
             },
@@ -886,11 +878,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     app.config.keybindings.milestones.open_in_browser
                 )),
                 action: "Open milestone in browser",
-            },
-            Shortcut {
-                category: "Milestones",
-                key: s("J / K"),
-                action: "Scroll milestone issues list",
             },
             // ── Runners ──
             Shortcut {
@@ -1286,7 +1273,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let group_end = cols_end + group_cols.len();
         let themes = crate::config::all_theme_presets();
         let theme_list_len = themes.len();
-        let width = 48;
+        let width = 64;
         let height =
             (columns_list.len() + group_cols.len() + theme_list_len + 4 + 2 + 2 + 6 + 6) as u16;
         let area = centered_rect_fixed(width, height, size);
@@ -1300,6 +1287,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 " {} Configure View: {} ",
                 icons.label_configure,
                 tab.title(kind)
+            ))
+            .title_bottom(Span::styled(
+                " Space: toggle · Enter: filter/set · J/K: jump · Esc: close ",
+                Style::default().fg(THEME.read().unwrap().text_muted),
             ))
             .title_style(
                 Style::default()

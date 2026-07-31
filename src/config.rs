@@ -708,8 +708,6 @@ pub struct KeybindingPipelines {
     pub retry: String,
     #[serde(default)]
     pub cancel: String,
-    #[serde(default)]
-    pub download_artifact: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -869,7 +867,6 @@ keybind_defaults! {
     def_trigger_pipeline = "p",
     def_retry = "r",
     def_cancel = "d",
-    def_download_artifact = "d",
     def_create_release = "n",
     def_edit_release = "e",
     def_delete_release = "d",
@@ -957,7 +954,6 @@ impl Default for KeybindingPipelines {
             trigger_pipeline: def_trigger_pipeline(),
             retry: def_retry(),
             cancel: def_cancel(),
-            download_artifact: def_download_artifact(),
         }
     }
 }
@@ -1243,7 +1239,6 @@ delete_entity = "d"
 trigger_pipeline = "p"
 retry = "r"
 cancel = "d"
-download_artifact = "d"
 
 [keybindings.releases]
 create_release = "n"

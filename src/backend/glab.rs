@@ -2851,4 +2851,44 @@ mod tests {
         let map = parse_mr_state_response(body).unwrap();
         assert!(!map.get(&9002).unwrap().0.as_ref().unwrap().you_reviewed);
     }
+
+    #[test]
+    fn absent_current_user_is_none_not_an_empty_string() {
+        // An empty string would make every downstream username comparison
+        // silently false, rendering a confident "not yours" instead of the
+        // honest "unknown" the cascade expects.
+        let body = r#"{
+          "data": {
+            "currentUser": {},
+            "project": { "mergeRequests": { "nodes": [
+              {
+                "iid": "9003",
+                "approved": true,
+                "approvalsLeft": 0,
+                "approvalsRequired": 1,
+                "userPermissions": { "canApprove": false },
+                "approvedBy": { "nodes": [ { "username": "someone.else" } ] },
+                "reviewers": { "nodes": [
+                  { "username": "someone.else",
+                    "mergeRequestInteraction": { "reviewState": "APPROVED" } }
+                ] },
+                "conflicts": false,
+                "shouldBeRebased": false,
+                "detailedMergeStatus": "MERGEABLE"
+              }
+            ] } }
+          }
+        }"#;
+        let map = parse_mr_state_response(body).unwrap();
+        let a = map.get(&9003).unwrap().0.as_ref().unwrap();
+        assert_eq!(a.current_user, None, "must be None, never Some(\"\")");
+        assert!(
+            !a.you_approved,
+            "cannot have approved when the user is unknown"
+        );
+        assert!(
+            !a.you_reviewed,
+            "cannot have reviewed when the user is unknown"
+        );
+    }
 }

@@ -160,8 +160,9 @@ pub struct ApprovalState {
     /// The authenticated user, carried alongside the flags derived from them
     /// so the workflow cascade has one input struct. `None` when unknown.
     pub current_user: Option<String>,
-    /// You submitted any review on this MR — approved OR requested changes.
-    /// Distinct from `you_approved`: you can request changes without approving.
+    /// You submitted any review on this MR — any reviewer state other than
+    /// `UNREVIEWED` (e.g. approved, requested changes, or reviewed).
+    /// Distinct from `you_approved`: you can review without approving.
     pub you_reviewed: bool,
 }
 

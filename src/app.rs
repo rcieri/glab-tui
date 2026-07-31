@@ -231,6 +231,7 @@ impl Tab {
                     "Reviewers",
                     "Approval",
                     "Mergeable",
+                    "Workflow",
                     "Labels",
                 ];
                 if kind.is_github() {
@@ -2469,6 +2470,11 @@ impl App {
                     check_match(&value);
                 }
             }
+            if enabled_cols.contains("Workflow") {
+                for v in Self::mr_filter_values(item, "Workflow") {
+                    check_match(&v);
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((item, score));
@@ -2520,6 +2526,7 @@ impl App {
             "Mergeable" => {
                 crate::domain::mr_state::mergeable_sort_key(m.mergeability.as_ref()).to_string()
             }
+            "Workflow" => crate::domain::mr_state::workflow_sort_key(m.workflow).to_string(),
             _ => String::new(),
         }
     }
@@ -2573,6 +2580,9 @@ impl App {
                 }
                 .to_string(),
             ],
+            "Workflow" => crate::domain::mr_state::workflow_label(m.workflow)
+                .map(|l| vec![l.to_string()])
+                .unwrap_or_default(),
             _ => vec![],
         }
     }
@@ -5296,5 +5306,71 @@ index 123456..789012 100644
                 );
             }
         }
+    }
+
+    #[test]
+    fn workflow_column_is_offered_but_not_default() {
+        for kind in [BackendKind::GitLab, BackendKind::GitHub] {
+            assert!(
+                Tab::MergeRequests.columns(kind).contains(&"Workflow"),
+                "Workflow must be offered for {kind:?}"
+            );
+        }
+        // Default-off: eight default columns collapse Title at 80 cols.
+        assert!(
+            !Tab::MergeRequests
+                .default_columns(BackendKind::GitLab)
+                .contains(&"Workflow")
+        );
+    }
+
+    #[test]
+    fn workflow_sorts_in_cascade_order_not_alphabetically() {
+        use crate::domain::mr_state::WorkflowStatus;
+        let mut returned = mr_fixture(1, "opened", "a", false, "returned");
+        returned.workflow = Some(WorkflowStatus::ReturnedToYou);
+        let mut yours = mr_fixture(2, "opened", "b", false, "yours");
+        yours.workflow = Some(WorkflowStatus::YourMergeRequest);
+        let mut approved = mr_fixture(3, "opened", "c", false, "approved");
+        approved.workflow = Some(WorkflowStatus::ApprovedByYou);
+        // Alphabetically "Approved…" < "Returned…" < "Your…"; by cascade the
+        // order is Returned(0), Yours(2), Approved(3).
+        let items = vec![approved, yours, returned];
+        assert_eq!(sorted_iids(&items, "Workflow", true), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn workflow_filter_offers_the_gitlab_label() {
+        use crate::domain::mr_state::WorkflowStatus;
+        let mut mr = mr_fixture(1, "opened", "a", false, "x");
+        mr.workflow = Some(WorkflowStatus::ReturnedToYou);
+        assert_eq!(
+            App::mr_filter_values(&mr, "Workflow"),
+            vec!["Returned to you".to_string()]
+        );
+    }
+
+    #[test]
+    fn workflow_search_matches_the_label() {
+        use crate::domain::mr_state::WorkflowStatus;
+        let mut mr = mr_fixture(1, "opened", "a", false, "unrelated title");
+        mr.workflow = Some(WorkflowStatus::ReturnedToYou);
+        let items = vec![mr];
+        let with = mr_enabled_cols(&["ID", "Title", "Workflow"]);
+        let cols_with: std::collections::HashSet<String> =
+            with.get(&Tab::MergeRequests).unwrap().clone();
+        assert_eq!(
+            App::filter_mrs_list(&items, "returned", &cols_with).len(),
+            1,
+            "search must match the Workflow label when the column is enabled"
+        );
+        let without = mr_enabled_cols(&["ID", "Title"]);
+        let cols_without: std::collections::HashSet<String> =
+            without.get(&Tab::MergeRequests).unwrap().clone();
+        assert_eq!(
+            App::filter_mrs_list(&items, "returned", &cols_without).len(),
+            0,
+            "the column gate must still apply"
+        );
     }
 }

@@ -750,6 +750,32 @@ pub(crate) fn render_tab_merge_requests(
                     Alignment::Center,
                 ));
             }
+            if app.is_column_visible(Tab::MergeRequests, "Workflow") {
+                let text = crate::domain::mr_state::workflow_cell(m.workflow);
+                let color = match m.workflow {
+                    Some(crate::domain::mr_state::WorkflowStatus::ReturnedToYou) => {
+                        THEME.read().unwrap().red
+                    }
+                    Some(crate::domain::mr_state::WorkflowStatus::ReviewRequested) => {
+                        THEME.read().unwrap().yellow
+                    }
+                    Some(crate::domain::mr_state::WorkflowStatus::YourMergeRequest) => {
+                        THEME.read().unwrap().blue
+                    }
+                    Some(crate::domain::mr_state::WorkflowStatus::ApprovedByYou) => {
+                        THEME.read().unwrap().green
+                    }
+                    _ => THEME.read().unwrap().text_muted,
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &text,
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(color),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::MergeRequests, "Labels") {
                 cells.push(super::helpers::render_labels_cell(
                     &m.labels,
@@ -933,6 +959,10 @@ pub(crate) fn render_tab_merge_requests(
             header_cells.push(Cell::from(
                 Line::from("Mergeable").alignment(Alignment::Center),
             ));
+            widths.push(col_w(content_area.width, 13));
+        }
+        if app.is_column_visible(Tab::MergeRequests, "Workflow") {
+            header_cells.push(Cell::from("Workflow"));
             widths.push(col_w(content_area.width, 13));
         }
         if app.is_column_visible(Tab::MergeRequests, "Labels") {

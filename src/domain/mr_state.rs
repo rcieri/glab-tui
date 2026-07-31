@@ -3,6 +3,145 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One merge request's workflow status, in GitLab's vocabulary.
+///
+/// GitLab assigns each MR exactly one status. The first three are "Active"
+/// (they count toward your review total); the rest are inactive.
+///
+/// `Inactive` collapses GitLab's "Waiting for assignee" and "Waiting for
+/// approvals": their documented definitions overlap with no stated
+/// precedence, so splitting them would mean inventing semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowStatus {
+    // Active
+    ReturnedToYou,
+    ReviewRequested,
+    YourMergeRequest,
+    // Inactive
+    ApprovedByYou,
+    ApprovedByOthers,
+    Inactive,
+    /// Known: this MR has no relationship to you. Distinct from `None`.
+    NotYours,
+}
+
+/// Everything the cascade needs, gathered in one place so the rules stay pure.
+pub struct WorkflowInputs<'a> {
+    /// `None` when the current user could not be determined — the whole
+    /// cascade is then unanswerable.
+    pub current_user: Option<&'a str>,
+    pub author: &'a str,
+    pub assignees: &'a [String],
+    pub reviewers: &'a [String],
+    pub changes_requested: bool,
+    pub approved: bool,
+    pub you_approved: bool,
+    /// You submitted any review — approved OR requested changes.
+    pub you_reviewed: bool,
+}
+
+impl WorkflowStatus {
+    /// The three statuses GitLab counts toward your review total.
+    pub fn is_active(self) -> bool {
+        matches!(
+            self,
+            WorkflowStatus::ReturnedToYou
+                | WorkflowStatus::ReviewRequested
+                | WorkflowStatus::YourMergeRequest
+        )
+    }
+}
+
+/// First-match cascade. Returns `None` only when the answer is unknowable —
+/// never as a stand-in for "not yours", which is `NotYours`.
+pub fn workflow_status(i: &WorkflowInputs) -> Option<WorkflowStatus> {
+    let me = i.current_user?;
+    if me.is_empty() {
+        return None;
+    }
+
+    let is_author = i.author == me;
+    let is_assignee = i.assignees.iter().any(|a| a == me);
+    let is_reviewer = i.reviewers.iter().any(|r| r == me);
+    let involves_me = is_author || is_assignee || is_reviewer;
+
+    if is_author && i.changes_requested {
+        return Some(WorkflowStatus::ReturnedToYou);
+    }
+    if is_reviewer && !i.you_reviewed {
+        return Some(WorkflowStatus::ReviewRequested);
+    }
+    if is_author || is_assignee {
+        return Some(WorkflowStatus::YourMergeRequest);
+    }
+    if i.you_approved {
+        return Some(WorkflowStatus::ApprovedByYou);
+    }
+    // The `involves_me` guard is load-bearing: without it this fires on every
+    // approved MR in the project, not just the ones you are part of.
+    if involves_me && i.approved {
+        return Some(WorkflowStatus::ApprovedByOthers);
+    }
+    if involves_me {
+        return Some(WorkflowStatus::Inactive);
+    }
+    Some(WorkflowStatus::NotYours)
+}
+
+/// Sort ordinal: GitLab's Active order first, then inactive, unknown last.
+///
+/// Returned to the table as a decimal string by the caller, so the
+/// comparator's `u64` fast path orders by ordinal rather than alphabetically
+/// by label. Grouping uses the same value, because group-by is sort.
+pub fn workflow_sort_key(s: Option<WorkflowStatus>) -> u8 {
+    match s {
+        Some(WorkflowStatus::ReturnedToYou) => 0,
+        Some(WorkflowStatus::ReviewRequested) => 1,
+        Some(WorkflowStatus::YourMergeRequest) => 2,
+        Some(WorkflowStatus::ApprovedByYou) => 3,
+        Some(WorkflowStatus::ApprovedByOthers) => 4,
+        Some(WorkflowStatus::Inactive) => 5,
+        Some(WorkflowStatus::NotYours) => 6,
+        None => 7,
+    }
+}
+
+/// Abbreviated cell text. Full wording lives in the Details pane, because
+/// "Returned to you" is 16 chars and the column clamps to 10 below 90 columns.
+pub fn workflow_cell(s: Option<WorkflowStatus>) -> String {
+    let icons = crate::config::ICONS.read().unwrap();
+    match s {
+        Some(WorkflowStatus::ReturnedToYou) => format!("{} Returned", icons.workflow_returned),
+        Some(WorkflowStatus::ReviewRequested) => {
+            format!("{} Review req", icons.workflow_review)
+        }
+        Some(WorkflowStatus::YourMergeRequest) => format!("{} Yours", icons.workflow_yours),
+        Some(WorkflowStatus::ApprovedByYou) => format!("{} Approved", icons.workflow_approved),
+        Some(WorkflowStatus::ApprovedByOthers) => {
+            format!("{} by others", icons.workflow_inactive)
+        }
+        Some(WorkflowStatus::Inactive) => format!("{} Inactive", icons.workflow_inactive),
+        // Known "not yours" renders blank so the 24-of-33 common case stays quiet.
+        Some(WorkflowStatus::NotYours) => String::new(),
+        // Unknown is visibly distinct from blank.
+        None => "—".to_string(),
+    }
+}
+
+/// GitLab's full wording, for the Details pane and filter values.
+/// `None` for both `NotYours` and unknown — neither gets a Details line.
+pub fn workflow_label(s: Option<WorkflowStatus>) -> Option<&'static str> {
+    match s {
+        Some(WorkflowStatus::ReturnedToYou) => Some("Returned to you"),
+        Some(WorkflowStatus::ReviewRequested) => Some("Review requested"),
+        Some(WorkflowStatus::YourMergeRequest) => Some("Your merge requests"),
+        Some(WorkflowStatus::ApprovedByYou) => Some("Approved by you"),
+        Some(WorkflowStatus::ApprovedByOthers) => Some("Approved by others"),
+        Some(WorkflowStatus::Inactive) => Some("Inactive"),
+        Some(WorkflowStatus::NotYours) | None => None,
+    }
+}
+
 /// Approval readiness for one merge request. Host-neutral.
 ///
 /// `None` at the call site means *unknown* (fetch failed or unsupported),
@@ -637,5 +776,193 @@ mod tests {
         };
         assert_eq!(rebase_gate(Some(&s)), RebaseGate::NotNeeded);
         assert_eq!(rebase_gate(None), RebaseGate::NotNeeded);
+    }
+
+    // ── workflow status cascade ──
+
+    fn inputs<'a>(
+        current_user: Option<&'a str>,
+        author: &'a str,
+        assignees: &'a [String],
+        reviewers: &'a [String],
+    ) -> WorkflowInputs<'a> {
+        WorkflowInputs {
+            current_user,
+            author,
+            assignees,
+            reviewers,
+            changes_requested: false,
+            approved: false,
+            you_approved: false,
+            you_reviewed: false,
+        }
+    }
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn unknown_current_user_yields_none_not_a_status() {
+        // None means "could not determine", and must never be mistaken for
+        // "not yours" — that would hide an MR waiting on the user.
+        let a = names(&[]);
+        let r = names(&[]);
+        assert_eq!(workflow_status(&inputs(None, "someone", &a, &r)), None);
+    }
+
+    #[test]
+    fn no_relation_is_not_yours_not_none() {
+        let a = names(&[]);
+        let r = names(&[]);
+        assert_eq!(
+            workflow_status(&inputs(Some("me"), "someone", &a, &r)),
+            Some(WorkflowStatus::NotYours)
+        );
+    }
+
+    #[test]
+    fn returned_to_you_requires_authorship() {
+        let a = names(&[]);
+        let r = names(&[]);
+        let mut i = inputs(Some("me"), "me", &a, &r);
+        i.changes_requested = true;
+        assert_eq!(workflow_status(&i), Some(WorkflowStatus::ReturnedToYou));
+    }
+
+    #[test]
+    fn changes_requested_on_someone_elses_mr_is_not_returned_to_you() {
+        let a = names(&[]);
+        let r = names(&["me"]);
+        let mut i = inputs(Some("me"), "someone", &a, &r);
+        i.changes_requested = true;
+        assert_ne!(workflow_status(&i), Some(WorkflowStatus::ReturnedToYou));
+    }
+
+    #[test]
+    fn review_requested_when_you_are_an_unreviewed_reviewer() {
+        let a = names(&[]);
+        let r = names(&["me", "other"]);
+        let i = inputs(Some("me"), "someone", &a, &r);
+        assert_eq!(workflow_status(&i), Some(WorkflowStatus::ReviewRequested));
+    }
+
+    #[test]
+    fn review_requested_needs_your_own_review_state_not_anyones() {
+        // The regression guard for restoring `username` in the GraphQL
+        // reviewers subselection: another reviewer being unreviewed must not
+        // make this "Review requested" for you.
+        let a = names(&[]);
+        let r = names(&["me", "other"]);
+        let mut i = inputs(Some("me"), "someone", &a, &r);
+        i.you_reviewed = true;
+        assert_ne!(workflow_status(&i), Some(WorkflowStatus::ReviewRequested));
+    }
+
+    #[test]
+    fn your_merge_request_covers_author_and_assignee() {
+        let none = names(&[]);
+        let r = names(&[]);
+        assert_eq!(
+            workflow_status(&inputs(Some("me"), "me", &none, &r)),
+            Some(WorkflowStatus::YourMergeRequest)
+        );
+        let a = names(&["me"]);
+        assert_eq!(
+            workflow_status(&inputs(Some("me"), "someone", &a, &r)),
+            Some(WorkflowStatus::YourMergeRequest)
+        );
+    }
+
+    #[test]
+    fn author_outranks_approved_by_you() {
+        // First-match: an MR you authored is "yours", even if you approved it.
+        let a = names(&[]);
+        let r = names(&[]);
+        let mut i = inputs(Some("me"), "me", &a, &r);
+        i.you_approved = true;
+        assert_eq!(workflow_status(&i), Some(WorkflowStatus::YourMergeRequest));
+    }
+
+    #[test]
+    fn approved_by_you_when_only_a_reviewer() {
+        let a = names(&[]);
+        let r = names(&["me"]);
+        let mut i = inputs(Some("me"), "someone", &a, &r);
+        i.you_reviewed = true;
+        i.you_approved = true;
+        assert_eq!(workflow_status(&i), Some(WorkflowStatus::ApprovedByYou));
+    }
+
+    #[test]
+    fn approved_by_others_requires_involvement() {
+        // THE load-bearing guard. Without it this fires on every approved MR
+        // in the project — 24 of 33 on the reference instance — turning a
+        // workflow column into a second approval column.
+        let a = names(&[]);
+        let r = names(&[]);
+        let mut i = inputs(Some("me"), "someone", &a, &r);
+        i.approved = true;
+        assert_eq!(workflow_status(&i), Some(WorkflowStatus::NotYours));
+
+        let r2 = names(&["me"]);
+        let mut j = inputs(Some("me"), "someone", &a, &r2);
+        j.approved = true;
+        j.you_reviewed = true;
+        assert_eq!(workflow_status(&j), Some(WorkflowStatus::ApprovedByOthers));
+    }
+
+    #[test]
+    fn involved_but_nothing_else_matches_is_inactive() {
+        let a = names(&[]);
+        let r = names(&["me"]);
+        let mut i = inputs(Some("me"), "someone", &a, &r);
+        i.you_reviewed = true; // reviewed, didn't approve, no changes requested
+        assert_eq!(workflow_status(&i), Some(WorkflowStatus::Inactive));
+    }
+
+    #[test]
+    fn sort_key_follows_gitlab_active_order_then_inactive_then_unknown() {
+        use WorkflowStatus::*;
+        let ordered = [
+            Some(ReturnedToYou),
+            Some(ReviewRequested),
+            Some(YourMergeRequest),
+            Some(ApprovedByYou),
+            Some(ApprovedByOthers),
+            Some(Inactive),
+            Some(NotYours),
+            None,
+        ];
+        let keys: Vec<u8> = ordered.iter().map(|s| workflow_sort_key(*s)).collect();
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        assert_eq!(keys, sorted, "sort keys must already be in cascade order");
+        assert_eq!(keys.len(), 8);
+    }
+
+    #[test]
+    fn not_yours_renders_blank_and_unknown_renders_dash() {
+        assert_eq!(workflow_cell(Some(WorkflowStatus::NotYours)), "");
+        assert_eq!(workflow_cell(None), "—");
+        assert_ne!(
+            workflow_cell(Some(WorkflowStatus::NotYours)),
+            workflow_cell(None),
+            "blank and unknown must be distinguishable"
+        );
+    }
+
+    #[test]
+    fn labels_use_gitlab_wording() {
+        assert_eq!(
+            workflow_label(Some(WorkflowStatus::ReturnedToYou)),
+            Some("Returned to you")
+        );
+        assert_eq!(
+            workflow_label(Some(WorkflowStatus::YourMergeRequest)),
+            Some("Your merge requests")
+        );
+        assert_eq!(workflow_label(Some(WorkflowStatus::NotYours)), None);
+        assert_eq!(workflow_label(None), None);
     }
 }

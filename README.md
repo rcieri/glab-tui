@@ -35,7 +35,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
 - **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
-- **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `open` (open entity in browser)
+- **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — 13 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
@@ -232,17 +232,31 @@ glab-tui --dir /path/to/other/repo
 ### Options
 
 | Flag / Subcommand | Argument | Description |
-|---|---|---|---|
-| `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
-| `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
-| `--update` | | Check for and install updates |
+|---|---|---|
+| `-r`, `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
+| `-d`, `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
+| `-u`, `--update` | | Check for and install updates |
 | `-h`, `--help` | | Print usage help details |
-| `doctor` | *(subcommand)* | Check system health — dependency availability, config integrity, cache status |
-| `clean-cache` | `[--dry-run]` | Remove stale cache entries for repos that no longer exist |
+| `-V`, `--version` | | Print version information |
+| `doctor` | *(subcommand)* | Check system health — backend CLI availability, config integrity, cache status |
+| `clean-cache` | `[-n, --dry-run]` | Remove stale cache entries for repos that no longer exist (preview with `--dry-run`) |
 | `cache` | *(subcommand)* | List cached data files with sizes |
-| `open` | `<entity> <id>` | Open an entity (issue/MR/pipeline) in the browser |
+| `open` | `<entity> <id>` | Open an entity in the browser **without launching the TUI** — valid entities: `issue`, `mr`, `pr`, `pipeline`, `job`, `milestone` |
+| `repos` | *(subcommand)* | List recently-used and sibling repositories |
 
 The TUI will launch in the terminal, auto-detecting the project context and fetching the Issues tab immediately.
+
+### CLI subcommand examples
+
+```sh
+glab-tui doctor                     # run system diagnostics
+glab-tui clean-cache --dry-run      # preview stale-cache cleanup
+glab-tui clean-cache                # actually remove stale cache entries
+glab-tui cache                      # list cached data files with sizes
+glab-tui open issue 42              # open issue #42 in your browser
+glab-tui open mr 7                  # open MR/PR #7 in your browser
+glab-tui repos                      # list recently-used repositories
+```
 
 ---
 
@@ -281,46 +295,50 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 ## Key Bindings
 
+> All tables below show the **default** keys. The **Config** column shows the key name to remap in `config.toml` (e.g. under `[keybindings.issues]`, `create_issue = "n"`). `—` means the binding is fixed and **not** remappable.
+
 ### Global
 
-> All keys below are the defaults. Every binding is remappable in `config.toml` under `[keybindings.global]`.
+> Remappable via `[keybindings.global]` in `config.toml`.
 
-| Key | Action |
-|---|---|
-| `l` / `→` | Next tab |
-| `h` / `←` | Previous tab |
-| `Tab` / `,` | Open column configure popup (`Space` toggle column, `Enter` filter by column values) |
-| `Esc` | Close configure popup / overlay |
-| `j` / `↓` | Move selection down |
-| `k` / `↑` | Move selection up |
-| `J` | Scroll description panel down |
-| `K` | Scroll description panel up |
-| `f` / `/` | Open search / filter bar |
-| `Enter` / `Esc` (in search) | Close search bar |
-| `?` / `F1` | Show help |
-| `Ctrl+P` | Global search across all loaded issues & MRs |
-| `Ctrl+S` | Switch repository |
-| `F5` / `Ctrl+R` | Refresh current tab |
-| `s` | Save view layout to config |
-| `u` | Check for updates |
-| `q` / `Esc` | Quit (or close current overlay) |
+| Key | Action | Config |
+|---|---|---|
+| `l` / `→` | Next tab | `next_tab` |
+| `h` / `←` | Previous tab | `prev_tab` |
+| `Tab` / `,` | Open column configure popup (`Space` toggle column, `Enter` filter by column values) | `configure` |
+| `Esc` | Close configure popup / overlay | — |
+| `j` / `↓` | Move selection down | — |
+| `k` / `↑` | Move selection up | — |
+| `J` | Scroll description panel down | `scroll_down` |
+| `K` | Scroll description panel up | `scroll_up` |
+| `f` / `/` | Open search / filter bar | `search` |
+| `Enter` / `Esc` (in search) | Close search bar | — |
+| `?` / `F1` | Show help | `help` |
+| `Ctrl+P` | Global search across all loaded issues & MRs | `global_search` |
+| `Ctrl+S` | Switch repository | — |
+| `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
+| `s` | Save view layout to config | `save_view` |
+| `u` | Check for updates | — |
+| `q` / `Esc` | Quit (or close current overlay) | `quit` |
 
 ---
 
 ### Issues tab
 
-| Key | Action |
-|---|---|
-| `n` | Create new issue (prompts for title) |
-| `e` | Open edit menu for selected issue (opens bulk edit menu when multiple are selected) |
-| `m` | Create MR/PR from selected issue |
-| `c` | Close selected issue |
-| `r` | Reopen selected issue |
-| `d` | Delete selected issue (with confirmation) |
-| `o` | Open selected issue in browser |
-| `Space` | Select issue for bulk editing |
-| `J` | Scroll description panel down |
-| `K` | Scroll description panel up |
+> Remappable via `[keybindings.issues]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create new issue (prompts for title) | `create_issue` |
+| `e` | Open edit menu for selected issue (opens bulk edit menu when multiple are selected) | `edit_entity` |
+| `m` | Create MR/PR from selected issue | `create_mr` |
+| `c` | Close selected issue | `close_entity` |
+| `r` | Reopen selected issue | `reopen_entity` |
+| `d` | Delete selected issue (with confirmation) | `delete_entity` |
+| `o` | Open selected issue in browser | — |
+| `Space` | Select issue for bulk editing | `select_issue` |
+| `J` | Scroll description panel down | `scroll_down` |
+| `K` | Scroll description panel up | `scroll_up` |
 
 **Issue edit menu fields**
 
@@ -339,22 +357,24 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 ### Merge Requests tab
 
-| Key | Action |
-|---|---|
-| `n` | Create MR from issue ID (prompts for issue IID) |
-| `e` | Open edit menu for selected MR (opens bulk edit menu when multiple are selected) |
-| `a` | Approve selected MR |
-| `m` | Merge selected MR (squash + remove source branch) |
-| `v` | View diff of selected MR in terminal |
-| `P` | View related pipelines from MR detail |
-| `Space` | Select MR for bulk editing |
-| `o` | Open selected MR in browser |
-| `s` | Toggle Draft / Ready status |
-| `c` | Close selected MR |
-| `r` | Reopen selected MR |
-| `d` | Delete selected MR (with confirmation) |
-| `J` | Scroll description panel down |
-| `K` | Scroll description panel up |
+> Remappable via `[keybindings.mrs]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create MR from issue ID (prompts for issue IID) | `create_mr` |
+| `e` | Open edit menu for selected MR (opens bulk edit menu when multiple are selected) | `edit_entity` |
+| `a` | Approve selected MR | `approve_mr` |
+| `m` | Merge selected MR (squash + remove source branch) | `merge_mr` |
+| `v` | View diff of selected MR in terminal | `view_diff` |
+| `P` | View related pipelines from MR detail | `view_related_pipelines` |
+| `Space` | Select MR for bulk editing | `select_mr` |
+| `o` | Open selected MR in browser | — |
+| `s` | Toggle Draft / Ready status | `toggle_draft` |
+| `c` | Close selected MR | `close_entity` |
+| `r` | Reopen selected MR | `reopen_entity` |
+| `d` | Delete selected MR (with confirmation) | `delete_entity` |
+| `J` | Scroll description panel down | `scroll_down` |
+| `K` | Scroll description panel up | `scroll_up` |
 
 **MR edit menu fields**
 
@@ -374,6 +394,8 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 ### Diff View
 
 Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
+
+> Diff View keys are **fixed** and not remappable in `config.toml`.
 
 | Key | Action |
 |---|---|
@@ -403,73 +425,83 @@ Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 ### Pipelines tab
 
-| Key | Action |
-|---|---|
-| `Enter` | Drill into selected pipeline (show its jobs) |
-| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) |
-| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) |
-| `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) |
-| `r` | Retry selected pipeline (or all checked pipelines) |
-| `d` | Cancel selected pipeline |
-| `o` | Open pipeline in browser |
-| `Space` | Check/uncheck pipeline for bulk retry |
-| `j` / `↓` | (in job view) move down |
-| `k` / `↑` | (in job view) move up |
+> Remappable via `[keybindings.pipelines]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Drill into selected pipeline (show its jobs) | — |
+| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | — |
+| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | — |
+| `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) | `trigger_pipeline` |
+| `r` | Retry selected pipeline (or all checked pipelines) | `retry` |
+| `d` | Cancel selected pipeline | `cancel` |
+| `o` | Open pipeline in browser | — |
+| `Space` | Check/uncheck pipeline for bulk retry | — |
+| `j` / `↓` | (in job view) move down | — |
+| `k` / `↑` | (in job view) move up | — |
 
 **Inside a pipeline (job view)**
 
-| Key | Action |
-|---|---|
-| `Enter` | Fetch and display job trace (toggle zoom when trace is open) |
-| `r` | Retry selected job (or all checked jobs) |
-| `S` | Start manual (blocked) GitLab CI job |
-| `c` | Cancel selected job (or all checked jobs) |
-| `d` | Download job artifact |
-| `o` | Open job in browser |
-| `e` | Open job trace in `$EDITOR` |
-| `p` | Switch to pipeline selector |
-| `s` | Select all jobs in the current stage |
-| `w` | Toggle trace word wrap |
-| `m` | Collapse / expand matrix jobs |
-| `Space` | Check/uncheck job for bulk retry/cancel |
-| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) |
-| `j` / `↓` | (in trace view) scroll down |
-| `k` / `↑` | (in trace view) scroll up |
+> Remappable via `[keybindings.jobs]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Fetch and display job trace (toggle zoom when trace is open) | `view_trace` |
+| `r` | Retry selected job (or all checked jobs) | `retry` |
+| `S` | Start manual (blocked) GitLab CI job | `start_job` |
+| `c` | Cancel selected job (or all checked jobs) | `cancel` |
+| `d` | Download job artifact | `download_artifact` |
+| `o` | Open job in browser | `open_in_browser` |
+| `e` | Open job trace in `$EDITOR` | `view_trace_editor` |
+| `p` | Switch to pipeline selector | `enter_pipeline` |
+| `s` | Select all jobs in the current stage | `select_stage` |
+| `w` | Toggle trace word wrap | `toggle_trace_wrap` |
+| `m` | Collapse / expand matrix jobs | — |
+| `Space` | Check/uncheck job for bulk retry/cancel | `select_job` |
+| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | — |
+| `j` / `↓` | (in trace view) scroll down | — |
+| `k` / `↑` | (in trace view) scroll up | — |
 
 ---
 
 ### Runners tab
 
-| Key | Action |
-|---|---|
-| `p` | Pause selected runner |
-| `r` | Resume (un-pause) selected runner |
-| `e` | Edit runner description (inline text input) |
+> Remappable via `[keybindings.runners]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `p` | Pause selected runner | `pause` |
+| `r` | Resume (un-pause) selected runner | `resume` |
+| `e` | Edit runner description (inline text input) | `edit_description` |
 
 ---
 
 ### Releases tab
 
-| Key | Action |
-|---|---|
-| `Enter` | View release details in terminal |
-| `n` | Create a new release (tag, name, description) |
-| `e` | Edit selected release |
-| `d` | Delete selected release (with confirmation) |
-| `o` | Open release in browser |
+> Remappable via `[keybindings.releases]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | View release details in terminal | — |
+| `n` | Create a new release (tag, name, description) | `create_release` |
+| `e` | Edit selected release | `edit_release` |
+| `d` | Delete selected release (with confirmation) | `delete_release` |
+| `o` | Open release in browser | `open_in_browser` |
 
 ---
 
 ### Milestones tab
 
-| Key | Action |
-|---|---|
-| `n` | Create new milestone (title, description, start & due date) |
-| `e` | Edit selected milestone |
-| `c` | Close selected milestone |
-| `r` | Reopen selected milestone |
-| `d` | Delete selected milestone (with confirmation) |
-| `o` | Open milestone in browser |
+> Remappable via `[keybindings.milestones]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create new milestone (title, description, start & due date) | `create_milestone` |
+| `e` | Edit selected milestone | `edit_milestone` |
+| `c` | Close selected milestone | `close_milestone` |
+| `r` | Reopen selected milestone | `reopen_milestone` |
+| `d` | Delete selected milestone (with confirmation) | `delete_milestone` |
+| `o` | Open milestone in browser | `open_in_browser` |
 
 ---
 
@@ -477,27 +509,33 @@ Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
 
-| Key | Action |
-|---|---|
-| `Enter` | Mark item as read and jump to its target (issue / MR) |
-| `o` | Open item in browser |
+> Remappable via `[keybindings.todos]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Mark item as read and jump to its target (issue / MR) | `mark_as_read` |
+| `o` | Open item in browser | `open_in_browser` |
 
 ---
 
 ### Branches tab
 
-| Key | Action |
-|---|---|
-| `n` | Create a new branch (prompts for name; based on the selected branch) |
-| `d` | Delete selected branch (with confirmation) |
+> Remappable via `[keybindings.branches]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create a new branch (prompts for name; based on the selected branch) | `create_branch` |
+| `d` | Delete selected branch (with confirmation) | `delete_branch` |
 
 ---
 
 ### Environments tab
 
-| Key | Action |
-|---|---|
-| `Enter` | Fetch and view the deployments list for the selected environment |
+> Remappable via `[keybindings.environments]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Fetch and view the deployments list for the selected environment | `view_deployments` |
 
 ---
 
@@ -505,17 +543,21 @@ On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
 
 Logs every `glab` / `gh` command the TUI executes, with success/failure status.
 
-| Key | Action |
-|---|---|
-| `j` / `↓` | Scroll log down |
-| `k` / `↑` | Scroll log up |
-| `w` | Toggle line wrapping |
+> Remappable via `[keybindings.terminal]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `j` / `↓` | Scroll log down | — |
+| `k` / `↑` | Scroll log up | — |
+| `w` | Toggle line wrapping | `toggle_wrap` |
 
 ---
 
 ### Selector overlays (labels, assignees, etc.)
 
 Searchable multi-select popups are used for choosing labels, assignees, reviewers, milestones, and for **value-based column filtering** (see [Filtering, Grouping & Columns](#filtering-grouping--columns)).
+
+> Selector keys are **fixed** and not remappable in `config.toml`.
 
 | Key | Action |
 |---|---|
@@ -566,7 +608,7 @@ src/
 ├── editor.rs        # External editor integration ($EDITOR)
 ├── entity_editor.rs # Edit-menu field change logic
 ├── templates.rs     # Default issue/MR/PR description templates
-├── cli.rs           # CLI subcommands (doctor, clean-cache)
+├── cli.rs           # CLI subcommands (doctor, clean-cache, cache, open, repos)
 ├── themes/          # Bundled theme TOML files
 ├── backend/         # CLI backend layer
 │   ├── mod.rs       # Backend trait (~40 methods)

@@ -38,6 +38,7 @@ pub fn gh_state_from_fields(
     mergeable: Option<&str>,
     merge_state_status: Option<&str>,
     latest_review_authors: Vec<String>,
+    current_user: Option<&str>,
 ) -> (
     Option<crate::domain::mr_state::ApprovalState>,
     Option<crate::domain::mr_state::MergeabilityState>,
@@ -46,6 +47,10 @@ pub fn gh_state_from_fields(
 
     let decision = review_decision.unwrap_or_default();
     let approved = decision.eq_ignore_ascii_case("APPROVED");
+
+    let you_reviewed = current_user
+        .map(|me| latest_review_authors.iter().any(|a| a == me))
+        .unwrap_or(false);
 
     let approval = ApprovalState {
         approved,
@@ -61,10 +66,8 @@ pub fn gh_state_from_fields(
         you_approved: false,
         // Needs canApprove, which gh pr list does not provide.
         awaiting_you: false,
-        // Task 3 populates the current user and derives you_reviewed for
-        // GitHub; gh pr list does not yet surface either here.
-        current_user: None,
-        you_reviewed: false,
+        current_user: current_user.map(|s| s.to_string()),
+        you_reviewed,
     };
 
     let merge_raw = mergeable.unwrap_or("UNKNOWN");
@@ -80,11 +83,37 @@ pub fn gh_state_from_fields(
 
 pub struct GhBackend {
     tx: Option<UnboundedSender<Event>>,
+    /// The authenticated GitHub login, fetched at most once per process.
+    /// GitLab gets this free on its GraphQL call; GitHub has no equivalent,
+    /// so it is looked up once and cached rather than per refresh.
+    current_user: tokio::sync::OnceCell<String>,
 }
 
 impl GhBackend {
     pub fn new() -> Self {
-        Self { tx: None }
+        Self {
+            tx: None,
+            current_user: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    /// `None` if the lookup fails — an unknown user must yield an unknown
+    /// workflow status, never a wrong one.
+    async fn current_user(&self) -> Option<&str> {
+        self.current_user
+            .get_or_try_init(|| async {
+                let raw = self
+                    .run_gh(&["api", "user", "--jq", ".login"], "FETCHING GH USER")
+                    .await?;
+                let login = raw.trim().to_string();
+                if login.is_empty() {
+                    anyhow::bail!("empty GitHub login");
+                }
+                Ok::<String, anyhow::Error>(login)
+            })
+            .await
+            .ok()
+            .map(|s| s.as_str())
     }
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
@@ -559,7 +588,7 @@ impl Backend for GhBackend {
                     "pr",
                     "list",
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests",
                     "-R",
                     project,
                     "--state",
@@ -602,6 +631,8 @@ impl Backend for GhBackend {
             mergeable: Option<String>,
             #[serde(rename = "mergeStateStatus", default)]
             merge_state_status: Option<String>,
+            #[serde(rename = "reviewRequests", default)]
+            review_requests: Vec<serde_json::Value>,
         }
         #[derive(Deserialize)]
         struct GhLogin {
@@ -612,6 +643,7 @@ impl Backend for GhBackend {
             title: String,
         }
 
+        let me = self.current_user().await;
         let gh_prs: Vec<GhPr> = serde_json::from_str(&raw)?;
         Ok(gh_prs
             .into_iter()
@@ -638,7 +670,18 @@ impl Backend for GhBackend {
                     .into_iter()
                     .map(|a| crate::domain::mr::Assignee { username: a.login })
                     .collect();
+                // Unfiltered: every reviewer with a latest review, any state
+                // (approved, changes requested, or commented). Feeds
+                // `you_reviewed`, which must be true for any review, not just
+                // an approving one.
                 let latest_review_authors: Vec<String> = gp
+                    .latest_reviews
+                    .iter()
+                    .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
+                    .collect();
+                // Filtered to approvals only: feeds `approved_by`, which must
+                // not credit a reviewer who only commented.
+                let approved_authors: Vec<String> = gp
                     .latest_reviews
                     .iter()
                     .filter(|r| {
@@ -654,7 +697,26 @@ impl Backend for GhBackend {
                     gp.mergeable.as_deref(),
                     gp.merge_state_status.as_deref(),
                     latest_review_authors,
+                    me,
                 );
+                // gh_state_from_fields derives approved_by from the same
+                // (unfiltered) list it uses for you_reviewed; restore the
+                // approvals-only view here.
+                let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
+                    approved_by: approved_authors,
+                    ..a
+                });
+                let reviewers: Vec<crate::domain::mr::Reviewer> = gp
+                    .review_requests
+                    .iter()
+                    .filter_map(|r| {
+                        r.get("login").or_else(|| r.get("name"))?.as_str().map(|s| {
+                            crate::domain::mr::Reviewer {
+                                username: s.to_string(),
+                            }
+                        })
+                    })
+                    .collect();
                 MergeRequest {
                     iid: gp.number,
                     title: gp.title,
@@ -664,7 +726,7 @@ impl Backend for GhBackend {
                     author,
                     milestone,
                     assignees,
-                    reviewers: vec![],
+                    reviewers,
                     target_branch: gp.base_ref_name.unwrap_or_default(),
                     source_branch: gp.head_ref_name.unwrap_or_default(),
                     draft: gp.is_draft.unwrap_or(false),
@@ -757,6 +819,8 @@ impl Backend for GhBackend {
             author,
             milestone,
             assignees,
+            // Deliberately left empty: get_mr has no UI caller, so fetching
+            // reviewRequests here would cost a request for no benefit.
             reviewers: vec![],
             target_branch: gp.base_ref_name.unwrap_or_default(),
             source_branch: gp.head_ref_name.unwrap_or_default(),
@@ -2324,6 +2388,7 @@ mod tests {
             Some("MERGEABLE"),
             Some("BLOCKED"),
             vec![],
+            None,
         );
         let m = merge.unwrap();
         assert!(!m.conflicts);
@@ -2333,20 +2398,22 @@ mod tests {
 
     #[test]
     fn conflicting_maps_to_conflicts() {
-        let (_, merge) = gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![]);
+        let (_, merge) =
+            gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![], None);
         assert!(merge.unwrap().conflicts);
     }
 
     #[test]
     fn behind_maps_to_needs_rebase() {
-        let (_, merge) = gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![]);
+        let (_, merge) =
+            gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![], None);
         assert!(merge.unwrap().needs_rebase);
     }
 
     #[test]
     fn unknown_mergeable_is_computing_not_failure() {
         // GitHub computes mergeability asynchronously.
-        let (_, merge) = gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![]);
+        let (_, merge) = gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![], None);
         let m = merge.unwrap();
         assert!(m.computing);
         assert!(!m.conflicts);
@@ -2354,7 +2421,7 @@ mod tests {
 
     #[test]
     fn absent_mergeable_is_computing() {
-        let (_, merge) = gh_state_from_fields(None, None, None, vec![]);
+        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None);
         assert!(merge.unwrap().computing);
     }
 
@@ -2365,6 +2432,7 @@ mod tests {
             Some("MERGEABLE"),
             Some("CLEAN"),
             vec!["octocat".to_string()],
+            None,
         );
         let a = approval.unwrap();
         assert!(a.approved);
@@ -2379,6 +2447,7 @@ mod tests {
             Some("MERGEABLE"),
             Some("BLOCKED"),
             vec![],
+            None,
         );
         assert!(approval.unwrap().changes_requested);
     }
@@ -2391,6 +2460,7 @@ mod tests {
             Some("MERGEABLE"),
             Some("CLEAN"),
             vec!["octocat".to_string()],
+            None,
         );
         let a = approval.unwrap();
         assert_eq!(a.approvals_required, None);
@@ -2402,9 +2472,59 @@ mod tests {
     fn null_review_decision_is_pending_not_unknown() {
         // A PR with no review yet returns null; that is "pending", and the
         // axis is still known.
-        let (approval, _) = gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![]);
+        let (approval, _) =
+            gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![], None);
         let a = approval.unwrap();
         assert!(!a.approved);
         assert!(!a.changes_requested);
+    }
+
+    #[test]
+    fn github_carries_the_current_user_through() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            Some("octocat"),
+        );
+        let a = approval.unwrap();
+        assert_eq!(a.current_user.as_deref(), Some("octocat"));
+    }
+
+    #[test]
+    fn github_you_reviewed_is_true_when_you_are_in_latest_reviews() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            Some("octocat"),
+        );
+        assert!(approval.unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn github_you_reviewed_is_false_when_someone_else_reviewed() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["someone.else".to_string()],
+            Some("octocat"),
+        );
+        assert!(!approval.unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn github_unknown_current_user_leaves_it_none() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec![],
+            None,
+        );
+        assert_eq!(approval.unwrap().current_user, None);
     }
 }

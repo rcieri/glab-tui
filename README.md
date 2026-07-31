@@ -660,6 +660,22 @@ Unit tests live in several modules:
 
 ---
 
+## Releasing
+
+Releases are prepared and distributed from a maintainer's machine; CI only builds the cross-platform release binaries.
+
+```sh
+scripts/release/prepare.sh patch|minor|major   # bump version, regenerate docs + demo GIFs, open a PR
+# review and merge the PR, then:
+git tag vX.Y.Z && git push origin vX.Y.Z        # CI builds binaries + GitHub release
+scripts/release/post.sh vX.Y.Z                 # release notes + Homebrew formula + Scoop manifest
+scripts/release/publish.sh vX.Y.Z               # Docker image + crates.io
+```
+
+Prerequisites: `gh` (authenticated), `opencode`, `cargo`/`docker` for publishing, and `vhs`/`ttyd`/`ffmpeg`/JetBrainsMono Nerd Font for the demo recordings. Each script fails fast with a clear message when a prerequisite is missing.
+
+---
+
 ## Contributing
 
 1. Fork the repo and create a feature branch.

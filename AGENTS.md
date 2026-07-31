@@ -307,3 +307,14 @@ These are user-triggered mutations that shell out directly to the CLI without go
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+
+## 8. Release Process (Local-First)
+
+Releases are prepared, documented, and distributed from a maintainer's machine via `scripts/release/*.sh`. CI is only responsible for building the cross-platform release binaries. The demo GIFs must be recorded locally because `glab-tui` shells out to `gh`/`glab`, and CI tokens lack the permissions for a realistic recording.
+
+1. `scripts/release/prepare.sh [patch|minor|major]` — bumps the tag, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR. Requires `vhs`, `ttyd`, `ffmpeg`, JetBrainsMono Nerd Font, and `gh auth`.
+2. Merge the PR, then push the version tag (`git tag vX.Y.Z && git push origin vX.Y.Z`). `.github/workflows/release.yml` builds the 5-target binary matrix and uploads them to the GitHub release.
+3. `scripts/release/post.sh vX.Y.Z` — generates `RELEASE_NOTES.md` via headless `opencode run`, edits the release body, and bumps the Homebrew formula and Scoop manifest.
+4. `scripts/release/publish.sh vX.Y.Z` — pushes the Docker image to GHCR and the crate to crates.io.
+
+Model override for the opencode steps: set `OPENCODE_MODEL` (e.g. `opencode-go/deepseek-v4-flash`). The scripts exit non-zero with a clear message if a prerequisite (including `gh auth`) is missing.

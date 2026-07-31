@@ -29,6 +29,40 @@ fn normalize_labels(s: &str) -> String {
     s.replace(", ", ",")
 }
 
+/// `None` for anything that is not a usable login, so an unknown user can
+/// never be mistaken for a known one. Never returns `Some("")`.
+fn parse_gh_login(raw: &str) -> Option<String> {
+    let login = raw.trim();
+    if login.is_empty() {
+        None
+    } else {
+        Some(login.to_string())
+    }
+}
+
+/// Splits `latestReviews` into (every review's author, approving authors only).
+///
+/// Two lists because they answer different questions: `you_reviewed` must be
+/// true for any review including a rejection, while `approved_by` must not
+/// credit someone who only commented.
+fn split_review_authors(latest_reviews: &[serde_json::Value]) -> (Vec<String>, Vec<String>) {
+    let all_authors: Vec<String> = latest_reviews
+        .iter()
+        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
+        .collect();
+    let approved_authors: Vec<String> = latest_reviews
+        .iter()
+        .filter(|r| {
+            r.get("state")
+                .and_then(|s| s.as_str())
+                .map(|s| s.eq_ignore_ascii_case("APPROVED"))
+                .unwrap_or(false)
+        })
+        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
+        .collect();
+    (all_authors, approved_authors)
+}
+
 /// Map GitHub's list fields onto the host-neutral state structs.
 ///
 /// `mergeStateStatus == "BLOCKED"` means blocked by branch protection, NOT a
@@ -83,10 +117,11 @@ pub fn gh_state_from_fields(
 
 pub struct GhBackend {
     tx: Option<UnboundedSender<Event>>,
-    /// The authenticated GitHub login, fetched at most once per process.
-    /// GitLab gets this free on its GraphQL call; GitHub has no equivalent,
-    /// so it is looked up once and cached rather than per refresh.
-    current_user: tokio::sync::OnceCell<String>,
+    /// The authenticated GitHub login, resolved at most once per process.
+    /// Holds `Option` rather than `String` so a *failed* lookup is cached too —
+    /// `get_or_try_init` leaves the cell uninitialised on error and would retry
+    /// on every refresh, which is the per-refresh request the design forbids.
+    current_user: tokio::sync::OnceCell<Option<String>>,
 }
 
 impl GhBackend {
@@ -98,22 +133,20 @@ impl GhBackend {
     }
 
     /// `None` if the lookup fails — an unknown user must yield an unknown
-    /// workflow status, never a wrong one.
+    /// workflow status, never a wrong one. The failure itself is cached
+    /// alongside a success, so this never re-issues the `gh api user` call
+    /// after the first attempt, whatever the outcome.
     async fn current_user(&self) -> Option<&str> {
         self.current_user
-            .get_or_try_init(|| async {
+            .get_or_init(|| async {
                 let raw = self
                     .run_gh(&["api", "user", "--jq", ".login"], "FETCHING GH USER")
-                    .await?;
-                let login = raw.trim().to_string();
-                if login.is_empty() {
-                    anyhow::bail!("empty GitHub login");
-                }
-                Ok::<String, anyhow::Error>(login)
+                    .await
+                    .ok()?;
+                parse_gh_login(&raw)
             })
             .await
-            .ok()
-            .map(|s| s.as_str())
+            .as_deref()
     }
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
@@ -670,28 +703,8 @@ impl Backend for GhBackend {
                     .into_iter()
                     .map(|a| crate::domain::mr::Assignee { username: a.login })
                     .collect();
-                // Unfiltered: every reviewer with a latest review, any state
-                // (approved, changes requested, or commented). Feeds
-                // `you_reviewed`, which must be true for any review, not just
-                // an approving one.
-                let latest_review_authors: Vec<String> = gp
-                    .latest_reviews
-                    .iter()
-                    .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
-                    .collect();
-                // Filtered to approvals only: feeds `approved_by`, which must
-                // not credit a reviewer who only commented.
-                let approved_authors: Vec<String> = gp
-                    .latest_reviews
-                    .iter()
-                    .filter(|r| {
-                        r.get("state")
-                            .and_then(|s| s.as_str())
-                            .map(|s| s.eq_ignore_ascii_case("APPROVED"))
-                            .unwrap_or(false)
-                    })
-                    .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
-                    .collect();
+                let (latest_review_authors, approved_authors) =
+                    split_review_authors(&gp.latest_reviews);
                 let (approval, mergeability) = gh_state_from_fields(
                     gp.review_decision.as_deref(),
                     gp.mergeable.as_deref(),
@@ -2375,6 +2388,79 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
+    }
+
+    #[test]
+    fn parse_gh_login_reads_a_normal_login() {
+        assert_eq!(parse_gh_login("octocat"), Some("octocat".to_string()));
+    }
+
+    #[test]
+    fn parse_gh_login_trims_the_trailing_newline_jq_emits() {
+        // `gh api user --jq .login` emits the login followed by a newline.
+        assert_eq!(parse_gh_login("octocat\n"), Some("octocat".to_string()));
+    }
+
+    #[test]
+    fn parse_gh_login_empty_string_is_none() {
+        assert_eq!(parse_gh_login(""), None);
+    }
+
+    #[test]
+    fn parse_gh_login_whitespace_only_is_none_not_some_empty_string() {
+        assert_eq!(parse_gh_login("   \n"), None);
+    }
+
+    #[test]
+    fn split_review_authors_separates_approvals_from_all_reviews() {
+        // One of each: an approval, a rejection, and a non-blocking comment.
+        // `you_reviewed` must see all three; `approved_by` must see only the
+        // approver.
+        let reviews = vec![
+            serde_json::json!({"author": {"login": "approver"}, "state": "APPROVED"}),
+            serde_json::json!({"author": {"login": "rejecter"}, "state": "CHANGES_REQUESTED"}),
+            serde_json::json!({"author": {"login": "commenter"}, "state": "COMMENTED"}),
+        ];
+
+        let (all_authors, approved_authors) = split_review_authors(&reviews);
+
+        assert_eq!(
+            all_authors,
+            vec![
+                "approver".to_string(),
+                "rejecter".to_string(),
+                "commenter".to_string(),
+            ]
+        );
+        assert_eq!(approved_authors, vec!["approver".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn once_cell_caches_a_failed_lookup_and_does_not_retry() {
+        // Regression guard for the pitfall in the original design: with
+        // `get_or_try_init`, an `Err` result is never stored (tokio's
+        // `OnceCell::get_or_try_init` only calls `set_value` on the `Ok`
+        // branch), so a failed lookup retries on every call. Switching
+        // `current_user`'s cell to `OnceCell<Option<String>>` and using the
+        // infallible `get_or_init` avoids that: the initializer always
+        // returns a plain value (here, `None` for "lookup failed"), and
+        // `get_or_init` unconditionally calls `set_value`, so the failure is
+        // cached exactly like a success would be.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = AtomicUsize::new(0);
+        let cell: tokio::sync::OnceCell<Option<i32>> = tokio::sync::OnceCell::new();
+
+        for _ in 0..3 {
+            let _ = cell
+                .get_or_init(|| async {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    None::<i32>
+                })
+                .await;
+        }
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

@@ -122,11 +122,27 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                     }
                     OverlayKind::EditMenu => {
                         if let Some(ref mut menu) = app.edit_menu {
-                            let new = if scroll_down {
-                                (menu.selected_idx + 1).min(menu.fields.len().saturating_sub(1))
+                            let is_new = menu.is_new();
+                            let max = if is_new {
+                                menu.fields.len()
+                            } else {
+                                menu.fields.len().saturating_sub(1)
+                            };
+                            let mut new = if scroll_down {
+                                (menu.selected_idx + 1).min(max)
                             } else {
                                 menu.selected_idx.saturating_sub(1)
                             };
+                            // Skip section headers
+                            while new < menu.fields.len()
+                                && menu.fields[new].kind == crate::app::FieldType::Section
+                            {
+                                if scroll_down {
+                                    new = (new + 1).min(max);
+                                } else {
+                                    new = new.saturating_sub(1);
+                                }
+                            }
                             menu.selected_idx = new;
                             menu.state.select(Some(new));
                         }
@@ -1011,6 +1027,10 @@ async fn main() -> Result<()> {
                                     {
                                         let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
                                     } else {
+                                        let _ = tx.send(Event::FetchFailed(
+                                            crate::app::Tab::Milestones,
+                                            format!("Failed to fetch milestone #{} issues", iid),
+                                        ));
                                         let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
                                     }
                                 });
@@ -1245,6 +1265,10 @@ async fn main() -> Result<()> {
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
                     app.status_message = None;
                     app.project_cache.milestones = app.milestones.items.clone();
+                    app.milestone_issues_cache.clear();
+                    app.selected_milestone_issues = None;
+                    app.selected_milestone_iid = None;
+                    app.project_cache.milestone_issues.clear();
                     crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
                 Event::MilestoneDeleted => {
@@ -2690,7 +2714,7 @@ async fn main() -> Result<()> {
                                         // (no CLI call — iid==0 means this entity is not yet created)
                                         if let Some(ref mut menu) = app.edit_menu {
                                             if let Some(field) = menu.fields.get_mut(field_idx) {
-                                                field.1 = value.clone();
+                                                field.value = value.clone();
                                             }
                                         }
                                     }
@@ -2922,6 +2946,9 @@ async fn main() -> Result<()> {
                                                     app.milestones.items.clear();
                                                     app.pipeline_jobs.clear();
                                                     app.fetching_pipelines.clear();
+                                                    app.edit_menu = None;
+                                                    app.selected_milestone_issues = None;
+                                                    app.selected_milestone_iid = None;
 
                                                     let cache = crate::utils::cache::load_cache(
                                                         &app.project_context,
@@ -2939,6 +2966,8 @@ async fn main() -> Result<()> {
                                                     app.environments.items = cache.environments;
                                                     app.milestone_issues_cache =
                                                         cache.milestone_issues;
+                                                    app.cached_labels = cache.labels;
+                                                    app.cached_members = cache.members;
 
                                                     let has_any_cached =
                                                         !app.issues.items.is_empty()
@@ -3035,6 +3064,11 @@ async fn main() -> Result<()> {
                                                             app.active_tab,
                                                             events.sender(),
                                                         );
+                                                        spawn_fetch_repo_attributes(
+                                                            &client.clone().muted(),
+                                                            &app.project_context,
+                                                            events.sender(),
+                                                        );
                                                     }
                                                 } else {
                                                     app.error_message = Some(format!(
@@ -3073,12 +3107,11 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         if let Some(ref mut menu) = app.edit_menu {
-                                            if let Some(f) = menu
-                                                .fields
-                                                .iter_mut()
-                                                .find(|f| f.0 == "Description")
-                                            {
-                                                f.1 = desc_val.clone();
+                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            }) {
+                                                f.value = desc_val.clone();
                                             }
                                             let field_idx = menu.selected_idx;
                                             let cursor_idx = desc_val.len();
@@ -3125,12 +3158,11 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         if let Some(ref mut menu) = app.edit_menu {
-                                            if let Some(f) = menu
-                                                .fields
-                                                .iter_mut()
-                                                .find(|f| f.0 == "Description")
-                                            {
-                                                f.1 = desc_val.clone();
+                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            }) {
+                                                f.value = desc_val.clone();
                                             }
                                             let field_idx = menu.selected_idx;
                                             let cursor_idx = desc_val.len();
@@ -3141,6 +3173,203 @@ async fn main() -> Result<()> {
                                                 action: crate::app::TextInputAction::EditNewField {
                                                     field_idx,
                                                 },
+                                            });
+                                        }
+                                        continue;
+                                    }
+
+                                    if field_type == "description_action" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        let choice = selected_val.unwrap_or_default();
+                                        let entity_iid = selector.entity_iid;
+                                        let entity_type = selector.entity_type.clone();
+
+                                        if choice == "Open in Editor" {
+                                            // Get current description from edit menu or entity data
+                                            let current_desc = if entity_iid == 0
+                                                || entity_type.starts_with("new_")
+                                            {
+                                                app.edit_menu
+                                                    .as_ref()
+                                                    .and_then(|m| {
+                                                        m.fields
+                                                            .iter()
+                                                            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
+                                                            .map(|f| f.value.clone())
+                                                    })
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "issue"
+                                                || entity_type == "edit_issue"
+                                            {
+                                                app.issues
+                                                    .items
+                                                    .iter()
+                                                    .find(|i| i.iid == entity_iid)
+                                                    .and_then(|i| i.description.clone())
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "milestone"
+                                                || entity_type == "edit_milestone"
+                                            {
+                                                app.milestones
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            } else {
+                                                app.mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            };
+                                            if let Some(new_desc) = crate::editor::edit_in_editor(
+                                                &current_desc,
+                                                &mut terminal,
+                                            ) {
+                                                if let Some(ref mut menu) = app.edit_menu {
+                                                    if let Some(f) =
+                                                        menu.fields.iter_mut().find(|f| {
+                                                            f.label == "Description"
+                                                                && f.kind
+                                                                    == crate::app::FieldType::Text
+                                                        })
+                                                    {
+                                                        f.value = new_desc.clone();
+                                                    }
+                                                }
+                                                // Apply the change to the backend
+                                                let Some(client) = app.gitlab_client.clone() else {
+                                                    continue;
+                                                };
+                                                let project_path = app.project_context.clone();
+                                                let result = if entity_type == "issue"
+                                                    || entity_type == "edit_issue"
+                                                {
+                                                    client
+                                                        .update_issue_description(
+                                                            &project_path,
+                                                            entity_iid,
+                                                            &new_desc,
+                                                        )
+                                                        .await
+                                                } else if entity_type == "milestone"
+                                                    || entity_type == "edit_milestone"
+                                                {
+                                                    crate::domain::milestones::update_milestone(
+                                                        &client,
+                                                        &project_path,
+                                                        entity_iid,
+                                                        &app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default(),
+                                                        &new_desc,
+                                                        app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .and_then(|m| m.start_date.clone())
+                                                            .as_deref(),
+                                                        app.milestones
+                                                            .items
+                                                            .iter()
+                                                            .find(|m| m.iid == entity_iid)
+                                                            .and_then(|m| m.due_date.clone())
+                                                            .as_deref(),
+                                                    )
+                                                    .await
+                                                } else {
+                                                    client
+                                                        .update_mr_description(
+                                                            &project_path,
+                                                            entity_iid,
+                                                            &new_desc,
+                                                        )
+                                                        .await
+                                                };
+                                                if let Err(e) = result {
+                                                    app.error_message = Some(format!(
+                                                        "Failed to update description: {}",
+                                                        e
+                                                    ));
+                                                }
+                                            }
+                                        } else {
+                                            // Edit Inline — open TextInput
+                                            let current_val = if entity_iid == 0
+                                                || entity_type.starts_with("new_")
+                                            {
+                                                app.edit_menu
+                                                    .as_ref()
+                                                    .and_then(|m| {
+                                                        m.fields
+                                                            .iter()
+                                                            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
+                                                            .map(|f| f.value.clone())
+                                                    })
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "issue"
+                                                || entity_type == "edit_issue"
+                                            {
+                                                app.issues
+                                                    .items
+                                                    .iter()
+                                                    .find(|i| i.iid == entity_iid)
+                                                    .and_then(|i| i.description.clone())
+                                                    .unwrap_or_default()
+                                            } else if entity_type == "milestone"
+                                                || entity_type == "edit_milestone"
+                                            {
+                                                app.milestones
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            } else {
+                                                app.mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| m.iid == entity_iid)
+                                                    .and_then(|m| m.description.clone())
+                                                    .unwrap_or_default()
+                                            };
+                                            let action = if entity_iid == 0
+                                                || entity_type.starts_with("new_")
+                                            {
+                                                crate::app::TextInputAction::EditNewField {
+                                                    field_idx: app
+                                                        .edit_menu
+                                                        .as_ref()
+                                                        .and_then(|m| {
+                                                            m.fields.iter().position(|f| {
+                                                                f.label == "Description"
+                                                            })
+                                                        })
+                                                        .unwrap_or(0),
+                                                }
+                                            } else {
+                                                crate::app::TextInputAction::EditField {
+                                                    entity_iid,
+                                                    entity_type: entity_type.clone(),
+                                                    field_type: "description".to_string(),
+                                                }
+                                            };
+                                            app.text_input = Some(crate::app::TextInput {
+                                                title: " Edit Description ".to_string(),
+                                                value: current_val.clone(),
+                                                cursor_idx: current_val.len(),
+                                                action,
                                             });
                                         }
                                         continue;
@@ -3245,32 +3474,56 @@ async fn main() -> Result<()> {
                                         app.edit_menu = Some(crate::app::EditMenu {
                                             title: format!("Create {}", pr_suffix),
                                             fields: vec![
-                                                ("Title".to_string(), title_val),
-                                                ("Source Branch".to_string(), source_branch_val),
-                                                (
-                                                    "Target Branch".to_string(),
+                                                crate::app::Field::text("Title", title_val),
+                                                crate::app::Field::section("Branches"),
+                                                crate::app::Field::ref_field(
+                                                    "Source Branch",
+                                                    source_branch_val,
+                                                ),
+                                                crate::app::Field::ref_field(
+                                                    "Target Branch",
                                                     get_default_branch()
                                                         .unwrap_or_else(|| "main".to_string()),
                                                 ),
-                                                ("Labels".to_string(), labels_val),
-                                                ("Assignees".to_string(), assignees_val),
-                                                ("Reviewers".to_string(), String::new()),
-                                                ("Milestone".to_string(), milestone_val),
-                                                (
-                                                    "Status (Draft/Ready)".to_string(),
+                                                crate::app::Field::section("Details"),
+                                                crate::app::Field::multi_select(
+                                                    "Labels", labels_val,
+                                                ),
+                                                crate::app::Field::multi_select(
+                                                    "Assignees",
+                                                    assignees_val,
+                                                ),
+                                                crate::app::Field::multi_select(
+                                                    "Reviewers",
+                                                    String::new(),
+                                                ),
+                                                crate::app::Field::multi_select(
+                                                    "Milestone",
+                                                    milestone_val,
+                                                ),
+                                                crate::app::Field::section("Status"),
+                                                crate::app::Field::toggle(
+                                                    "Status (Draft/Ready)",
                                                     "Draft".to_string(),
                                                 ),
-                                                ("Description".to_string(), description_val),
+                                                crate::app::Field::section("Description"),
+                                                crate::app::Field::text(
+                                                    "Description",
+                                                    description_val,
+                                                ),
                                             ],
                                             selected_idx: 0,
                                             entity_iid: issue_iid,
-                                            entity_type: "new_mr".to_string(),
+                                            entity_kind: crate::app::EditEntityKind::CreateMr,
                                             state: {
                                                 let mut s = ListState::default();
                                                 s.select(Some(0));
                                                 s
                                             },
                                             workflow_inputs: vec![],
+                                            cursor_pos: 0,
+                                            editing: false,
+                                            desc_scroll: 0,
                                         });
                                         continue;
                                     }
@@ -3484,6 +3737,9 @@ async fn main() -> Result<()> {
                                                         });
                                                         continue;
                                                     }
+                                                    // Edit entity: close menu, writes happen on field-level handlers
+                                                    app.edit_menu = None;
+                                                    continue;
                                                 }
                                             }
                                         }
@@ -3868,7 +4124,7 @@ async fn main() -> Result<()> {
                                                 if let Some(f) = menu
                                                     .fields
                                                     .iter_mut()
-                                                    .find(|f| f.0 == target_field_name)
+                                                    .find(|f| f.label == target_field_name)
                                                 {
                                                     let display_val = if field_type
                                                         == "confidential"
@@ -3895,7 +4151,7 @@ async fn main() -> Result<()> {
                                                         == "workflow_file"
                                                         && !display_val.is_empty();
 
-                                                    f.1 = display_val.clone();
+                                                    f.value = display_val.clone();
 
                                                     let _ = f; // release borrow before modifying fields
 
@@ -3925,16 +4181,16 @@ async fn main() -> Result<()> {
                                                                 crate::domain::workflow_inputs::parse_workflow_inputs(&yaml_path)
                                                             {
                                                                 menu.workflow_inputs = inputs.clone();
-                                                                menu.fields.retain(|(l, _)| l != "Inputs");
+                                                                menu.fields.retain(|f| f.label != "Inputs");
                                                                 let insert_pos = menu
                                                                     .fields
                                                                     .iter()
-                                                                    .position(|(l, _)| l == "Variables")
+                                                                    .position(|f| f.label == "Variables")
                                                                     .unwrap_or(menu.fields.len());
                                                                 for input in inputs.iter().rev() {
                                                                     let label = format!("Input: {}", input.name);
                                                                     let default_val = input.default.clone().unwrap_or_default();
-                                                                    menu.fields.insert(insert_pos, (label, default_val));
+                                                                    menu.fields.insert(insert_pos, crate::app::Field::text(&label, default_val));
                                                                 }
                                                             }
                                                         }
@@ -3978,11 +4234,15 @@ async fn main() -> Result<()> {
                     if let Some(mut menu) = app.edit_menu.take() {
                         match key_event.code {
                             KeyCode::Esc => {
-                                // close menu
+                                if menu.editing {
+                                    menu.editing = false;
+                                    app.edit_menu = Some(menu);
+                                }
+                                // else: close menu (drop menu by not reassigning)
                             }
                             KeyCode::Char('j') | KeyCode::Down => {
                                 let is_new =
-                                    menu.entity_iid == 0 || menu.entity_type.starts_with("new_");
+                                    menu.entity_iid == 0 || menu.entity_kind.needs_submit();
                                 let max_idx = if is_new {
                                     menu.fields.len() + 1 // fields + spacer + submit
                                 } else {
@@ -3993,16 +4253,68 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx + 1
                                 };
-                                // Skip the spacer row (index == fields.len())
+                                // Skip section headers, Description, and spacer row
+                                while menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].kind
+                                        == crate::app::FieldType::Section
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    menu.selected_idx += 1;
+                                }
                                 if is_new && menu.selected_idx == menu.fields.len() {
                                     menu.selected_idx += 1;
                                 }
                                 menu.state.select(Some(menu.selected_idx));
+                                // Reset cursor for inline-editable fields
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        menu.cursor_pos =
+                                            menu.fields[menu.selected_idx].value.len();
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            // h: jump to left pane (first non-section field)
+                            KeyCode::Char('h') => {
+                                // Find Title or first non-section field
+                                let target = menu
+                                    .fields
+                                    .iter()
+                                    .position(|f| f.kind != crate::app::FieldType::Section)
+                                    .unwrap_or(0);
+                                menu.selected_idx = target;
+                                menu.state.select(Some(target));
+                                menu.cursor_pos = menu.fields[target].value.len();
+                                app.edit_menu = Some(menu);
+                            }
+                            // l: jump to right pane (Description field)
+                            KeyCode::Char('l') => {
+                                let target = menu
+                                    .fields
+                                    .iter()
+                                    .position(|f| {
+                                        f.label == "Description"
+                                            && f.kind == crate::app::FieldType::Text
+                                    })
+                                    .unwrap_or(menu.fields.len().saturating_sub(1));
+                                menu.selected_idx = target;
+                                menu.state.select(Some(target));
+                                menu.cursor_pos = menu.fields[target].value.len();
+                                app.edit_menu = Some(menu);
+                            }
+                            // J/K: scroll description pane
+                            KeyCode::Char('J') => {
+                                menu.desc_scroll = menu.desc_scroll.saturating_add(1);
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Char('K') => {
+                                menu.desc_scroll = menu.desc_scroll.saturating_sub(1);
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::Char('k') | KeyCode::Up => {
                                 let is_new =
-                                    menu.entity_iid == 0 || menu.entity_type.starts_with("new_");
+                                    menu.entity_iid == 0 || menu.entity_kind.needs_submit();
                                 let max_idx = if is_new {
                                     menu.fields.len() + 1
                                 } else {
@@ -4013,64 +4325,126 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx - 1
                                 };
-                                // Skip the spacer row (index == fields.len())
+                                // Skip section headers and Description
+                                while menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].kind
+                                        == crate::app::FieldType::Section
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                    && menu.selected_idx > 0
+                                {
+                                    menu.selected_idx -= 1;
+                                }
+                                // Skip spacer row
                                 if is_new && menu.selected_idx == menu.fields.len() {
                                     menu.selected_idx = menu.fields.len().saturating_sub(1);
                                 }
                                 menu.state.select(Some(menu.selected_idx));
+                                // Reset cursor for inline-editable fields
+                                if menu.selected_idx < menu.fields.len() {
+                                    let label = &menu.fields[menu.selected_idx].label;
+                                    if label == "Title" || label == "Description" {
+                                        menu.cursor_pos =
+                                            menu.fields[menu.selected_idx].value.len();
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Left => {
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    menu.cursor_pos = menu.cursor_pos.saturating_sub(1);
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Right => {
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    let max = menu.fields[menu.selected_idx].value.len();
+                                    if menu.cursor_pos < max {
+                                        menu.cursor_pos += 1;
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Home => {
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    menu.cursor_pos = 0;
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::End => {
+                                if menu.editing
+                                    && menu.selected_idx < menu.fields.len()
+                                    && (menu.fields[menu.selected_idx].label == "Title"
+                                        || menu.fields[menu.selected_idx].label == "Description")
+                                {
+                                    menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
+                                }
                                 app.edit_menu = Some(menu);
                             }
                             KeyCode::Enter => {
                                 let entity_iid = menu.entity_iid;
-                                let entity_type = menu.entity_type.clone();
+                                let entity_type = menu.entity_kind.legacy_string();
                                 let is_new_entity =
                                     entity_iid == 0 || entity_type.starts_with("new_");
-                                let is_on_submit =
-                                    is_new_entity && menu.selected_idx == menu.fields.len() + 1;
+                                let is_on_submit = menu.selected_idx == menu.fields.len() + 1;
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {
                                         let title = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Title")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let due_date = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Due Date")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Due Date")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let weight = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Weight")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Weight")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
@@ -4109,50 +4483,53 @@ async fn main() -> Result<()> {
                                         let title = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Title")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let source = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Source Branch")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Source Branch")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let target = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Target Branch")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Target Branch")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let reviewers = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Reviewers")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Reviewers")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if !source.is_empty() {
@@ -4215,20 +4592,20 @@ async fn main() -> Result<()> {
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if labels.is_empty()
@@ -4297,20 +4674,20 @@ async fn main() -> Result<()> {
                                         let labels = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Labels")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let assignees = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Assignees")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let milestone = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Milestone")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if labels.is_empty()
@@ -4379,26 +4756,29 @@ async fn main() -> Result<()> {
                                         let title = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Title")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let start_date = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Start Date")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Start Date")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let due_date = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Due Date")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Due Date")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
@@ -4449,52 +4829,56 @@ async fn main() -> Result<()> {
                                         let branch = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Branch / Ref")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Branch / Ref")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let mr = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Merge Request Pipeline")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Merge Request Pipeline")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let variables = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Variables")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Variables")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let inputs = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Inputs")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Inputs")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let workflow = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Workflow File")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Workflow File")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         let var_pairs = parse_key_value_pairs(&variables);
                                         // Collect per-input fields when workflow_dispatch inputs
                                         // were detected; otherwise fall back to the generic
                                         // "Inputs" field.
-                                        let per_input_fields: Vec<&(String, String)> = menu
+                                        let per_input_fields: Vec<&crate::app::Field> = menu
                                             .fields
                                             .iter()
-                                            .filter(|(k, _)| k.starts_with("Input: "))
+                                            .filter(|f| f.label.starts_with("Input: "))
                                             .collect();
                                         let input_pairs: Vec<(String, String)> =
                                             if !per_input_fields.is_empty() {
                                                 per_input_fields
                                                     .iter()
-                                                    .map(|(label, value)| {
-                                                        let name = label
+                                                    .map(|f| {
+                                                        let name = f
+                                                            .label
                                                             .strip_prefix("Input: ")
-                                                            .unwrap_or(label);
-                                                        (name.to_string(), value.trim().to_string())
+                                                            .unwrap_or(&f.label);
+                                                        (
+                                                            name.to_string(),
+                                                            f.value.trim().to_string(),
+                                                        )
                                                     })
                                                     .filter(|(_, v)| !v.is_empty())
                                                     .collect()
@@ -4536,20 +4920,23 @@ async fn main() -> Result<()> {
                                         let tag = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Tag")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Tag")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let name = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Release Name")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| f.label == "Release Name")
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
                                         let description = menu
                                             .fields
                                             .iter()
-                                            .find(|(k, _)| k == "Description")
-                                            .map(|(_, v)| v.trim().to_string())
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
                                         if !tag.is_empty() {
@@ -4589,10 +4976,24 @@ async fn main() -> Result<()> {
 
                                 // Not on submit — act on the currently selected field
                                 let field_name = if menu.selected_idx < menu.fields.len() {
-                                    menu.fields[menu.selected_idx].0.clone()
+                                    menu.fields[menu.selected_idx].label.clone()
                                 } else {
                                     String::new()
                                 };
+
+                                // Title / Description: Enter toggles inline edit mode
+                                if field_name == "Title" || field_name == "Description" {
+                                    if menu.editing {
+                                        menu.editing = false;
+                                    } else {
+                                        menu.editing = true;
+                                        if let Some(f) = menu.fields.get(menu.selected_idx) {
+                                            menu.cursor_pos = f.value.len();
+                                        }
+                                    }
+                                    app.edit_menu = Some(menu);
+                                    continue;
+                                }
 
                                 if field_name == "Labels"
                                     || field_name == "Assignees"
@@ -4643,7 +5044,7 @@ async fn main() -> Result<()> {
                                             entity_iid == 0 || entity_type.starts_with("new_");
                                         if is_new_entity {
                                             let current_val =
-                                                menu.fields[menu.selected_idx].1.clone();
+                                                menu.fields[menu.selected_idx].value.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             } else {
@@ -4665,7 +5066,7 @@ async fn main() -> Result<()> {
                                             entity_iid == 0 || entity_type.starts_with("new_");
                                         if is_new_entity {
                                             let current_val =
-                                                menu.fields[menu.selected_idx].1.clone();
+                                                menu.fields[menu.selected_idx].value.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             } else {
@@ -4703,7 +5104,7 @@ async fn main() -> Result<()> {
                                             .collect();
                                         if field_type == "pipeline_branch" {
                                             let current_val =
-                                                menu.fields[menu.selected_idx].1.clone();
+                                                menu.fields[menu.selected_idx].value.clone();
                                             if !current_val.is_empty() {
                                                 current_set.insert(current_val);
                                             }
@@ -4716,7 +5117,8 @@ async fn main() -> Result<()> {
                                         all_items = get_workflow_files(app.is_github());
                                         is_loading = false;
                                         // Pre-select any already-typed value
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
@@ -4743,7 +5145,8 @@ async fn main() -> Result<()> {
                                             }
                                             is_loading = false;
                                         }
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
@@ -4772,14 +5175,16 @@ async fn main() -> Result<()> {
                                         tags.sort();
                                         all_items = tags;
                                         is_loading = false;
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
-                                        let current_val = menu.fields[menu.selected_idx].1.clone();
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty()
                                             && field_type != "draft_status"
                                             && field_type != "mr_pipeline"
@@ -4931,8 +5336,9 @@ async fn main() -> Result<()> {
                                 }
 
                                 if field_name == "Description" {
+                                    // For new entities with empty description, show template selector
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
-                                        let raw_val = menu.fields[menu.selected_idx].1.clone();
+                                        let raw_val = menu.fields[menu.selected_idx].value.clone();
                                         if raw_val.trim().is_empty() {
                                             let template_type = if entity_type == "new_mr" {
                                                 "mr"
@@ -4990,62 +5396,7 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     }
-                                    let current_val = if entity_iid == 0
-                                        || entity_type.starts_with("new_")
-                                    {
-                                        let raw_val = menu.fields[menu.selected_idx].1.clone();
-                                        if raw_val.trim().is_empty() {
-                                            let template_type = if entity_type == "new_mr" {
-                                                "mr"
-                                            } else {
-                                                "issue"
-                                            };
-                                            get_default_template(template_type).unwrap_or_default()
-                                        } else {
-                                            raw_val
-                                        }
-                                    } else {
-                                        if entity_type == "issue" {
-                                            app.issues
-                                                .items
-                                                .iter()
-                                                .find(|i| i.iid == entity_iid)
-                                                .and_then(|i| i.description.clone())
-                                                .unwrap_or_default()
-                                        } else if entity_type == "milestone" {
-                                            app.milestones
-                                                .items
-                                                .iter()
-                                                .find(|m| m.iid == entity_iid)
-                                                .and_then(|m| m.description.clone())
-                                                .unwrap_or_default()
-                                        } else {
-                                            app.mrs
-                                                .items
-                                                .iter()
-                                                .find(|m| m.iid == entity_iid)
-                                                .and_then(|m| m.description.clone())
-                                                .unwrap_or_default()
-                                        }
-                                    };
-                                    let action =
-                                        if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            crate::app::TextInputAction::EditNewField {
-                                                field_idx: menu.selected_idx,
-                                            }
-                                        } else {
-                                            crate::app::TextInputAction::EditField {
-                                                entity_iid,
-                                                entity_type: entity_type.clone(),
-                                                field_type: "description".to_string(),
-                                            }
-                                        };
-                                    app.text_input = Some(crate::app::TextInput {
-                                        title: " Edit Description ".to_string(),
-                                        value: current_val.clone(),
-                                        cursor_idx: current_val.len(),
-                                        action,
-                                    });
+                                    // Otherwise inline editing handles Description — Enter does nothing
                                     app.edit_menu = Some(menu);
                                     continue;
                                 }
@@ -5053,7 +5404,7 @@ async fn main() -> Result<()> {
                                 if field_name == "Due Date" || field_name == "Start Date" {
                                     let current_val =
                                         if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            menu.fields[menu.selected_idx].1.clone()
+                                            menu.fields[menu.selected_idx].value.clone()
                                         } else {
                                             if entity_type == "issue" {
                                                 app.issues
@@ -5104,15 +5455,14 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
 
-                                if field_name == "Title"
-                                    || field_name == "Weight"
+                                if field_name == "Weight"
                                     || field_name == "Variables"
                                     || field_name == "Inputs"
                                     || field_name == "Release Name"
                                 {
                                     let current_val =
                                         if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            menu.fields[menu.selected_idx].1.clone()
+                                            menu.fields[menu.selected_idx].value.clone()
                                         } else {
                                             let field_type = match field_name.as_str() {
                                                 "Title" => "title",
@@ -5207,6 +5557,77 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
                             }
+                            KeyCode::Backspace => {
+                                if menu.editing {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Title" || field_name == "Description" {
+                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                            if menu.cursor_pos > 0 {
+                                                f.value.remove(menu.cursor_pos - 1);
+                                                menu.cursor_pos -= 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
+                            KeyCode::Char(c)
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                                    && c == 'e' =>
+                            {
+                                let field_name = if menu.selected_idx < menu.fields.len() {
+                                    menu.fields[menu.selected_idx].label.clone()
+                                } else {
+                                    String::new()
+                                };
+                                if field_name == "Description" {
+                                    let entity_iid = menu.entity_iid;
+                                    let entity_type = menu.entity_kind.legacy_string();
+                                    let desc = if let Some(f) = menu.fields.iter().find(|f| {
+                                        f.label == "Description"
+                                            && f.kind == crate::app::FieldType::Text
+                                    }) {
+                                        f.value.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    app.edit_menu = Some(menu);
+                                    if let Some(new_desc) =
+                                        crate::editor::edit_in_editor(&desc, &mut terminal)
+                                    {
+                                        if let Some(menu) = &mut app.edit_menu {
+                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            }) {
+                                                f.value = new_desc;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    app.edit_menu = Some(menu);
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if menu.editing {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Title" || field_name == "Description" {
+                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                            f.value.insert(menu.cursor_pos, c);
+                                            menu.cursor_pos += 1;
+                                        }
+                                    }
+                                }
+                                app.edit_menu = Some(menu);
+                            }
                             _ => {
                                 app.edit_menu = Some(menu);
                             }
@@ -5267,7 +5688,7 @@ async fn main() -> Result<()> {
                             // --- Search input mode (real-time) ---
                             _ if diff_view.search_active => {
                                 match key_event.code {
-                                    KeyCode::Enter => {
+                                    KeyCode::Esc => {
                                         diff_view.search_active = false;
                                     }
                                     KeyCode::Backspace => {

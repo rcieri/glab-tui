@@ -4,6 +4,88 @@ use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crossterm::event::KeyCode;
 
+// ── Shared field builders (single source of truth for edit/creation forms) ──
+
+pub fn issue_fields(
+    title: String,
+    labels: String,
+    assignees: String,
+    milestone: String,
+    confidential: String,
+    due_date: String,
+    weight: String,
+    description: String,
+    is_github: bool,
+) -> Vec<crate::app::Field> {
+    let mut fields = vec![
+        crate::app::Field::text("Title", title),
+        crate::app::Field::section("Details"),
+        crate::app::Field::multi_select("Labels", labels),
+        crate::app::Field::multi_select("Assignees", assignees),
+        crate::app::Field::multi_select("Milestone", milestone),
+    ];
+    if !is_github {
+        fields.push(crate::app::Field::toggle("Confidential", confidential));
+        fields.push(crate::app::Field::date("Due Date", due_date));
+        fields.push(crate::app::Field::text("Weight", weight));
+    }
+    fields.push(crate::app::Field::section("Description"));
+    fields.push(crate::app::Field::text("Description", description));
+    fields
+}
+
+pub fn mr_fields(
+    title: String,
+    labels: String,
+    assignees: String,
+    reviewers: String,
+    milestone: String,
+    target_branch: String,
+    draft_status: String,
+    description: String,
+    is_github: bool,
+) -> Vec<crate::app::Field> {
+    let mut fields = vec![
+        crate::app::Field::text("Title", title),
+        crate::app::Field::section("Details"),
+        crate::app::Field::multi_select("Labels", labels),
+        crate::app::Field::multi_select("Assignees", assignees),
+        crate::app::Field::multi_select("Reviewers", reviewers),
+        crate::app::Field::multi_select("Milestone", milestone),
+    ];
+    if !is_github {
+        fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
+        fields.push(crate::app::Field::toggle(
+            "Status (Draft/Ready)",
+            draft_status,
+        ));
+    }
+    fields.push(crate::app::Field::section("Description"));
+    fields.push(crate::app::Field::text("Description", description));
+    fields
+}
+
+pub fn milestone_fields(
+    title: String,
+    start_date: String,
+    due_date: String,
+    description: String,
+    is_github: bool,
+) -> Vec<crate::app::Field> {
+    let mut fields = vec![
+        crate::app::Field::section("Details"),
+        crate::app::Field::text("Title", title),
+    ];
+    if !is_github {
+        fields.push(crate::app::Field::date("Start Date", start_date));
+    }
+    fields.push(crate::app::Field::section("Dates"));
+    fields.push(crate::app::Field::date("Due Date", due_date));
+    fields.push(crate::app::Field::section("Description"));
+    fields.push(crate::app::Field::text("Description", description));
+    fields
+}
+
 pub fn apply_field_text_change(
     app: &mut App,
     entity_type: &str,
@@ -14,7 +96,7 @@ pub fn apply_field_text_change(
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
-    if entity_type == "milestone" {
+    if entity_type == "milestone" || entity_type == "edit_milestone" {
         if let Some(item) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
             match field_type {
                 "title" => item.title = value.clone(),
@@ -117,11 +199,12 @@ pub fn apply_field_text_change(
 
     match field_type {
         "title" => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.title = value.clone();
                 }
-            } else if entity_type == "mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.title = value.clone();
                 }
@@ -145,7 +228,7 @@ pub fn apply_field_text_change(
             });
         }
         "target_branch" => {
-            if entity_type == "mr" {
+            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.target_branch = value.clone();
                 }
@@ -166,7 +249,8 @@ pub fn apply_field_text_change(
             }
         }
         "due_date" => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 let flag_value = if value == "YYYY-MM-DD" || value.trim().is_empty() {
                     String::new()
                 } else {
@@ -196,7 +280,8 @@ pub fn apply_field_text_change(
             }
         }
         "weight" => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
@@ -232,11 +317,12 @@ pub fn apply_field_text_change(
             });
         }
         "description" => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.description = Some(value.clone());
                 }
-            } else if entity_type == "mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.description = Some(value.clone());
                 }
@@ -279,7 +365,10 @@ pub fn apply_selector_changes(
 ) {
     match field_type {
         "labels" => {
-            let current_labels: Vec<String> = if entity_type == "issue" {
+            let current_labels: Vec<String> = if entity_type == "issue"
+                || entity_type == "edit_issue"
+                || entity_type == "edit_issue"
+            {
                 app.issues
                     .items
                     .iter()
@@ -329,11 +418,12 @@ pub fn apply_selector_changes(
                 });
             }
 
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.labels = values;
                 }
-            } else if entity_type == "mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.labels = values;
                 }
@@ -344,7 +434,10 @@ pub fn apply_selector_changes(
                 .iter()
                 .map(|v| v.trim_start_matches('@').to_string())
                 .collect();
-            let current_assignees: Vec<String> = if entity_type == "issue" {
+            let current_assignees: Vec<String> = if entity_type == "issue"
+                || entity_type == "edit_issue"
+                || entity_type == "edit_issue"
+            {
                 app.issues
                     .items
                     .iter()
@@ -394,7 +487,8 @@ pub fn apply_selector_changes(
                 });
             }
 
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.assignees = clean_values
                         .iter()
@@ -403,7 +497,7 @@ pub fn apply_selector_changes(
                         })
                         .collect();
                 }
-            } else if entity_type == "mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.assignees = clean_values
                         .iter()
@@ -415,7 +509,7 @@ pub fn apply_selector_changes(
             }
         }
         "reviewers" => {
-            if entity_type == "mr" {
+            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 let clean_values: Vec<String> = values
                     .iter()
                     .map(|v| v.trim_start_matches('@').to_string())
@@ -467,14 +561,15 @@ pub fn apply_selector_changes(
         }
         "milestone" => {
             let first_val = values.first().cloned().unwrap_or_default();
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     let m = crate::domain::issues::Milestone {
                         title: first_val.clone(),
                     };
                     item.milestone = Some(m);
                 }
-            } else if entity_type == "mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     let m = crate::domain::mr::Milestone {
                         title: first_val.clone(),
@@ -505,7 +600,8 @@ pub fn apply_selector_changes(
             });
         }
         "confidential" => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 let is_confidential = values.iter().any(|v| v == "Yes" || v == "true");
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
@@ -528,7 +624,7 @@ pub fn apply_selector_changes(
 }
 
 pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
-    if entity_type == "issue" {
+    if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue" {
         if let Some(issue) = app.issues.items.iter().find(|i| i.iid == entity_iid) {
             let labels = if issue.labels.is_empty() {
                 "None".to_string()
@@ -552,43 +648,55 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             };
 
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-
             let is_github = app.is_github();
-            let program = if is_github { "gh" } else { "glab" };
-            let mut fields = vec![
-                ("Title".to_string(), issue.title.clone()),
-                ("Labels".to_string(), labels),
-                ("Assignees".to_string(), assignees),
-                ("Milestone".to_string(), milestone),
-            ];
-            if !is_github {
-                fields.push(("Confidential".to_string(), "Toggle/Set".to_string()));
-                fields.push((
-                    "Due Date".to_string(),
-                    issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
-                ));
-                fields.push(("Weight".to_string(), "Set".to_string()));
-            }
-            fields.push((
-                "Description".to_string(),
+
+            let fields = issue_fields(
+                issue.title.clone(),
+                if issue.labels.is_empty() {
+                    "None".to_string()
+                } else {
+                    issue.labels.join(", ")
+                },
+                if issue.assignees.is_empty() {
+                    "None".to_string()
+                } else {
+                    issue
+                        .assignees
+                        .iter()
+                        .map(|a| format!("@{}", a.username))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+                issue
+                    .milestone
+                    .as_ref()
+                    .map(|m| m.title.clone())
+                    .unwrap_or_else(|| "None".to_string()),
+                "No".to_string(),
+                issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
+                "Set".to_string(),
                 issue.description.clone().unwrap_or_default(),
-            ));
+                is_github,
+            );
 
             app.edit_menu = Some(crate::app::EditMenu {
                 title: format!("Edit Issue #{}", issue.iid),
                 fields,
                 selected_idx,
                 entity_iid: issue.iid,
-                entity_type: "issue".to_string(),
+                entity_kind: crate::app::EditEntityKind::EditIssue,
                 state: {
                     let mut s = ratatui::widgets::ListState::default();
                     s.select(Some(selected_idx));
                     s
                 },
                 workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
             });
         }
-    } else if entity_type == "mr" {
+    } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
         if let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid) {
             let labels = if mr.labels.is_empty() {
                 "None".to_string()
@@ -618,26 +726,48 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                     .collect::<Vec<_>>()
                     .join(", ")
             };
-            let draft_status = if mr.draft { "Draft" } else { "Ready" };
-
+            let draft_status = if mr.draft {
+                "Draft".to_string()
+            } else {
+                "Ready".to_string()
+            };
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-
             let is_github = app.is_github();
-            let mut fields = vec![
-                ("Title".to_string(), mr.title.clone()),
-                ("Labels".to_string(), labels),
-                ("Assignees".to_string(), assignees),
-                ("Reviewers".to_string(), reviewers),
-                ("Milestone".to_string(), milestone),
-            ];
-            if !is_github {
-                fields.push(("Target Branch".to_string(), mr.target_branch.clone()));
-                fields.push(("Draft Status".to_string(), draft_status.to_string()));
-            }
-            fields.push((
-                "Description".to_string(),
+
+            let fields = mr_fields(
+                mr.title.clone(),
+                if mr.labels.is_empty() {
+                    "None".to_string()
+                } else {
+                    mr.labels.join(", ")
+                },
+                if mr.assignees.is_empty() {
+                    "None".to_string()
+                } else {
+                    mr.assignees
+                        .iter()
+                        .map(|a| format!("@{}", a.username))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+                if mr.reviewers.is_empty() {
+                    "None".to_string()
+                } else {
+                    mr.reviewers
+                        .iter()
+                        .map(|r| format!("@{}", r.username))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+                mr.milestone
+                    .as_ref()
+                    .map(|m| m.title.clone())
+                    .unwrap_or_else(|| "None".to_string()),
+                mr.target_branch.clone(),
+                draft_status,
                 mr.description.clone().unwrap_or_default(),
-            ));
+                is_github,
+            );
 
             let mr_label = app.kind().term("mr_short");
             app.edit_menu = Some(crate::app::EditMenu {
@@ -645,53 +775,55 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 fields,
                 selected_idx,
                 entity_iid: mr.iid,
-                entity_type: "mr".to_string(),
+                entity_kind: crate::app::EditEntityKind::EditMr,
                 state: {
                     let mut s = ratatui::widgets::ListState::default();
                     s.select(Some(selected_idx));
                     s
                 },
                 workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
             });
         }
-    } else if entity_type == "milestone" {
+    } else if entity_type == "milestone"
+        || entity_type == "edit_milestone"
+        || entity_type == "edit_milestone"
+    {
         if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
             let is_github = app.is_github();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-            let mut fields = vec![("Title".to_string(), milestone.title.clone())];
-            if !is_github {
-                fields.push((
-                    "Start Date".to_string(),
-                    milestone
-                        .start_date
-                        .clone()
-                        .unwrap_or_else(|| "Set".to_string()),
-                ));
-            }
-            fields.push((
-                "Due Date".to_string(),
+
+            let fields = milestone_fields(
+                milestone.title.clone(),
+                milestone
+                    .start_date
+                    .clone()
+                    .unwrap_or_else(|| "Set".to_string()),
                 milestone
                     .due_date
                     .clone()
                     .unwrap_or_else(|| "Set".to_string()),
-            ));
-            fields.push((
-                "Description".to_string(),
                 milestone.description.clone().unwrap_or_default(),
-            ));
+                is_github,
+            );
 
             app.edit_menu = Some(crate::app::EditMenu {
                 title: format!("Edit Milestone #{}", milestone.iid),
                 fields,
                 selected_idx,
                 entity_iid: milestone.iid,
-                entity_type: "milestone".to_string(),
+                entity_kind: crate::app::EditEntityKind::EditMilestone,
                 state: {
                     let mut s = ratatui::widgets::ListState::default();
                     s.select(Some(selected_idx));
                     s
                 },
                 workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
             });
         }
     }
@@ -708,7 +840,10 @@ pub async fn handle_entity_update(
 ) {
     match code {
         KeyCode::Char('t') => {
-            let current_title = if entity_type == "issue" {
+            let current_title = if entity_type == "issue"
+                || entity_type == "edit_issue"
+                || entity_type == "edit_issue"
+            {
                 app.issues
                     .items
                     .iter()
@@ -729,7 +864,10 @@ pub async fn handle_entity_update(
                     return;
                 };
                 let project_path = app.project_context.clone();
-                let result = if entity_type == "issue" {
+                let result = if entity_type == "issue"
+                    || entity_type == "edit_issue"
+                    || entity_type == "edit_issue"
+                {
                     client
                         .update_issue_title(&project_path, iid, &new_title)
                         .await
@@ -740,11 +878,17 @@ pub async fn handle_entity_update(
                     app.error_message = Some(format!("Failed to update title: {}", e));
                     return;
                 }
-                if entity_type == "issue" {
+                if entity_type == "issue"
+                    || entity_type == "edit_issue"
+                    || entity_type == "edit_issue"
+                {
                     if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                         item.title = new_title;
                     }
-                } else if entity_type == "mr" {
+                } else if entity_type == "mr"
+                    || entity_type == "edit_mr"
+                    || entity_type == "edit_mr"
+                {
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                         item.title = new_title;
                     }
@@ -752,7 +896,7 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('s') => {
-            if entity_type == "mr" {
+            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 let is_draft = app
                     .mrs
                     .items
@@ -774,7 +918,7 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('g') => {
-            if entity_type == "mr" {
+            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 let current_branch = app
                     .mrs
                     .items
@@ -801,7 +945,8 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('c') => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(res) = edit_in_editor("public", terminal) {
                     let flag = if res.to_lowercase().contains("confidential") {
                         "--confidential"
@@ -824,7 +969,8 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('u') => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(due_date) = edit_in_editor("YYYY-MM-DD", terminal) {
                     let flag_value = if due_date == "YYYY-MM-DD" || due_date.is_empty() {
                         ""
@@ -845,7 +991,8 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('w') => {
-            if entity_type == "issue" {
+            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
+            {
                 if let Some(weight) = edit_in_editor("0", terminal) {
                     let Some(client) = app.gitlab_client.clone() else {
                         return;
@@ -861,7 +1008,10 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('d') => {
-            let current_desc = if entity_type == "issue" {
+            let current_desc = if entity_type == "issue"
+                || entity_type == "edit_issue"
+                || entity_type == "edit_issue"
+            {
                 app.issues
                     .items
                     .iter()
@@ -888,7 +1038,10 @@ pub async fn handle_entity_update(
             });
         }
         KeyCode::Char('D') => {
-            let current_desc = if entity_type == "issue" {
+            let current_desc = if entity_type == "issue"
+                || entity_type == "edit_issue"
+                || entity_type == "edit_issue"
+            {
                 app.issues
                     .items
                     .iter()
@@ -904,11 +1057,17 @@ pub async fn handle_entity_update(
                     .unwrap_or_default()
             };
             if let Some(new_desc) = edit_in_editor(&current_desc, terminal) {
-                if entity_type == "issue" {
+                if entity_type == "issue"
+                    || entity_type == "edit_issue"
+                    || entity_type == "edit_issue"
+                {
                     if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                         item.description = Some(new_desc.clone());
                     }
-                } else if entity_type == "mr" {
+                } else if entity_type == "mr"
+                    || entity_type == "edit_mr"
+                    || entity_type == "edit_mr"
+                {
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                         item.description = Some(new_desc.clone());
                     }
@@ -917,7 +1076,10 @@ pub async fn handle_entity_update(
                     return;
                 };
                 let project_path = app.project_context.clone();
-                let result = if entity_type == "issue" {
+                let result = if entity_type == "issue"
+                    || entity_type == "edit_issue"
+                    || entity_type == "edit_issue"
+                {
                     client
                         .update_issue_description(&project_path, iid, &new_desc)
                         .await

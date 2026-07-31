@@ -250,15 +250,18 @@ impl Tab {
                 } else {
                     cols.push("Stages");
                 }
+                cols.push("Created");
                 cols
             }
             Tab::Jobs => {
                 let mut cols = vec!["ID", "Status", "Name", "Matrix"];
                 if kind.is_github() {
                     cols.push("Runner");
+                    cols.push("Needs");
                 } else {
                     cols.push("Stage");
                 }
+                cols.push("Duration");
                 cols
             }
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
@@ -290,14 +293,14 @@ impl Tab {
             Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
             Tab::Pipelines => {
                 if kind.is_github() {
-                    vec!["Name", "Status", "Event", "Ref"]
+                    vec!["Name", "Status", "Event", "Ref", "Created"]
                 } else {
                     vec!["ID", "Status", "Stages", "Ref"]
                 }
             }
             Tab::Jobs => {
                 if kind.is_github() {
-                    vec!["Name", "Status", "Ref"]
+                    vec!["Name", "Status", "Runner", "Duration"]
                 } else {
                     vec!["ID", "Stage", "Status", "Name", "Matrix"]
                 }
@@ -317,20 +320,93 @@ impl Tab {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditEntityKind {
+    CreateIssue,
+    EditIssue,
+    BulkEditIssues,
+    CreateMr,
+    EditMr,
+    BulkEditMrs,
+    CreateMilestone,
+    EditMilestone,
+    CreateRelease,
+    CreatePipeline,
+}
+
+impl EditEntityKind {
+    pub fn is_create(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateIssue
+                | Self::CreateMr
+                | Self::CreateMilestone
+                | Self::CreateRelease
+                | Self::CreatePipeline
+                | Self::BulkEditIssues
+                | Self::BulkEditMrs
+        )
+    }
+
+    pub fn needs_submit(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateIssue
+                | Self::EditIssue
+                | Self::CreateMr
+                | Self::EditMr
+                | Self::CreateMilestone
+                | Self::EditMilestone
+                | Self::CreateRelease
+                | Self::CreatePipeline
+        )
+    }
+
+    pub fn entity_name(&self) -> &str {
+        match self {
+            Self::CreateIssue | Self::EditIssue | Self::BulkEditIssues => "issue",
+            Self::CreateMr | Self::EditMr | Self::BulkEditMrs => "mr",
+            Self::CreateMilestone | Self::EditMilestone => "milestone",
+            Self::CreateRelease => "release",
+            Self::CreatePipeline => "pipeline",
+        }
+    }
+
+    /// Return the legacy entity_type string for backward compat.
+    pub fn legacy_string(&self) -> String {
+        match self {
+            Self::CreateIssue => "new_issue",
+            Self::EditIssue => "issue",
+            Self::BulkEditIssues => "new_bulk_edit_issues",
+            Self::CreateMr => "new_mr",
+            Self::EditMr => "mr",
+            Self::BulkEditMrs => "new_bulk_edit_mrs",
+            Self::CreateMilestone => "new_milestone",
+            Self::EditMilestone => "milestone",
+            Self::CreateRelease => "new_release",
+            Self::CreatePipeline => "new_pipeline",
+        }
+        .to_string()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
-    pub fields: Vec<(String, String)>, // (Label, Value) — TODO: migrate to Vec<Field>
+    pub fields: Vec<Field>,
     pub selected_idx: usize,
     pub entity_iid: u64,
-    pub entity_type: String, // "issue", "mr"
+    pub entity_kind: EditEntityKind,
     pub state: ListState,
     pub workflow_inputs: Vec<WorkflowInput>,
+    pub cursor_pos: usize,
+    pub editing: bool,
+    pub desc_scroll: u16,
 }
 
 impl EditMenu {
     pub fn is_new(&self) -> bool {
-        self.entity_type.starts_with("new_")
+        self.entity_kind.needs_submit()
     }
 }
 
@@ -341,6 +417,7 @@ pub enum FieldType {
     Date,
     Toggle,
     Ref,
+    Section,
 }
 
 #[derive(Clone, Debug)]
@@ -384,6 +461,13 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Date,
             value,
+        }
+    }
+    pub fn section(label: &str) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::Section,
+            value: String::new(),
         }
     }
 }
@@ -1822,7 +1906,7 @@ pub struct App {
     pub job_trace_needs_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
     pub job_trace_wrap: bool,
-    pub collapse_matrix_jobs: bool,
+
     pub show_help: bool,
     pub help_search_query: String,
     pub diff_view: Option<DiffView>,
@@ -1917,7 +2001,7 @@ impl Default for App {
             job_trace_needs_scroll_to_bottom: false,
             job_trace_loading: false,
             job_trace_wrap: false,
-            collapse_matrix_jobs: false,
+
             show_help: false,
             help_search_query: String::new(),
             diff_view: None,
@@ -2236,13 +2320,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -2637,6 +2722,11 @@ impl App {
             if enabled_cols.contains("Actor") {
                 check_match(item.actor_login());
             }
+            if enabled_cols.contains("Created") {
+                if let Some(created) = item.created_at() {
+                    check_match(&crate::utils::format::time_ago(created));
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2666,6 +2756,12 @@ impl App {
                     "ID" => a.id().to_string(),
                     "Name" => a.name().to_string(),
                     "Event" => a.event().to_string(),
+                    "SHA" => a.head_sha().to_string(),
+                    "Actor" => a.actor_login().to_string(),
+                    "Created" => a
+                        .created_at()
+                        .map(|c| crate::utils::format::time_ago(c))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2674,6 +2770,12 @@ impl App {
                     "ID" => b.id().to_string(),
                     "Name" => b.name().to_string(),
                     "Event" => b.event().to_string(),
+                    "SHA" => b.head_sha().to_string(),
+                    "Actor" => b.actor_login().to_string(),
+                    "Created" => b
+                        .created_at()
+                        .map(|c| crate::utils::format::time_ago(c))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2751,6 +2853,21 @@ impl App {
                     check_match(matrix);
                 }
             }
+            if enabled_cols.contains("Runner") {
+                if let Some(runner) = item.runner() {
+                    check_match(runner);
+                }
+            }
+            if enabled_cols.contains("Needs") {
+                for need in item.needs() {
+                    check_match(need);
+                }
+            }
+            if enabled_cols.contains("Duration") {
+                if let Some(dur) = item.duration_seconds() {
+                    check_match(&format!("{}m {}s", dur / 60, dur % 60));
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2778,6 +2895,11 @@ impl App {
                     "Stage" => a.stage().to_string(),
                     "Name" => a.name().to_string(),
                     "ID" => a.id().to_string(),
+                    "Runner" => a.runner().unwrap_or("-").to_string(),
+                    "Duration" => a
+                        .duration_seconds()
+                        .map(|d| format!("{}m", d / 60))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2785,6 +2907,11 @@ impl App {
                     "Stage" => b.stage().to_string(),
                     "Name" => b.name().to_string(),
                     "ID" => b.id().to_string(),
+                    "Runner" => b.runner().unwrap_or("-").to_string(),
+                    "Duration" => b
+                        .duration_seconds()
+                        .map(|d| format!("{}m", d / 60))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2821,18 +2948,7 @@ impl App {
             },
         );
 
-        if self.collapse_matrix_jobs {
-            let mut collapsed: Vec<&crate::domain::pipelines::Job> = Vec::new();
-            let mut seen_names = std::collections::HashSet::new();
-            for job in list {
-                if seen_names.insert(job.name().to_string()) {
-                    collapsed.push(job);
-                }
-            }
-            collapsed
-        } else {
-            list
-        }
+        list
     }
 
     pub fn filter_runners_list<'a>(
@@ -2843,13 +2959,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -2904,13 +3021,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3134,13 +3252,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3255,7 +3374,7 @@ impl App {
             &self.column_filters,
             Tab::Milestones,
             |item, col| match col {
-                "ID" => vec![item.id.to_string()],
+                "ID" => vec![item.iid.to_string()],
                 "Title" => vec![item.title.clone()],
                 "State" => vec![item.state.clone()],
                 _ => vec![],
@@ -3272,13 +3391,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3323,13 +3443,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3504,7 +3625,24 @@ impl App {
                         "Ref" => {
                             values.insert(item.ref_branch().to_string());
                         }
-                        _ => {} // Pipeline no longer carries GitHub-specific fields
+                        "Name" => {
+                            values.insert(item.name().to_string());
+                        }
+                        "Event" => {
+                            values.insert(item.event().to_string());
+                        }
+                        "SHA" => {
+                            values.insert(item.head_sha().to_string());
+                        }
+                        "Actor" => {
+                            values.insert(item.actor_login().to_string());
+                        }
+                        "Created" => {
+                            if let Some(c) = item.created_at() {
+                                values.insert(crate::utils::format::time_ago(c));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3523,8 +3661,18 @@ impl App {
                         "Name" => {
                             values.insert(item.name().to_string());
                         }
+                        "Runner" => {
+                            if let Some(r) = item.runner() {
+                                values.insert(r.to_string());
+                            }
+                        }
+                        "Duration" => {
+                            if let Some(d) = item.duration_seconds() {
+                                values.insert(format!("{}m {}s", d / 60, d % 60));
+                            }
+                        }
                         _ => {}
-                    }
+                    };
                 }
             }
             Tab::Runners => {
@@ -3790,9 +3938,14 @@ impl App {
                         "Status" => p.status().to_string(),
                         "Ref" => p.ref_branch().to_string(),
                         "ID" => format!("#{}", p.id()),
-                        "Name" => format!("#{}", p.id()),
-                        "Event" => "Unknown".to_string(),
-                        "SHA" => "Unknown".to_string(),
+                        "Name" => p.name().to_string(),
+                        "Event" => p.event().to_string(),
+                        "SHA" => p.head_sha().to_string(),
+                        "Actor" => p.actor_login().to_string(),
+                        "Created" => p
+                            .created_at()
+                            .map(|c| crate::utils::format::time_ago(c))
+                            .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -3809,6 +3962,11 @@ impl App {
                         "Stage" => j.stage().to_string(),
                         "Name" => j.name().to_string(),
                         "ID" => format!("#{}", j.id()),
+                        "Runner" => j.runner().unwrap_or("-").to_string(),
+                        "Duration" => j
+                            .duration_seconds()
+                            .map(|d| format!("{}m", d / 60))
+                            .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);

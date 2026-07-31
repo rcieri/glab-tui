@@ -118,7 +118,7 @@ pub fn workflow_cell(s: Option<WorkflowStatus>) -> String {
         Some(WorkflowStatus::YourMergeRequest) => format!("{} Yours", icons.workflow_yours),
         Some(WorkflowStatus::ApprovedByYou) => format!("{} Approved", icons.workflow_approved),
         Some(WorkflowStatus::ApprovedByOthers) => {
-            format!("{} by others", icons.workflow_inactive)
+            format!("{} by others", icons.workflow_approved_others)
         }
         Some(WorkflowStatus::Inactive) => format!("{} Inactive", icons.workflow_inactive),
         // Known "not yours" renders blank so the 24-of-33 common case stays quiet.
@@ -964,5 +964,20 @@ mod tests {
         );
         assert_eq!(workflow_label(Some(WorkflowStatus::NotYours)), None);
         assert_eq!(workflow_label(None), None);
+    }
+
+    #[test]
+    fn approved_by_others_has_its_own_icon() {
+        let by_others = workflow_cell(Some(WorkflowStatus::ApprovedByOthers));
+        let inactive = workflow_cell(Some(WorkflowStatus::Inactive));
+        let mine = workflow_cell(Some(WorkflowStatus::ApprovedByYou));
+        assert_ne!(
+            by_others, inactive,
+            "ApprovedByOthers must not share Inactive's icon"
+        );
+        assert_ne!(
+            by_others, mine,
+            "ApprovedByOthers must not share ApprovedByYou's icon"
+        );
     }
 }

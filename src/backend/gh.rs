@@ -73,6 +73,7 @@ pub fn gh_state_from_fields(
     merge_state_status: Option<&str>,
     latest_review_authors: Vec<String>,
     current_user: Option<&str>,
+    approved_authors: &[String],
 ) -> (
     Option<crate::domain::mr_state::ApprovalState>,
     Option<crate::domain::mr_state::MergeabilityState>,
@@ -86,6 +87,16 @@ pub fn gh_state_from_fields(
         .map(|me| latest_review_authors.iter().any(|a| a == me))
         .unwrap_or(false);
 
+    // `approved_authors` (unlike `latest_review_authors`, which includes
+    // rejections and comments) is the approvals-only list, so this is the
+    // one place the workflow cascade's `you_approved` input can be derived
+    // correctly. Without it, this stayed hard-coded `false` and the cascade
+    // could never reach `ApprovedByYou` on GitHub — see the regression this
+    // guards in the tests below.
+    let you_approved = current_user
+        .map(|me| approved_authors.iter().any(|a| a == me))
+        .unwrap_or(false);
+
     let approval = ApprovalState {
         approved,
         // GitHub exposes no approval counts.
@@ -97,7 +108,7 @@ pub fn gh_state_from_fields(
             Vec::new()
         },
         changes_requested: decision.eq_ignore_ascii_case("CHANGES_REQUESTED"),
-        you_approved: false,
+        you_approved,
         // Needs canApprove, which gh pr list does not provide.
         awaiting_you: false,
         current_user: current_user.map(|s| s.to_string()),
@@ -115,29 +126,37 @@ pub fn gh_state_from_fields(
     (Some(approval), Some(mergeability))
 }
 
+/// The authenticated GitHub login, resolved at most once per process.
+///
+/// Process-global rather than a field on `GhBackend`: `GitlabClient::clone`
+/// rebuilds the backend from scratch (`create_backend`, see
+/// `domain::client`'s `Clone` impl), and every refresh clones the client
+/// (`spawn_refresh_active_tab`), so a per-instance cell would start empty on
+/// every single refresh and never serve a hit. Matches the `ICONS`/`THEME`
+/// precedent of process-global state for values that do not change within a
+/// run. Holds `Option` rather than `String` so a *failed* lookup is cached
+/// too — `get_or_try_init` leaves the cell uninitialised on error and would
+/// retry on every refresh, which is the per-refresh request the design
+/// forbids.
+static GH_CURRENT_USER: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
+
 pub struct GhBackend {
     tx: Option<UnboundedSender<Event>>,
-    /// The authenticated GitHub login, resolved at most once per process.
-    /// Holds `Option` rather than `String` so a *failed* lookup is cached too —
-    /// `get_or_try_init` leaves the cell uninitialised on error and would retry
-    /// on every refresh, which is the per-refresh request the design forbids.
-    current_user: tokio::sync::OnceCell<Option<String>>,
 }
 
 impl GhBackend {
     pub fn new() -> Self {
-        Self {
-            tx: None,
-            current_user: tokio::sync::OnceCell::new(),
-        }
+        Self { tx: None }
     }
 
     /// `None` if the lookup fails — an unknown user must yield an unknown
     /// workflow status, never a wrong one. The failure itself is cached
     /// alongside a success, so this never re-issues the `gh api user` call
-    /// after the first attempt, whatever the outcome.
+    /// after the first attempt, whatever the outcome — and because the cache
+    /// is the process-global `GH_CURRENT_USER`, that holds across cloned
+    /// clients too, not just repeated calls on one instance.
     async fn current_user(&self) -> Option<&str> {
-        self.current_user
+        GH_CURRENT_USER
             .get_or_init(|| async {
                 let raw = self
                     .run_gh(&["api", "user", "--jq", ".login"], "FETCHING GH USER")
@@ -711,10 +730,13 @@ impl Backend for GhBackend {
                     gp.merge_state_status.as_deref(),
                     latest_review_authors,
                     me,
+                    &approved_authors,
                 );
                 // gh_state_from_fields derives approved_by from the same
                 // (unfiltered) list it uses for you_reviewed; restore the
-                // approvals-only view here.
+                // approvals-only view here. (you_approved was already
+                // derived correctly inside gh_state_from_fields, from this
+                // same approved_authors list passed in below.)
                 let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
                     approved_by: approved_authors,
                     ..a
@@ -2438,31 +2460,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn once_cell_caches_a_failed_lookup_and_does_not_retry() {
-        // Regression guard for the pitfall in the original design: with
-        // `get_or_try_init`, an `Err` result is never stored (tokio's
-        // `OnceCell::get_or_try_init` only calls `set_value` on the `Ok`
-        // branch), so a failed lookup retries on every call. Switching
-        // `current_user`'s cell to `OnceCell<Option<String>>` and using the
-        // infallible `get_or_init` avoids that: the initializer always
-        // returns a plain value (here, `None` for "lookup failed"), and
-        // `get_or_init` unconditionally calls `set_value`, so the failure is
-        // cached exactly like a success would be.
+    async fn current_user_cache_is_shared_across_cloned_backend_instances() {
+        // Regression guard for the bug this cache exists to avoid: an earlier
+        // version cached in a `OnceCell` field *on* `GhBackend`. But
+        // `GitlabClient::clone` rebuilds the backend from scratch
+        // (`create_backend`), and every refresh clones the client
+        // (`spawn_refresh_active_tab`), so a per-instance cell would start
+        // empty on every refresh and never see a second call — zero cache
+        // hits, ever. A test that only builds one `OnceCell` locally (as the
+        // previous version of this test did) cannot see that bug: it passes
+        // identically whether the cache is shared, per-instance, or absent.
+        //
+        // This test instead exercises the actual static, `GH_CURRENT_USER`,
+        // through what stand in for two independently-cloned backends —
+        // there is nothing left to construct per-instance, which is exactly
+        // the fix: the cache no longer lives on the struct at all.
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let calls = AtomicUsize::new(0);
-        let cell: tokio::sync::OnceCell<Option<i32>> = tokio::sync::OnceCell::new();
-
-        for _ in 0..3 {
-            let _ = cell
-                .get_or_init(|| async {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    None::<i32>
-                })
-                .await;
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        async fn init() -> Option<String> {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            Some("cached-user".to_string())
         }
 
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let _first_backend = GhBackend::new();
+        let _second_backend = GhBackend::new();
+
+        let a = GH_CURRENT_USER.get_or_init(init).await.clone();
+        let b = GH_CURRENT_USER.get_or_init(init).await.clone();
+
+        assert_eq!(a, Some("cached-user".to_string()));
+        assert_eq!(a, b);
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            1,
+            "the initializer must run once total, not once per backend instance"
+        );
     }
 
     #[test]
@@ -2477,6 +2510,7 @@ mod tests {
             Some("BLOCKED"),
             vec![],
             None,
+            &[],
         );
         let m = merge.unwrap();
         assert!(!m.conflicts);
@@ -2487,21 +2521,22 @@ mod tests {
     #[test]
     fn conflicting_maps_to_conflicts() {
         let (_, merge) =
-            gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![], None);
+            gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![], None, &[]);
         assert!(merge.unwrap().conflicts);
     }
 
     #[test]
     fn behind_maps_to_needs_rebase() {
         let (_, merge) =
-            gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![], None);
+            gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![], None, &[]);
         assert!(merge.unwrap().needs_rebase);
     }
 
     #[test]
     fn unknown_mergeable_is_computing_not_failure() {
         // GitHub computes mergeability asynchronously.
-        let (_, merge) = gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![], None);
+        let (_, merge) =
+            gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![], None, &[]);
         let m = merge.unwrap();
         assert!(m.computing);
         assert!(!m.conflicts);
@@ -2509,7 +2544,7 @@ mod tests {
 
     #[test]
     fn absent_mergeable_is_computing() {
-        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None);
+        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None, &[]);
         assert!(merge.unwrap().computing);
     }
 
@@ -2521,6 +2556,7 @@ mod tests {
             Some("CLEAN"),
             vec!["octocat".to_string()],
             None,
+            &[],
         );
         let a = approval.unwrap();
         assert!(a.approved);
@@ -2536,6 +2572,7 @@ mod tests {
             Some("BLOCKED"),
             vec![],
             None,
+            &[],
         );
         assert!(approval.unwrap().changes_requested);
     }
@@ -2549,6 +2586,7 @@ mod tests {
             Some("CLEAN"),
             vec!["octocat".to_string()],
             None,
+            &[],
         );
         let a = approval.unwrap();
         assert_eq!(a.approvals_required, None);
@@ -2561,7 +2599,7 @@ mod tests {
         // A PR with no review yet returns null; that is "pending", and the
         // axis is still known.
         let (approval, _) =
-            gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![], None);
+            gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![], None, &[]);
         let a = approval.unwrap();
         assert!(!a.approved);
         assert!(!a.changes_requested);
@@ -2575,6 +2613,7 @@ mod tests {
             Some("CLEAN"),
             vec!["octocat".to_string()],
             Some("octocat"),
+            &[],
         );
         let a = approval.unwrap();
         assert_eq!(a.current_user.as_deref(), Some("octocat"));
@@ -2588,6 +2627,7 @@ mod tests {
             Some("CLEAN"),
             vec!["octocat".to_string()],
             Some("octocat"),
+            &[],
         );
         assert!(approval.unwrap().you_reviewed);
     }
@@ -2600,6 +2640,7 @@ mod tests {
             Some("CLEAN"),
             vec!["someone.else".to_string()],
             Some("octocat"),
+            &[],
         );
         assert!(!approval.unwrap().you_reviewed);
     }
@@ -2612,7 +2653,39 @@ mod tests {
             Some("CLEAN"),
             vec![],
             None,
+            &[],
         );
         assert_eq!(approval.unwrap().current_user, None);
+    }
+
+    // ── you_approved (CRITICAL/IMPORTANT finding: was hard-coded `false`,
+    // making `ApprovedByYou` unreachable on GitHub and rendering a PR you
+    // personally approved as blank "not yours" once you dropped out of
+    // reviewRequests) ──
+
+    #[test]
+    fn github_you_approved_is_true_when_you_are_in_approved_authors() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            Some("octocat"),
+            &["octocat".to_string()],
+        );
+        assert!(approval.unwrap().you_approved);
+    }
+
+    #[test]
+    fn github_you_approved_is_false_when_only_someone_else_approved() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["someone.else".to_string()],
+            Some("octocat"),
+            &["someone.else".to_string()],
+        );
+        assert!(!approval.unwrap().you_approved);
     }
 }

@@ -5293,10 +5293,14 @@ index 123456..789012 100644
         // (collect_unique_column_values), or a user can never select it.
         let mut draft_unresolved = mr_fixture(1, "opened", "a", true, "draft with unresolved");
         draft_unresolved.blocking_discussions_resolved = Some(false);
+        // Give Workflow a real (non-`None`) value too, or its expected set
+        // from `mr_filter_values` would be trivially empty and the parity
+        // check below would pass without checking anything.
+        draft_unresolved.workflow = Some(crate::domain::mr_state::WorkflowStatus::ReturnedToYou);
         let mut app = App::default();
         app.mrs.items = vec![draft_unresolved];
 
-        for col in ["Status", "Approval", "Mergeable"] {
+        for col in ["Status", "Approval", "Mergeable", "Workflow"] {
             let offered = app.collect_unique_column_values(Tab::MergeRequests, col);
             let expected = App::mr_filter_values(&app.mrs.items[0], col);
             for v in expected {

@@ -16,10 +16,12 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`)
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.8.1`)
 
 ### Dual-Engine Architecture
 The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
+
+The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call is extracted from the remote URL by `git_helpers::parse_project_path` ([src/git_helpers.rs](src/git_helpers.rs)), which keeps every path segment after the host so nested GitLab subgroup namespaces (`group/subgroup/project`) resolve correctly. Always use this helper — do not reimplement remote-URL parsing inline.
 
 **Rule:** Never use `glab api` or `gh api` when a native subcommand exists. Prefer native subcommands — they use built-in pagination, auth, and output formatting. Only fall back to raw API calls for endpoints with no native CLI equivalent.
 
@@ -46,6 +48,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
 * [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches.
+* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `parse_project_path` (remote-URL → `namespace/project`), `get_current_branch`, `slugify`, `get_workflow_files`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
@@ -101,6 +104,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
   - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` and submitted atomically.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
   - `DiffFetched` event now uses named fields: `{ mr_iid, raw_diff, comments }`.
+  - Leaving the diff view with pending drafts opens the standard confirm popup (`ConfirmAction::SubmitReview(mr_iid)`); confirming opens the Approve / Request Changes / Comment selector, declining clears the drafts and exits review mode.
 * **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui.rs](src/ui.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
 
 ### Cache & State Persistence
@@ -132,7 +136,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Navigation: `h`/`l` → previous/next month, `j`/`k` → previous/next day, `Enter` → confirm, `Esc` → cancel.
 
 ### Confirmation Popup
-* Destructive actions (close issue/MR, merge MR, delete branch/release/milestone/issue/MR) show a confirmation popup before executing.
+* Destructive actions (close issue/MR, merge MR, delete branch/release/milestone/issue/MR) and review submission with pending draft comments (`ConfirmAction::SubmitReview`) show a confirmation popup before executing.
 * `ConfirmAction` enum in [src/app.rs](src/app.rs) lists all confirmable actions. The UI renders a yes/no box; the selected state is `app.confirm_popup_selected_yes: bool`.
 * Add new variants to `ConfirmAction` when introducing destructive operations. Handle the confirmation flow in [src/main.rs](src/main.rs) by checking `app.confirm_popup` before proceeding.
 
@@ -205,6 +209,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Retry job | `glab ci retry <job_id> -R <repo>` |
 | Cancel job | `glab ci cancel job <id> -R <repo>` |
 | Start manual job | `glab ci retry <job_id> -R <repo>` |
+| Run pipeline (variables/inputs) | `glab ci run [--branch <ref>] [--mr] [--variables k:v ...] [--input k:v ...]` |
 | Mark todo done | `glab todo done <id>` |
 
 #### Data Fetching — Raw API (no native subcommand exists)
@@ -300,6 +305,8 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Open in browser | `gh issue\|pr\|run view --web` / `glab issue\|mr\|ci view -w` |
 | Reply to comment | `gh api POST repos/{}/pulls/{}/comments` / `glab api POST projects/{}/merge_requests/{}/discussions/{}/notes` |
 | Submit review | `gh api POST repos/{}/pulls/{}/reviews` / `glab api POST projects/{}/merge_requests/{}/...` |
+
+> `glab ci run` notes: variables/inputs are passed via the plural `--variables k:v` / `--input k:v` flags (not `--variable`), and `--mr` is only passed when no variables or `workflow_dispatch` inputs are set.
 
 ## 7. Development & Quality Standards
 

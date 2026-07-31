@@ -6,6 +6,7 @@ pub struct GitlabClient {
     pub backend: Box<dyn Backend>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub page_size: usize,
+    pub api_per_page: usize,
 }
 
 impl GitlabClient {
@@ -31,6 +32,7 @@ impl GitlabClient {
             backend,
             tx: None,
             page_size: 100,
+            api_per_page: 100,
         })
     }
 
@@ -556,6 +558,7 @@ impl Clone for GitlabClient {
             backend,
             tx: self.tx.clone(),
             page_size: self.page_size,
+            api_per_page: self.api_per_page,
         }
     }
 }

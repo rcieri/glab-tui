@@ -8,7 +8,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
-- **Bulk editing** — select multiple issues or merge requests and apply batch operations (close, reopen, label, assign)
+- **Bulk editing** — select multiple issues or merge requests with `Space`, then press `e` to apply labels, assignees, or milestone across all selected items at once
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description)
 - **Merge Requests / Pull Requests** — list, filter, create MRs from issues, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
 - **Code Reviews** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, and atomic review submission
@@ -18,13 +18,19 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Releases** — browse project releases and view details in the terminal
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
+- **Branches** — browse branches with default/protected markers; create and delete branches inline
+- **Environments & Deployments** — browse environments and their deployment status, drilling into deployment history with `Enter`
+- **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status
 - **Multi-colored Labels** — table columns render labels with their individual unique hashed colors, preserving search highlights
-- **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility, group by any column, and set sort order
-- **Value-based Column Filtering** — filter table rows by specific column values from the configure popup
+- **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
+- **Value-based Column Filtering** — press `Enter` on any column inside the configure popup to filter rows by that column's values (e.g. Issues → `State` → `opened`); multi-select supports multiple values per column
 - **Live Search** — fuzzy-filter across all visible columns by pressing `/`
+- **Global Search** — press `Ctrl+P` to fuzzy-search across all loaded issues and MRs from any tab
+- **Switch Repository** — press `Ctrl+S` to switch to another local repository without restarting
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
+- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `open` (open entity in browser)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — 13 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
@@ -35,6 +41,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ![Overview](assets/demo-overview.gif)
 ![Search & Configure](assets/demo-search.gif)
 ![Navigation & Selection](assets/demo-selection.gif)
+![Terminal Trove — Tool of the Week](assets/terminal_trove_tool_of_the_week_green_on_black_bg.png)
 
 ## Prerequisites
 
@@ -177,10 +184,18 @@ create_issue = "n"
 edit_entity = "e"
 # ...
 
-# Persist default column visibility / grouping per pane
+# Persist default column visibility / grouping / filters per pane
 # [issues]
 # columns = ["ID", "State", "Title", "Labels"]
 # group_by_column = "State"
+# group_ascending = true
+# [issues.column_filters]
+# State = ["opened"]
+
+# [mrs]
+# columns = ["ID", "State", "Status", "Title", "Labels"]
+# [mrs.column_filters]
+# State = ["opened"]
 ```
 
 ### Custom themes
@@ -228,6 +243,39 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 
 ---
 
+## Filtering, Grouping & Columns
+
+Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Milestones, Branches, Environments) can be tailored with column visibility, value-based filters, grouping, and sort order — all from a single **Configure View** popup.
+
+### Column configuration & value-based filtering
+
+1. Press **`Tab`** (or **`,`**) to open the **Configure View** popup.
+2. The **COLUMNS** section lists every available column for the active tab. Use `j`/`k` (or arrows) to move through it.
+   - **`Space`** toggles whether a column is shown in the table.
+   - **`Enter`** opens a **value-based filter** for that column: a searchable multi-select of the distinct values currently loaded. For example, on the Issues tab, `Enter` on the `State` column lets you filter to just `opened` issues — or on the `Labels` column, to specific labels.
+3. Inside the filter selector: `Space` toggles values on/off, `/` or `f` fuzzy-searches the values, `Enter` applies the filter, `Esc` cancels. Selecting multiple values is supported (e.g. `opened` **and** `closed`).
+4. Applied filters are shown as a count next to the column, e.g. `[x] State (1)`. Re-open the column and uncheck values to widen or clear the filter.
+
+### Grouping & sort order
+
+- The **GROUP BY** section lets you group rows by any column: move to a column and press **`Space`** or **`Enter`** to toggle grouping. Grouped rows are visually separated by headers.
+- The **ORDER** section toggles between **Ascending** and **Descending** sort order for the current group-by column (or the default ordering when no group is set).
+
+### Page size & theme
+
+- **PAGE SIZE** controls how many items are fetched per tab. **`Enter`** on it puts it into edit mode.
+- **THEME** lets you switch the color theme on the fly; selections persist via **Save View** below.
+
+### Saving & persistence
+
+- The **Save View** button at the bottom of the popup writes the current layout — enabled columns, group-by, order, filters, and page size — to `config.toml` (repo-local `.glab-tui/config.toml` or global `~/.config/glab-tui/config.toml`).
+
+### A note on filtering
+
+> Column filters are applied **client-side, after data is fetched** — they only ever see the rows that were loaded. If you have many closed/merged items and want more open ones in the list, raise the **PAGE SIZE** in the Configure View popup (or set `page_size` in `config.toml`) so more rows are fetched to filter across.
+
+---
+
 ## Key Bindings
 
 ### Global
@@ -238,7 +286,7 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 |---|---|
 | `l` / `→` | Next tab |
 | `h` / `←` | Previous tab |
-| `Tab` / `,` | Toggle column configure popup (columns, group, order) |
+| `Tab` / `,` | Open column configure popup (`Space` toggle column, `Enter` filter by column values) |
 | `Esc` | Close configure popup / overlay |
 | `j` / `↓` | Move selection down |
 | `k` / `↑` | Move selection up |
@@ -246,8 +294,12 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | `K` | Scroll description panel up |
 | `f` / `/` | Open search / filter bar |
 | `Enter` / `Esc` (in search) | Close search bar |
-| `?` | Show help |
+| `?` / `F1` | Show help |
+| `Ctrl+P` | Global search across all loaded issues & MRs |
+| `Ctrl+S` | Switch repository |
 | `F5` / `Ctrl+R` | Refresh current tab |
+| `s` | Save view layout to config |
+| `u` | Check for updates |
 | `q` / `Esc` | Quit (or close current overlay) |
 
 ---
@@ -257,10 +309,12 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | Key | Action |
 |---|---|
 | `n` | Create new issue (prompts for title) |
-| `e` | Open edit menu for selected issue |
+| `e` | Open edit menu for selected issue (opens bulk edit menu when multiple are selected) |
 | `m` | Create MR/PR from selected issue |
 | `c` | Close selected issue |
 | `r` | Reopen selected issue |
+| `d` | Delete selected issue (with confirmation) |
+| `o` | Open selected issue in browser |
 | `Space` | Select issue for bulk editing |
 | `J` | Scroll description panel down |
 | `K` | Scroll description panel up |
@@ -285,7 +339,7 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | Key | Action |
 |---|---|
 | `n` | Create MR from issue ID (prompts for issue IID) |
-| `e` | Open edit menu for selected MR |
+| `e` | Open edit menu for selected MR (opens bulk edit menu when multiple are selected) |
 | `a` | Approve selected MR |
 | `m` | Merge selected MR (squash + remove source branch) |
 | `v` | View diff of selected MR in terminal |
@@ -295,13 +349,9 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | `s` | Toggle Draft / Ready status |
 | `c` | Close selected MR |
 | `r` | Reopen selected MR |
+| `d` | Delete selected MR (with confirmation) |
 | `J` | Scroll description panel down |
 | `K` | Scroll description panel up |
-| `d` | Toggle unified/side-by-side diff layout (inside diff view) |
-| `c` | Add comment on selected line range (inside diff view) |
-| `e` | Add code suggestion (inside diff view) |
-| `a` | Open comment actions menu (inside diff view) |
-| `r` | Submit pending review (inside diff view) |
 
 **MR edit menu fields**
 
@@ -318,13 +368,44 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 
 ---
 
+### Diff View
+
+Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
+
+| Key | Action |
+|---|---|
+| `q` / `Esc` | Exit diff view (or cancel current selection / search) |
+| `Tab` | Toggle focus between file tree and diff pane |
+| `h` / `←` | In file tree: collapse directory; in diff: focus file tree |
+| `l` / `→` | In file tree: expand directory / open file |
+| `j` / `↓` | Move down (file tree or diff lines) |
+| `k` / `↑` | Move up (file tree or diff lines) |
+| `J` / `K` | Scroll 10 lines / jump 10 files |
+| `Enter` / `Space` | In file tree: open file; in diff: toggle zoom (hide/show file tree) |
+| `[` / `]` | Previous / next hunk |
+| `z` / `Z` | Collapse / expand all files |
+| `d` | Toggle unified / side-by-side layout |
+| `v` / `V` | Start / stop multi-line selection for comments |
+| `c` | Add comment on current line / selection |
+| `C` | Add comment via external `$EDITOR` |
+| `e` | Add code suggestion via `$EDITOR` |
+| `a` | Open comment actions menu (reply, resolve, edit, delete) |
+| `r` | Submit review (Approve / Request Changes / Comment) |
+| `/` / `f` | Search within diff |
+| `Ctrl+N` | Next search match |
+| `Ctrl+Shift+N` | Previous search match |
+| `?` / `F1` | Show help |
+
+---
+
 ### Pipelines tab
 
 | Key | Action |
 |---|---|
 | `Enter` | Drill into selected pipeline (show its jobs) |
 | `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) |
-| `p` | Trigger a new pipeline (`glab ci run --mr`) |
+| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) |
+| `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) |
 | `r` | Retry selected pipeline (or all checked pipelines) |
 | `d` | Cancel selected pipeline |
 | `o` | Open pipeline in browser |
@@ -336,13 +417,19 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 
 | Key | Action |
 |---|---|
-| `Enter` | Fetch and display job trace |
+| `Enter` | Fetch and display job trace (toggle zoom when trace is open) |
 | `r` | Retry selected job (or all checked jobs) |
 | `S` | Start manual (blocked) GitLab CI job |
+| `c` | Cancel selected job (or all checked jobs) |
 | `d` | Download job artifact |
 | `o` | Open job in browser |
 | `e` | Open job trace in `$EDITOR` |
-| `Space` | Check/uncheck job for bulk retry |
+| `p` | Switch to pipeline selector |
+| `s` | Select all jobs in the current stage |
+| `w` | Toggle trace word wrap |
+| `m` | Collapse / expand matrix jobs |
+| `Space` | Check/uncheck job for bulk retry/cancel |
+| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) |
 | `j` / `↓` | (in trace view) scroll down |
 | `k` / `↑` | (in trace view) scroll up |
 
@@ -363,11 +450,69 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 | Key | Action |
 |---|---|
 | `Enter` | View release details in terminal |
+| `n` | Create a new release (tag, name, description) |
+| `e` | Edit selected release |
+| `d` | Delete selected release (with confirmation) |
 | `o` | Open release in browser |
 
 ---
 
+### Milestones tab
+
+| Key | Action |
+|---|---|
+| `n` | Create new milestone (title, description, start & due date) |
+| `e` | Edit selected milestone |
+| `c` | Close selected milestone |
+| `r` | Reopen selected milestone |
+| `d` | Delete selected milestone (with confirmation) |
+| `o` | Open milestone in browser |
+
+---
+
+### Todos tab
+
+On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
+
+| Key | Action |
+|---|---|
+| `Enter` | Mark item as read and jump to its target (issue / MR) |
+| `o` | Open item in browser |
+
+---
+
+### Branches tab
+
+| Key | Action |
+|---|---|
+| `n` | Create a new branch (prompts for name; based on the selected branch) |
+| `d` | Delete selected branch (with confirmation) |
+
+---
+
+### Environments tab
+
+| Key | Action |
+|---|---|
+| `Enter` | Fetch and view the deployments list for the selected environment |
+
+---
+
+### Terminal tab
+
+Logs every `glab` / `gh` command the TUI executes, with success/failure status.
+
+| Key | Action |
+|---|---|
+| `j` / `↓` | Scroll log down |
+| `k` / `↑` | Scroll log up |
+| `w` | Toggle line wrapping |
+
+---
+
 ### Selector overlays (labels, assignees, etc.)
+
+Searchable multi-select popups are used for choosing labels, assignees, reviewers, milestones, and for **value-based column filtering** (see [Filtering, Grouping & Columns](#filtering-grouping--columns)).
 
 | Key | Action |
 |---|---|

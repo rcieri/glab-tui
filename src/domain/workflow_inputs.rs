@@ -95,23 +95,77 @@ pub fn parse_workflow_inputs(yaml_path: &str) -> Option<Vec<WorkflowInput>> {
 mod tests {
     use super::*;
 
+    /// A `workflow_dispatch` block with a single choice input, in the shape
+    /// GitHub emits. Kept inline so the parser's tests do not depend on which
+    /// workflow files happen to exist in this repository.
+    const CHOICE_WORKFLOW: &str = r#"
+name: Prepare Release
+on:
+  workflow_dispatch:
+    inputs:
+      version_increment:
+        description: "Version increment"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+"#;
+
+    fn write_workflow(contents: &str) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workflow.yml");
+        std::fs::write(&path, contents).unwrap();
+        let path_str = path.to_str().unwrap().to_string();
+        (dir, path_str)
+    }
+
     #[test]
-    fn test_parse_prepare_release_workflow() {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let yaml_path = format!("{}/.github/workflows/prepare-release.yml", manifest_dir);
-        let inputs = parse_workflow_inputs(&yaml_path);
-        assert!(
-            inputs.is_some(),
-            "Failed to parse prepare-release.yml — inputs should not be None"
-        );
-        let inputs = inputs.unwrap();
-        assert_eq!(inputs.len(), 1, "Expected 1 input, got {}", inputs.len());
+    fn parses_a_choice_input_with_all_its_fields() {
+        let (_dir, path) = write_workflow(CHOICE_WORKFLOW);
+        let inputs = parse_workflow_inputs(&path).expect("workflow_dispatch inputs should parse");
+        assert_eq!(inputs.len(), 1, "expected 1 input, got {}", inputs.len());
 
         let version = &inputs[0];
         assert_eq!(version.name, "version_increment");
-        assert_eq!(version.required, true);
+        assert_eq!(version.description, "Version increment");
+        assert!(version.required);
         assert_eq!(version.default, Some("patch".to_string()));
         assert_eq!(version.input_type, WorkflowInputType::Choice);
         assert_eq!(version.options, vec!["patch", "minor", "major"]);
+    }
+
+    #[test]
+    fn untyped_input_defaults_to_string_and_is_optional() {
+        let (_dir, path) = write_workflow(
+            r#"
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build"
+"#,
+        );
+        let inputs = parse_workflow_inputs(&path).expect("inputs should parse");
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].input_type, WorkflowInputType::String);
+        assert!(!inputs[0].required);
+        assert_eq!(inputs[0].default, None);
+        assert!(inputs[0].options.is_empty());
+    }
+
+    #[test]
+    fn workflow_without_dispatch_inputs_yields_none() {
+        let (_dir, path) = write_workflow("name: CI\non:\n  push:\n    branches: [main]\n");
+        assert!(parse_workflow_inputs(&path).is_none());
+    }
+
+    #[test]
+    fn missing_file_yields_none() {
+        let (dir, _) = write_workflow("");
+        let absent = dir.path().join("does-not-exist.yml");
+        assert!(parse_workflow_inputs(absent.to_str().unwrap()).is_none());
     }
 }

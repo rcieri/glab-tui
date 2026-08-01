@@ -1189,6 +1189,10 @@ theme_preset = "default"
 # Default request page size
 page_size = 100
 
+# Maximum items per API request (1-100). Lower this if your GitLab instance
+# truncates large JSON response bodies. Only affects GitLab backends.
+# api_per_page = 100
+
 # Per-color overrides (takes precedence over theme_preset).
 # Uncomment the [theme] line and any colors you want to override.
 # [theme]

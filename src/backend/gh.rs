@@ -88,6 +88,9 @@ impl Backend for GhBackend {
 
     // ── Issues ──
 
+    /// `_per_request` is unused in the GitHub backend (as with all `Backend`
+    /// methods that take it) — `gh` uses `--limit` for the total item count,
+    /// not per-page pagination. Only GitLab backends paginate per-request.
     async fn list_issues(
         &self,
         project: &str,
@@ -494,6 +497,8 @@ impl Backend for GhBackend {
 
     // ── Merge Requests ──
 
+    /// `_per_request` is unused in the GitHub backend — `gh` uses `--limit`
+    /// for the total item count, not per-page pagination.
     async fn list_mrs(
         &self,
         project: &str,
@@ -1093,6 +1098,8 @@ impl Backend for GhBackend {
 
     // ── Pipelines ──
 
+    /// `_per_request` is unused in the GitHub backend — `gh run list` uses
+    /// `--limit` for the total item count, not per-page pagination.
     async fn list_pipelines(
         &self,
         project: &str,

@@ -2494,7 +2494,7 @@ impl Backend for GlabBackend {
 
     // ── Labels / Members / Misc ──
 
-    async fn fetch_labels(&self, project: &str) -> Result<Vec<String>> {
+    async fn fetch_labels(&self, project: &str, per_request: usize) -> Result<Vec<String>> {
         let raw = self
             .run_glab(
                 &[
@@ -2505,7 +2505,7 @@ impl Backend for GlabBackend {
                     "-R",
                     project,
                     "--per-page",
-                    "100",
+                    &per_request.to_string(),
                 ],
                 "Fetching Labels",
             )
@@ -2816,9 +2816,9 @@ mod tests {
         assert_eq!(page_count(100, 20), 5);
         assert_eq!(page_count(100, 100), 1);
         assert_eq!(page_count(250, 100), 3);
-        // per_request = 0 must not panic (div_ceil would); clamped to 1 item per
-        // request, so a 100-item budget needs 100 requests.
-        assert_eq!(page_count(100, 0), 100);
+        // value already clamped to 1..=100 by Config::api_per_page_clamped(),
+        // but the max(1) guard in page_count() ensures division safety.
+        assert_eq!(page_count(100, 1), 100);
     }
 
     // ── project path validation (GraphQL injection guard) ──

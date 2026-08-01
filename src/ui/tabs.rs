@@ -663,6 +663,45 @@ pub(crate) fn render_tab_merge_requests(
                     Alignment::Center,
                 ));
             }
+            if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
+                let (text, tone) = crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref());
+                let color = match tone {
+                    crate::domain::mr_state::MergeTone::Conflict => THEME.read().unwrap().red,
+                    crate::domain::mr_state::MergeTone::Rebase => THEME.read().unwrap().yellow,
+                    crate::domain::mr_state::MergeTone::Clean => THEME.read().unwrap().green,
+                    _ => THEME.read().unwrap().text_muted,
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &text,
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(color),
+                    Alignment::Center,
+                ));
+            }
+            if app.is_column_visible(Tab::MergeRequests, "Approval") {
+                let (text, tone) =
+                    crate::domain::mr_state::approval_cell(m.approval.as_ref(), app.is_github());
+                let color = match tone {
+                    crate::domain::mr_state::ApprovalTone::ChangesRequested => {
+                        THEME.read().unwrap().red
+                    }
+                    crate::domain::mr_state::ApprovalTone::AwaitingYou => {
+                        THEME.read().unwrap().yellow
+                    }
+                    crate::domain::mr_state::ApprovalTone::Approved => THEME.read().unwrap().green,
+                    _ => THEME.read().unwrap().text_muted,
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &text,
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(color),
+                    Alignment::Center,
+                ));
+            }
             if app.is_column_visible(Tab::MergeRequests, "Title") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&clean_title, 100),
@@ -709,45 +748,6 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
-                ));
-            }
-            if app.is_column_visible(Tab::MergeRequests, "Approval") {
-                let (text, tone) =
-                    crate::domain::mr_state::approval_cell(m.approval.as_ref(), app.is_github());
-                let color = match tone {
-                    crate::domain::mr_state::ApprovalTone::ChangesRequested => {
-                        THEME.read().unwrap().red
-                    }
-                    crate::domain::mr_state::ApprovalTone::AwaitingYou => {
-                        THEME.read().unwrap().yellow
-                    }
-                    crate::domain::mr_state::ApprovalTone::Approved => THEME.read().unwrap().green,
-                    _ => THEME.read().unwrap().text_muted,
-                };
-                cells.push(super::helpers::render_fuzzy_cell(
-                    &text,
-                    &app.search_query,
-                    is_selected,
-                    is_checked,
-                    Style::default().fg(color),
-                    Alignment::Center,
-                ));
-            }
-            if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
-                let (text, tone) = crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref());
-                let color = match tone {
-                    crate::domain::mr_state::MergeTone::Conflict => THEME.read().unwrap().red,
-                    crate::domain::mr_state::MergeTone::Rebase => THEME.read().unwrap().yellow,
-                    crate::domain::mr_state::MergeTone::Clean => THEME.read().unwrap().green,
-                    _ => THEME.read().unwrap().text_muted,
-                };
-                cells.push(super::helpers::render_fuzzy_cell(
-                    &text,
-                    &app.search_query,
-                    is_selected,
-                    is_checked,
-                    Style::default().fg(color),
-                    Alignment::Center,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Workflow") {
@@ -937,6 +937,18 @@ pub(crate) fn render_tab_merge_requests(
             ));
             widths.push(Constraint::Length(12));
         }
+        if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
+            header_cells.push(Cell::from(
+                Line::from("Mergeable").alignment(Alignment::Center),
+            ));
+            widths.push(col_w(content_area.width, 13));
+        }
+        if app.is_column_visible(Tab::MergeRequests, "Approval") {
+            header_cells.push(Cell::from(
+                Line::from("Approval").alignment(Alignment::Center),
+            ));
+            widths.push(col_w(content_area.width, 12));
+        }
         if app.is_column_visible(Tab::MergeRequests, "Title") {
             header_cells.push(Cell::from("Title"));
             widths.push(Constraint::Fill(1));
@@ -948,18 +960,6 @@ pub(crate) fn render_tab_merge_requests(
         if app.is_column_visible(Tab::MergeRequests, "Reviewers") {
             header_cells.push(Cell::from("Reviewers"));
             widths.push(col_w(content_area.width, 22));
-        }
-        if app.is_column_visible(Tab::MergeRequests, "Approval") {
-            header_cells.push(Cell::from(
-                Line::from("Approval").alignment(Alignment::Center),
-            ));
-            widths.push(col_w(content_area.width, 12));
-        }
-        if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
-            header_cells.push(Cell::from(
-                Line::from("Mergeable").alignment(Alignment::Center),
-            ));
-            widths.push(col_w(content_area.width, 13));
         }
         if app.is_column_visible(Tab::MergeRequests, "Workflow") {
             header_cells.push(Cell::from(

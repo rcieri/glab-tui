@@ -68,7 +68,9 @@ impl GitlabClient {
     }
 
     pub async fn fetch_labels(&self, project_path: &str) -> Result<Vec<String>> {
-        self.backend.fetch_labels(project_path).await
+        self.backend
+            .fetch_labels(project_path, self.api_per_page)
+            .await
     }
 
     pub async fn fetch_members(&self, project_path: &str) -> Result<Vec<String>> {

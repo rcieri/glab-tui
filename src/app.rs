@@ -226,11 +226,11 @@ impl Tab {
                     "ID",
                     "State",
                     "Status",
+                    "Mergeable",
+                    "Approval",
                     "Title",
                     "Assignees",
                     "Reviewers",
-                    "Approval",
-                    "Mergeable",
                     "Workflow",
                     "Labels",
                 ];
@@ -294,8 +294,8 @@ impl Tab {
                 "ID",
                 "State",
                 "Status",
-                "Approval",
                 "Mergeable",
+                "Approval",
                 "Title",
                 "Labels",
             ],
@@ -2560,26 +2560,32 @@ impl App {
             ),
             "ID" => vec![m.iid.to_string()],
             "Title" => vec![m.title.clone()],
-            "Approval" => vec![
-                match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
-                    crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
-                    crate::domain::mr_state::ApprovalTone::ChangesRequested => "Changes requested",
-                    crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
-                    crate::domain::mr_state::ApprovalTone::Approved => "Approved",
-                    crate::domain::mr_state::ApprovalTone::Pending => "Pending",
-                }
-                .to_string(),
-            ],
-            "Mergeable" => vec![
-                match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
-                    crate::domain::mr_state::MergeTone::Unknown => "Unknown",
-                    crate::domain::mr_state::MergeTone::Conflict => "Conflict",
-                    crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
-                    crate::domain::mr_state::MergeTone::Computing => "Checking",
-                    crate::domain::mr_state::MergeTone::Clean => "Mergeable",
-                }
-                .to_string(),
-            ],
+            "Approval" => {
+                vec![
+                    match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
+                        crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
+                        crate::domain::mr_state::ApprovalTone::ChangesRequested => {
+                            "Changes requested"
+                        }
+                        crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
+                        crate::domain::mr_state::ApprovalTone::Approved => "Approved",
+                        crate::domain::mr_state::ApprovalTone::Pending => "Pending",
+                    }
+                    .to_string(),
+                ]
+            }
+            "Mergeable" => {
+                vec![
+                    match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
+                        crate::domain::mr_state::MergeTone::Unknown => "Unknown",
+                        crate::domain::mr_state::MergeTone::Conflict => "Conflict",
+                        crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
+                        crate::domain::mr_state::MergeTone::Computing => "Checking",
+                        crate::domain::mr_state::MergeTone::Clean => "Mergeable",
+                    }
+                    .to_string(),
+                ]
+            }
             "Workflow" => crate::domain::mr_state::workflow_label(m.workflow)
                 .map(|l| vec![l.to_string()])
                 .unwrap_or_default(),

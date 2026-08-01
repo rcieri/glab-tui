@@ -136,8 +136,9 @@ fn test_pagination_fallback_invalid() {
     assert_all_use_per_page(&calls, 100);
 }
 
-/// `api_per_page` governs the paged list fetches only. Endpoints that issue a
-/// single unpaged request keep their own sizing.
+/// `api_per_page` is passed through to all list endpoints, including labels.
+/// Lowering it from the default 100 shrinks every page, including the label
+/// fetch that populates the edit-menu selector.
 #[test]
 fn test_pagination_custom_per_endpoint() {
     let session = session_with(Some("page_size = 100\napi_per_page = 20\n"));
@@ -154,10 +155,11 @@ fn test_pagination_custom_per_endpoint() {
         !label_calls.is_empty(),
         "expected a label-list call to compare against"
     );
+    // fetch_labels now honours api_per_page (was previously hard-coded to 100).
     for call in &label_calls {
         assert!(
-            call.contains("--per-page 100"),
-            "unpaged label fetch should keep its own size, got: {}",
+            call.contains("--per-page 20"),
+            "label fetch should use api_per_page=20, got: {}",
             call
         );
     }

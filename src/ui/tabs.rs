@@ -665,18 +665,48 @@ pub(crate) fn render_tab_merge_requests(
             }
             if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
                 let (text, tone) = crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref());
-                let color = match tone {
-                    crate::domain::mr_state::MergeTone::Conflict => THEME.read().unwrap().red,
-                    crate::domain::mr_state::MergeTone::Rebase => THEME.read().unwrap().yellow,
-                    crate::domain::mr_state::MergeTone::Clean => THEME.read().unwrap().green,
-                    _ => THEME.read().unwrap().text_muted,
+                let style = {
+                    let t = THEME.read().unwrap();
+                    match tone {
+                        crate::domain::mr_state::MergeTone::Conflict => Style::default()
+                            .fg(t.red)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else if is_checked {
+                                t.checked_bg
+                            } else {
+                                t.red_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
+                        crate::domain::mr_state::MergeTone::Rebase => Style::default()
+                            .fg(t.yellow)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else if is_checked {
+                                t.checked_bg
+                            } else {
+                                t.yellow_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
+                        crate::domain::mr_state::MergeTone::Clean => Style::default()
+                            .fg(t.green)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else if is_checked {
+                                t.checked_bg
+                            } else {
+                                t.green_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
+                        _ => Style::default().fg(t.text_muted),
+                    }
                 };
                 cells.push(super::helpers::render_fuzzy_cell(
                     &text,
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(color),
+                    style,
                     Alignment::Center,
                 ));
             }

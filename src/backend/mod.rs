@@ -57,11 +57,14 @@ pub trait Backend: Send + Sync {
     fn set_tx(&mut self, tx: UnboundedSender<Event>);
 
     // ── Issues ──
+    /// `page_size` is the total item budget across all pages; `per_request` is how many
+    /// items each HTTP call asks for.
     async fn list_issues(
         &self,
         project: &str,
         show_closed: bool,
         page_size: usize,
+        per_request: usize,
     ) -> Result<Vec<Issue>>;
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue>;
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()>;
@@ -110,11 +113,14 @@ pub trait Backend: Send + Sync {
     ) -> Result<()>;
 
     // ── Merge Requests ──
+    /// `page_size` is the total item budget across all pages; `per_request` is how many
+    /// items each HTTP call asks for.
     async fn list_mrs(
         &self,
         project: &str,
         show_closed: bool,
         page_size: usize,
+        per_request: usize,
     ) -> Result<Vec<MergeRequest>>;
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest>;
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
@@ -193,7 +199,14 @@ pub trait Backend: Send + Sync {
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()>;
 
     // ── Pipelines ──
-    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>>;
+    /// `page_size` is the total item budget across all pages; `per_request` is how many
+    /// items each HTTP call asks for.
+    async fn list_pipelines(
+        &self,
+        project: &str,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Pipeline>>;
     async fn list_pipeline_jobs(
         &self,
         project: &str,

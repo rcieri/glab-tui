@@ -93,6 +93,7 @@ impl Backend for GhBackend {
         project: &str,
         show_closed: bool,
         page_size: usize,
+        _per_request: usize,
     ) -> Result<Vec<Issue>> {
         let state = if show_closed { "all" } else { "open" };
         let total = page_size * 10;
@@ -498,6 +499,7 @@ impl Backend for GhBackend {
         project: &str,
         show_closed: bool,
         page_size: usize,
+        _per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
         let state = if show_closed { "all" } else { "open" };
         let total = page_size * 10;
@@ -1091,7 +1093,12 @@ impl Backend for GhBackend {
 
     // ── Pipelines ──
 
-    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
+    async fn list_pipelines(
+        &self,
+        project: &str,
+        page_size: usize,
+        _per_request: usize,
+    ) -> Result<Vec<Pipeline>> {
         let total = page_size * 10;
         let raw = self
             .run_gh(

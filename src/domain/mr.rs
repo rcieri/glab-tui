@@ -123,7 +123,12 @@ pub async fn list_mrs(
 ) -> Result<Vec<MergeRequest>> {
     client
         .backend
-        .list_mrs(project_path, show_closed, client.page_size)
+        .list_mrs(
+            project_path,
+            show_closed,
+            client.page_size,
+            client.api_per_page,
+        )
         .await
 }
 

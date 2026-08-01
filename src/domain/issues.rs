@@ -43,7 +43,12 @@ pub async fn list_issues(
 ) -> Result<Vec<Issue>> {
     client
         .backend
-        .list_issues(project_path, show_closed, client.page_size)
+        .list_issues(
+            project_path,
+            show_closed,
+            client.page_size,
+            client.api_per_page,
+        )
         .await
 }
 

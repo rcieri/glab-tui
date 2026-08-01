@@ -229,6 +229,9 @@ impl Tab {
                     "Title",
                     "Assignees",
                     "Reviewers",
+                    "Approval",
+                    "Mergeable",
+                    "Workflow",
                     "Labels",
                 ];
                 if kind.is_github() {
@@ -287,7 +290,15 @@ impl Tab {
                 }
                 cols
             }
-            Tab::MergeRequests => vec!["ID", "State", "Status", "Title", "Labels"],
+            Tab::MergeRequests => vec![
+                "ID",
+                "State",
+                "Status",
+                "Approval",
+                "Mergeable",
+                "Title",
+                "Labels",
+            ],
             Tab::Pipelines => {
                 if kind.is_github() {
                     vec!["Name", "Status", "Event", "Ref"]
@@ -1777,6 +1788,8 @@ pub enum ConfirmAction {
     CloseIssue(u64),       // issue iid
     CloseMr(u64),          // mr iid
     MergeMr(u64),          // mr iid
+    RevokeMr(u64),         // mr iid
+    RebaseMr(u64),         // mr iid
     SubmitReview(u64),     // mr iid
 }
 
@@ -2447,6 +2460,21 @@ impl App {
                     check_match(&format!("@{}", reviewer.username));
                 }
             }
+            if enabled_cols.contains("Approval") {
+                for value in Self::mr_filter_values(item, "Approval") {
+                    check_match(&value);
+                }
+            }
+            if enabled_cols.contains("Mergeable") {
+                for value in Self::mr_filter_values(item, "Mergeable") {
+                    check_match(&value);
+                }
+            }
+            if enabled_cols.contains("Workflow") {
+                for v in Self::mr_filter_values(item, "Workflow") {
+                    check_match(&v);
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((item, score));
@@ -2455,6 +2483,108 @@ impl App {
 
         scored_items.sort_by(|a, b| b.1.cmp(&a.1));
         scored_items.into_iter().map(|(item, _)| item).collect()
+    }
+
+    /// The string a column contributes to MR sorting.
+    ///
+    /// One function for both sides of the comparator — previously this `match`
+    /// was duplicated across `val_a` and `val_b`, so every new column had to be
+    /// added twice. Values are strings because the comparator falls back to
+    /// numeric ordering when both sides parse as `u64`.
+    fn mr_sort_value(m: &crate::domain::mr::MergeRequest, col: &str) -> String {
+        match col {
+            "State" => m.state.clone(),
+            "Author" => m.author.username.clone(),
+            "Labels" => m.labels.first().cloned().unwrap_or_default(),
+            "Milestone" => m
+                .milestone
+                .as_ref()
+                .map(|ms| ms.title.clone())
+                .unwrap_or_default(),
+            "Assignees" => m
+                .assignees
+                .first()
+                .map(|asg| asg.username.clone())
+                .unwrap_or_default(),
+            "Reviewers" => m
+                .reviewers
+                .first()
+                .map(|rev| rev.username.clone())
+                .unwrap_or_default(),
+            "Status" => {
+                if m.draft {
+                    "Draft".to_string()
+                } else {
+                    "Ready".to_string()
+                }
+            }
+            "ID" => m.iid.to_string(),
+            "Title" => m.title.clone(),
+            "Approval" => {
+                crate::domain::mr_state::approval_sort_key(m.approval.as_ref()).to_string()
+            }
+            "Mergeable" => {
+                crate::domain::mr_state::mergeable_sort_key(m.mergeability.as_ref()).to_string()
+            }
+            "Workflow" => crate::domain::mr_state::workflow_sort_key(m.workflow).to_string(),
+            _ => String::new(),
+        }
+    }
+
+    /// The filter values a column contributes for one MR.
+    ///
+    /// Returns several values when an MR carries more than one independent fact —
+    /// a draft MR with unresolved discussions yields both "Draft" and
+    /// "Unresolved discussions", so each is independently filterable.
+    ///
+    /// One function for BOTH filter call sites: `filtered_mrs` (which decides
+    /// whether an MR matches an active filter) and `collect_unique_column_values`
+    /// (which populates the picker's selectable options). They previously drifted,
+    /// leaving values that matched but could never be selected.
+    fn mr_filter_values(m: &crate::domain::mr::MergeRequest, col: &str) -> Vec<String> {
+        match col {
+            "Labels" => m.labels.clone(),
+            "Assignees" => m.assignees.iter().map(|a| a.username.clone()).collect(),
+            "Reviewers" => m.reviewers.iter().map(|r| r.username.clone()).collect(),
+            "Author" => vec![m.author.username.clone()],
+            "Milestone" => m
+                .milestone
+                .as_ref()
+                .map(|ms| ms.title.clone())
+                .into_iter()
+                .collect(),
+            "State" => vec![m.state.clone()],
+            "Status" => crate::domain::mr_state::status_filter_values(
+                m.draft,
+                m.blocking_discussions_resolved,
+            ),
+            "ID" => vec![m.iid.to_string()],
+            "Title" => vec![m.title.clone()],
+            "Approval" => vec![
+                match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
+                    crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
+                    crate::domain::mr_state::ApprovalTone::ChangesRequested => "Changes requested",
+                    crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
+                    crate::domain::mr_state::ApprovalTone::Approved => "Approved",
+                    crate::domain::mr_state::ApprovalTone::Pending => "Pending",
+                }
+                .to_string(),
+            ],
+            "Mergeable" => vec![
+                match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
+                    crate::domain::mr_state::MergeTone::Unknown => "Unknown",
+                    crate::domain::mr_state::MergeTone::Conflict => "Conflict",
+                    crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
+                    crate::domain::mr_state::MergeTone::Computing => "Checking",
+                    crate::domain::mr_state::MergeTone::Clean => "Mergeable",
+                }
+                .to_string(),
+            ],
+            "Workflow" => crate::domain::mr_state::workflow_label(m.workflow)
+                .map(|l| vec![l.to_string()])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
     }
 
     pub fn filtered_mrs_list<'a>(
@@ -2471,66 +2601,8 @@ impl App {
         let mut list = Self::filter_mrs_list(items, query, enabled_cols);
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
-                let val_a = match col.as_str() {
-                    "State" => a.state.clone(),
-                    "Author" => a.author.username.clone(),
-                    "Labels" => a.labels.first().cloned().unwrap_or_default(),
-                    "Milestone" => a
-                        .milestone
-                        .as_ref()
-                        .map(|m| m.title.clone())
-                        .unwrap_or_default(),
-                    "Assignees" => a
-                        .assignees
-                        .first()
-                        .map(|asg| asg.username.clone())
-                        .unwrap_or_default(),
-                    "Reviewers" => a
-                        .reviewers
-                        .first()
-                        .map(|rev| rev.username.clone())
-                        .unwrap_or_default(),
-                    "Status" => {
-                        if a.draft {
-                            "Draft".to_string()
-                        } else {
-                            "Ready".to_string()
-                        }
-                    }
-                    "ID" => a.iid.to_string(),
-                    "Title" => a.title.clone(),
-                    _ => String::new(),
-                };
-                let val_b = match col.as_str() {
-                    "State" => b.state.clone(),
-                    "Author" => b.author.username.clone(),
-                    "Labels" => b.labels.first().cloned().unwrap_or_default(),
-                    "Milestone" => b
-                        .milestone
-                        .as_ref()
-                        .map(|m| m.title.clone())
-                        .unwrap_or_default(),
-                    "Assignees" => b
-                        .assignees
-                        .first()
-                        .map(|asg| asg.username.clone())
-                        .unwrap_or_default(),
-                    "Reviewers" => b
-                        .reviewers
-                        .first()
-                        .map(|rev| rev.username.clone())
-                        .unwrap_or_default(),
-                    "Status" => {
-                        if b.draft {
-                            "Draft".to_string()
-                        } else {
-                            "Ready".to_string()
-                        }
-                    }
-                    "ID" => b.iid.to_string(),
-                    "Title" => b.title.clone(),
-                    _ => String::new(),
-                };
+                let val_a = Self::mr_sort_value(a, col.as_str());
+                let val_b = Self::mr_sort_value(b, col.as_str());
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
@@ -2558,27 +2630,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::MergeRequests,
-            |item, col| match col {
-                "Labels" => item.labels.clone(),
-                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
-                "Reviewers" => item.reviewers.iter().map(|r| r.username.clone()).collect(),
-                "Author" => vec![item.author.username.clone()],
-                "Milestone" => item
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .into_iter()
-                    .collect(),
-                "State" => vec![item.state.clone()],
-                "Status" => vec![if item.draft {
-                    "Draft".to_string()
-                } else {
-                    "Ready".to_string()
-                }],
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                _ => vec![],
-            },
+            |item, col| Self::mr_filter_values(item, col),
         );
         list
     }
@@ -3448,47 +3500,8 @@ impl App {
             }
             Tab::MergeRequests => {
                 for item in &self.mrs.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.iid.to_string());
-                        }
-                        "State" => {
-                            values.insert(item.state.clone());
-                        }
-                        "Status" => {
-                            values.insert(if item.draft {
-                                "Draft".to_string()
-                            } else {
-                                "Ready".to_string()
-                            });
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "Labels" => {
-                            for l in &item.labels {
-                                values.insert(l.clone());
-                            }
-                        }
-                        "Assignees" => {
-                            for a in &item.assignees {
-                                values.insert(a.username.clone());
-                            }
-                        }
-                        "Reviewers" => {
-                            for r in &item.reviewers {
-                                values.insert(r.username.clone());
-                            }
-                        }
-                        "Author" => {
-                            values.insert(item.author.username.clone());
-                        }
-                        "Milestone" => {
-                            if let Some(m) = &item.milestone {
-                                values.insert(m.title.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::mr_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
@@ -4275,6 +4288,10 @@ mod tests {
             milestone: None,
             description: None,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -4292,6 +4309,10 @@ mod tests {
             milestone: None,
             description: None,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
         };
 
         let mr_ready = MergeRequest {
@@ -4309,6 +4330,10 @@ mod tests {
             milestone: None,
             description: None,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
@@ -4335,6 +4360,36 @@ mod tests {
         assert_eq!(filtered_open[0].iid, 1);
         assert_eq!(filtered_open[1].iid, 2);
         assert_eq!(filtered_open[2].iid, 3);
+    }
+
+    #[test]
+    fn search_matches_conflicting_mr_when_mergeable_column_enabled() {
+        let mut mr = mr_fixture(1, "opened", "alice", false, "unrelated title");
+        mr.mergeability = Some(crate::domain::mr_state::MergeabilityState {
+            conflicts: true,
+            needs_rebase: false,
+            computing: false,
+        });
+        let items = vec![mr];
+
+        let with_mergeable: std::collections::HashSet<String> = ["ID", "Title", "Mergeable"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let matched = App::filter_mrs_list(&items, "conflict", &with_mergeable);
+        assert_eq!(
+            matched.len(),
+            1,
+            "expected the conflicting MR to match a 'conflict' search when Mergeable is enabled"
+        );
+
+        let without_mergeable: std::collections::HashSet<String> =
+            ["ID", "Title"].iter().map(|s| s.to_string()).collect();
+        let unmatched = App::filter_mrs_list(&items, "conflict", &without_mergeable);
+        assert!(
+            unmatched.is_empty(),
+            "the column gate should suppress the match when Mergeable is disabled"
+        );
     }
 
     #[test]
@@ -4993,5 +5048,333 @@ index 123456..789012 100644
 ";
         let view = DiffView::new(42, diff.to_string());
         assert_eq!(view.file_tree_scroll_offset, 0);
+    }
+
+    fn mr_fixture(
+        iid: u64,
+        state: &str,
+        author: &str,
+        draft: bool,
+        title: &str,
+    ) -> crate::domain::mr::MergeRequest {
+        crate::domain::mr::MergeRequest {
+            iid,
+            title: title.to_string(),
+            state: state.to_string(),
+            labels: vec![],
+            updated_at: "2026-07-29T00:00:00Z".to_string(),
+            author: crate::domain::mr::Author {
+                username: author.to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".to_string(),
+            source_branch: "feature".to_string(),
+            draft,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+        }
+    }
+
+    fn mr_enabled_cols(
+        cols: &[&str],
+    ) -> std::collections::HashMap<Tab, std::collections::HashSet<String>> {
+        let mut m = std::collections::HashMap::new();
+        m.insert(
+            Tab::MergeRequests,
+            cols.iter().map(|c| c.to_string()).collect(),
+        );
+        m
+    }
+
+    /// iids in the order `filtered_mrs_list` returns them when grouped by `col`.
+    fn sorted_iids(
+        items: &[crate::domain::mr::MergeRequest],
+        col: &str,
+        ascending: bool,
+    ) -> Vec<u64> {
+        let cols = mr_enabled_cols(&["ID", "State", "Author", "Status", "Title"]);
+        App::filtered_mrs_list(items, "", &cols, ascending, &Some(col.to_string()))
+            .iter()
+            .map(|m| m.iid)
+            .collect()
+    }
+
+    #[test]
+    fn sorting_by_author_is_alphabetical() {
+        let items = vec![
+            mr_fixture(1, "opened", "zoe", false, "z"),
+            mr_fixture(2, "opened", "alice", false, "a"),
+            mr_fixture(3, "opened", "mallory", false, "m"),
+        ];
+        assert_eq!(sorted_iids(&items, "Author", true), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn sorting_respects_descending_flag() {
+        let items = vec![
+            mr_fixture(1, "opened", "zoe", false, "z"),
+            mr_fixture(2, "opened", "alice", false, "a"),
+        ];
+        assert_eq!(sorted_iids(&items, "Author", false), vec![1, 2]);
+    }
+
+    #[test]
+    fn sorting_by_id_is_numeric_not_lexicographic() {
+        // The comparator parses both sides as u64 when possible, so 9 < 10.
+        let items = vec![
+            mr_fixture(10, "opened", "a", false, "ten"),
+            mr_fixture(9, "opened", "b", false, "nine"),
+            mr_fixture(100, "opened", "c", false, "hundred"),
+        ];
+        assert_eq!(sorted_iids(&items, "ID", true), vec![9, 10, 100]);
+    }
+
+    #[test]
+    fn sorting_by_status_uses_draft_ready_words() {
+        let items = vec![
+            mr_fixture(1, "opened", "a", false, "ready one"),
+            mr_fixture(2, "opened", "b", true, "draft one"),
+        ];
+        // "Draft" < "Ready" alphabetically.
+        assert_eq!(sorted_iids(&items, "Status", true), vec![2, 1]);
+    }
+
+    #[test]
+    fn sorting_by_title_is_alphabetical() {
+        let items = vec![
+            mr_fixture(1, "opened", "a", false, "beta"),
+            mr_fixture(2, "opened", "b", false, "alpha"),
+        ];
+        assert_eq!(sorted_iids(&items, "Title", true), vec![2, 1]);
+    }
+
+    #[test]
+    fn sorting_by_state_groups_by_state_string() {
+        let items = vec![
+            mr_fixture(1, "opened", "a", false, "x"),
+            mr_fixture(2, "closed", "b", false, "y"),
+            mr_fixture(3, "merged", "c", false, "z"),
+        ];
+        // closed < merged < opened alphabetically.
+        assert_eq!(sorted_iids(&items, "State", true), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn sorting_by_unknown_column_is_stable_noop() {
+        // Unrecognised columns fall through to empty strings, so all compare equal
+        // and the original order is preserved.
+        let items = vec![
+            mr_fixture(3, "opened", "a", false, "x"),
+            mr_fixture(1, "opened", "b", false, "y"),
+            mr_fixture(2, "opened", "c", false, "z"),
+        ];
+        assert_eq!(sorted_iids(&items, "NoSuchColumn", true), vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn mr_columns_include_both_state_columns_on_both_hosts() {
+        for kind in [BackendKind::GitLab, BackendKind::GitHub] {
+            let cols = Tab::MergeRequests.columns(kind);
+            assert!(cols.contains(&"Approval"), "missing Approval for {kind:?}");
+            assert!(
+                cols.contains(&"Mergeable"),
+                "missing Mergeable for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mr_default_columns_show_both_state_columns() {
+        // Default-on, else the feature hides behind Tab -> configure.
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        assert!(cols.contains(&"Approval"));
+        assert!(cols.contains(&"Mergeable"));
+    }
+
+    #[test]
+    fn mr_default_columns_keep_pre_existing_defaults() {
+        // Adding columns must not remove any.
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        for expected in ["ID", "State", "Status", "Title", "Labels"] {
+            assert!(cols.contains(&expected), "lost default column {expected}");
+        }
+    }
+
+    #[test]
+    fn sorting_by_mergeable_puts_conflicts_first() {
+        use crate::domain::mr_state::MergeabilityState;
+        let mut conflicted = mr_fixture(1, "opened", "a", false, "conflicted");
+        conflicted.mergeability = Some(MergeabilityState {
+            conflicts: true,
+            needs_rebase: false,
+            computing: false,
+        });
+        let mut clean = mr_fixture(2, "opened", "b", false, "clean");
+        clean.mergeability = Some(MergeabilityState {
+            conflicts: false,
+            needs_rebase: false,
+            computing: false,
+        });
+        let unknown = mr_fixture(3, "opened", "c", false, "unknown");
+        let items = vec![clean, unknown, conflicted];
+        // conflict(0) < clean(3) < unknown(4)
+        assert_eq!(sorted_iids(&items, "Mergeable", true), vec![1, 2, 3]);
+    }
+
+    // ── MR filter picker options (collect_unique_column_values) ──
+    //
+    // filtered_mrs (matching) and collect_unique_column_values (picker options)
+    // are two separate call sites over the same data; they previously drifted,
+    // leaving values that matched an active filter but could never be selected
+    // from the picker. mr_filter_values is now the single source both call.
+
+    #[test]
+    fn collect_unique_column_values_status_includes_unresolved_discussions_flag() {
+        let mut draft_unresolved = mr_fixture(1, "opened", "a", true, "draft with unresolved");
+        draft_unresolved.blocking_discussions_resolved = Some(false);
+        let mut app = App::default();
+        app.mrs.items = vec![draft_unresolved];
+
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Status");
+
+        assert!(values.contains(&"Draft".to_string()));
+        assert!(values.contains(&"Unresolved discussions".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_column_values_approval_offers_tone_label() {
+        use crate::domain::mr_state::ApprovalState;
+        let mut approved = mr_fixture(1, "opened", "a", false, "approved");
+        approved.approval = Some(ApprovalState {
+            approved: true,
+            approvals_left: Some(0),
+            approvals_required: Some(1),
+            approved_by: vec!["chandler.anderson".to_string()],
+            changes_requested: false,
+            you_approved: true,
+            awaiting_you: false,
+            ..Default::default()
+        });
+        let mut app = App::default();
+        app.mrs.items = vec![approved];
+
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Approval");
+
+        assert!(values.contains(&"Approved".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_column_values_mergeable_offers_conflict_label() {
+        use crate::domain::mr_state::MergeabilityState;
+        let mut conflicted = mr_fixture(1, "opened", "a", false, "conflicted");
+        conflicted.mergeability = Some(MergeabilityState {
+            conflicts: true,
+            needs_rebase: false,
+            computing: false,
+        });
+        let mut app = App::default();
+        app.mrs.items = vec![conflicted];
+
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Mergeable");
+
+        assert!(values.contains(&"Conflict".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_column_values_agrees_with_mr_filter_values() {
+        // The invariant that broke: every value the matching side (mr_filter_values)
+        // would accept for an MR must also be offered by the picker side
+        // (collect_unique_column_values), or a user can never select it.
+        let mut draft_unresolved = mr_fixture(1, "opened", "a", true, "draft with unresolved");
+        draft_unresolved.blocking_discussions_resolved = Some(false);
+        // Give Workflow a real (non-`None`) value too, or its expected set
+        // from `mr_filter_values` would be trivially empty and the parity
+        // check below would pass without checking anything.
+        draft_unresolved.workflow = Some(crate::domain::mr_state::WorkflowStatus::ReturnedToYou);
+        let mut app = App::default();
+        app.mrs.items = vec![draft_unresolved];
+
+        for col in ["Status", "Approval", "Mergeable", "Workflow"] {
+            let offered = app.collect_unique_column_values(Tab::MergeRequests, col);
+            let expected = App::mr_filter_values(&app.mrs.items[0], col);
+            for v in expected {
+                assert!(
+                    offered.contains(&v),
+                    "column {col}: {v} matches via mr_filter_values but is not offered by collect_unique_column_values"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn workflow_column_is_offered_but_not_default() {
+        for kind in [BackendKind::GitLab, BackendKind::GitHub] {
+            assert!(
+                Tab::MergeRequests.columns(kind).contains(&"Workflow"),
+                "Workflow must be offered for {kind:?}"
+            );
+        }
+        // Default-off: eight default columns collapse Title at 80 cols.
+        assert!(
+            !Tab::MergeRequests
+                .default_columns(BackendKind::GitLab)
+                .contains(&"Workflow")
+        );
+    }
+
+    #[test]
+    fn workflow_sorts_in_cascade_order_not_alphabetically() {
+        use crate::domain::mr_state::WorkflowStatus;
+        let mut returned = mr_fixture(1, "opened", "a", false, "returned");
+        returned.workflow = Some(WorkflowStatus::ReturnedToYou);
+        let mut yours = mr_fixture(2, "opened", "b", false, "yours");
+        yours.workflow = Some(WorkflowStatus::YourMergeRequest);
+        let mut approved = mr_fixture(3, "opened", "c", false, "approved");
+        approved.workflow = Some(WorkflowStatus::ApprovedByYou);
+        // Alphabetically "Approved…" < "Returned…" < "Your…"; by cascade the
+        // order is Returned(0), Yours(2), Approved(3).
+        let items = vec![approved, yours, returned];
+        assert_eq!(sorted_iids(&items, "Workflow", true), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn workflow_filter_offers_the_gitlab_label() {
+        use crate::domain::mr_state::WorkflowStatus;
+        let mut mr = mr_fixture(1, "opened", "a", false, "x");
+        mr.workflow = Some(WorkflowStatus::ReturnedToYou);
+        assert_eq!(
+            App::mr_filter_values(&mr, "Workflow"),
+            vec!["Returned to you".to_string()]
+        );
+    }
+
+    #[test]
+    fn workflow_search_matches_the_label() {
+        use crate::domain::mr_state::WorkflowStatus;
+        let mut mr = mr_fixture(1, "opened", "a", false, "unrelated title");
+        mr.workflow = Some(WorkflowStatus::ReturnedToYou);
+        let items = vec![mr];
+        let with = mr_enabled_cols(&["ID", "Title", "Workflow"]);
+        let cols_with: std::collections::HashSet<String> =
+            with.get(&Tab::MergeRequests).unwrap().clone();
+        assert_eq!(
+            App::filter_mrs_list(&items, "returned", &cols_with).len(),
+            1,
+            "search must match the Workflow label when the column is enabled"
+        );
+        let without = mr_enabled_cols(&["ID", "Title"]);
+        let cols_without: std::collections::HashSet<String> =
+            without.get(&Tab::MergeRequests).unwrap().clone();
+        assert_eq!(
+            App::filter_mrs_list(&items, "returned", &cols_without).len(),
+            0,
+            "the column gate must still apply"
+        );
     }
 }

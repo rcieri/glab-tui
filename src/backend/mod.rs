@@ -13,6 +13,7 @@ use crate::domain::runners::Runner;
 use crate::event::Event;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +135,10 @@ pub trait Backend: Send + Sync {
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn approve_mr(&self, project: &str, iid: u64) -> Result<()>;
+    /// Revoke your own approval. GitLab only — see the GhBackend impl.
+    async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()>;
+    /// Rebase the source branch onto the target. Supported on both hosts.
+    async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn merge_mr(
         &self,
         project: &str,
@@ -316,6 +321,25 @@ pub trait Backend: Send + Sync {
     // ── Labels / Members / Misc ──
     async fn fetch_labels(&self, project: &str) -> Result<Vec<String>>;
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>>;
+
+    // ── MR review state (approval + mergeability) ──
+    /// Bulk-fetch both readiness axes for the given MR iids.
+    ///
+    /// Returns a per-iid pair; either element may be `None`, meaning *unknown*.
+    /// An absent map entry likewise means unknown for that MR.
+    async fn list_mr_state(
+        &self,
+        project: &str,
+        iids: &[u64],
+    ) -> Result<
+        HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    >;
 
     // ── Raw API fallback ──
     async fn raw_api(

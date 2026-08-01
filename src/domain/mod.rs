@@ -4,6 +4,7 @@ pub mod deployments;
 pub mod issues;
 pub mod milestones;
 pub mod mr;
+pub mod mr_state;
 pub mod notifications;
 pub mod pipelines;
 pub mod releases;

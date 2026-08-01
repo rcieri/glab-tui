@@ -82,6 +82,20 @@ pub struct Icons {
     pub state_merged: String,
     pub status_draft: String,
     pub status_ready: String,
+    pub approval_approved: String,
+    pub approval_changes: String,
+    pub approval_pending: String,
+    pub merge_conflict: String,
+    pub merge_rebase: String,
+    pub merge_clean: String,
+    pub merge_checking: String,
+    pub flag_unresolved: String,
+    pub workflow_returned: String,
+    pub workflow_review: String,
+    pub workflow_yours: String,
+    pub workflow_approved: String,
+    pub workflow_inactive: String,
+    pub workflow_approved_others: String,
     pub runner_online: String,
     pub runner_paused: String,
     pub runner_offline: String,
@@ -169,6 +183,20 @@ impl Icons {
             state_merged: "\u{f419}".to_string(),
             status_draft: "\u{f4dd}".to_string(),
             status_ready: "\u{f42e}".to_string(),
+            approval_approved: "\u{f4a7}".to_string(),
+            approval_changes: "\u{f467}".to_string(),
+            approval_pending: "\u{f444}".to_string(),
+            merge_conflict: "\u{f467}".to_string(),
+            merge_rebase: "\u{f419}".to_string(),
+            merge_clean: "\u{f4a7}".to_string(),
+            merge_checking: "\u{f4a3}".to_string(),
+            flag_unresolved: "\u{f475}".to_string(),
+            workflow_returned: "\u{f460}".to_string(),
+            workflow_review: "\u{f4a3}".to_string(),
+            workflow_yours: "\u{f44a}".to_string(),
+            workflow_approved: "\u{f4a7}".to_string(),
+            workflow_inactive: "\u{f444}".to_string(),
+            workflow_approved_others: "\u{f0c0}".to_string(),
             runner_online: "\u{f444}".to_string(),
             runner_paused: "\u{f46e}".to_string(),
             runner_offline: "\u{f4c3}".to_string(),
@@ -680,6 +708,10 @@ pub struct KeybindingMrs {
     pub create_mr: String,
     #[serde(default)]
     pub approve_mr: String,
+    #[serde(default = "def_revoke_mr")]
+    pub revoke_mr: String,
+    #[serde(default = "def_rebase_mr")]
+    pub rebase_mr: String,
     #[serde(default)]
     pub merge_mr: String,
     #[serde(default)]
@@ -860,6 +892,8 @@ keybind_defaults! {
     def_create_mr = "n",
     def_select_mr = "Space",
     def_approve_mr = "a",
+    def_revoke_mr = "A",
+    def_rebase_mr = "R",
     def_merge_mr = "m",
     def_toggle_draft = "s",
     def_view_diff = "v",
@@ -935,6 +969,8 @@ impl Default for KeybindingMrs {
         Self {
             create_mr: def_create_mr(),
             approve_mr: def_approve_mr(),
+            revoke_mr: def_revoke_mr(),
+            rebase_mr: def_rebase_mr(),
             merge_mr: def_merge_mr(),
             toggle_draft: def_toggle_draft(),
             view_diff: def_view_diff(),
@@ -1238,6 +1274,8 @@ delete_entity = "d"
 create_mr = "n"
 select_mr = "Space"
 approve_mr = "a"
+revoke_mr = "A"
+rebase_mr = "R"
 merge_mr = "m"
 toggle_draft = "s"
 view_diff = "v"
@@ -1668,6 +1706,14 @@ pub fn reload_theme() {
     }
 }
 
+pub fn set_theme_preset(name: &str) {
+    if let Some(preset) = Theme::preset(name) {
+        if let Ok(mut theme) = THEME.write() {
+            *theme = preset;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1706,12 +1752,45 @@ page_size = 250
         assert_eq!(cfg.api_per_page, 100);
         assert_eq!(cfg.page_size, 250);
     }
-}
 
-pub fn set_theme_preset(name: &str) {
-    if let Some(preset) = Theme::preset(name) {
-        if let Ok(mut theme) = THEME.write() {
-            *theme = preset;
+    #[test]
+    fn revoke_mr_defaults_to_shift_a() {
+        let cfg = Config::default();
+        assert_eq!(cfg.keybindings.mrs.revoke_mr, "A");
+    }
+
+    #[test]
+    fn rebase_mr_defaults_to_shift_r() {
+        let cfg = Config::default();
+        assert_eq!(cfg.keybindings.mrs.rebase_mr, "R");
+    }
+
+    #[test]
+    fn mr_keybindings_do_not_collide() {
+        let cfg = Config::default();
+
+        // Enumerate fields via the struct's own `Serialize` impl instead of a
+        // hand-maintained array: a manually listed array silently excludes
+        // whatever field the author forgot to add (this happened once
+        // already -- `select_mr` was missing), so a newly added
+        // `KeybindingMrs` field is picked up automatically here with no
+        // extra step required.
+        let value = serde_json::to_value(&cfg.keybindings.mrs).expect("serialize KeybindingMrs");
+        let fields = value
+            .as_object()
+            .expect("KeybindingMrs serializes to a JSON object");
+        assert!(!fields.is_empty(), "KeybindingMrs serialized to no fields");
+
+        let mut seen: HashMap<&str, &str> = HashMap::new();
+        for (field, binding) in fields {
+            let binding = binding
+                .as_str()
+                .expect("every KeybindingMrs field is a string");
+            if let Some(other_field) = seen.insert(binding, field) {
+                panic!(
+                    "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
+                );
+            }
         }
     }
 }

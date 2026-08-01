@@ -626,6 +626,12 @@ pub(crate) fn render_tab_merge_requests(
                 }
             };
 
+            let status_styled = format!(
+                "{}{}",
+                status_styled,
+                crate::domain::mr_state::status_flags(m.blocking_discussions_resolved)
+            );
+
             let mut cells = Vec::new();
             if app.is_column_visible(Tab::MergeRequests, "ID") {
                 cells.push(super::helpers::render_fuzzy_cell(
@@ -703,6 +709,71 @@ pub(crate) fn render_tab_merge_requests(
                     is_checked,
                     Style::default().fg(THEME.read().unwrap().blue),
                     Alignment::Left,
+                ));
+            }
+            if app.is_column_visible(Tab::MergeRequests, "Approval") {
+                let (text, tone) =
+                    crate::domain::mr_state::approval_cell(m.approval.as_ref(), app.is_github());
+                let color = match tone {
+                    crate::domain::mr_state::ApprovalTone::ChangesRequested => {
+                        THEME.read().unwrap().red
+                    }
+                    crate::domain::mr_state::ApprovalTone::AwaitingYou => {
+                        THEME.read().unwrap().yellow
+                    }
+                    crate::domain::mr_state::ApprovalTone::Approved => THEME.read().unwrap().green,
+                    _ => THEME.read().unwrap().text_muted,
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &text,
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(color),
+                    Alignment::Center,
+                ));
+            }
+            if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
+                let (text, tone) = crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref());
+                let color = match tone {
+                    crate::domain::mr_state::MergeTone::Conflict => THEME.read().unwrap().red,
+                    crate::domain::mr_state::MergeTone::Rebase => THEME.read().unwrap().yellow,
+                    crate::domain::mr_state::MergeTone::Clean => THEME.read().unwrap().green,
+                    _ => THEME.read().unwrap().text_muted,
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &text,
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(color),
+                    Alignment::Center,
+                ));
+            }
+            if app.is_column_visible(Tab::MergeRequests, "Workflow") {
+                let text = crate::domain::mr_state::workflow_cell(m.workflow);
+                let color = match m.workflow {
+                    Some(crate::domain::mr_state::WorkflowStatus::ReturnedToYou) => {
+                        THEME.read().unwrap().red
+                    }
+                    Some(crate::domain::mr_state::WorkflowStatus::ReviewRequested) => {
+                        THEME.read().unwrap().yellow
+                    }
+                    Some(crate::domain::mr_state::WorkflowStatus::YourMergeRequest) => {
+                        THEME.read().unwrap().blue
+                    }
+                    Some(crate::domain::mr_state::WorkflowStatus::ApprovedByYou) => {
+                        THEME.read().unwrap().green
+                    }
+                    _ => THEME.read().unwrap().text_muted,
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &text,
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(color),
+                    Alignment::Center,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Labels") {
@@ -878,6 +949,24 @@ pub(crate) fn render_tab_merge_requests(
             header_cells.push(Cell::from("Reviewers"));
             widths.push(col_w(content_area.width, 22));
         }
+        if app.is_column_visible(Tab::MergeRequests, "Approval") {
+            header_cells.push(Cell::from(
+                Line::from("Approval").alignment(Alignment::Center),
+            ));
+            widths.push(col_w(content_area.width, 12));
+        }
+        if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
+            header_cells.push(Cell::from(
+                Line::from("Mergeable").alignment(Alignment::Center),
+            ));
+            widths.push(col_w(content_area.width, 13));
+        }
+        if app.is_column_visible(Tab::MergeRequests, "Workflow") {
+            header_cells.push(Cell::from(
+                Line::from("Workflow").alignment(Alignment::Center),
+            ));
+            widths.push(col_w(content_area.width, 13));
+        }
         if app.is_column_visible(Tab::MergeRequests, "Labels") {
             header_cells.push(Cell::from("Labels"));
             widths.push(col_w(content_area.width, 26));
@@ -995,6 +1084,163 @@ pub(crate) fn render_tab_merge_requests(
                     ),
                     Span::styled(reviewers, Style::default().fg(THEME.read().unwrap().blue)),
                 ]));
+
+                // Workflow — omitted entirely for `NotYours` and unknown, so
+                // MRs with no relation to you (and failed/unsupported
+                // fetches) show nothing rather than a misleading status.
+                if let Some(label) = crate::domain::mr_state::workflow_label(mr.workflow) {
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Workflow:  ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            format!(
+                                "{} {}",
+                                crate::domain::mr_state::workflow_icon(mr.workflow),
+                                label
+                            ),
+                            Style::default().fg(THEME.read().unwrap().text_normal),
+                        ),
+                    ]));
+                }
+
+                // Approval — omitted entirely when unknown, so a failed fetch
+                // never reads as "not approved".
+                if let Some(ap) = mr.approval.as_ref() {
+                    let (label, color) = if ap.changes_requested {
+                        (
+                            format!("{} Changes requested", icons.approval_changes),
+                            THEME.read().unwrap().red,
+                        )
+                    } else if ap.awaiting_you {
+                        let counts = match ap.approvals_required {
+                            Some(r) if r > 0 => format!("{}/{}", ap.approved_by.len(), r),
+                            _ => ap.approved_by.len().to_string(),
+                        };
+                        (
+                            format!("{} Needs approval ({})", icons.approval_pending, counts),
+                            THEME.read().unwrap().yellow,
+                        )
+                    } else if ap.approved && !ap.approved_by.is_empty() {
+                        let counts = match ap.approvals_required {
+                            Some(r) if r > 0 => format!(" ({}/{})", ap.approved_by.len(), r),
+                            _ => format!(" ({})", ap.approved_by.len()),
+                        };
+                        (
+                            format!("{} Approved{}", icons.approval_approved, counts),
+                            THEME.read().unwrap().green,
+                        )
+                    } else {
+                        (
+                            "Pending approval".to_string(),
+                            THEME.read().unwrap().text_muted,
+                        )
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Approvals: ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(label, Style::default().fg(color)),
+                    ]));
+
+                    // The "your approval is needed" case is already carried
+                    // by the Approvals: value above (it reads
+                    // "Needs approval (0/1)" when `awaiting_you`), so no
+                    // separate marker is needed for it here.
+                    let approvers = if ap.approved_by.is_empty() {
+                        "—".to_string()
+                    } else {
+                        ap.approved_by
+                            .iter()
+                            .map(|u| {
+                                if ap.current_user.as_deref() == Some(u.as_str()) {
+                                    format!("@{} (you)", u)
+                                } else {
+                                    format!("@{}", u)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Approvers: ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(approvers, Style::default().fg(THEME.read().unwrap().blue)),
+                    ]));
+                }
+
+                // Mergeable — likewise omitted when unknown.
+                if let Some(mg) = mr.mergeability.as_ref() {
+                    let (label, color) = if mg.conflicts {
+                        (
+                            format!("{} Merge conflicts", icons.merge_conflict),
+                            THEME.read().unwrap().red,
+                        )
+                    } else if mg.needs_rebase {
+                        (
+                            format!("{} Behind target — needs rebase", icons.merge_rebase),
+                            THEME.read().unwrap().yellow,
+                        )
+                    } else if mg.computing {
+                        (
+                            format!("{} Checking…", icons.merge_checking),
+                            THEME.read().unwrap().text_muted,
+                        )
+                    } else {
+                        (
+                            format!("{} No conflicts", icons.merge_clean),
+                            THEME.read().unwrap().green,
+                        )
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Mergeable: ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(label, Style::default().fg(color)),
+                    ]));
+                }
+
+                // One Threads line. The blocking flag is always available on
+                // GitLab; the count only after the diff has been fetched for
+                // this MR. GitHub deliberately omits this line entirely:
+                // `blocking_discussions_resolved` has no GitHub equivalent
+                // (always `None` there), and no GitHub-side count can stand
+                // in for it — `list_mr_notes` hard-codes `resolved:
+                // Some(false)` for every review comment, so
+                // `unresolved_threads_count()` on GitHub counts *all*
+                // threads, not unresolved ones. Rendering that as a threads
+                // status would be a confidently wrong number, which is worse
+                // than an absent line. (Spec: the design's Threads matrix was
+                // written assuming the flag was universally available; this
+                // omission is the corrected behavior, not a gap to fill.)
+                let count = if Some(mr.iid) == app.last_fetched_mr_iid {
+                    Some(app.unresolved_threads_count())
+                } else {
+                    None
+                };
+                if let Some((threads_text, tone)) = crate::domain::mr_state::threads_line_text(
+                    mr.blocking_discussions_resolved,
+                    count,
+                    &icons,
+                ) {
+                    let threads_color = match tone {
+                        crate::domain::mr_state::ThreadsTone::Blocking => THEME.read().unwrap().red,
+                        crate::domain::mr_state::ThreadsTone::Clean => THEME.read().unwrap().green,
+                    };
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Threads:   ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(threads_text, Style::default().fg(threads_color)),
+                    ]));
+                }
+
                 text.push(Line::from(vec![
                     Span::styled(
                         "Milestone: ",
@@ -1142,25 +1388,6 @@ pub(crate) fn render_tab_merge_requests(
                             ),
                         ]));
                     }
-                }
-                if Some(mr.iid) == app.last_fetched_mr_iid {
-                    let unresolved_count = app.unresolved_threads_count();
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Threads:   ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            format!("{} unresolved", unresolved_count),
-                            Style::default()
-                                .fg(if unresolved_count > 0 {
-                                    THEME.read().unwrap().red
-                                } else {
-                                    THEME.read().unwrap().green
-                                })
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
                 }
                 text.push(Line::from(""));
                 let mut label_spans = vec![Span::styled(

@@ -156,6 +156,30 @@ impl GitlabClient {
         self.backend.approve_mr(project, iid).await
     }
 
+    pub async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.revoke_mr(project, iid).await
+    }
+
+    pub async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.rebase_mr(project, iid).await
+    }
+
+    pub async fn list_mr_state(
+        &self,
+        project: &str,
+        iids: &[u64],
+    ) -> Result<
+        std::collections::HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    > {
+        self.backend.list_mr_state(project, iids).await
+    }
+
     pub async fn merge_mr(
         &self,
         project: &str,

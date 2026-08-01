@@ -435,6 +435,26 @@ fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
                             ));
                         });
                     }
+                    crate::app::ConfirmAction::RevokeMr(iid) => {
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client.revoke_mr(&project_path, iid).await;
+                            let _ = tx2.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                    crate::app::ConfirmAction::RebaseMr(iid) => {
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client.rebase_mr(&project_path, iid).await;
+                            let _ = tx2.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
                     crate::app::ConfirmAction::SubmitReview(mr_iid) => {
                         app.selector = Some(crate::app::Selector {
                             title: " Submit Pull Request Review ".to_string(),
@@ -801,6 +821,10 @@ async fn main() -> Result<()> {
     app.project_cache = cache.clone();
     app.issues.items = cache.issues;
     app.mrs.items = cache.mrs;
+    // workflow is #[serde(skip)] — cached rows arrive with it unset even
+    // though the approval state it derives from was persisted and just
+    // loaded above.
+    crate::fetch::derive_workflow(&mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
     app.runners.items = cache.runners;
     app.releases.items = cache.releases;
@@ -2932,6 +2956,11 @@ async fn main() -> Result<()> {
                                                     app.project_cache = cache.clone();
                                                     app.issues.items = cache.issues;
                                                     app.mrs.items = cache.mrs;
+                                                    // workflow is #[serde(skip)] — see the
+                                                    // comment at the startup cache load.
+                                                    crate::fetch::derive_workflow(
+                                                        &mut app.mrs.items,
+                                                    );
                                                     app.pipelines.items = cache.pipelines;
                                                     app.runners.items = cache.runners;
                                                     app.releases.items = cache.releases;

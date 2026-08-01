@@ -684,6 +684,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.revoke_mr)),
+                action: "Revoke your approval (GitLab only)",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.rebase_mr)),
+                action: "Rebase source branch onto target",
+            },
+            Shortcut {
+                category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.merge_mr)),
                 action: "Merge selected MR (configure squash/delete)",
             },
@@ -1820,6 +1830,30 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 (
                     format!(" {} Merge {mr}? ", icons.action_merge),
                     format!("Are you sure you want to merge {mr_short} #{}?", iid),
+                )
+            }
+            crate::app::ConfirmAction::RevokeMr(iid) => (
+                format!(" {} Revoke Approval? ", icons.action_review),
+                format!(
+                    "Are you sure you want to revoke your approval on MR #{}?",
+                    iid
+                ),
+            ),
+            crate::app::ConfirmAction::RebaseMr(iid) => {
+                let mr_short = kind.term("mr_short");
+                // GitLab refers to merge requests as `!N`, GitHub to pull
+                // requests as `#N` -- match whichever host we're on.
+                let marker = if kind.is_github() { "#" } else { "!" };
+                let target = app
+                    .mrs
+                    .items
+                    .iter()
+                    .find(|m| m.iid == *iid)
+                    .map(|m| m.target_branch.as_str())
+                    .unwrap_or("target");
+                (
+                    format!(" {} Rebase {mr_short}? ", icons.merge_rebase),
+                    format!("Rebase {marker}{iid} onto {target}?"),
                 )
             }
             crate::app::ConfirmAction::SubmitReview(_) => (

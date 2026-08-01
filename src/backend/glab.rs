@@ -12,8 +12,12 @@ use crate::event::Event;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::JoinSet;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -33,6 +37,357 @@ fn page_count(page_size: usize, per_request: usize) -> usize {
     page_size.div_ceil(per_request.max(1)).max(1)
 }
 
+/// GitLab's `mergeRequests(iids: [...])` GraphQL connection caps results at
+/// 100 nodes when no `first:` argument is given. `page_size` (src/config.rs)
+/// is user-configurable above that, so a single query can silently drop MRs
+/// past the 100th — they'd render "—" on both axes with no error. Chunk so
+/// no single query can exceed the cap.
+const MR_STATE_QUERY_BATCH_SIZE: usize = 100;
+
+/// Split `iids` into batches of at most `batch_size`, preserving order.
+fn chunk_iids(iids: &[u64], batch_size: usize) -> Vec<&[u64]> {
+    if batch_size == 0 {
+        return vec![iids];
+    }
+    iids.chunks(batch_size).collect()
+}
+
+type MrStateMap = HashMap<
+    u64,
+    (
+        Option<crate::domain::mr_state::ApprovalState>,
+        Option<crate::domain::mr_state::MergeabilityState>,
+    ),
+>;
+
+/// The project path originates from `git remote get-url` and is interpolated
+/// into a GraphQL query string, so it must be constrained before use.
+/// Permits only the characters that legitimately appear in a GitLab path.
+pub fn validate_project_path(path: &str) -> anyhow::Result<()> {
+    if path.is_empty() {
+        anyhow::bail!("empty project path");
+    }
+    let ok = path
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'));
+    if !ok {
+        anyhow::bail!("project path contains unsupported characters: {}", path);
+    }
+    Ok(())
+}
+
+/// Parse the bulk MR-state GraphQL response.
+///
+/// A top-level `errors` array is a hard error: GraphQL is all-or-nothing, so a
+/// single unknown field yields no data at all, and that must not be mistaken
+/// for "this project has no approval state".
+pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
+    use crate::domain::mr_state::{
+        ApprovalState, MergeabilityState, derive_awaiting_you, is_transient_merge_status,
+    };
+
+    let root: serde_json::Value = serde_json::from_str(json)?;
+
+    if let Some(errors) = root.get("errors").and_then(|e| e.as_array()) {
+        let first = errors
+            .first()
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown GraphQL error");
+        anyhow::bail!("GraphQL error: {}", first);
+    }
+
+    let data = root
+        .get("data")
+        .ok_or_else(|| anyhow::anyhow!("GraphQL response has no data"))?;
+
+    let current_user = data
+        .get("currentUser")
+        .and_then(|u| u.get("username"))
+        .and_then(|u| u.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    let nodes = data
+        .get("project")
+        .and_then(|p| p.get("mergeRequests"))
+        .and_then(|m| m.get("nodes"))
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut out = HashMap::new();
+    for node in nodes {
+        // GraphQL returns iid as a string. A malformed one drops that row only.
+        let Some(iid) = node
+            .get("iid")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            continue;
+        };
+
+        let approved = node
+            .get("approved")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let approved_by: Vec<String> = node
+            .get("approvedBy")
+            .and_then(|a| a.get("nodes"))
+            .and_then(|n| n.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|u| u.get("username")?.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let can_approve = node
+            .get("userPermissions")
+            .and_then(|p| p.get("canApprove"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Per-reviewer reviewState, NOT detailedMergeStatus: the latter is
+        // precedence-ordered and masks this.
+        let changes_requested = node
+            .get("reviewers")
+            .and_then(|r| r.get("nodes"))
+            .and_then(|n| n.as_array())
+            .map(|arr| {
+                arr.iter().any(|r| {
+                    r.get("mergeRequestInteraction")
+                        .and_then(|i| i.get("reviewState"))
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.eq_ignore_ascii_case("REQUESTED_CHANGES"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+
+        let you_approved =
+            !current_user.is_empty() && approved_by.iter().any(|u| *u == current_user);
+
+        // Your own review state, matched by username. Someone else having
+        // reviewed must not set this.
+        let you_reviewed = !current_user.is_empty()
+            && (approved_by.iter().any(|u| *u == current_user)
+                || node
+                    .get("reviewers")
+                    .and_then(|r| r.get("nodes"))
+                    .and_then(|n| n.as_array())
+                    .map(|arr| {
+                        arr.iter().any(|r| {
+                            let is_me = r
+                                .get("username")
+                                .and_then(|u| u.as_str())
+                                .map(|u| u == current_user)
+                                .unwrap_or(false);
+                            let reviewed = r
+                                .get("mergeRequestInteraction")
+                                .and_then(|i| i.get("reviewState"))
+                                .and_then(|s| s.as_str())
+                                .map(|s| !s.eq_ignore_ascii_case("UNREVIEWED"))
+                                .unwrap_or(false);
+                            is_me && reviewed
+                        })
+                    })
+                    .unwrap_or(false));
+
+        let approval = ApprovalState {
+            approved,
+            approvals_left: node
+                .get("approvalsLeft")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
+            approvals_required: node
+                .get("approvalsRequired")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
+            approved_by,
+            changes_requested,
+            you_approved,
+            awaiting_you: derive_awaiting_you(can_approve, you_approved, approved),
+            current_user: if current_user.is_empty() {
+                None
+            } else {
+                Some(current_user.clone())
+            },
+            you_reviewed,
+        };
+
+        let raw_status = node
+            .get("detailedMergeStatus")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        let mergeability = MergeabilityState {
+            conflicts: node
+                .get("conflicts")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            needs_rebase: node
+                .get("shouldBeRebased")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            computing: is_transient_merge_status(raw_status),
+        };
+
+        out.insert(iid, (Some(approval), Some(mergeability)));
+    }
+    Ok(out)
+}
+
+/// Maximum `glab` subprocesses in flight for one paged fetch.
+const MAX_CONCURRENT_REQUESTS: usize = 8;
+
+/// Run one `glab` invocation and log it to the terminal pane.
+///
+/// Free-standing rather than a method so its future is `'static` and can be
+/// spawned: `tx` is the only state a command needs from `GlabBackend`.
+async fn run_glab_command(
+    tx: Option<UnboundedSender<Event>>,
+    args: Vec<String>,
+    desc: String,
+) -> Result<String> {
+    let label = desc.to_uppercase();
+    let cmd_str = format!("glab {}", args.join(" "));
+
+    let output = Command::new("glab")
+        .args(&args)
+        .output()
+        .await
+        .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
+
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    if output.status.success() {
+        let s = String::from_utf8(output.stdout)?;
+        if let Some(ref tx) = tx {
+            let _ = tx.send(Event::TerminalCommandLogged {
+                timestamp,
+                command: format!("{}: {}", label, cmd_str),
+                status: "Success".to_string(),
+            });
+        }
+        Ok(s)
+    } else {
+        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if let Some(ref tx) = tx {
+            let _ = tx.send(Event::TerminalCommandLogged {
+                timestamp,
+                command: format!("{}: {}", label, cmd_str),
+                status: format!("Failed: {}", err_msg),
+            });
+        }
+        anyhow::bail!("glab command failed: {}", err_msg)
+    }
+}
+
+/// Issue every request concurrently and return each response paired with the
+/// index of the request that produced it, in ascending index order.
+///
+/// At most `MAX_CONCURRENT_REQUESTS` subprocesses run at once; beyond that the
+/// fetch degrades to waves rather than a subprocess storm. A task that panics
+/// or is cancelled yields an `Err` for its index rather than a silently
+/// missing response, so no caller can mistake it for a short page.
+async fn run_glab_concurrent(
+    tx: Option<UnboundedSender<Event>>,
+    requests: Vec<Vec<String>>,
+    desc: &str,
+) -> Vec<(usize, Result<String>)> {
+    let total = requests.len();
+    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
+    let mut tasks = JoinSet::new();
+
+    for (index, args) in requests.into_iter().enumerate() {
+        let tx = tx.clone();
+        let desc = desc.to_string();
+        let permits = Arc::clone(&permits);
+        tasks.spawn(async move {
+            // Held until the request finishes, so the permit — not the number
+            // of spawned tasks — bounds the subprocesses in flight.
+            let _permit = permits.acquire_owned().await;
+            (index, run_glab_command(tx, args, desc).await)
+        });
+    }
+
+    let mut slots: Vec<Option<Result<String>>> = (0..total).map(|_| None).collect();
+    let mut join_failure: Option<String> = None;
+    while let Some(joined) = tasks.join_next().await {
+        match joined {
+            Ok((index, response)) => slots[index] = Some(response),
+            // A panicked or cancelled task never reports its index; the empty
+            // slot it leaves behind is filled in below.
+            Err(e) => join_failure = Some(e.to_string()),
+        }
+    }
+
+    slots
+        .into_iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            let response = slot.unwrap_or_else(|| {
+                let cause = join_failure
+                    .clone()
+                    .unwrap_or_else(|| "task did not complete".to_string());
+                Err(anyhow::anyhow!("request {} failed: {}", index + 1, cause))
+            });
+            (index, response)
+        })
+        .collect()
+}
+
+/// Assemble indexed responses into index order, failing on the first error.
+///
+/// Mirrors the `?` the sequential page loops used: one failed page fails the
+/// whole fetch, because rendering a silently truncated list is worse than an
+/// error. Sorting first means the surfaced error is the lowest-indexed
+/// failure, not whichever task happened to lose the race.
+fn ordered_or_first_error<T>(mut results: Vec<(usize, Result<T>)>) -> Result<Vec<T>> {
+    results.sort_by_key(|(index, _)| *index);
+    let mut ordered = Vec::with_capacity(results.len());
+    for (_, result) in results {
+        ordered.push(result?);
+    }
+    Ok(ordered)
+}
+
+/// Merge indexed batch results, tolerating partial failure.
+///
+/// A failed batch shouldn't poison the batches that did succeed — the caller
+/// (src/fetch.rs) already degrades a missing entry to "—" per row. But if every
+/// batch failed, surface the error rather than returning a suspiciously-empty
+/// `Ok(HashMap::new())`, which the caller cannot distinguish from "no MRs had
+/// state". Sorting first keeps both which error surfaces and which duplicate
+/// key wins tied to batch order rather than completion order.
+fn merge_tolerating_partial_failure(
+    mut results: Vec<(usize, Result<MrStateMap>)>,
+) -> Result<MrStateMap> {
+    results.sort_by_key(|(index, _)| *index);
+
+    let mut merged = HashMap::new();
+    let mut last_err = None;
+    let mut any_batch_succeeded = false;
+
+    for (_, result) in results {
+        match result {
+            Ok(state) => {
+                any_batch_succeeded = true;
+                merged.extend(state);
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    if !any_batch_succeeded {
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+    }
+
+    Ok(merged)
+}
+
 pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -47,37 +402,46 @@ impl GlabBackend {
     }
 
     async fn run_glab(&self, args: &[&str], desc: &str) -> Result<String> {
-        let label = desc.to_uppercase();
-        let cmd_str = format!("glab {}", args.join(" "));
+        run_glab_command(
+            self.tx.clone(),
+            args.iter().map(|a| (*a).to_string()).collect(),
+            desc.to_string(),
+        )
+        .await
+    }
 
-        let output = Command::new("glab")
-            .args(args)
-            .output()
-            .await
-            .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
+    /// Build the `glab` arguments that fetch approval/mergeability state for
+    /// one batch of iids (at most `MR_STATE_QUERY_BATCH_SIZE`, to stay under
+    /// GitLab's 100-node connection cap — see `list_mr_state`).
+    fn mr_state_batch_args(project: &str, iids: &[u64]) -> Vec<String> {
+        // Query the exact iids the list returned, so there is no pagination drift.
+        let iid_list = iids
+            .iter()
+            .map(|i| format!("\"{}\"", i))
+            .collect::<Vec<_>>()
+            .join(", ");
 
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        if output.status.success() {
-            let s = String::from_utf8(output.stdout)?;
-            if let Some(ref tx) = self.tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: "Success".to_string(),
-                });
-            }
-            Ok(s)
-        } else {
-            let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if let Some(ref tx) = self.tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", err_msg),
-                });
-            }
-            anyhow::bail!("glab command failed: {}", err_msg)
-        }
+        // Only fields verified present on the reference instance. GraphQL is
+        // all-or-nothing: one unknown field blanks both axes.
+        let query = format!(
+            "query {{ currentUser {{ username }} \
+             project(fullPath: \"{}\") {{ \
+             mergeRequests(iids: [{}]) {{ nodes {{ \
+             iid approved approvalsLeft approvalsRequired \
+             userPermissions {{ canApprove }} \
+             approvedBy {{ nodes {{ username }} }} \
+             reviewers {{ nodes {{ username mergeRequestInteraction {{ reviewState }} }} }} \
+             conflicts shouldBeRebased detailedMergeStatus \
+             }} }} }} }}",
+            project, iid_list
+        );
+
+        vec![
+            "api".to_string(),
+            "graphql".to_string(),
+            "-f".to_string(),
+            format!("query={}", query),
+        ]
     }
 }
 
@@ -105,43 +469,37 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<Issue>> {
         let pages = page_count(page_size, per_request);
+        // Every page is issued at once, so there is no last-page detection to
+        // stop early on: a repo with fewer issues than the budget pays for a
+        // few requests that come back empty, which merge harmlessly. That is
+        // the price of not serialising the round trips, and at the default
+        // `api_per_page = 100` it is still a single request.
+        let requests: Vec<Vec<String>> = (1..=pages)
+            .map(|page| {
+                let mut args: Vec<String> = vec![
+                    "issue".to_string(),
+                    "list".to_string(),
+                    "--output".to_string(),
+                    "json".to_string(),
+                    "-R".to_string(),
+                    project.to_string(),
+                ];
+                if show_closed {
+                    args.push("--all".to_string());
+                }
+                args.push("--page".to_string());
+                args.push(page.to_string());
+                args.push("--per-page".to_string());
+                args.push(per_request.to_string());
+                args
+            })
+            .collect();
+        let responses = ordered_or_first_error(
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching Issues").await,
+        )?;
+
         let mut all: Vec<Issue> = Vec::new();
-        for page in 1..=pages {
-            let page_str = page.to_string();
-            let per_request_str = per_request.to_string();
-            let raw = self
-                .run_glab(
-                    &if show_closed {
-                        vec![
-                            "issue",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--all",
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    } else {
-                        vec![
-                            "issue",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    },
-                    "Fetching Issues",
-                )
-                .await?;
+        for raw in responses {
             #[derive(Deserialize)]
             struct GiIssue {
                 iid: u64,
@@ -176,7 +534,6 @@ impl Backend for GlabBackend {
                 username: String,
             }
             let issues: Vec<GiIssue> = serde_json::from_str(&raw).unwrap_or_default();
-            let len = issues.len();
             all.extend(issues.into_iter().map(|i| {
                 Issue {
                     iid: i.iid,
@@ -203,9 +560,6 @@ impl Backend for GlabBackend {
                     due_date: i.due_date,
                 }
             }));
-            if len < per_request {
-                break;
-            }
         }
         Ok(all)
     }
@@ -537,43 +891,39 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
         let pages = page_count(page_size, per_request);
+        // Every page is issued at once, so there is no last-page detection to
+        // stop early on: a repo with fewer MRs than the budget pays for a few
+        // requests that come back empty, which merge harmlessly. That is the
+        // price of not serialising the round trips, and at the default
+        // `api_per_page = 100` it is still a single request.
+        let requests: Vec<Vec<String>> = (1..=pages)
+            .map(|page| {
+                let mut args: Vec<String> = vec![
+                    "mr".to_string(),
+                    "list".to_string(),
+                    "--output".to_string(),
+                    "json".to_string(),
+                    "-R".to_string(),
+                    project.to_string(),
+                ];
+                if show_closed {
+                    args.push("--all".to_string());
+                }
+                args.push("--page".to_string());
+                args.push(page.to_string());
+                args.push("--per-page".to_string());
+                args.push(per_request.to_string());
+                args
+            })
+            .collect();
+        // Pages are merged in page order, not completion order: the MR table's
+        // row order is this list's order.
+        let responses = ordered_or_first_error(
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching MRs").await,
+        )?;
+
         let mut all: Vec<MergeRequest> = Vec::new();
-        for page in 1..=pages {
-            let page_str = page.to_string();
-            let per_request_str = per_request.to_string();
-            let raw = self
-                .run_glab(
-                    &if show_closed {
-                        vec![
-                            "mr",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--all",
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    } else {
-                        vec![
-                            "mr",
-                            "list",
-                            "--output",
-                            "json",
-                            "-R",
-                            project,
-                            "--page",
-                            &page_str,
-                            "--per-page",
-                            &per_request_str,
-                        ]
-                    },
-                    "Fetching MRs",
-                )
-                .await?;
+        for raw in responses {
             #[derive(Deserialize)]
             struct GiMr {
                 iid: u64,
@@ -596,6 +946,8 @@ impl Backend for GlabBackend {
                 description: Option<String>,
                 #[serde(default)]
                 head_pipeline: Option<GiPipeline>,
+                #[serde(default)]
+                blocking_discussions_resolved: Option<bool>,
             }
             #[derive(Deserialize)]
             struct GiAuthor {
@@ -622,7 +974,6 @@ impl Backend for GlabBackend {
                 updated_at: String,
             }
             let mrs: Vec<GiMr> = serde_json::from_str(&raw).unwrap_or_default();
-            let len = mrs.len();
             all.extend(mrs.into_iter().map(|m| {
                 MergeRequest {
                     iid: m.iid,
@@ -665,11 +1016,12 @@ impl Backend for GlabBackend {
                         head_sha: String::new(),
                         actor_login: String::new(),
                     }),
+                    blocking_discussions_resolved: m.blocking_discussions_resolved,
+                    approval: None,
+                    mergeability: None,
+                    workflow: None,
                 }
             }));
-            if len < per_request {
-                break;
-            }
         }
         Ok(all)
     }
@@ -711,6 +1063,8 @@ impl Backend for GlabBackend {
             description: Option<String>,
             #[serde(default)]
             head_pipeline: Option<GiPipeline>,
+            #[serde(default)]
+            blocking_discussions_resolved: Option<bool>,
         }
         #[derive(Deserialize)]
         struct GiAuthor {
@@ -778,6 +1132,10 @@ impl Backend for GlabBackend {
                 head_sha: String::new(),
                 actor_login: String::new(),
             }),
+            blocking_discussions_resolved: m.blocking_discussions_resolved,
+            approval: None,
+            mergeability: None,
+            workflow: None,
         })
     }
 
@@ -905,6 +1263,47 @@ impl Backend for GlabBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_glab(
+            &["mr", "revoke", &iid.to_string(), "-R", project],
+            "REVOKING MR APPROVAL",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_glab(
+            &["mr", "rebase", &iid.to_string(), "-R", project],
+            "REBASING MR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn list_mr_state(&self, project: &str, iids: &[u64]) -> Result<MrStateMap> {
+        if iids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        validate_project_path(project)?;
+
+        let requests: Vec<Vec<String>> = chunk_iids(iids, MR_STATE_QUERY_BATCH_SIZE)
+            .into_iter()
+            .map(|batch| Self::mr_state_batch_args(project, batch))
+            .collect();
+
+        let parsed: Vec<(usize, Result<MrStateMap>)> =
+            run_glab_concurrent(self.tx.clone(), requests, "FETCHING MR STATE")
+                .await
+                .into_iter()
+                .map(|(index, raw)| (index, raw.and_then(|r| parse_mr_state_response(&r))))
+                .collect();
+
+        // Unlike the paged list fetches, a single failed batch must not fail
+        // the whole call — see `merge_tolerating_partial_failure`.
+        merge_tolerating_partial_failure(parsed)
     }
 
     async fn merge_mr(
@@ -1208,25 +1607,33 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<Pipeline>> {
         let pages = page_count(page_size, per_request);
+        // Every page is issued at once, so there is no last-page detection to
+        // stop early on: a repo with fewer pipelines than the budget pays for
+        // a few requests that come back empty, which merge harmlessly. That is
+        // the price of not serialising the round trips, and at the default
+        // `api_per_page = 100` it is still a single request.
+        let requests: Vec<Vec<String>> = (1..=pages)
+            .map(|page| {
+                vec![
+                    "ci".to_string(),
+                    "list".to_string(),
+                    "--output".to_string(),
+                    "json".to_string(),
+                    "-R".to_string(),
+                    project.to_string(),
+                    "--page".to_string(),
+                    page.to_string(),
+                    "--per-page".to_string(),
+                    per_request.to_string(),
+                ]
+            })
+            .collect();
+        let responses = ordered_or_first_error(
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipelines").await,
+        )?;
+
         let mut all: Vec<Pipeline> = Vec::new();
-        for page in 1..=pages {
-            let raw = self
-                .run_glab(
-                    &[
-                        "ci",
-                        "list",
-                        "--output",
-                        "json",
-                        "-R",
-                        project,
-                        "--page",
-                        &page.to_string(),
-                        "--per-page",
-                        &per_request.to_string(),
-                    ],
-                    "Fetching Pipelines",
-                )
-                .await?;
+        for raw in responses {
             #[derive(Deserialize)]
             struct GiPipe {
                 id: u64,
@@ -1236,7 +1643,6 @@ impl Backend for GlabBackend {
                 updated_at: String,
             }
             let pipes: Vec<GiPipe> = serde_json::from_str(&raw).unwrap_or_default();
-            let len = pipes.len();
             all.extend(pipes.into_iter().map(|p| Pipeline {
                 id: p.id,
                 status: p.status,
@@ -1248,9 +1654,6 @@ impl Backend for GlabBackend {
                 head_sha: String::new(),
                 actor_login: String::new(),
             }));
-            if len < per_request {
-                break;
-            }
         }
         Ok(all)
     }
@@ -2251,6 +2654,141 @@ impl Backend for GlabBackend {
 mod tests {
     use super::*;
 
+    // ── iid batching (GraphQL 100-node connection cap) ──
+
+    #[test]
+    fn chunk_iids_splits_250_into_100_100_50() {
+        let iids: Vec<u64> = (1..=250).collect();
+        let batches = chunk_iids(&iids, 100);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].len(), 100);
+        assert_eq!(batches[1].len(), 100);
+        assert_eq!(batches[2].len(), 50);
+        // Order and identity are preserved across the split.
+        assert_eq!(batches[0][0], 1);
+        assert_eq!(batches[2][49], 250);
+    }
+
+    #[test]
+    fn chunk_iids_keeps_exactly_100_as_a_single_batch() {
+        let iids: Vec<u64> = (1..=100).collect();
+        let batches = chunk_iids(&iids, 100);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].len(), 100);
+    }
+
+    // ── assembling concurrently-fetched pages (fail-fast) ──
+
+    #[test]
+    fn ordered_or_first_error_assembles_out_of_order_completions_by_index() {
+        // JoinSet yields completions in arbitrary order, but the MR table's
+        // row order is page order, so assembly must re-sort.
+        let results: Vec<(usize, Result<&str>)> =
+            vec![(2, Ok("page 3")), (0, Ok("page 1")), (1, Ok("page 2"))];
+
+        let ordered = ordered_or_first_error(results).expect("every page succeeded");
+
+        assert_eq!(ordered, vec!["page 1", "page 2", "page 3"]);
+    }
+
+    #[test]
+    fn ordered_or_first_error_fails_when_one_page_fails() {
+        // Rendering a subset of MRs as though it were complete is worse than
+        // an error, so a single failure fails the whole fetch.
+        let results: Vec<(usize, Result<&str>)> = vec![
+            (0, Ok("page 1")),
+            (1, Err(anyhow::anyhow!("page 2 was truncated"))),
+            (2, Ok("page 3")),
+        ];
+
+        let err = ordered_or_first_error(results).expect_err("a failed page fails the fetch");
+
+        assert!(err.to_string().contains("page 2 was truncated"));
+    }
+
+    #[test]
+    fn ordered_or_first_error_reports_the_lowest_indexed_failure() {
+        // Which error surfaces must not depend on which request lost the race.
+        let results: Vec<(usize, Result<&str>)> = vec![
+            (2, Err(anyhow::anyhow!("page 3 was truncated"))),
+            (1, Err(anyhow::anyhow!("page 2 was truncated"))),
+            (0, Ok("page 1")),
+        ];
+
+        let err = ordered_or_first_error(results).expect_err("a failed page fails the fetch");
+
+        assert!(err.to_string().contains("page 2 was truncated"));
+    }
+
+    #[test]
+    fn ordered_or_first_error_merges_empty_and_short_pages_in_index_order() {
+        // Requesting all pages unconditionally means trailing pages can come
+        // back empty; they must merge without erroring or duplicating.
+        let results: Vec<(usize, Result<Vec<u64>>)> =
+            vec![(2, Ok(vec![])), (1, Ok(vec![4])), (0, Ok(vec![1, 2, 3]))];
+
+        let merged: Vec<u64> = ordered_or_first_error(results)
+            .expect("empty pages are successful responses")
+            .into_iter()
+            .flatten()
+            .collect();
+
+        assert_eq!(merged, vec![1, 2, 3, 4]);
+    }
+
+    // ── merging concurrently-fetched MR-state batches (tolerate partial) ──
+
+    fn mr_state_for(iid: u64) -> MrStateMap {
+        let mut state: MrStateMap = HashMap::new();
+        state.insert(iid, (None, None));
+        state
+    }
+
+    #[test]
+    fn merge_tolerating_partial_failure_keeps_the_batches_that_succeeded() {
+        // src/fetch.rs degrades a missing entry to "—" per row, so one bad
+        // batch must not discard the state the others returned.
+        let results: Vec<(usize, Result<MrStateMap>)> = vec![
+            (1, Err(anyhow::anyhow!("batch 2 was truncated"))),
+            (0, Ok(mr_state_for(7))),
+            (2, Ok(mr_state_for(9))),
+        ];
+
+        let merged =
+            merge_tolerating_partial_failure(results).expect("successful batches still count");
+
+        assert_eq!(merged.len(), 2);
+        assert!(merged.contains_key(&7));
+        assert!(merged.contains_key(&9));
+    }
+
+    #[test]
+    fn merge_tolerating_partial_failure_errors_when_every_batch_failed() {
+        // An empty map here is indistinguishable from "no MRs had state".
+        let results: Vec<(usize, Result<MrStateMap>)> = vec![
+            (1, Err(anyhow::anyhow!("batch 2 was truncated"))),
+            (0, Err(anyhow::anyhow!("batch 1 was truncated"))),
+        ];
+
+        let err = merge_tolerating_partial_failure(results)
+            .expect_err("a total failure must not look like an empty result");
+
+        // The last batch in batch order, not whichever finished last.
+        assert!(err.to_string().contains("batch 2 was truncated"));
+    }
+
+    #[test]
+    fn merge_tolerating_partial_failure_treats_an_empty_batch_as_a_success() {
+        // An empty response is a successful batch, not a failure, so it must
+        // not push the merge onto the "every batch failed" path.
+        let results: Vec<(usize, Result<MrStateMap>)> = vec![(0, Ok(HashMap::new()))];
+
+        let merged = merge_tolerating_partial_failure(results)
+            .expect("an empty batch is a success, not a failure");
+
+        assert!(merged.is_empty());
+    }
+
     #[test]
     fn test_strip_ats() {
         assert_eq!(strip_ats(""), "");
@@ -2281,5 +2819,293 @@ mod tests {
         // per_request = 0 must not panic (div_ceil would); clamped to 1 item per
         // request, so a 100-item budget needs 100 requests.
         assert_eq!(page_count(100, 0), 100);
+    }
+
+    // ── project path validation (GraphQL injection guard) ──
+
+    #[test]
+    fn accepts_normal_project_paths() {
+        assert!(validate_project_path("excalibur/mvp").is_ok());
+        assert!(validate_project_path("dev/cbr/salesforce/salesforce").is_ok());
+        assert!(validate_project_path("group/sub-group/pro_ject.42").is_ok());
+    }
+
+    #[test]
+    fn rejects_graphql_significant_characters() {
+        // The path comes from `git remote get-url`, so it is untrusted input
+        // interpolated into a query string.
+        for bad in ["a\"b", "a{b", "a}b", "a\\b", "a\nb", "a b", ""] {
+            assert!(
+                validate_project_path(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    // ── GraphQL response parsing ──
+
+    /// Captured from the live instance: dev/cbr/salesforce/salesforce.
+    const GRAPHQL_OK: &str = r#"{
+      "data": {
+        "currentUser": { "username": "chandler.anderson" },
+        "project": { "mergeRequests": { "nodes": [
+          {
+            "iid": "5281",
+            "approved": true,
+            "approvalsLeft": 0,
+            "approvalsRequired": 0,
+            "userPermissions": { "canApprove": true },
+            "approvedBy": { "nodes": [ { "username": "julien.carmignani" } ] },
+            "reviewers": { "nodes": [ { "username": "julien.carmignani",
+                "mergeRequestInteraction": { "reviewState": "APPROVED" } } ] },
+            "conflicts": false,
+            "shouldBeRebased": false,
+            "detailedMergeStatus": "UNCHECKED"
+          },
+          {
+            "iid": "5279",
+            "approved": false,
+            "approvalsLeft": 1,
+            "approvalsRequired": 1,
+            "userPermissions": { "canApprove": false },
+            "approvedBy": { "nodes": [] },
+            "reviewers": { "nodes": [ { "username": "julien.carmignani",
+                "mergeRequestInteraction": { "reviewState": "REQUESTED_CHANGES" } } ] },
+            "conflicts": false,
+            "shouldBeRebased": false,
+            "detailedMergeStatus": "REQUESTED_CHANGES"
+          },
+          {
+            "iid": "1448",
+            "approved": true,
+            "approvalsLeft": 0,
+            "approvalsRequired": 1,
+            "userPermissions": { "canApprove": false },
+            "approvedBy": { "nodes": [ { "username": "ozgur.gurkan" },
+                                       { "username": "chandler.anderson" } ] },
+            "reviewers": { "nodes": [] },
+            "conflicts": true,
+            "shouldBeRebased": false,
+            "detailedMergeStatus": "CONFLICT"
+          },
+          {
+            "iid": "402",
+            "approved": true,
+            "approvalsLeft": 0,
+            "approvalsRequired": 0,
+            "userPermissions": { "canApprove": false },
+            "approvedBy": { "nodes": [ { "username": "chandler.anderson" } ] },
+            "reviewers": { "nodes": [] },
+            "conflicts": false,
+            "shouldBeRebased": true,
+            "detailedMergeStatus": "NEED_REBASE"
+          }
+        ] } }
+      }
+    }"#;
+
+    #[test]
+    fn parses_approval_counts_and_approvers() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, _) = map.get(&1448).unwrap();
+        let a = approval.as_ref().unwrap();
+        assert!(a.approved);
+        assert_eq!(a.approvals_required, Some(1));
+        assert_eq!(a.approved_by.len(), 2);
+    }
+
+    #[test]
+    fn derives_you_approved_from_current_user() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        // chandler.anderson is in !1448's approvedBy.
+        assert!(map.get(&1448).unwrap().0.as_ref().unwrap().you_approved);
+        // ...and not in !5281's.
+        assert!(!map.get(&5281).unwrap().0.as_ref().unwrap().you_approved);
+    }
+
+    #[test]
+    fn awaiting_you_is_false_for_satisfied_mr_you_can_still_approve() {
+        // !5281: canApprove true, you_approved false, but approved true.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(!map.get(&5281).unwrap().0.as_ref().unwrap().awaiting_you);
+    }
+
+    #[test]
+    fn changes_requested_comes_from_reviewer_review_state() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(
+            map.get(&5279)
+                .unwrap()
+                .0
+                .as_ref()
+                .unwrap()
+                .changes_requested
+        );
+        assert!(
+            !map.get(&1448)
+                .unwrap()
+                .0
+                .as_ref()
+                .unwrap()
+                .changes_requested
+        );
+    }
+
+    #[test]
+    fn conflicts_are_read_from_the_boolean_not_the_merge_status() {
+        // !1448 is approved AND conflicted — the two axes must not interfere.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, merge) = map.get(&1448).unwrap();
+        assert!(merge.as_ref().unwrap().conflicts);
+        assert!(approval.as_ref().unwrap().approved);
+    }
+
+    #[test]
+    fn needs_rebase_is_read_from_the_boolean_not_the_merge_status() {
+        // !402 is approved AND needs rebase — detailedMergeStatus: NEED_REBASE
+        // must not suppress the approval, mirroring the conflicts case above.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, merge) = map.get(&402).unwrap();
+        assert!(merge.as_ref().unwrap().needs_rebase);
+        assert!(approval.as_ref().unwrap().approved);
+    }
+
+    #[test]
+    fn transient_merge_status_sets_computing() {
+        // !5281 reports UNCHECKED.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(map.get(&5281).unwrap().1.as_ref().unwrap().computing);
+        assert!(!map.get(&1448).unwrap().1.as_ref().unwrap().computing);
+    }
+
+    #[test]
+    fn graphql_errors_response_is_an_error_not_empty_data() {
+        // One unknown field fails the whole query; must not look like "no state".
+        let body = r#"{"errors":[{"message":"Field 'x' doesn't exist on type 'MergeRequest'"}]}"#;
+        assert!(parse_mr_state_response(body).is_err());
+    }
+
+    #[test]
+    fn unparseable_iid_skips_that_row_only() {
+        let body = GRAPHQL_OK.replace("\"iid\": \"5279\"", "\"iid\": \"not-a-number\"");
+        let map = parse_mr_state_response(&body).unwrap();
+        assert!(!map.contains_key(&5279));
+        assert!(map.contains_key(&1448), "other rows must survive");
+    }
+
+    #[test]
+    fn parses_current_user_onto_every_state() {
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        let (approval, _) = map.get(&1448).unwrap();
+        assert_eq!(
+            approval.as_ref().unwrap().current_user.as_deref(),
+            Some("chandler.anderson")
+        );
+    }
+
+    #[test]
+    fn you_reviewed_is_true_when_your_review_state_is_present() {
+        // !1448's approvedBy contains chandler.anderson, so you reviewed it.
+        let map = parse_mr_state_response(GRAPHQL_OK).unwrap();
+        assert!(map.get(&1448).unwrap().0.as_ref().unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn you_reviewed_is_false_when_you_are_an_unreviewed_reviewer() {
+        // A reviewer entry for the current user with reviewState UNREVIEWED.
+        let body = r#"{
+          "data": {
+            "currentUser": { "username": "chandler.anderson" },
+            "project": { "mergeRequests": { "nodes": [
+              {
+                "iid": "9001",
+                "approved": false,
+                "approvalsLeft": 1,
+                "approvalsRequired": 1,
+                "userPermissions": { "canApprove": true },
+                "approvedBy": { "nodes": [] },
+                "reviewers": { "nodes": [
+                  { "username": "chandler.anderson",
+                    "mergeRequestInteraction": { "reviewState": "UNREVIEWED" } }
+                ] },
+                "conflicts": false,
+                "shouldBeRebased": false,
+                "detailedMergeStatus": "NOT_APPROVED"
+              }
+            ] } }
+          }
+        }"#;
+        let map = parse_mr_state_response(body).unwrap();
+        assert!(!map.get(&9001).unwrap().0.as_ref().unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn you_reviewed_ignores_other_peoples_review_state() {
+        // Regression guard for restoring `username` in the reviewers
+        // subselection: someone ELSE having reviewed must not set your flag.
+        let body = r#"{
+          "data": {
+            "currentUser": { "username": "chandler.anderson" },
+            "project": { "mergeRequests": { "nodes": [
+              {
+                "iid": "9002",
+                "approved": false,
+                "approvalsLeft": 1,
+                "approvalsRequired": 1,
+                "userPermissions": { "canApprove": true },
+                "approvedBy": { "nodes": [] },
+                "reviewers": { "nodes": [
+                  { "username": "someone.else",
+                    "mergeRequestInteraction": { "reviewState": "REQUESTED_CHANGES" } }
+                ] },
+                "conflicts": false,
+                "shouldBeRebased": false,
+                "detailedMergeStatus": "NOT_APPROVED"
+              }
+            ] } }
+          }
+        }"#;
+        let map = parse_mr_state_response(body).unwrap();
+        assert!(!map.get(&9002).unwrap().0.as_ref().unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn absent_current_user_is_none_not_an_empty_string() {
+        // An empty string would make every downstream username comparison
+        // silently false, rendering a confident "not yours" instead of the
+        // honest "unknown" the cascade expects.
+        let body = r#"{
+          "data": {
+            "currentUser": {},
+            "project": { "mergeRequests": { "nodes": [
+              {
+                "iid": "9003",
+                "approved": true,
+                "approvalsLeft": 0,
+                "approvalsRequired": 1,
+                "userPermissions": { "canApprove": false },
+                "approvedBy": { "nodes": [ { "username": "someone.else" } ] },
+                "reviewers": { "nodes": [
+                  { "username": "someone.else",
+                    "mergeRequestInteraction": { "reviewState": "APPROVED" } }
+                ] },
+                "conflicts": false,
+                "shouldBeRebased": false,
+                "detailedMergeStatus": "MERGEABLE"
+              }
+            ] } }
+          }
+        }"#;
+        let map = parse_mr_state_response(body).unwrap();
+        let a = map.get(&9003).unwrap().0.as_ref().unwrap();
+        assert_eq!(a.current_user, None, "must be None, never Some(\"\")");
+        assert!(
+            !a.you_approved,
+            "cannot have approved when the user is unknown"
+        );
+        assert!(
+            !a.you_reviewed,
+            "cannot have reviewed when the user is unknown"
+        );
     }
 }

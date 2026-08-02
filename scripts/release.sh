@@ -6,11 +6,14 @@ set -euo pipefail
 # Usage: scripts/release.sh [patch|minor|major]
 #
 # With no argument, you are prompted to pick the release increment (patch is
-# the default). Walks the whole release: bumps the crate version, regenerates
-# docs and demo GIFs locally (where `gh` is authenticated), opens a prepare PR,
-# waits for you to review it, squash-merges it, tags and pushes the version,
-# waits for the CI release build, then writes the release notes and pushes the
-# Homebrew formula, Scoop manifest, Docker image, and crate.
+# the default). You are also prompted to pick the opencode model used for the
+# regenerated docs and release notes (provider -> model -> variant, via fzf
+# when available; set OPENCODE_MODEL to skip the prompt). Walks the whole
+# release: bumps the crate version, regenerates docs and demo GIFs locally
+# (where `gh` is authenticated), opens a prepare PR, waits for you to review
+# it, squash-merges it, tags and pushes the version, waits for the CI release
+# build, then writes the release notes and pushes the Homebrew formula, Scoop
+# manifest, Docker image, and crate.
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -18,6 +21,7 @@ cd "$ROOT"
 REPO="rcieri/glab-tui"
 INCREMENT="${1:-}"
 RELEASE_WAIT_MIN="${RELEASE_WAIT_MIN:-45}"
+OPENCODE_MODEL_FROM_ENV="${OPENCODE_MODEL:-}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
 REQUIRED_ASSETS=(
   glab-tui-linux-amd64.tar.gz
@@ -54,6 +58,133 @@ run_opencode() {
     tail -20 "$TMP_DIR/opencode.log" >&2
     die "opencode failed (log: $TMP_DIR/opencode.log)"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# opencode model selection (provider -> model -> variant)
+# ---------------------------------------------------------------------------
+VARIANT_TOKENS='free mini nano pro max fast lite spark preview latest codex plus ultra'
+PICK_RESULT=''
+
+split_model_id() {
+  local id="$1"
+  MODEL_PROVIDER="${id%%/*}"
+  MODEL_NAME="${id#*/}"
+}
+
+# strip_variant <model>: strips trailing variant tokens, setting MODEL_BASE and
+# MODEL_VARIANT (e.g. gpt-5.4-mini-fast -> base gpt-5.4, variant mini-fast)
+strip_variant() {
+  local name="$1" variant="" last
+  MODEL_BASE="$name"
+  MODEL_VARIANT="(default)"
+  while true; do
+    last="${name##*-}"
+    if [[ " $VARIANT_TOKENS " == *" $last "* ]]; then
+      variant="$last${variant:+-$variant}"
+      name="${name%-$last}"
+      [[ "$name" == *-* ]] || break
+    else
+      break
+    fi
+  done
+  if [[ -n "$variant" ]]; then
+    MODEL_BASE="$name"
+    MODEL_VARIANT="$variant"
+  fi
+}
+
+# pick <prompt> <default> <candidate...>; each candidate is "value<TAB>label".
+# Stores the chosen value in PICK_RESULT (defaults when nothing is picked).
+pick() {
+  local prompt="$1" default="$2"
+  shift 2
+  local -a lines=("$@")
+  local chosen="" i choice
+  if command -v fzf >/dev/null 2>&1; then
+    chosen="$(printf '%s\n' "${lines[@]}" |
+      fzf --prompt="$prompt> " --query="$default" --delimiter=$'\t' --with-nth=2 \
+          --exit-0 --height=40% --border --layout=reverse 2>/dev/null || true)"
+  else
+    printf '\n%sChoose %s%s (default: %s)\n' "$C_BOLD" "$prompt" "$C_RESET" "$default"
+    for i in "${!lines[@]}"; do
+      printf '  %s%s)%s %s\n' "$C_BOLD" "$((i + 1))" "$C_RESET" "${lines[$i]#*$'\t'}"
+    done
+    read -r -p "Select [1-${#lines[@]}], Enter for default: " choice
+    if [[ -z "$choice" ]]; then
+      chosen="$default"
+    elif [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#lines[@]})); then
+      chosen="${lines[$((choice - 1))]}"
+    else
+      die "invalid selection '$choice'"
+    fi
+  fi
+  PICK_RESULT="${chosen%%$'\t'*}"
+  [[ -z "$PICK_RESULT" ]] && PICK_RESULT="$default"
+}
+
+select_opencode_model() {
+  local all_models provider_lines provider models model_lines variants_lines variant
+  local base cur_base cur_variant current cur_provider
+  local b vs m v
+  local -A families=()
+
+  current="${OPENCODE_MODEL:-opencode/big-pickle}"
+  split_model_id "$current"
+  cur_provider="$MODEL_PROVIDER"
+  strip_variant "$MODEL_NAME"
+  cur_base="$MODEL_BASE"
+  cur_variant="$MODEL_VARIANT"
+
+  note "Select the opencode model used to regenerate docs and release notes"
+  all_models="$(opencode models)"
+  [[ -n "$all_models" ]] || die "'opencode models' returned no models"
+
+  # Step 1: provider
+  provider_lines=()
+  while read -r count name; do
+    provider_lines+=("$(printf '%s\t%s (%s models)' "$name" "$name" "$count")")
+  done < <(printf '%s\n' "$all_models" | cut -d/ -f1 | sort | uniq -c)
+  pick "provider" "$cur_provider" "${provider_lines[@]}"
+  provider="$PICK_RESULT"
+
+  # Step 2: model family
+  mapfile -t models < <(printf '%s\n' "$all_models" | awk -F/ -v p="$provider" '$1 == p')
+  for m in "${models[@]}"; do
+    strip_variant "${m#*/}"
+    if [[ -n "${families[$MODEL_BASE]:-}" ]]; then
+      families[$MODEL_BASE]+=" $MODEL_VARIANT"
+    else
+      families[$MODEL_BASE]="$MODEL_VARIANT"
+    fi
+  done
+  model_lines=()
+  while read -r b; do
+    vs="$(printf '%s\n' ${families[$b]:-} | sort -u | paste -sd' ' -)"
+    if [[ "$vs" == "(default)" ]]; then
+      model_lines+=("$(printf '%s\t%s' "$b" "$b")")
+    else
+      model_lines+=("$(printf '%s\t%s [%s]' "$b" "$b" "$vs")")
+    fi
+  done < <(printf '%s\n' "${!families[@]}" | sort)
+  [[ "$provider" == "$cur_provider" ]] || cur_base=""
+  pick "model" "$cur_base" "${model_lines[@]}"
+  base="$PICK_RESULT"
+
+  # Step 3: variant
+  variants_lines=()
+  for v in $(printf '%s\n' ${families[$base]:-} | sort -u); do
+    variants_lines+=("$(printf '%s\t%s' "$v" "$v")")
+  done
+  [[ "$provider" == "$cur_provider" && "$base" == "$cur_base" ]] || cur_variant="(default)"
+  pick "variant" "$cur_variant" "${variants_lines[@]}"
+  variant="$PICK_RESULT"
+
+  OPENCODE_MODEL="$provider/$base"
+  [[ "$variant" != "(default)" ]] && OPENCODE_MODEL="$OPENCODE_MODEL-$variant"
+  grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
+    die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
+  ok "opencode model: $OPENCODE_MODEL"
 }
 
 # ---------------------------------------------------------------------------
@@ -381,6 +512,11 @@ main() {
 
   phase "Prepare"
   next_version
+  if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
+    select_opencode_model
+  else
+    ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+  fi
   prepare
 
   phase "Review & merge"

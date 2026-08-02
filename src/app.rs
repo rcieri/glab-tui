@@ -5407,6 +5407,90 @@ index 123456..789012 100644
     }
 
     #[test]
+    fn column_filtering_works_for_pipelines_jobs_and_todos() {
+        let mut app = App::default();
+
+        // 1. Pipelines
+        let p_success = crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "success".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "".to_string(),
+            name: "".to_string(),
+            display_title: "".to_string(),
+            event: "".to_string(),
+            head_sha: "".to_string(),
+            actor_login: "".to_string(),
+        };
+        let p_failed = crate::domain::pipelines::Pipeline {
+            id: 2,
+            status: "failed".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "".to_string(),
+            name: "".to_string(),
+            display_title: "".to_string(),
+            event: "".to_string(),
+            head_sha: "".to_string(),
+            actor_login: "".to_string(),
+        };
+        app.pipelines.items = vec![p_success, p_failed];
+
+        // Filter Pipelines by new display value "SUCCESS"
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Status".to_string(),
+                ["SUCCESS".to_string()].into_iter().collect(),
+            );
+        let res = app.filtered_pipelines();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].id, 1);
+
+        // Filter Pipelines by legacy value "success"
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Status".to_string(),
+                ["success".to_string()].into_iter().collect(),
+            );
+        let res_legacy = app.filtered_pipelines();
+        assert_eq!(res_legacy.len(), 1);
+        assert_eq!(res_legacy[0].id, 1);
+
+        // 2. Todos
+        let t_unread = crate::domain::notifications::Notification {
+            id: "101".to_string(),
+            state: "unread".to_string(),
+            project_path: "org/repo".to_string(),
+            target_type: "Issue".to_string(),
+            target_iid: 1,
+            title: "Task 1".to_string(),
+            updated_at: "".to_string(),
+        };
+        let t_done = crate::domain::notifications::Notification {
+            id: "102".to_string(),
+            state: "done".to_string(),
+            project_path: "org/repo".to_string(),
+            target_type: "Issue".to_string(),
+            target_iid: 2,
+            title: "Task 2".to_string(),
+            updated_at: "".to_string(),
+        };
+        app.todos.items = vec![t_unread, t_done];
+
+        // Filter Todos by new display value "NEW"
+        app.column_filters.entry(Tab::Todos).or_default().insert(
+            "State".to_string(),
+            ["NEW".to_string()].into_iter().collect(),
+        );
+        let res_todos = app.filtered_todos();
+        assert_eq!(res_todos.len(), 1);
+        assert_eq!(res_todos[0].id, "101");
+    }
+
+    #[test]
     fn workflow_column_is_offered_but_not_default() {
         for kind in [BackendKind::GitLab, BackendKind::GitHub] {
             assert!(

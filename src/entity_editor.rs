@@ -729,11 +729,37 @@ mod tests {
         };
         app.issues.items = vec![issue];
 
+        let mr = crate::domain::mr::MergeRequest {
+            iid: 1,
+            title: "MR 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            author: crate::domain::mr::Author {
+                username: "u1".to_string(),
+            },
+            milestone: Some(crate::domain::mr::Milestone {
+                title: "v1.0".to_string(),
+            }),
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".to_string(),
+            source_branch: "feature".to_string(),
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+        };
+        app.mrs.items = vec![mr];
+
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
 
-        // Clear milestone by passing empty values or "None"
+        // Clear milestone by passing empty values or "None" on Issue
         apply_selector_changes(
             &mut app,
             "issue",
@@ -741,10 +767,24 @@ mod tests {
             "milestone",
             vec!["None".to_string()],
             &mut terminal,
-            tx,
+            tx.clone(),
             crate::app::Tab::Issues,
         );
 
         assert!(app.issues.items[0].milestone.is_none());
+
+        // Clear milestone by passing empty values or "None" on MR
+        apply_selector_changes(
+            &mut app,
+            "mr",
+            1,
+            "milestone",
+            vec!["None".to_string()],
+            &mut terminal,
+            tx,
+            crate::app::Tab::MergeRequests,
+        );
+
+        assert!(app.mrs.items[0].milestone.is_none());
     }
 }

@@ -2236,7 +2236,7 @@ impl Backend for GhBackend {
 
     // ── Labels / Members / Misc ──
 
-    async fn fetch_labels(&self, project: &str) -> Result<Vec<String>> {
+    async fn fetch_labels(&self, project: &str, _per_request: usize) -> Result<Vec<String>> {
         let raw = self
             .run_gh(
                 &[

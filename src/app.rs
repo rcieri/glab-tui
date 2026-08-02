@@ -226,11 +226,11 @@ impl Tab {
                     "ID",
                     "State",
                     "Status",
+                    "Mergeable",
+                    "Approval",
                     "Title",
                     "Assignees",
                     "Reviewers",
-                    "Approval",
-                    "Mergeable",
                     "Workflow",
                     "Labels",
                 ];
@@ -294,8 +294,8 @@ impl Tab {
                 "ID",
                 "State",
                 "Status",
-                "Approval",
                 "Mergeable",
+                "Approval",
                 "Title",
                 "Labels",
             ],
@@ -2378,7 +2378,11 @@ impl App {
                     .map(|m| m.title.clone())
                     .into_iter()
                     .collect(),
-                "State" => vec![item.state.clone()],
+                "State" => vec![if item.state == "opened" {
+                    "OPEN".to_string()
+                } else {
+                    "CLOSED".to_string()
+                }],
                 "ID" => vec![item.iid.to_string()],
                 "Title" => vec![item.title.clone()],
                 _ => vec![],
@@ -2553,35 +2557,45 @@ impl App {
                 .map(|ms| ms.title.clone())
                 .into_iter()
                 .collect(),
-            "State" => vec![m.state.clone()],
+            "State" => vec![if m.state == "opened" {
+                "OPEN".to_string()
+            } else if m.state == "merged" {
+                "MERGED".to_string()
+            } else {
+                "CLOSED".to_string()
+            }],
             "Status" => crate::domain::mr_state::status_filter_values(
                 m.draft,
                 m.blocking_discussions_resolved,
             ),
             "ID" => vec![m.iid.to_string()],
             "Title" => vec![m.title.clone()],
-            "Approval" => vec![
-                match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
-                    crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
-                    crate::domain::mr_state::ApprovalTone::ChangesRequested => "Changes requested",
-                    crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
-                    crate::domain::mr_state::ApprovalTone::Approved => "Approved",
-                    crate::domain::mr_state::ApprovalTone::Pending => "Pending",
-                }
-                .to_string(),
-            ],
-            "Mergeable" => vec![
-                match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
-                    crate::domain::mr_state::MergeTone::Unknown => "Unknown",
-                    crate::domain::mr_state::MergeTone::Conflict => "Conflict",
-                    crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
-                    crate::domain::mr_state::MergeTone::Computing => "Checking",
-                    crate::domain::mr_state::MergeTone::Clean => "Mergeable",
-                }
-                .to_string(),
-            ],
-            "Workflow" => crate::domain::mr_state::workflow_label(m.workflow)
-                .map(|l| vec![l.to_string()])
+            "Approval" => {
+                vec![
+                    match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
+                        crate::domain::mr_state::ApprovalTone::Unknown => "—",
+                        crate::domain::mr_state::ApprovalTone::ChangesRequested => "CHG",
+                        crate::domain::mr_state::ApprovalTone::AwaitingYou => "AWAITING",
+                        crate::domain::mr_state::ApprovalTone::Approved => "APPROVED",
+                        crate::domain::mr_state::ApprovalTone::Pending => "REVIEW REQ",
+                    }
+                    .to_string(),
+                ]
+            }
+            "Mergeable" => {
+                vec![
+                    match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
+                        crate::domain::mr_state::MergeTone::Unknown => "—",
+                        crate::domain::mr_state::MergeTone::Conflict => "CONFLICT",
+                        crate::domain::mr_state::MergeTone::Rebase => "REBASE",
+                        crate::domain::mr_state::MergeTone::Computing => "CHECKING",
+                        crate::domain::mr_state::MergeTone::Clean => "CLEAN",
+                    }
+                    .to_string(),
+                ]
+            }
+            "Workflow" => crate::domain::mr_state::workflow_cell_word(m.workflow)
+                .map(|w| vec![w.to_string()])
                 .unwrap_or_default(),
             _ => vec![],
         }
@@ -2756,7 +2770,7 @@ impl App {
             Tab::Pipelines,
             |item, col| match col {
                 "ID" => vec![item.id().to_string()],
-                "Status" => vec![item.status().to_string()],
+                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
                 "Ref" => vec![item.ref_branch().to_string()],
                 _ => vec![],
             },
@@ -2867,7 +2881,7 @@ impl App {
             |item, col| match col {
                 "ID" => vec![item.id().to_string()],
                 "Stage" => vec![item.stage().to_string()],
-                "Status" => vec![item.status().to_string()],
+                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
                 "Name" => vec![item.name().to_string()],
                 _ => vec![],
             },
@@ -3166,7 +3180,11 @@ impl App {
         );
         Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
             match col {
-                "State" => vec![item.state.clone()],
+                "State" => vec![if item.state == "unread" || item.state == "pending" {
+                    "NEW".to_string()
+                } else {
+                    "READ".to_string()
+                }],
                 "Project" => vec![item.project_path.clone()],
                 "Type" => vec![item.target_type.clone()],
                 "ID" => vec![item.id.clone()],
@@ -3425,6 +3443,71 @@ impl App {
         list
     }
 
+    /// Canonicalise a saved filter value to the display string that
+    /// `mr_filter_values` / issue filter functions now produce.
+    ///
+    /// Older config files stored lowercase API values ("opened", "Draft", …).
+    /// After the display-alignment change those no longer appear in the
+    /// filter-value sets, so this mapping keeps pre-existing filters working.
+    /// Maps raw API pipeline/job status strings to the uppercase display text
+    /// shown in the table cell (e.g. `"success"` → `"SUCCESS"`, `"canceled"` → `"CANCEL"`).
+    fn pipeline_status_display(raw: &str) -> &str {
+        match raw {
+            "success" => "SUCCESS",
+            "failed" => "FAILED",
+            "running" => "RUNNING",
+            "canceled" | "cancelled" => "CANCEL",
+            "pending" => "PENDING",
+            "skipped" => "SKIP",
+            "manual" => "MANUAL",
+            "created" | "waiting_for_resource" | "preparing" => "PENDING",
+            other => other,
+        }
+    }
+
+    fn normalize_filter_value(v: &str) -> &str {
+        match v {
+            // State
+            "opened" => "OPEN",
+            "closed" => "CLOSED",
+            "merged" => "MERGED",
+            // Status
+            "Draft" | "draft" => "DRAFT",
+            "Ready" | "ready" => "READY",
+            "Unresolved discussions" => "UNRESOLVED",
+            // Approval
+            "Changes requested" | "Changes Requested" => "CHG",
+            "Awaiting you" | "Awaiting You" => "AWAITING",
+            "Approved" | "approved" => "APPROVED",
+            "Pending" | "pending" | "Review req" | "review req" => "REVIEW REQ",
+            // Mergeable
+            "Conflict" | "conflict" => "CONFLICT",
+            "Needs rebase" | "needs rebase" => "REBASE",
+            "Checking" | "checking" => "CHECKING",
+            "Mergeable" | "mergeable" | "Clean" | "clean" => "CLEAN",
+            // Workflow (old long labels -> abbreviated cell words)
+            "Returned to you" => "Returned",
+            "Review requested" => "Review req",
+            "Your merge requests" => "Yours",
+            "Approved by you" => "Approved",
+            "Approved by others" => "By others",
+            // Pipeline/Job status (raw API → display)
+            "success" => "SUCCESS",
+            "failed" => "FAILED",
+            "running" => "RUNNING",
+            "canceled" | "cancelled" => "CANCEL",
+            "skipped" => "SKIP",
+            "manual" => "MANUAL",
+            // Todos state
+            "unread" | "done" => {
+                // "unread"→"NEW", "done"→"READ" — handled via pipeline_status_display
+                // but normalize maps them too for saved-filter compat
+                if v == "unread" { "NEW" } else { "READ" }
+            }
+            other => other,
+        }
+    }
+
     pub fn apply_column_filters<'a, T>(
         list: &mut Vec<&'a T>,
         column_filters: &std::collections::HashMap<
@@ -3454,7 +3537,15 @@ impl App {
                             .any(|s| v.to_lowercase().contains(&s.to_lowercase()))
                     })
                 } else {
-                    vals.iter().any(|v| selected.contains(v))
+                    vals.iter().any(|v| {
+                        let norm_v = Self::normalize_filter_value(v);
+                        selected.contains(v)
+                            || selected.contains(norm_v)
+                            || selected.iter().any(|s| {
+                                let norm_s = Self::normalize_filter_value(s);
+                                norm_s == v.as_str() || norm_s == norm_v
+                            })
+                    })
                 }
             });
         }
@@ -3471,7 +3562,12 @@ impl App {
                             values.insert(item.iid.to_string());
                         }
                         "State" => {
-                            values.insert(item.state.clone());
+                            let display = if item.state == "opened" {
+                                "OPEN"
+                            } else {
+                                "CLOSED"
+                            };
+                            values.insert(display.to_string());
                         }
                         "Title" => {
                             values.insert(item.title.clone());
@@ -3512,12 +3608,12 @@ impl App {
                             values.insert(item.id().to_string());
                         }
                         "Status" => {
-                            values.insert(item.status().to_string());
+                            values.insert(Self::pipeline_status_display(item.status()).to_string());
                         }
                         "Ref" => {
                             values.insert(item.ref_branch().to_string());
                         }
-                        _ => {} // Pipeline no longer carries GitHub-specific fields
+                        _ => {}
                     }
                 }
             }
@@ -3531,7 +3627,7 @@ impl App {
                             values.insert(item.stage().to_string());
                         }
                         "Status" => {
-                            values.insert(item.status().to_string());
+                            values.insert(Self::pipeline_status_display(item.status()).to_string());
                         }
                         "Name" => {
                             values.insert(item.name().to_string());
@@ -3583,7 +3679,12 @@ impl App {
                 for item in &self.todos.items {
                     match col {
                         "State" => {
-                            values.insert(item.state.clone());
+                            let display = if item.state == "unread" || item.state == "pending" {
+                                "NEW"
+                            } else {
+                                "READ"
+                            };
+                            values.insert(display.to_string());
                         }
                         "Project" => {
                             values.insert(item.project_path.clone());
@@ -5243,8 +5344,8 @@ index 123456..789012 100644
 
         let values = app.collect_unique_column_values(Tab::MergeRequests, "Status");
 
-        assert!(values.contains(&"Draft".to_string()));
-        assert!(values.contains(&"Unresolved discussions".to_string()));
+        assert!(values.contains(&"DRAFT".to_string()));
+        assert!(values.contains(&"UNRESOLVED".to_string()));
     }
 
     #[test]
@@ -5266,7 +5367,7 @@ index 123456..789012 100644
 
         let values = app.collect_unique_column_values(Tab::MergeRequests, "Approval");
 
-        assert!(values.contains(&"Approved".to_string()));
+        assert!(values.contains(&"APPROVED".to_string()));
     }
 
     #[test]
@@ -5283,7 +5384,7 @@ index 123456..789012 100644
 
         let values = app.collect_unique_column_values(Tab::MergeRequests, "Mergeable");
 
-        assert!(values.contains(&"Conflict".to_string()));
+        assert!(values.contains(&"CONFLICT".to_string()));
     }
 
     #[test]
@@ -5310,6 +5411,134 @@ index 123456..789012 100644
                 );
             }
         }
+    }
+
+    #[test]
+    fn column_filtering_works_for_pipelines_jobs_and_todos() {
+        let mut app = App::default();
+
+        // 1. Pipelines
+        let p_success = crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "success".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "".to_string(),
+            name: "".to_string(),
+            display_title: "".to_string(),
+            event: "".to_string(),
+            head_sha: "".to_string(),
+            actor_login: "".to_string(),
+        };
+        let p_failed = crate::domain::pipelines::Pipeline {
+            id: 2,
+            status: "failed".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "".to_string(),
+            name: "".to_string(),
+            display_title: "".to_string(),
+            event: "".to_string(),
+            head_sha: "".to_string(),
+            actor_login: "".to_string(),
+        };
+        app.pipelines.items = vec![p_success, p_failed];
+
+        // Filter Pipelines by new display value "SUCCESS"
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Status".to_string(),
+                ["SUCCESS".to_string()].into_iter().collect(),
+            );
+        let res = app.filtered_pipelines();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].id, 1);
+
+        // Filter Pipelines by legacy value "success"
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Status".to_string(),
+                ["success".to_string()].into_iter().collect(),
+            );
+        let res_legacy = app.filtered_pipelines();
+        assert_eq!(res_legacy.len(), 1);
+        assert_eq!(res_legacy[0].id, 1);
+
+        // 2. Todos
+        let t_unread = crate::domain::notifications::Notification {
+            id: "101".to_string(),
+            state: "unread".to_string(),
+            project_path: "org/repo".to_string(),
+            target_type: "Issue".to_string(),
+            target_iid: 1,
+            title: "Task 1".to_string(),
+            updated_at: "".to_string(),
+        };
+        let t_done = crate::domain::notifications::Notification {
+            id: "102".to_string(),
+            state: "done".to_string(),
+            project_path: "org/repo".to_string(),
+            target_type: "Issue".to_string(),
+            target_iid: 2,
+            title: "Task 2".to_string(),
+            updated_at: "".to_string(),
+        };
+        app.todos.items = vec![t_unread, t_done];
+
+        // 3. Issues
+        let i_open = crate::domain::issues::Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        let i_closed = crate::domain::issues::Issue {
+            iid: 2,
+            title: "Issue 2".to_string(),
+            state: "closed".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user2".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        app.issues.items = vec![i_open, i_closed];
+
+        // Filter Issues by new display value "OPEN"
+        app.column_filters.entry(Tab::Issues).or_default().insert(
+            "State".to_string(),
+            ["OPEN".to_string()].into_iter().collect(),
+        );
+        let res_issues = app.filtered_issues();
+        assert_eq!(res_issues.len(), 1);
+        assert_eq!(res_issues[0].iid, 1);
+
+        // Filter Issues by legacy value "opened"
+        app.column_filters.entry(Tab::Issues).or_default().insert(
+            "State".to_string(),
+            ["opened".to_string()].into_iter().collect(),
+        );
+        let res_issues_legacy = app.filtered_issues();
+        assert_eq!(res_issues_legacy.len(), 1);
+        assert_eq!(res_issues_legacy[0].iid, 1);
     }
 
     #[test]
@@ -5350,7 +5579,7 @@ index 123456..789012 100644
         mr.workflow = Some(WorkflowStatus::ReturnedToYou);
         assert_eq!(
             App::mr_filter_values(&mr, "Workflow"),
-            vec!["Returned to you".to_string()]
+            vec!["Returned".to_string()]
         );
     }
 

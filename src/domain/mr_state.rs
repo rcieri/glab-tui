@@ -153,6 +153,16 @@ pub fn workflow_label(s: Option<WorkflowStatus>) -> Option<&'static str> {
     }
 }
 
+/// The abbreviated word shown in the Workflow table cell (e.g. "Returned",
+/// "Review req"). Used as the column-filter picker value so it matches
+/// exactly what the user sees. `None` for statuses that render blank.
+pub fn workflow_cell_word(s: Option<WorkflowStatus>) -> Option<&'static str> {
+    match s {
+        Some(status) => workflow_icon_and_word(status).map(|(_, word)| word),
+        None => None,
+    }
+}
+
 /// Approval readiness for one merge request. Host-neutral.
 ///
 /// `None` at the call site means *unknown* (fetch failed or unsupported),
@@ -250,6 +260,16 @@ fn format_counts(s: &ApprovalState) -> String {
     }
 }
 
+/// Repeat the pending icon once per approval still needed (capped at 5).
+/// Falls back to a single icon when `approvals_left` is unknown.
+fn pending_icons(s: &ApprovalState, icon: &str) -> String {
+    let n = s.approvals_left.unwrap_or(1).min(5).max(1) as usize;
+    std::iter::repeat(icon)
+        .take(n)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// First-match-wins cascade. See the precedence flowchart in the design spec.
 pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String, ApprovalTone) {
     let icons = crate::config::ICONS.read().unwrap();
@@ -259,9 +279,9 @@ pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String,
 
     if s.changes_requested {
         let text = if is_github {
-            format!("{} changes", icons.approval_changes)
+            format!("{} CHANGES", icons.approval_changes)
         } else {
-            format!("{} chg", icons.approval_changes)
+            format!("{} CHG", icons.approval_changes)
         };
         return (text, ApprovalTone::ChangesRequested);
     }
@@ -270,16 +290,19 @@ pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String,
     if is_github {
         if is_attributably_approved(s) {
             return (
-                format!("{} approved", icons.approval_approved),
+                format!("{} APPROVED", icons.approval_approved),
                 ApprovalTone::Approved,
             );
         }
-        return ("review req".to_string(), ApprovalTone::Pending);
+        return (
+            format!("{} REVIEW REQ", icons.approval_pending),
+            ApprovalTone::Pending,
+        );
     }
 
     if s.awaiting_you {
         return (
-            format!("{} {}", icons.approval_pending, format_counts(s)),
+            format!("{} AWAITING", pending_icons(s, &icons.approval_pending)),
             ApprovalTone::AwaitingYou,
         );
     }
@@ -289,7 +312,14 @@ pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String,
             ApprovalTone::Approved,
         );
     }
-    (format_counts(s), ApprovalTone::Pending)
+    (
+        format!(
+            "{} {}",
+            pending_icons(s, &icons.approval_pending),
+            format_counts(s)
+        ),
+        ApprovalTone::Pending,
+    )
 }
 
 /// First-match-wins cascade. Conflict outranks rebase because it is the more
@@ -302,17 +332,17 @@ pub fn mergeable_cell(state: Option<&MergeabilityState>) -> (String, MergeTone) 
     };
     if s.conflicts {
         return (
-            format!("{} conflict", icons.merge_conflict),
+            format!("{} CONFLICT", icons.merge_conflict),
             MergeTone::Conflict,
         );
     }
     if s.needs_rebase {
-        return (format!("{} rebase", icons.merge_rebase), MergeTone::Rebase);
+        return (format!("{} REBASE", icons.merge_rebase), MergeTone::Rebase);
     }
     if s.computing {
         return (icons.merge_checking.clone(), MergeTone::Computing);
     }
-    (icons.merge_clean.clone(), MergeTone::Clean)
+    (format!("{} CLEAN", icons.merge_clean), MergeTone::Clean)
 }
 
 /// Sort ordinal: most-blocking first, unknown last. The caller (`App::mr_sort_value`)
@@ -431,9 +461,9 @@ pub fn status_filter_values(
     draft: bool,
     blocking_discussions_resolved: Option<bool>,
 ) -> Vec<String> {
-    let mut v = vec![if draft { "Draft" } else { "Ready" }.to_string()];
+    let mut v = vec![if draft { "DRAFT" } else { "READY" }.to_string()];
     if blocking_discussions_resolved == Some(false) {
-        v.push("Unresolved discussions".to_string());
+        v.push("UNRESOLVED".to_string());
     }
     v
 }
@@ -494,7 +524,7 @@ mod tests {
     // rather than duplicating glyph literals here.
     fn expect_chg() -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        format!("{} chg", icons.approval_changes)
+        format!("{} CHG", icons.approval_changes)
     }
 
     fn expect_approved(counts: &str) -> String {
@@ -504,22 +534,44 @@ mod tests {
 
     fn expect_github_approved() -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        format!("{} approved", icons.approval_approved)
+        format!("{} APPROVED", icons.approval_approved)
     }
 
-    fn expect_awaiting(counts: &str) -> String {
+    /// Builds the expected awaiting-you string: n icons + " AWAITING".
+    fn expect_awaiting_you(approvals_left: u32) -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        format!("{} {}", icons.approval_pending, counts)
+        let n = approvals_left.min(5).max(1) as usize;
+        let dots = std::iter::repeat(icons.approval_pending.as_str())
+            .take(n)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{} AWAITING", dots)
+    }
+
+    /// Builds the expected pending string: n icons + " " + counts.
+    fn expect_pending(approvals_left: u32, counts: &str) -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        let n = approvals_left.min(5).max(1) as usize;
+        let dots = std::iter::repeat(icons.approval_pending.as_str())
+            .take(n)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{} {}", dots, counts)
+    }
+
+    fn expect_github_pending() -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} REVIEW REQ", icons.approval_pending)
     }
 
     fn expect_conflict() -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        format!("{} conflict", icons.merge_conflict)
+        format!("{} CONFLICT", icons.merge_conflict)
     }
 
     fn expect_rebase() -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        format!("{} rebase", icons.merge_rebase)
+        format!("{} REBASE", icons.merge_rebase)
     }
 
     fn expect_computing() -> String {
@@ -527,7 +579,8 @@ mod tests {
     }
 
     fn expect_clean() -> String {
-        crate::config::ICONS.read().unwrap().merge_clean.clone()
+        let icons = crate::config::ICONS.read().unwrap();
+        format!("{} CLEAN", icons.merge_clean)
     }
 
     // ── awaiting_you truth table ──
@@ -638,7 +691,7 @@ mod tests {
         };
         let (text, tone) = approval_cell(Some(&s), false);
         assert_ne!(tone, ApprovalTone::Approved);
-        assert_eq!(text, "0");
+        assert_eq!(text, expect_pending(0, "0"));
     }
 
     #[test]
@@ -655,7 +708,7 @@ mod tests {
             ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
-        assert_eq!(text, expect_awaiting("0/1"));
+        assert_eq!(text, expect_awaiting_you(1));
         assert_eq!(tone, ApprovalTone::AwaitingYou);
     }
 
@@ -672,7 +725,7 @@ mod tests {
             ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
-        assert_eq!(text, "1/2");
+        assert_eq!(text, expect_pending(1, "1/2"));
         assert_eq!(tone, ApprovalTone::Pending);
     }
 
@@ -705,7 +758,7 @@ mod tests {
             ..Default::default()
         };
         let (text, _) = approval_cell(Some(&s), true);
-        assert_eq!(text, "review req");
+        assert_eq!(text, expect_github_pending());
     }
 
     // ── mergeability cell rendering ──
@@ -857,9 +910,9 @@ mod tests {
     fn status_filter_values_include_base_word_only_when_resolved() {
         assert_eq!(
             status_filter_values(true, Some(true)),
-            vec!["Draft".to_string()]
+            vec!["DRAFT".to_string()]
         );
-        assert_eq!(status_filter_values(false, None), vec!["Ready".to_string()]);
+        assert_eq!(status_filter_values(false, None), vec!["READY".to_string()]);
     }
 
     #[test]
@@ -867,8 +920,8 @@ mod tests {
         // !1471 is draft AND unresolved; a filter on either must match it,
         // which is what preserves fidelity in the shared column.
         let v = status_filter_values(true, Some(false));
-        assert!(v.contains(&"Draft".to_string()));
-        assert!(v.contains(&"Unresolved discussions".to_string()));
+        assert!(v.contains(&"DRAFT".to_string()));
+        assert!(v.contains(&"UNRESOLVED".to_string()));
     }
 
     // ── rebase gate ──

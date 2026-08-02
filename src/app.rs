@@ -2553,7 +2553,13 @@ impl App {
                 .map(|ms| ms.title.clone())
                 .into_iter()
                 .collect(),
-            "State" => vec![m.state.clone()],
+            "State" => vec![if m.state == "opened" {
+                "OPEN".to_string()
+            } else if m.state == "merged" {
+                "MERGED".to_string()
+            } else {
+                "CLOSED".to_string()
+            }],
             "Status" => crate::domain::mr_state::status_filter_values(
                 m.draft,
                 m.blocking_discussions_resolved,
@@ -2563,13 +2569,11 @@ impl App {
             "Approval" => {
                 vec![
                     match crate::domain::mr_state::approval_cell(m.approval.as_ref(), false).1 {
-                        crate::domain::mr_state::ApprovalTone::Unknown => "Unknown",
-                        crate::domain::mr_state::ApprovalTone::ChangesRequested => {
-                            "Changes requested"
-                        }
-                        crate::domain::mr_state::ApprovalTone::AwaitingYou => "Awaiting you",
-                        crate::domain::mr_state::ApprovalTone::Approved => "Approved",
-                        crate::domain::mr_state::ApprovalTone::Pending => "Pending",
+                        crate::domain::mr_state::ApprovalTone::Unknown => "—",
+                        crate::domain::mr_state::ApprovalTone::ChangesRequested => "CHG",
+                        crate::domain::mr_state::ApprovalTone::AwaitingYou => "AWAITING",
+                        crate::domain::mr_state::ApprovalTone::Approved => "APPROVED",
+                        crate::domain::mr_state::ApprovalTone::Pending => "REVIEW REQ",
                     }
                     .to_string(),
                 ]
@@ -2577,17 +2581,17 @@ impl App {
             "Mergeable" => {
                 vec![
                     match crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref()).1 {
-                        crate::domain::mr_state::MergeTone::Unknown => "Unknown",
-                        crate::domain::mr_state::MergeTone::Conflict => "Conflict",
-                        crate::domain::mr_state::MergeTone::Rebase => "Needs rebase",
-                        crate::domain::mr_state::MergeTone::Computing => "Checking",
-                        crate::domain::mr_state::MergeTone::Clean => "Mergeable",
+                        crate::domain::mr_state::MergeTone::Unknown => "—",
+                        crate::domain::mr_state::MergeTone::Conflict => "CONFLICT",
+                        crate::domain::mr_state::MergeTone::Rebase => "REBASE",
+                        crate::domain::mr_state::MergeTone::Computing => "CHECKING",
+                        crate::domain::mr_state::MergeTone::Clean => "CLEAN",
                     }
                     .to_string(),
                 ]
             }
-            "Workflow" => crate::domain::mr_state::workflow_label(m.workflow)
-                .map(|l| vec![l.to_string()])
+            "Workflow" => crate::domain::mr_state::workflow_cell_word(m.workflow)
+                .map(|w| vec![w.to_string()])
                 .unwrap_or_default(),
             _ => vec![],
         }
@@ -3431,6 +3435,42 @@ impl App {
         list
     }
 
+    /// Canonicalise a saved filter value to the display string that
+    /// `mr_filter_values` / issue filter functions now produce.
+    ///
+    /// Older config files stored lowercase API values ("opened", "Draft", …).
+    /// After the display-alignment change those no longer appear in the
+    /// filter-value sets, so this mapping keeps pre-existing filters working.
+    fn normalize_filter_value(v: &str) -> &str {
+        match v {
+            // State
+            "opened" => "OPEN",
+            "closed" => "CLOSED",
+            "merged" => "MERGED",
+            // Status
+            "Draft" | "draft" => "DRAFT",
+            "Ready" | "ready" => "READY",
+            "Unresolved discussions" => "UNRESOLVED",
+            // Approval
+            "Changes requested" | "Changes Requested" => "CHG",
+            "Awaiting you" | "Awaiting You" => "AWAITING",
+            "Approved" | "approved" => "APPROVED",
+            "Pending" | "pending" | "Review req" | "review req" => "REVIEW REQ",
+            // Mergeable
+            "Conflict" | "conflict" => "CONFLICT",
+            "Needs rebase" | "needs rebase" => "REBASE",
+            "Checking" | "checking" => "CHECKING",
+            "Mergeable" | "mergeable" | "Clean" | "clean" => "CLEAN",
+            // Workflow (old long labels -> abbreviated cell words)
+            "Returned to you" => "Returned",
+            "Review requested" => "Review req",
+            "Your merge requests" => "Yours",
+            "Approved by you" => "Approved",
+            "Approved by others" => "By others",
+            other => other,
+        }
+    }
+
     pub fn apply_column_filters<'a, T>(
         list: &mut Vec<&'a T>,
         column_filters: &std::collections::HashMap<
@@ -3460,7 +3500,12 @@ impl App {
                             .any(|s| v.to_lowercase().contains(&s.to_lowercase()))
                     })
                 } else {
-                    vals.iter().any(|v| selected.contains(v))
+                    vals.iter().any(|v| {
+                        selected.contains(v)
+                            || selected
+                                .iter()
+                                .any(|s| Self::normalize_filter_value(s) == v.as_str())
+                    })
                 }
             });
         }
@@ -3477,7 +3522,12 @@ impl App {
                             values.insert(item.iid.to_string());
                         }
                         "State" => {
-                            values.insert(item.state.clone());
+                            let display = if item.state == "opened" {
+                                "OPEN"
+                            } else {
+                                "CLOSED"
+                            };
+                            values.insert(display.to_string());
                         }
                         "Title" => {
                             values.insert(item.title.clone());
@@ -5249,8 +5299,8 @@ index 123456..789012 100644
 
         let values = app.collect_unique_column_values(Tab::MergeRequests, "Status");
 
-        assert!(values.contains(&"Draft".to_string()));
-        assert!(values.contains(&"Unresolved discussions".to_string()));
+        assert!(values.contains(&"DRAFT".to_string()));
+        assert!(values.contains(&"UNRESOLVED".to_string()));
     }
 
     #[test]
@@ -5272,7 +5322,7 @@ index 123456..789012 100644
 
         let values = app.collect_unique_column_values(Tab::MergeRequests, "Approval");
 
-        assert!(values.contains(&"Approved".to_string()));
+        assert!(values.contains(&"APPROVED".to_string()));
     }
 
     #[test]
@@ -5289,7 +5339,7 @@ index 123456..789012 100644
 
         let values = app.collect_unique_column_values(Tab::MergeRequests, "Mergeable");
 
-        assert!(values.contains(&"Conflict".to_string()));
+        assert!(values.contains(&"CONFLICT".to_string()));
     }
 
     #[test]
@@ -5356,7 +5406,7 @@ index 123456..789012 100644
         mr.workflow = Some(WorkflowStatus::ReturnedToYou);
         assert_eq!(
             App::mr_filter_values(&mr, "Workflow"),
-            vec!["Returned to you".to_string()]
+            vec!["Returned".to_string()]
         );
     }
 

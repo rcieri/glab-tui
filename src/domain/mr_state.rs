@@ -153,6 +153,16 @@ pub fn workflow_label(s: Option<WorkflowStatus>) -> Option<&'static str> {
     }
 }
 
+/// The abbreviated word shown in the Workflow table cell (e.g. "Returned",
+/// "Review req"). Used as the column-filter picker value so it matches
+/// exactly what the user sees. `None` for statuses that render blank.
+pub fn workflow_cell_word(s: Option<WorkflowStatus>) -> Option<&'static str> {
+    match s {
+        Some(status) => workflow_icon_and_word(status).map(|(_, word)| word),
+        None => None,
+    }
+}
+
 /// Approval readiness for one merge request. Host-neutral.
 ///
 /// `None` at the call site means *unknown* (fetch failed or unsupported),
@@ -451,9 +461,9 @@ pub fn status_filter_values(
     draft: bool,
     blocking_discussions_resolved: Option<bool>,
 ) -> Vec<String> {
-    let mut v = vec![if draft { "Draft" } else { "Ready" }.to_string()];
+    let mut v = vec![if draft { "DRAFT" } else { "READY" }.to_string()];
     if blocking_discussions_resolved == Some(false) {
-        v.push("Unresolved discussions".to_string());
+        v.push("UNRESOLVED".to_string());
     }
     v
 }
@@ -900,9 +910,9 @@ mod tests {
     fn status_filter_values_include_base_word_only_when_resolved() {
         assert_eq!(
             status_filter_values(true, Some(true)),
-            vec!["Draft".to_string()]
+            vec!["DRAFT".to_string()]
         );
-        assert_eq!(status_filter_values(false, None), vec!["Ready".to_string()]);
+        assert_eq!(status_filter_values(false, None), vec!["READY".to_string()]);
     }
 
     #[test]
@@ -910,8 +920,8 @@ mod tests {
         // !1471 is draft AND unresolved; a filter on either must match it,
         // which is what preserves fidelity in the shared column.
         let v = status_filter_values(true, Some(false));
-        assert!(v.contains(&"Draft".to_string()));
-        assert!(v.contains(&"Unresolved discussions".to_string()));
+        assert!(v.contains(&"DRAFT".to_string()));
+        assert!(v.contains(&"UNRESOLVED".to_string()));
     }
 
     // ── rebase gate ──

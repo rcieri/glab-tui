@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 - **Milestone removal & attribute clearing** — Milestones can now be removed (empty / `None` selector value) and attributes cleared from the edit menu and bulk updates, and the premature tab-refresh race after edit submission was eliminated (#281).
 - **Cached filter compatibility** — Pre-existing saved column filters stored with the old lowercase display values are normalized transparently, so no config or cache migration is required after upgrading (#274).
+- **Overlay & diff view backgrounds** — Popup overlays (edit menus, selectors, confirm dialogs, column filters) and the diff view now paint the active theme background instead of resetting to the terminal default color, so every surface renders consistently with the chosen theme on terminals whose default background differs from `bg`.
 
 ### Maintenance
 - **Release tooling** — `scripts/release.sh` now interactively selects the opencode model (provider → model → variant) used for regenerated docs and release notes, via `fzf` with a numbered-menu fallback; set `OPENCODE_MODEL` to skip the prompt (#283).

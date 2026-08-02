@@ -11,11 +11,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
 use self::diff::{centered_rect_min, format_comment_with_suggestions};
 use self::helpers::{build_log_line, highlight_fuzzy_match};
+use self::modal::clear_area;
 use self::overlays::render_overlays;
 use crate::app::{App, DiffLine, Tab};
 use crate::config::{ICONS, THEME};
@@ -530,7 +531,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .alignment(Alignment::Left)
             .wrap(ratatui::widgets::Wrap { trim: true });
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(paragraph, area);
     }
 
@@ -881,7 +882,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .zip(updated_diff_view.selection_end)
                     .map_or(false, |(s, e)| idx >= s && idx <= e);
 
-                let gutter_bg = Color::Rgb(22, 22, 26);
+                let gutter_bg = THEME.read().unwrap().bg;
                 let marker_style = Style::default()
                     .fg(THEME.read().unwrap().yellow)
                     .add_modifier(Modifier::BOLD)
@@ -961,7 +962,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             left_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
-                            let actual_bg = sel_bg.unwrap_or(Color::Reset);
+                            let actual_bg = sel_bg.unwrap_or(THEME.read().unwrap().bg);
                             let prefix = line
                                 .content
                                 .chars()
@@ -1045,7 +1046,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         _ => {}
                     }
                 } else {
-                    let actual_bg = sel_bg.unwrap_or(Color::Reset);
+                    let actual_bg = sel_bg.unwrap_or(THEME.read().unwrap().bg);
                     left_spans.extend(vec![
                         Span::styled(
                             if is_cursor {
@@ -1126,7 +1127,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             right_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
-                            let actual_bg = sel_bg.unwrap_or(Color::Reset);
+                            let actual_bg = sel_bg.unwrap_or(THEME.read().unwrap().bg);
                             let prefix = line
                                 .content
                                 .chars()
@@ -1210,7 +1211,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         _ => {}
                     }
                 } else {
-                    let actual_bg = sel_bg.unwrap_or(Color::Reset);
+                    let actual_bg = sel_bg.unwrap_or(THEME.read().unwrap().bg);
                     right_spans.extend(vec![
                         Span::styled(
                             if is_cursor {
@@ -1425,7 +1426,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| " ".to_string());
 
-                let gutter_bg = Color::Rgb(22, 22, 26);
+                let gutter_bg = THEME.read().unwrap().bg;
 
                 let marker_style = Style::default()
                     .fg(THEME.read().unwrap().yellow)
@@ -1514,7 +1515,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         line_spans.append(&mut content_spans);
                     }
                     crate::app::DiffLineType::Normal => {
-                        let actual_bg = sel_bg.unwrap_or(Color::Reset);
+                        let actual_bg = sel_bg.unwrap_or(THEME.read().unwrap().bg);
                         let prefix = line
                             .content
                             .chars()
@@ -1745,7 +1746,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .style(Style::default().fg(THEME.read().unwrap().text_muted).add_modifier(Modifier::ITALIC))
             .wrap(ratatui::widgets::Wrap { trim: true });
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(outer_block, area);
         if file_tree_visible {
             f.render_widget(files_list, main_chunks[0]);

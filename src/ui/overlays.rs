@@ -1,17 +1,15 @@
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::{get_label_color, highlight_fuzzy_match};
-use super::modal::modal_area;
+use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
-    },
+    widgets::{Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
@@ -40,7 +38,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let item_bg = if is_selected {
                     THEME.read().unwrap().highlight_bg
                 } else {
-                    Color::Reset
+                    THEME.read().unwrap().bg
                 };
 
                 let label_style = if is_selected {
@@ -163,7 +161,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let submit_bg = if is_submit_selected {
                 THEME.read().unwrap().border_focused
             } else {
-                Color::Reset
+                THEME.read().unwrap().bg
             };
             let submit_fg = if is_submit_selected {
                 THEME.read().unwrap().bg
@@ -179,7 +177,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )]);
             let mut v = items;
             v.push(ListItem::new(
-                Line::from("").style(Style::default().bg(Color::Reset)),
+                Line::from("").style(Style::default().bg(THEME.read().unwrap().bg)),
             ));
             v.push(ListItem::new(submit_line));
             v
@@ -187,7 +185,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             items
         };
 
-        let list = List::new(all_items).style(Style::default().bg(Color::Reset));
+        let list = List::new(all_items).style(Style::default().bg(THEME.read().unwrap().bg));
         let mut state = menu.state.clone();
         f.render_stateful_widget(list, body, &mut state);
         menu.state = state;
@@ -232,7 +230,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(Color::Reset))
+                .border_style(
+                    Style::default()
+                        .fg(border_color_search)
+                        .bg(THEME.read().unwrap().bg),
+                )
                 .title(" Filter (press 'f' or '/' to focus) ");
 
             let search_text = if selector.is_filtering {
@@ -246,12 +248,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
-                    .bg(Color::Reset)
+                    .bg(THEME.read().unwrap().bg)
                     .add_modifier(Modifier::ITALIC)
             } else {
                 Style::default()
                     .fg(THEME.read().unwrap().text_normal)
-                    .bg(Color::Reset)
+                    .bg(THEME.read().unwrap().bg)
             };
 
             let search_p = Paragraph::new(search_text)
@@ -268,7 +270,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .style(
                         Style::default()
                             .fg(THEME.read().unwrap().text_muted)
-                            .bg(Color::Reset)
+                            .bg(THEME.read().unwrap().bg)
                             .add_modifier(Modifier::ITALIC),
                     )
                     .wrap(ratatui::widgets::Wrap { trim: true });
@@ -280,7 +282,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .style(
                             Style::default()
                                 .fg(THEME.read().unwrap().text_muted)
-                                .bg(Color::Reset)
+                                .bg(THEME.read().unwrap().bg)
                                 .add_modifier(Modifier::ITALIC),
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true });
@@ -311,7 +313,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             let item_bg = if i == selector.cursor_idx {
                                 THEME.read().unwrap().highlight_bg
                             } else {
-                                Color::Reset
+                                THEME.read().unwrap().bg
                             };
 
                             let style = if i == selector.cursor_idx {
@@ -361,7 +363,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         })
                         .collect();
 
-                    let list = List::new(items).style(Style::default().bg(Color::Reset));
+                    let list =
+                        List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
                     let mut state = selector.state.clone();
                     f.render_stateful_widget(list, list_chunk, &mut state);
                     selector.state = state;
@@ -383,7 +386,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let area = centered_rect_min(60, 60, 28, 4, size);
-        f.render_widget(ratatui::widgets::Clear, area);
+        clear_area(f, area);
         f.render_widget(block, area);
 
         let chunks = Layout::default()
@@ -525,7 +528,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .header(table_header)
             .column_spacing(1);
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(block, area);
         f.render_widget(header_p, chunks[0]);
         f.render_widget(table, chunks[1]);
@@ -1263,7 +1266,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .row_highlight_style(Style::default())
             .column_spacing(2);
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(search_p, help_chunks[0]);
         f.render_widget(table, help_chunks[1]);
     }
@@ -1293,6 +1296,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let checklist_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+            .style(Style::default().bg(THEME.read().unwrap().bg))
             .title(format!(
                 " {} Configure View: {} ",
                 icons.label_configure,
@@ -1308,7 +1312,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .add_modifier(Modifier::BOLD),
             );
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(checklist_block.clone(), area);
 
         let inner_area = checklist_block.inner(area);
@@ -1601,7 +1605,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .fg(THEME.read().unwrap().border_focused)
                         .add_modifier(Modifier::BOLD),
                 );
-            f.render_widget(Clear, submenu_area);
+            clear_area(f, submenu_area);
             f.render_widget(submenu_block.clone(), submenu_area);
             let submenu_inner = submenu_block.inner(submenu_area);
 
@@ -1683,7 +1687,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(Color::Reset))
+                .border_style(
+                    Style::default()
+                        .fg(border_color_search)
+                        .bg(THEME.read().unwrap().bg),
+                )
                 .title(" Filter (press 'f' or '/' to focus) ");
 
             let search_text = if selector.is_filtering {
@@ -1697,7 +1705,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .block(search_block)
                 .style(Style::default().fg(THEME.read().unwrap().text_normal));
 
-            f.render_widget(Clear, area);
+            clear_area(f, area);
             f.render_widget(block, area);
             f.render_widget(search_p, search_chunk);
 
@@ -1723,7 +1731,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     let item_bg = if i == selector.cursor_idx {
                         THEME.read().unwrap().highlight_bg
                     } else {
-                        Color::Reset
+                        THEME.read().unwrap().bg
                     };
 
                     let style = if i == selector.cursor_idx {
@@ -1772,7 +1780,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 })
                 .collect();
 
-            let list = List::new(items).style(Style::default().bg(Color::Reset));
+            let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
             let mut state = selector.state.clone();
             f.render_stateful_widget(list, list_chunk, &mut state);
             selector.state = state;
@@ -1905,7 +1913,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .bg(if app.confirm_popup_selected_yes {
                         THEME.read().unwrap().border_focused
                     } else {
-                        Color::Reset
+                        THEME.read().unwrap().bg
                     })
                     .add_modifier(Modifier::BOLD),
             ),
@@ -1921,14 +1929,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .bg(if !app.confirm_popup_selected_yes {
                         THEME.read().unwrap().border_focused
                     } else {
-                        Color::Reset
+                        THEME.read().unwrap().bg
                     })
                     .add_modifier(Modifier::BOLD),
             ),
         ]))
         .alignment(Alignment::Center);
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(block, area);
         f.render_widget(message_p, chunks[0]);
         f.render_widget(footer_p, chunks[1]);

@@ -757,7 +757,13 @@ mod tests {
 
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut terminal = ratatui::Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
+            },
+        )
+        .unwrap();
 
         // Clear milestone by passing empty values or "None" on Issue
         apply_selector_changes(

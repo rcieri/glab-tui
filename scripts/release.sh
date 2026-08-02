@@ -14,6 +14,11 @@ set -euo pipefail
 # it, squash-merges it, tags and pushes the version, waits for the CI release
 # build, then writes the release notes and pushes the Homebrew formula, Scoop
 # manifest, Docker image, and crate.
+#
+# You may resume from any phase by answering the "start from" prompt that
+# appears after the banner. Phases that require state set by earlier phases
+# (version tag, PR number, ...) will prompt for those values if they were
+# skipped.
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -41,12 +46,12 @@ else
   C_BOLD='' C_DIM='' C_RED='' C_GREEN='' C_YELLOW='' C_CYAN='' C_RESET=''
 fi
 
-die() { printf '%serror:%s %s\n' "${C_BOLD}${C_RED}" "$C_RESET" "$*" >&2; exit 1; }
+die()     { printf '%serror:%s %s\n' "${C_BOLD}${C_RED}" "$C_RESET" "$*" >&2; exit 1; }
 require() { command -v "$1" >/dev/null 2>&1 || die "missing required tool '$1' (${2:-})"; }
-note() { printf '\n%s==>%s %s\n' "${C_BOLD}${C_CYAN}" "$C_RESET" "$*"; }
-ok() { printf '%s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-phase() { printf '\n%s── [ %s ] ──%s\n' "${C_BOLD}${C_YELLOW}" "$*" "$C_RESET"; }
-banner() {
+note()    { printf '\n%s==>%s %s\n' "${C_BOLD}${C_CYAN}" "$C_RESET" "$*"; }
+ok()      { printf '%s✓%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+phase()   { printf '\n%s── [ %s ] ──%s\n' "${C_BOLD}${C_YELLOW}" "$*" "$C_RESET"; }
+banner()  {
   printf '\n%s============================================%s\n' "${C_BOLD}${C_CYAN}" "$C_RESET"
   printf '%s  glab-tui release orchestrator%s\n' "${C_BOLD}" "$C_RESET"
   printf '%s============================================%s\n' "${C_BOLD}${C_CYAN}" "$C_RESET"
@@ -118,6 +123,86 @@ select_opencode_model() {
 }
 
 # ---------------------------------------------------------------------------
+# Starting-point picker
+# ---------------------------------------------------------------------------
+# Phase IDs (numeric so we can do >= comparisons)
+PHASE_PREFLIGHT=0
+PHASE_PREPARE=1
+PHASE_GIFS=2
+PHASE_REVIEW=3
+PHASE_WAIT_CI=4
+PHASE_POST_RELEASE=5
+PHASE_PUBLISH=6
+
+START_PHASE=$PHASE_PREFLIGHT   # default: run everything
+
+select_start_phase() {
+  local -a phase_lines=(
+    "$PHASE_PREFLIGHT"$'\t'"0 · From the beginning  (preflight → prepare → GIFs → review → CI → post-release → publish)"
+    "$PHASE_PREPARE"$'\t'"1 · Prepare docs & PR    (version bump, opencode docs, create PR — skips preflight)"
+    "$PHASE_GIFS"$'\t'"2 · Generate GIFs only   (re-run generate-demos.sh, push, rebuild PR if needed)"
+    "$PHASE_REVIEW"$'\t'"3 · Review & merge       (squash-merge an existing PR and tag)"
+    "$PHASE_WAIT_CI"$'\t'"4 · Wait for CI build    (poll release assets for an already-tagged version)"
+    "$PHASE_POST_RELEASE"$'\t'"5 · Post-release         (release notes, Homebrew formula, Scoop manifest)"
+    "$PHASE_PUBLISH"$'\t'"6 · Publish              (Docker image → GHCR + crate → crates.io)"
+  )
+
+  note "Where would you like to start?"
+  pick "start phase" "$PHASE_PREFLIGHT" "${phase_lines[@]}"
+  START_PHASE="$PICK_RESULT"
+  ok "Starting from phase $START_PHASE"
+}
+
+# ---------------------------------------------------------------------------
+# State bootstrap helpers — prompt for values that skipped phases would set
+# ---------------------------------------------------------------------------
+
+# Ensure NEW_TAG / VERSION are set; fetch from git tags or prompt.
+ensure_version() {
+  if [[ -n "${NEW_TAG:-}" ]]; then return; fi
+
+  git fetch --tags --prune 2>/dev/null || true
+  local latest_tag
+  latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
+
+  printf '\n%sEnter the release tag%s (e.g. v1.2.3)' "$C_BOLD" "$C_RESET"
+  if [[ -n "$latest_tag" ]]; then
+    printf ' [latest tag: %s]' "$latest_tag"
+  fi
+  printf ': '
+  read -r NEW_TAG
+  [[ -n "$NEW_TAG" ]] || die "version tag is required"
+  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || die "tag must match vX.Y.Z (got '$NEW_TAG')"
+  VERSION="${NEW_TAG#v}"
+  ok "Version: $NEW_TAG"
+}
+
+# Ensure BRANCH is set (derived from NEW_TAG when not set by prepare()).
+ensure_branch() {
+  if [[ -n "${BRANCH:-}" ]]; then return; fi
+  ensure_version
+  BRANCH="opencode-release/$NEW_TAG"
+}
+
+# Ensure PR_NUMBER is set; look it up or prompt.
+ensure_pr_number() {
+  if [[ -n "${PR_NUMBER:-}" ]]; then return; fi
+  ensure_branch
+
+  PR_NUMBER="$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+  if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+    PR_NUMBER="$(gh pr list --repo "$REPO" --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+    printf '\n%sEnter the PR number%s for branch %s: ' "$C_BOLD" "$C_RESET" "$BRANCH"
+    read -r PR_NUMBER
+    [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || die "PR number must be a positive integer"
+  fi
+  ok "PR #$PR_NUMBER"
+}
+
+# ---------------------------------------------------------------------------
 # Phase 0: preflight checks
 # ---------------------------------------------------------------------------
 preflight() {
@@ -176,6 +261,7 @@ next_version() {
   fi
 
   NEW_TAG="v$VERSION"
+  BRANCH="opencode-release/$NEW_TAG"
   note "Next version: $NEW_TAG"
 }
 
@@ -191,7 +277,8 @@ bump_cargo_version() {
 }
 
 prepare() {
-  BRANCH="opencode-release/$NEW_TAG"
+  ensure_version   # no-op if next_version() already ran
+
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout "$BRANCH"
   elif git ls-remote --exit-code --quiet origin "refs/heads/$BRANCH" 2>/dev/null; then
@@ -217,12 +304,26 @@ The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSI
 
   run_opencode "$PROMPT"
   ok "CHANGELOG.md / AGENTS.md / README.md regenerated"
+}
+
+# ---------------------------------------------------------------------------
+# Phase 2: generate demo GIFs
+# ---------------------------------------------------------------------------
+generate_gifs() {
+  ensure_branch
+
+  # Make sure there is a built binary on PATH.
+  if [[ ! -x "$ROOT/target/release/glab-tui" ]]; then
+    note "No release binary found — building now..."
+    cargo build --release
+  fi
 
   note "Generating demo GIFs..."
   export PATH="$ROOT/target/release:$PATH"
   "$ROOT/assets/generate-demos.sh"
   ok "demo GIFs regenerated"
 
+  # Stage and commit the GIFs (and any other outstanding prepare changes).
   git add CHANGELOG.md AGENTS.md README.md Cargo.toml Cargo.lock assets/demo-*.gif
   if ! git diff --cached --quiet; then
     git commit -m "chore: prepare release $NEW_TAG"
@@ -248,14 +349,19 @@ Review, then this script will merge and cut the release.")"
 }
 
 # ---------------------------------------------------------------------------
-# Phase 2: wait for review, then merge and tag
+# Phase 3: wait for review, then merge and tag
 # ---------------------------------------------------------------------------
 review_gate() {
-  note "Pause for review"
+  ensure_pr_number
+  PR_URL="https://github.com/$REPO/pull/$PR_NUMBER"
+  note "Pause for review — PR: $PR_URL"
   read -r -p "Review the PR (CI checks run in the background). Press Enter to squash-merge and continue the release... "
 }
 
 merge_and_tag() {
+  ensure_version
+  ensure_pr_number
+
   note "Merging PR #$PR_NUMBER (squash, auto-merge when checks pass)..."
   if ! gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --auto 2>/dev/null; then
     local state
@@ -281,9 +387,11 @@ merge_and_tag() {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 3: wait for the CI release build
+# Phase 4: wait for the CI release build
 # ---------------------------------------------------------------------------
 wait_for_release() {
+  ensure_version
+
   local total i current elapsed
   total=$((RELEASE_WAIT_MIN * 3)) # one check every 20s
   note "Waiting for release $NEW_TAG assets (timeout ${RELEASE_WAIT_MIN}m)..."
@@ -304,7 +412,7 @@ wait_for_release() {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 4: post-release (notes, Homebrew, Scoop)
+# Phase 5: post-release (notes, Homebrew, Scoop)
 # ---------------------------------------------------------------------------
 update_homebrew() {
   local arch file sha macos_amd64 macos_arm64 linux_amd64 linux_arm64
@@ -372,8 +480,10 @@ update_scoop() {
 }
 
 post_release() {
+  ensure_version
+
   local prev_tag prompt
-  prev_tag="$(git describe --tags --abbrev=0 "$NEW_TAG^" 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || true)"
+  prev_tag="$(git describe --tags --abbrev=0 "${NEW_TAG}^" 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || true)"
   [[ -n "$prev_tag" ]] || die "could not determine the previous tag before $NEW_TAG"
 
   note "Generating RELEASE_NOTES.md via opencode..."
@@ -403,9 +513,11 @@ Use the content from CHANGELOG.md for the current version as the source material
 }
 
 # ---------------------------------------------------------------------------
-# Phase 5: publish (Docker image + crate)
+# Phase 6: publish (Docker image + crate)
 # ---------------------------------------------------------------------------
 publish() {
+  ensure_version
+
   local package_version tag_version user
   package_version="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[0].version')"
   tag_version="${NEW_TAG#v}"
@@ -437,34 +549,84 @@ main() {
   trap 'rm -rf "$TMP_DIR"' EXIT
   banner
 
-  phase "Preflight"
-  preflight
+  # ── Starting-point picker ──────────────────────────────────────────────────
+  select_start_phase
 
-  phase "Prepare"
-  next_version
-  if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
-    select_opencode_model
-  else
-    ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+  # ── Phase 0: Preflight ────────────────────────────────────────────────────
+  if [[ "$START_PHASE" -le "$PHASE_PREFLIGHT" ]]; then
+    phase "Preflight"
+    preflight
   fi
-  prepare
 
-  phase "Review & merge"
-  review_gate
-  merge_and_tag
+  # ── Phase 1: Prepare (version bump, docs, PR) ─────────────────────────────
+  if [[ "$START_PHASE" -le "$PHASE_PREPARE" ]]; then
+    phase "Prepare"
+    next_version
+    if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
+      select_opencode_model
+    else
+      ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+    fi
+    prepare
+  fi
 
-  phase "Wait for CI build"
-  wait_for_release
+  # ── Phase 2: Generate GIFs ────────────────────────────────────────────────
+  if [[ "$START_PHASE" -le "$PHASE_GIFS" ]]; then
+    phase "Generate GIFs"
+    # If jumping directly to this phase, hydrate required state.
+    if [[ "$START_PHASE" -ge "$PHASE_GIFS" ]]; then
+      ensure_version
+      if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
+        select_opencode_model
+      else
+        ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+      fi
+    fi
+    generate_gifs
+  fi
 
-  phase "Post-release"
-  post_release
+  # ── Phase 3: Review & merge ───────────────────────────────────────────────
+  if [[ "$START_PHASE" -le "$PHASE_REVIEW" ]]; then
+    phase "Review & merge"
+    review_gate
+    merge_and_tag
+  fi
 
-  phase "Publish"
-  publish
+  # ── Phase 4: Wait for CI build ────────────────────────────────────────────
+  if [[ "$START_PHASE" -le "$PHASE_WAIT_CI" ]]; then
+    phase "Wait for CI build"
+    if [[ "$START_PHASE" -ge "$PHASE_WAIT_CI" ]]; then
+      ensure_version
+    fi
+    wait_for_release
+  fi
+
+  # ── Phase 5: Post-release (notes, Homebrew, Scoop) ───────────────────────
+  if [[ "$START_PHASE" -le "$PHASE_POST_RELEASE" ]]; then
+    phase "Post-release"
+    if [[ "$START_PHASE" -ge "$PHASE_POST_RELEASE" ]]; then
+      ensure_version
+      if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
+        select_opencode_model
+      else
+        ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+      fi
+    fi
+    post_release
+  fi
+
+  # ── Phase 6: Publish (Docker + crate) ────────────────────────────────────
+  if [[ "$START_PHASE" -le "$PHASE_PUBLISH" ]]; then
+    phase "Publish"
+    if [[ "$START_PHASE" -ge "$PHASE_PUBLISH" ]]; then
+      ensure_version
+    fi
+    publish
+  fi
 
   git checkout main 2>/dev/null || true
-  git branch -D "$BRANCH" 2>/dev/null || true
-  ok "Release $NEW_TAG complete."
+  git branch -D "${BRANCH:-}" 2>/dev/null || true
+  ok "Release ${NEW_TAG:-} complete."
 }
 
 main "$@"

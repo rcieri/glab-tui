@@ -16,7 +16,7 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.8.1`)
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.8.2`)
 
 ### Dual-Engine Architecture
 The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
@@ -36,9 +36,10 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
 * [src/domain/](src/domain/): Domain models and top-level API functions.
-    * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, and event tx.
+    * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, api_per_page, and event tx.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
+    * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.
     * [pipelines.rs](src/domain/pipelines.rs): Pipeline, Job structures and job deduplication logic.
     * [runners.rs](src/domain/runners.rs): Runner structures.
     * [releases.rs](src/domain/releases.rs): Release structures.
@@ -47,7 +48,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
     * [branches.rs](src/domain/branches.rs): Branch structures.
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
-* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches.
+* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
 * [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `parse_project_path` (remote-URL → `namespace/project`), `get_current_branch`, `slugify`, `get_workflow_files`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
@@ -107,6 +108,12 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
   - Leaving the diff view with pending drafts opens the standard confirm popup (`ConfirmAction::SubmitReview(mr_iid)`); confirming opens the Approve / Request Changes / Comment selector, declining clears the drafts and exits review mode.
 * **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui.rs](src/ui.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
 
+### MR Review State (Approval / Mergeable / Workflow)
+* The MR/PR table's `Approval`, `Mergeable`, and `Workflow` columns are derived, not fetched. `ApprovalState` / `MergeabilityState` / `WorkflowStatus` and the display/sort/filter helpers live in [src/domain/mr_state.rs](src/domain/mr_state.rs); cell text uses ALL-CAPS display strings (e.g. `CONFLICT`, `REBASE`, `CLEAN`, `APPROVED`, `AWAITING`) that the column-filter picker also shows.
+* **Data sources:** GitLab fills both axes with one bulk `glab api graphql` query over `mergeRequests(iids: [...])` (batched by `api_per_page`); GitHub derives them from the review/merge fields returned by `gh pr list` (`reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests`) plus the current login via `gh api user --jq .login`. Either axis may be `None` (unknown) — never a guessed value.
+* `MergeRequest` carries `approval` and `mergeability` as `Option<…>` and a `#[serde(skip)]` derived `workflow`. After any load (live fetch or cache read), call `derive_workflow()` in [src/fetch.rs](src/fetch.rs) to recompute `workflow` from approval state — cached rows deserialize with it unset even though the approval state it reads was persisted.
+* **Rebase gating:** `rebase_gate()` in [src/domain/mr_state.rs](src/domain/mr_state.rs) decides whether `R` may rebase — `Allowed`, `ResolveLocally` (conflicts), or `NotNeeded` — surfaced as a confirm popup or a user-facing error toast. Revoking approval (`A`) is GitLab-only; `gh pr review` has no revoke path.
+
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
 * `ProjectCache` now stores `enabled_columns`, `group_by_column`, `group_ascending`, and `column_filters` in addition to API data.
@@ -114,10 +121,11 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 
 ### Config & Theme System
 * Config is loaded via `Config::load()` in [src/config.rs](src/config.rs) at startup and stored on `App` as `app.config`.
+* `Config` exposes both `page_size` (total item budget per tab) and `api_per_page` (items per HTTP request, clamped to GitLab's `1–100` `per_page` range via `api_per_page_clamped()`). Thread both through the `Backend` pagination methods; `_per_request` is a no-op on GitHub, which paginates with `--limit`.
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` / the `save_view` keybinding), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
-* Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`.
+* Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`. `Theme::default()` derives directly from `src/themes/default.toml` — there is no hardcoded in-code fallback, so the bundled TOML is the single source of truth.
 * Icons: The global `ICONS` `RwLock` is initialized at startup with hardcoded nerd font defaults and is not user-configurable.
-* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES`. User themes in `~/.config/glab-tui/themes/` take precedence.
+* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (16 presets including the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens to `Theme` if needed.
 
 ### Keybinding System
@@ -152,6 +160,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 * Column filter state is tracked via `app.column_filter_context` and `app.column_filters: HashMap<Tab, HashMap<String, Vec<String>>>`.
 * Group state is tracked via `app.group_by_column: Option<String>` and `app.group_ascending: bool`.
 * When rendering the MR/PR pipeline status column, check `is_github` to display "Pipeline" (GitLab) or "Action" (GitHub) terminology.
+* MR/PR review-state columns (`Approval`, `Mergeable`, `Workflow`) are derived in [src/domain/mr_state.rs](src/domain/mr_state.rs); see the "MR review state" note under Core Architectural Patterns below.
 
 ## 4. UI & Rendering Guidelines (`ratatui`)
 
@@ -182,19 +191,19 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Command | Pagination |
 |---|---|---|
-| List issues | `glab issue list --output json -R <repo> --state <s> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| List issues | `glab issue list --output json -R <repo> --state <s> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Get single issue | `glab issue view <iid> --output json -R <repo>` | N/A |
-| List MRs | `glab mr list --output json -R <repo> --state <s> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| List MRs | `glab mr list --output json -R <repo> --state <s> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Get single MR | `glab mr view <iid> --output json -R <repo>` | N/A |
 | Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
 | List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
-| List pipelines | `glab ci list --output json -R <repo> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
 | List milestones | `glab milestone list --output json -R <repo> --per-page <N>` | Single call |
 | List milestone issues | `glab issue list --milestone <id> --all --output json -R <repo> --per-page <N>` | Single call |
 | List todos | `glab todo list --output=json` | Single call |
-| List labels | `glab label list --output json -R <repo> --per-page 100` | Single call |
+| List labels | `glab label list --output json -R <repo> --per-page <api_per_page>` | Single call |
 
 #### Mutations — Native Subcommands
 
@@ -211,6 +220,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Start manual job | `glab ci retry <job_id> -R <repo>` |
 | Run pipeline (variables/inputs) | `glab ci run [--branch <ref>] [--mr] [--variables k:v ...] [--input k:v ...]` |
 | Mark todo done | `glab todo done <id>` |
+| Revoke MR approval | `glab mr revoke <iid> -R <repo>` |
+| Rebase MR | `glab mr rebase <iid> -R <repo>` |
 
 #### Data Fetching — Raw API (no native subcommand exists)
 
@@ -226,6 +237,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
+| MR approval/mergeability state | `glab api graphql` over `mergeRequests(iids: [...])` | `glab mr list` exposes neither axis; one bulk query fills the Approval/Mergeable columns (batched by `api_per_page`) |
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 
@@ -237,7 +249,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 |---|---|---|
 | List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10) |
 | Get single issue | `gh issue view <iid> --json ... -R <repo>` | N/A |
-| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call |
+| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call; the JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
 | List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
@@ -257,12 +269,14 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Update release | `gh release edit <tag> -R <repo> -t <name> -n <desc>` |
 | Delete release | `gh release delete <tag> -R <repo> -y` |
 | Update milestone state | `gh api -X PATCH repos/{}/milestones/{} -f state=...` |
+| Rebase PR | `gh pr update-branch <iid> -R <repo> --rebase` |
 
 #### Data Fetching — Raw API (no native subcommand exists)
 
 | Operation | Endpoint | Why raw API |
 |---|---|---|
 | List PR review comments | `GET /repos/{}/pulls/{}/comments?per_page=<N>` | `gh pr view --json comments` lacks inline line/position fields needed for diff review |
+| Get current user login | `gh api user --jq .login` | Needed to derive "your" workflow/approval state for the MR/PR review columns |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
 | List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
@@ -322,7 +336,7 @@ Releases are prepared, documented, and distributed from a maintainer's machine v
 Run `scripts/release.sh [patch|minor|major]` (default `patch`) and the script walks the full release:
 
 1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, JetBrainsMono Nerd Font, and push access to both manifest repos (`rcieri/homebrew-glab-tui`, `rcieri/scoop-glab-tui`); exits non-zero with a clear message if a prerequisite is missing.
-2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
+2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the opencode model (provider → model → variant; see below) unless `OPENCODE_MODEL` is set, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
 3. **Review gate** — pauses for the maintainer to review the PR (CI checks run in the background); the script continues on Enter.
 4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 5-target binary matrix and uploads them to the GitHub release.
 5. **Wait for build** — polls until all 5 release assets exist (timeout: `RELEASE_WAIT_MIN`, default 45 min).

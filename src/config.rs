@@ -455,6 +455,9 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
         "everforest-dark",
         include_str!("themes/everforest-dark.toml"),
     ),
+    ("rose-pine", include_str!("themes/rose-pine.toml")),
+    ("rose-pine-moon", include_str!("themes/rose-pine-moon.toml")),
+    ("rose-pine-dawn", include_str!("themes/rose-pine-dawn.toml")),
 ];
 
 fn config_dir() -> PathBuf {
@@ -493,57 +496,18 @@ fn ensure_themes() {
     }
 }
 
-#[rustfmt::skip]
+impl Default for Theme {
+    fn default() -> Self {
+        toml::from_str::<ThemeToml>(include_str!("themes/default.toml"))
+            .expect("Bundled default.toml must be valid")
+            .to_theme()
+            .expect("Bundled default.toml must map to valid Theme")
+    }
+}
+
 impl Theme {
     pub fn default() -> Self {
-        Self {
-            bg:               Color::Rgb(18, 18, 20),
-            border:           Color::Rgb(80, 80, 88),
-            border_focused:   Color::Rgb(49, 191, 103),
-            header_fg:        Color::Rgb(49, 191, 103),
-            highlight_bg:     Color::Rgb(43, 43, 57),
-            inactive_bg:      Color::Rgb(49, 50, 68),
-            text_normal:      Color::Rgb(216, 222, 233),
-            text_muted:       Color::Rgb(130, 130, 138),
-            checked_bg:       Color::Rgb(28, 38, 55),
-            green:            Color::Rgb(49, 191, 103),
-            green_bg:         Color::Rgb(20, 45, 28),
-            red:              Color::Rgb(224, 73, 83),
-            red_bg:           Color::Rgb(50, 20, 25),
-            blue:             Color::Rgb(61, 139, 255),
-            blue_bg:          Color::Rgb(15, 35, 60),
-            yellow:           Color::Rgb(235, 180, 50),
-            yellow_bg:        Color::Rgb(45, 35, 15),
-            purple:           Color::Rgb(168, 122, 243),
-            purple_bg:        Color::Rgb(38, 25, 55),
-            diff_addition_fg: Color::Rgb(49, 191, 103),
-            diff_addition_bg: Color::Rgb(20, 45, 28),
-            diff_deletion_fg: Color::Rgb(224, 73, 83),
-            diff_deletion_bg: Color::Rgb(50, 20, 25),
-            diff_gutter_bg:   Color::Rgb(35, 35, 45),
-            diff_sep:         Color::Rgb(130, 130, 138),
-            comment_bg:       Color::Rgb(43, 43, 57),
-            comment_draft_bg: Color::Rgb(45, 35, 15),
-            modal_border:     Color::Rgb(49, 191, 103),
-            pipeline_success: Color::Rgb(49, 191, 103),
-            pipeline_failed:  Color::Rgb(224, 73, 83),
-            pipeline_running: Color::Rgb(61, 139, 255),
-            pipeline_pending: Color::Rgb(235, 180, 50),
-            pipeline_canceled:Color::Rgb(130, 130, 138),
-            pipeline_skipped: Color::Rgb(130, 130, 138),
-            label_palette: [
-                Color::Rgb(168, 122, 243),
-                Color::Rgb(61, 139, 255),
-                Color::Rgb(49, 191, 103),
-                Color::Rgb(235, 180, 50),
-                Color::Rgb(224, 73, 83),
-                Color::Rgb(240, 140, 180),
-                Color::Rgb(250, 120, 80),
-                Color::Rgb(40, 200, 200),
-                Color::Rgb(180, 230, 40),
-                Color::Rgb(220, 160, 255),
-            ],
-        }
+        Default::default()
     }
 
     pub fn preset(name: &str) -> Option<Self> {
@@ -562,7 +526,6 @@ impl Theme {
             .find(|(n, _)| *n == name)
             .and_then(|(_, toml_str)| toml::from_str::<ThemeToml>(toml_str).ok())
             .and_then(|tf| tf.to_theme())
-            .or_else(|| (name == "default").then(Self::default))
     }
 }
 
@@ -1219,7 +1182,8 @@ impl Config {
 # See https://github.com/rcieri/glab-tui for documentation
 
 # Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
-# "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark"
+# "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark",
+# "rose-pine", "rose-pine-moon", "rose-pine-dawn"
 theme_preset = "default"
 
 # Default request page size
@@ -1478,21 +1442,10 @@ pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().
 pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Icons::default()));
 
 pub fn all_theme_presets() -> Vec<String> {
-    let mut presets: Vec<String> = vec![
-        "default".into(),
-        "clean".into(),
-        "tokyo-night".into(),
-        "gruvbox".into(),
-        "nord".into(),
-        "catppuccin-mocha".into(),
-        "dracula".into(),
-        "deep-space".into(),
-        "solarized-dark".into(),
-        "monokai".into(),
-        "one-dark".into(),
-        "synthwave-84".into(),
-        "everforest-dark".into(),
-    ];
+    let mut presets: Vec<String> = BUNDLED_THEMES
+        .iter()
+        .map(|(name, _)| name.to_string())
+        .collect();
 
     // Scan user themes directory for additional .toml files
     let dir = themes_dir();
@@ -1795,6 +1748,27 @@ page_size = 250
                     "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_all_bundled_themes_parse_successfully() {
+        for (name, _) in BUNDLED_THEMES {
+            assert!(
+                Theme::preset(name).is_some(),
+                "Bundled theme '{name}' failed to parse into valid Theme"
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_theme_presets_includes_all_bundled() {
+        let presets = all_theme_presets();
+        for (name, _) in BUNDLED_THEMES {
+            assert!(
+                presets.contains(&name.to_string()),
+                "all_theme_presets() missing bundled theme '{name}'"
+            );
         }
     }
 }

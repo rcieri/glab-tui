@@ -1,7 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, BorderType, Borders, Clear},
 };
 
@@ -21,7 +21,7 @@ pub(crate) fn modal_block(title: &str) -> Block<'static> {
                 .fg(theme.modal_border)
                 .add_modifier(Modifier::BOLD),
         )
-        .style(Style::default().bg(Color::Reset))
+        .style(Style::default().bg(theme.bg))
 }
 
 /// Clear, size, and render a modal frame. Returns (inner_area, outer_area) for body content.

@@ -18,7 +18,7 @@ generate() {
 mkdir -p "$ROOT/.glab-tui"
 
 generate "$ROOT/assets/demo-overview.tape"  "default"
-generate "$ROOT/assets/demo-search.tape"    "tokyo-night"
+generate "$ROOT/assets/demo-search.tape"    "rose-pine-dawn"
 generate "$ROOT/assets/demo-selection.tape" "gruvbox"
 
 echo "=== All demos generated ==="

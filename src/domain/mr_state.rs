@@ -250,6 +250,16 @@ fn format_counts(s: &ApprovalState) -> String {
     }
 }
 
+/// Repeat the pending icon once per approval still needed (capped at 5).
+/// Falls back to a single icon when `approvals_left` is unknown.
+fn pending_icons(s: &ApprovalState, icon: &str) -> String {
+    let n = s.approvals_left.unwrap_or(1).min(5).max(1) as usize;
+    std::iter::repeat(icon)
+        .take(n)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// First-match-wins cascade. See the precedence flowchart in the design spec.
 pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String, ApprovalTone) {
     let icons = crate::config::ICONS.read().unwrap();
@@ -282,7 +292,7 @@ pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String,
 
     if s.awaiting_you {
         return (
-            format!("{} {}", icons.approval_pending, format_counts(s)),
+            format!("{} AWAITING", pending_icons(s, &icons.approval_pending)),
             ApprovalTone::AwaitingYou,
         );
     }
@@ -293,7 +303,11 @@ pub fn approval_cell(state: Option<&ApprovalState>, is_github: bool) -> (String,
         );
     }
     (
-        format!("{} {}", icons.approval_pending, format_counts(s)),
+        format!(
+            "{} {}",
+            pending_icons(s, &icons.approval_pending),
+            format_counts(s)
+        ),
         ApprovalTone::Pending,
     )
 }
@@ -513,9 +527,26 @@ mod tests {
         format!("{} APPROVED", icons.approval_approved)
     }
 
-    fn expect_awaiting(counts: &str) -> String {
+    /// Builds the expected awaiting-you string: n icons + " AWAITING".
+    fn expect_awaiting_you(approvals_left: u32) -> String {
         let icons = crate::config::ICONS.read().unwrap();
-        format!("{} {}", icons.approval_pending, counts)
+        let n = approvals_left.min(5).max(1) as usize;
+        let dots = std::iter::repeat(icons.approval_pending.as_str())
+            .take(n)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{} AWAITING", dots)
+    }
+
+    /// Builds the expected pending string: n icons + " " + counts.
+    fn expect_pending(approvals_left: u32, counts: &str) -> String {
+        let icons = crate::config::ICONS.read().unwrap();
+        let n = approvals_left.min(5).max(1) as usize;
+        let dots = std::iter::repeat(icons.approval_pending.as_str())
+            .take(n)
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("{} {}", dots, counts)
     }
 
     fn expect_github_pending() -> String {
@@ -650,7 +681,7 @@ mod tests {
         };
         let (text, tone) = approval_cell(Some(&s), false);
         assert_ne!(tone, ApprovalTone::Approved);
-        assert_eq!(text, expect_awaiting("0"));
+        assert_eq!(text, expect_pending(0, "0"));
     }
 
     #[test]
@@ -667,7 +698,7 @@ mod tests {
             ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
-        assert_eq!(text, expect_awaiting("0/1"));
+        assert_eq!(text, expect_awaiting_you(1));
         assert_eq!(tone, ApprovalTone::AwaitingYou);
     }
 
@@ -684,7 +715,7 @@ mod tests {
             ..Default::default()
         };
         let (text, tone) = approval_cell(Some(&s), false);
-        assert_eq!(text, expect_awaiting("1/2"));
+        assert_eq!(text, expect_pending(1, "1/2"));
         assert_eq!(tone, ApprovalTone::Pending);
     }
 

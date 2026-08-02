@@ -7,8 +7,8 @@ set -euo pipefail
 #
 # With no argument, you are prompted to pick the release increment (patch is
 # the default). You are also prompted to pick the opencode model used for the
-# regenerated docs and release notes (provider -> model -> variant, via fzf
-# when available; set OPENCODE_MODEL to skip the prompt). Walks the whole
+# regenerated docs and release notes (the `opencode models` printout piped
+# through fzf; set OPENCODE_MODEL to skip the prompt). Walks the whole
 # release: bumps the crate version, regenerates docs and demo GIFs locally
 # (where `gh` is authenticated), opens a prepare PR, waits for you to review
 # it, squash-merges it, tags and pushes the version, waits for the CI release
@@ -61,38 +61,9 @@ run_opencode() {
 }
 
 # ---------------------------------------------------------------------------
-# opencode model selection (provider -> model -> variant)
+# opencode model selection (fzf over the `opencode models` printout)
 # ---------------------------------------------------------------------------
-VARIANT_TOKENS='free mini nano pro max fast lite spark preview latest codex plus ultra'
 PICK_RESULT=''
-
-split_model_id() {
-  local id="$1"
-  MODEL_PROVIDER="${id%%/*}"
-  MODEL_NAME="${id#*/}"
-}
-
-# strip_variant <model>: strips trailing variant tokens, setting MODEL_BASE and
-# MODEL_VARIANT (e.g. gpt-5.4-mini-fast -> base gpt-5.4, variant mini-fast)
-strip_variant() {
-  local name="$1" variant="" last
-  MODEL_BASE="$name"
-  MODEL_VARIANT="(default)"
-  while true; do
-    last="${name##*-}"
-    if [[ " $VARIANT_TOKENS " == *" $last "* ]]; then
-      variant="$last${variant:+-$variant}"
-      name="${name%-$last}"
-      [[ "$name" == *-* ]] || break
-    else
-      break
-    fi
-  done
-  if [[ -n "$variant" ]]; then
-    MODEL_BASE="$name"
-    MODEL_VARIANT="$variant"
-  fi
-}
 
 # pick <prompt> <default> <candidate...>; each candidate is "value<TAB>label".
 # Stores the chosen value in PICK_RESULT (defaults when nothing is picked).
@@ -120,68 +91,27 @@ pick() {
     fi
   fi
   PICK_RESULT="${chosen%%$'\t'*}"
-  [[ -z "$PICK_RESULT" ]] && PICK_RESULT="$default"
+  if [[ -z "$PICK_RESULT" ]]; then
+    PICK_RESULT="$default"
+  fi
 }
 
 select_opencode_model() {
-  local all_models provider_lines provider models model_lines variants_lines variant
-  local base cur_base cur_variant current cur_provider
-  local b vs m v
-  local -A families=()
+  local all_models selected current
+  local -a model_lines=()
 
-  current="${OPENCODE_MODEL:-opencode/big-pickle}"
-  split_model_id "$current"
-  cur_provider="$MODEL_PROVIDER"
-  strip_variant "$MODEL_NAME"
-  cur_base="$MODEL_BASE"
-  cur_variant="$MODEL_VARIANT"
-
-  note "Select the opencode model used to regenerate docs and release notes"
   all_models="$(opencode models)"
   [[ -n "$all_models" ]] || die "'opencode models' returned no models"
+  current="${OPENCODE_MODEL:-opencode/big-pickle}"
 
-  # Step 1: provider
-  provider_lines=()
-  while read -r count name; do
-    provider_lines+=("$(printf '%s\t%s (%s models)' "$name" "$name" "$count")")
-  done < <(printf '%s\n' "$all_models" | cut -d/ -f1 | sort | uniq -c)
-  pick "provider" "$cur_provider" "${provider_lines[@]}"
-  provider="$PICK_RESULT"
+  note "Select the opencode model used to regenerate docs and release notes"
+  while read -r id; do
+    model_lines+=("$id"$'\t'"$id")
+  done <<< "$all_models"
+  pick "model" "$current" "${model_lines[@]}"
+  selected="$PICK_RESULT"
 
-  # Step 2: model family
-  mapfile -t models < <(printf '%s\n' "$all_models" | awk -F/ -v p="$provider" '$1 == p')
-  for m in "${models[@]}"; do
-    strip_variant "${m#*/}"
-    if [[ -n "${families[$MODEL_BASE]:-}" ]]; then
-      families[$MODEL_BASE]+=" $MODEL_VARIANT"
-    else
-      families[$MODEL_BASE]="$MODEL_VARIANT"
-    fi
-  done
-  model_lines=()
-  while read -r b; do
-    vs="$(printf '%s\n' ${families[$b]:-} | sort -u | paste -sd' ' -)"
-    if [[ "$vs" == "(default)" ]]; then
-      model_lines+=("$(printf '%s\t%s' "$b" "$b")")
-    else
-      model_lines+=("$(printf '%s\t%s [%s]' "$b" "$b" "$vs")")
-    fi
-  done < <(printf '%s\n' "${!families[@]}" | sort)
-  [[ "$provider" == "$cur_provider" ]] || cur_base=""
-  pick "model" "$cur_base" "${model_lines[@]}"
-  base="$PICK_RESULT"
-
-  # Step 3: variant
-  variants_lines=()
-  for v in $(printf '%s\n' ${families[$base]:-} | sort -u); do
-    variants_lines+=("$(printf '%s\t%s' "$v" "$v")")
-  done
-  [[ "$provider" == "$cur_provider" && "$base" == "$cur_base" ]] || cur_variant="(default)"
-  pick "variant" "$cur_variant" "${variants_lines[@]}"
-  variant="$PICK_RESULT"
-
-  OPENCODE_MODEL="$provider/$base"
-  [[ "$variant" != "(default)" ]] && OPENCODE_MODEL="$OPENCODE_MODEL-$variant"
+  OPENCODE_MODEL="$selected"
   grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
     die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
   ok "opencode model: $OPENCODE_MODEL"

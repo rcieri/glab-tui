@@ -2378,7 +2378,11 @@ impl App {
                     .map(|m| m.title.clone())
                     .into_iter()
                     .collect(),
-                "State" => vec![item.state.clone()],
+                "State" => vec![if item.state == "opened" {
+                    "OPEN".to_string()
+                } else {
+                    "CLOSED".to_string()
+                }],
                 "ID" => vec![item.iid.to_string()],
                 "Title" => vec![item.title.clone()],
                 _ => vec![],
@@ -3534,10 +3538,13 @@ impl App {
                     })
                 } else {
                     vals.iter().any(|v| {
+                        let norm_v = Self::normalize_filter_value(v);
                         selected.contains(v)
-                            || selected
-                                .iter()
-                                .any(|s| Self::normalize_filter_value(s) == v.as_str())
+                            || selected.contains(norm_v)
+                            || selected.iter().any(|s| {
+                                let norm_s = Self::normalize_filter_value(s);
+                                norm_s == v.as_str() || norm_s == norm_v
+                            })
                     })
                 }
             });
@@ -5480,14 +5487,58 @@ index 123456..789012 100644
         };
         app.todos.items = vec![t_unread, t_done];
 
-        // Filter Todos by new display value "NEW"
-        app.column_filters.entry(Tab::Todos).or_default().insert(
+        // 3. Issues
+        let i_open = crate::domain::issues::Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        let i_closed = crate::domain::issues::Issue {
+            iid: 2,
+            title: "Issue 2".to_string(),
+            state: "closed".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user2".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        app.issues.items = vec![i_open, i_closed];
+
+        // Filter Issues by new display value "OPEN"
+        app.column_filters.entry(Tab::Issues).or_default().insert(
             "State".to_string(),
-            ["NEW".to_string()].into_iter().collect(),
+            ["OPEN".to_string()].into_iter().collect(),
         );
-        let res_todos = app.filtered_todos();
-        assert_eq!(res_todos.len(), 1);
-        assert_eq!(res_todos[0].id, "101");
+        let res_issues = app.filtered_issues();
+        assert_eq!(res_issues.len(), 1);
+        assert_eq!(res_issues[0].iid, 1);
+
+        // Filter Issues by legacy value "opened"
+        app.column_filters.entry(Tab::Issues).or_default().insert(
+            "State".to_string(),
+            ["opened".to_string()].into_iter().collect(),
+        );
+        let res_issues_legacy = app.filtered_issues();
+        assert_eq!(res_issues_legacy.len(), 1);
+        assert_eq!(res_issues_legacy[0].iid, 1);
     }
 
     #[test]

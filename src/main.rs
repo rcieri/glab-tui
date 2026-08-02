@@ -3877,7 +3877,9 @@ async fn main() -> Result<()> {
                                                     selected_list = vec![query];
                                                 }
                                             }
-                                        } else if !selector.multi_select && selected_list.is_empty()
+                                        } else if !selector.multi_select
+                                            && selected_list.is_empty()
+                                            && selector.field_type != "milestone"
                                         {
                                             selected_list.push(item.clone());
                                         }
@@ -3992,15 +3994,6 @@ async fn main() -> Result<()> {
                                             events.sender(),
                                             active_tab,
                                         );
-
-                                        if let Some(client) = &app.gitlab_client {
-                                            spawn_refresh_active_tab(
-                                                client,
-                                                &app.project_context,
-                                                app.active_tab,
-                                                events.sender(),
-                                            );
-                                        }
 
                                         rebuild_edit_menu(&mut app, &entity_type, entity_iid);
                                     }

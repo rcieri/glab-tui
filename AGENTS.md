@@ -70,7 +70,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
     * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers.
     * [diff.rs](src/ui/diff.rs): Diff view render functions.
     * [modal.rs](src/ui/modal.rs): Unified modal component.
-* [src/themes/](src/themes/): 13 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84).
+* [src/themes/](src/themes/): 16 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84, rose-pine, rose-pine-moon, rose-pine-dawn).
 
 ## 3. Core Architectural Patterns
 

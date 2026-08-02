@@ -135,6 +135,12 @@ fn merge_syntax_with_fuzzy(
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
 
+    // Paint full canvas with theme background so theme renders consistently regardless of terminal emulator defaults
+    f.render_widget(
+        Block::default().style(Style::default().bg(THEME.read().unwrap().bg)),
+        size,
+    );
+
     // Minimum terminal size guard
     if size.width < 54 || size.height < 10 {
         let msg = format!("Terminal too small — resize to at least {}×{}", 54, 10);
@@ -499,7 +505,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let pr_label = if app.is_github() {
             "Pull Request"
@@ -609,7 +615,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             .title(Line::from(title_spans))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let inner_area = outer_block.inner(area);
 

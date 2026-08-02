@@ -455,6 +455,9 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
         "everforest-dark",
         include_str!("themes/everforest-dark.toml"),
     ),
+    ("rose-pine", include_str!("themes/rose-pine.toml")),
+    ("rose-pine-moon", include_str!("themes/rose-pine-moon.toml")),
+    ("rose-pine-dawn", include_str!("themes/rose-pine-dawn.toml")),
 ];
 
 fn config_dir() -> PathBuf {
@@ -497,12 +500,12 @@ fn ensure_themes() {
 impl Theme {
     pub fn default() -> Self {
         Self {
-            bg:               Color::Rgb(18, 18, 20),
+            bg:               Color::Rgb(0, 0, 0),
             border:           Color::Rgb(80, 80, 88),
             border_focused:   Color::Rgb(49, 191, 103),
             header_fg:        Color::Rgb(49, 191, 103),
-            highlight_bg:     Color::Rgb(43, 43, 57),
-            inactive_bg:      Color::Rgb(49, 50, 68),
+            highlight_bg:     Color::Rgb(38, 38, 50),
+            inactive_bg:      Color::Rgb(24, 24, 28),
             text_normal:      Color::Rgb(216, 222, 233),
             text_muted:       Color::Rgb(130, 130, 138),
             checked_bg:       Color::Rgb(28, 38, 55),
@@ -1219,7 +1222,8 @@ impl Config {
 # See https://github.com/rcieri/glab-tui for documentation
 
 # Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
-# "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark"
+# "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark",
+# "rose-pine", "rose-pine-moon", "rose-pine-dawn"
 theme_preset = "default"
 
 # Default request page size
@@ -1478,21 +1482,10 @@ pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().
 pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Icons::default()));
 
 pub fn all_theme_presets() -> Vec<String> {
-    let mut presets: Vec<String> = vec![
-        "default".into(),
-        "clean".into(),
-        "tokyo-night".into(),
-        "gruvbox".into(),
-        "nord".into(),
-        "catppuccin-mocha".into(),
-        "dracula".into(),
-        "deep-space".into(),
-        "solarized-dark".into(),
-        "monokai".into(),
-        "one-dark".into(),
-        "synthwave-84".into(),
-        "everforest-dark".into(),
-    ];
+    let mut presets: Vec<String> = BUNDLED_THEMES
+        .iter()
+        .map(|(name, _)| name.to_string())
+        .collect();
 
     // Scan user themes directory for additional .toml files
     let dir = themes_dir();
@@ -1795,6 +1788,27 @@ page_size = 250
                     "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_all_bundled_themes_parse_successfully() {
+        for (name, _) in BUNDLED_THEMES {
+            assert!(
+                Theme::preset(name).is_some(),
+                "Bundled theme '{name}' failed to parse into valid Theme"
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_theme_presets_includes_all_bundled() {
+        let presets = all_theme_presets();
+        for (name, _) in BUNDLED_THEMES {
+            assert!(
+                presets.contains(&name.to_string()),
+                "all_theme_presets() missing bundled theme '{name}'"
+            );
         }
     }
 }

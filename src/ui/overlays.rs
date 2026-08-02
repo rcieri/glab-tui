@@ -380,7 +380,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let area = centered_rect_min(60, 60, 28, 4, size);
         f.render_widget(ratatui::widgets::Clear, area);
@@ -408,7 +408,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_normal)
-                    .bg(Color::Reset),
+                    .bg(THEME.read().unwrap().bg),
             )
             .wrap(ratatui::widgets::Wrap { trim: true });
 
@@ -425,7 +425,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         // 36 columns wide, 11 rows high
         let area = centered_rect_fixed(36, 11, size);
@@ -1109,7 +1109,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
             .border_type(BorderType::Double)
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let area = centered_rect_fixed(72, 30, size);
         app.overlay_stack
@@ -1657,7 +1657,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 )
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-                .style(Style::default().bg(Color::Reset));
+                .style(Style::default().bg(THEME.read().unwrap().bg));
 
             let area = centered_rect_fixed(44, 44, size);
             app.overlay_stack
@@ -1873,7 +1873,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
             .border_type(BorderType::Double)
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let area = centered_rect_fixed(60, 9, size);
         app.overlay_stack

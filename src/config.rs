@@ -505,7 +505,7 @@ impl Theme {
             border_focused:   Color::Rgb(49, 191, 103),
             header_fg:        Color::Rgb(49, 191, 103),
             highlight_bg:     Color::Rgb(38, 38, 50),
-            inactive_bg:      Color::Rgb(24, 24, 28),
+            inactive_bg:      Color::Rgb(0, 0, 0),
             text_normal:      Color::Rgb(216, 222, 233),
             text_muted:       Color::Rgb(130, 130, 138),
             checked_bg:       Color::Rgb(28, 38, 55),

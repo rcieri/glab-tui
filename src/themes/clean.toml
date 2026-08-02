@@ -3,7 +3,7 @@ border = "#2e323c"
 border_focused = "#58a6ff"
 header_fg = "#58a6ff"
 highlight_bg = "#1a1d26"
-inactive_bg = "#12141a"
+inactive_bg = "#000000"
 text_normal = "#c9d1d9"
 text_muted = "#6e7681"
 checked_bg = "#0d419d"
@@ -23,11 +23,11 @@ diff_addition_fg = "#3fb950"
 diff_addition_bg = "#122d1a"
 diff_deletion_fg = "#f85149"
 diff_deletion_bg = "#2d1215"
-diff_gutter_bg = "#1a1d26"
+diff_gutter_bg = "#000000"
 diff_sep = "#30363d"
 
 # ── Comments ──
-comment_bg = "#1a1d26"
+comment_bg = "#000000"
 comment_draft_bg = "#2b2209"
 
 # ── Modals ──

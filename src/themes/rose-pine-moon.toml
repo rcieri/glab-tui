@@ -1,0 +1,71 @@
+# Rosé Pine Moon (dark, lifted base)
+# Palette: https://rosepinetheme.com/palette/
+#   base #232136  surface #2a273f  overlay #393552
+#   muted #6e6a86  subtle #908caa  text #e0def4
+#   love #eb6f92  gold #f6c177  rose #ea9a97
+#   pine #3e8fb0  foam #9ccfd8  iris #c4a7e7
+#   highlight low #2a283e  med #44415a  high #56526e
+#   leaf #95b1ac (rose-pine/neovim only, not one of the site's 15 roles)
+#
+# Same construction as rose-pine.toml. Moon's base is lighter and its pine
+# is brighter (#3e8fb0, 4.3:1 on base versus 3.4:1 in main), so the accent
+# backgrounds sit a little higher in lightness. Role mapping is identical
+# to main: foam carries success and diff additions, pine carries
+# informational blue, iris carries focus.
+
+bg             = "#232136"  # base
+border         = "#56526e"  # highlight high
+border_focused = "#c4a7e7"  # iris
+header_fg      = "#c4a7e7"  # iris
+highlight_bg   = "#44415a"  # highlight med, cursor row
+inactive_bg    = "#393552"  # overlay
+text_normal    = "#e0def4"  # text
+text_muted     = "#908caa"  # subtle
+checked_bg     = "#2b505f"  # deep foam, distinct from the cursor row
+
+green          = "#9ccfd8"  # foam, success and additions
+green_bg       = "#1f4248"
+red            = "#eb6f92"  # love
+red_bg         = "#5b2736"
+blue           = "#3e8fb0"  # pine
+blue_bg        = "#1d3944"
+yellow         = "#f6c177"  # gold
+yellow_bg      = "#4d3a21"
+purple         = "#c4a7e7"  # iris
+purple_bg      = "#4b2f6d"
+
+# ── Diff ──
+diff_addition_fg = "#9ccfd8"
+diff_addition_bg = "#1f4248"
+diff_deletion_fg = "#eb6f92"
+diff_deletion_bg = "#5b2736"
+diff_gutter_bg   = "#393552"  # overlay
+diff_sep         = "#56526e"  # highlight high
+
+# ── Comments ──
+comment_bg       = "#2a283e"  # highlight low
+comment_draft_bg = "#4d3a21"  # deep gold
+
+# ── Modals ──
+modal_border = "#c4a7e7"  # iris
+
+# ── Pipelines ──
+pipeline_success  = "#9ccfd8"  # foam
+pipeline_failed   = "#eb6f92"  # love
+pipeline_running  = "#3e8fb0"  # pine
+pipeline_pending  = "#f6c177"  # gold
+pipeline_canceled = "#908caa"  # subtle
+pipeline_skipped  = "#6e6a86"  # muted
+
+# ── Label palette ──
+# Six palette accents first, then dimmed in-family shades.
+label_palette_0 = "#c4a7e7"  # iris
+label_palette_1 = "#9ccfd8"  # foam
+label_palette_2 = "#3e8fb0"  # pine
+label_palette_3 = "#f6c177"  # gold
+label_palette_4 = "#eb6f92"  # love
+label_palette_5 = "#ea9a97"  # rose
+label_palette_6 = "#9c86bb"  # dim iris
+label_palette_7 = "#95b1ac"  # leaf
+label_palette_8 = "#b95c7b"  # dim love
+label_palette_9 = "#908caa"  # subtle

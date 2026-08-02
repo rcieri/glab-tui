@@ -1,0 +1,77 @@
+# Rosé Pine (dark main variant)
+# Palette: https://rosepinetheme.com/palette/
+#   base #191724  surface #1f1d2e  overlay #26233a
+#   muted #6e6a86  subtle #908caa  text #e0def4
+#   love #eb6f92  gold #f6c177  rose #ebbcba
+#   pine #31748f  foam #9ccfd8  iris #c4a7e7
+#   highlight low #21202e  med #403d52  high #524f67
+#   leaf #95b1ac (rose-pine/neovim only, not one of the site's 15 roles)
+#
+# Same construction as rose-pine-dawn.toml, mirrored for a dark base.
+# Accent backgrounds keep the accent hue at low lightness, sized so the
+# matching foreground stays legible on top (the app draws `green` on
+# `green_bg`, `blue` on `blue_bg`, etc).
+#
+# Dawn has no green and neither does this variant. On the light base pine
+# was the legible teal and foam the weak one, so Dawn used green=pine,
+# blue=foam. Dark inverts that: foam is 10.4:1 on base, pine only 3.4:1,
+# so success and diff additions take foam and informational blue takes
+# pine. Same rule, opposite outcome. This also matches upstream Rosé Pine
+# ports, which use foam for git additions.
+
+bg             = "#191724"  # base
+border         = "#524f67"  # highlight high
+border_focused = "#c4a7e7"  # iris
+header_fg      = "#c4a7e7"  # iris
+highlight_bg   = "#403d52"  # highlight med, cursor row
+inactive_bg    = "#26233a"  # overlay
+text_normal    = "#e0def4"  # text
+text_muted     = "#908caa"  # subtle
+checked_bg     = "#22404c"  # deep foam, distinct from the cursor row
+
+green          = "#9ccfd8"  # foam, success and additions
+green_bg       = "#1b393f"
+red            = "#eb6f92"  # love
+red_bg         = "#572533"
+blue           = "#31748f"  # pine
+blue_bg        = "#152830"  # kept dark; pine is the dimmest accent here
+yellow         = "#f6c177"  # gold
+yellow_bg      = "#42321c"
+purple         = "#c4a7e7"  # iris
+purple_bg      = "#422960"
+
+# ── Diff ──
+diff_addition_fg = "#9ccfd8"
+diff_addition_bg = "#1b393f"
+diff_deletion_fg = "#eb6f92"
+diff_deletion_bg = "#572533"
+diff_gutter_bg   = "#26233a"  # overlay
+diff_sep         = "#524f67"  # highlight high
+
+# ── Comments ──
+comment_bg       = "#21202e"  # highlight low
+comment_draft_bg = "#42321c"  # deep gold
+
+# ── Modals ──
+modal_border = "#c4a7e7"  # iris
+
+# ── Pipelines ──
+pipeline_success  = "#9ccfd8"  # foam
+pipeline_failed   = "#eb6f92"  # love
+pipeline_running  = "#31748f"  # pine
+pipeline_pending  = "#f6c177"  # gold
+pipeline_canceled = "#908caa"  # subtle
+pipeline_skipped  = "#6e6a86"  # muted
+
+# ── Label palette ──
+# Six palette accents first, then dimmed in-family shades.
+label_palette_0 = "#c4a7e7"  # iris
+label_palette_1 = "#9ccfd8"  # foam
+label_palette_2 = "#31748f"  # pine
+label_palette_3 = "#f6c177"  # gold
+label_palette_4 = "#eb6f92"  # love
+label_palette_5 = "#ebbcba"  # rose
+label_palette_6 = "#9983b6"  # dim iris
+label_palette_7 = "#95b1ac"  # leaf
+label_palette_8 = "#b65976"  # dim love
+label_palette_9 = "#908caa"  # subtle

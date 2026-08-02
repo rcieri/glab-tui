@@ -108,7 +108,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 |---|---|---|
 | **Crates.io** | `cargo install glab-tui-crate` | [![Crates.io](https://img.shields.io/crates/v/glab-tui-crate.svg)](https://crates.io/crates/glab-tui-crate) |
 | **GitHub Releases (Binaries)** | Manual / Self-update (`glab-tui -u`) | [![GitHub Release](https://img.shields.io/github/v/release/rcieri/glab-tui.svg)](https://github.com/rcieri/glab-tui/releases/latest) |
-| **Homebrew** | `brew install rcieri/glab-tui/glab-tui` | [![Homebrew Formula](https://img.shields.io/github/v/release/rcieri/homebrew-glab-tui?label=homebrew)](https://github.com/rcieri/homebrew-glab-tui) |
+| **Homebrew** | `brew install rcieri/glab-tui/glab-tui` | [![Homebrew Formula](https://img.shields.io/github/v/release/rcieri/glab-tui?label=homebrew)](https://github.com/rcieri/homebrew-glab-tui) |
 | **Scoop (Windows)** | `scoop install glab-tui` | [![Scoop Bucket](https://img.shields.io/github/v/release/rcieri/glab-tui?label=scoop)](https://github.com/rcieri/scoop-glab-tui) |
 | **Docker Container** | `docker run --rm -it ghcr.io/rcieri/glab-tui` | [![GHCR](https://img.shields.io/badge/docker-ghcr.io%2Frcieri%2Fglab--tui-blue)](https://github.com/rcieri/glab-tui/pkgs/container/glab-tui) |
 

@@ -1411,7 +1411,13 @@ async fn main() -> Result<()> {
                         }
                         crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
-                            selector.all_items = items;
+                            if selector.field_type == "milestone" {
+                                let mut ms_items = vec!["None".to_string()];
+                                ms_items.extend(items.into_iter().filter(|i| i != "None"));
+                                selector.all_items = ms_items;
+                            } else {
+                                selector.all_items = items;
+                            }
                             selector.is_loading = false;
                             app.selector = Some(selector);
                         }
@@ -3871,7 +3877,9 @@ async fn main() -> Result<()> {
                                                     selected_list = vec![query];
                                                 }
                                             }
-                                        } else if !selector.multi_select && selected_list.is_empty()
+                                        } else if !selector.multi_select
+                                            && selected_list.is_empty()
+                                            && selector.field_type != "milestone"
                                         {
                                             selected_list.push(item.clone());
                                         }
@@ -3986,15 +3994,6 @@ async fn main() -> Result<()> {
                                             events.sender(),
                                             active_tab,
                                         );
-
-                                        if let Some(client) = &app.gitlab_client {
-                                            spawn_refresh_active_tab(
-                                                client,
-                                                &app.project_context,
-                                                app.active_tab,
-                                                events.sender(),
-                                            );
-                                        }
 
                                         rebuild_edit_menu(&mut app, &entity_type, entity_iid);
                                     }
@@ -4716,12 +4715,15 @@ async fn main() -> Result<()> {
                                             is_loading = false;
                                         }
                                     } else if field_type == "milestone" {
-                                        all_items = app
-                                            .milestones
-                                            .items
-                                            .iter()
-                                            .map(|m| m.title.clone())
-                                            .collect();
+                                        let mut ms_items = vec!["None".to_string()];
+                                        ms_items.extend(
+                                            app.milestones
+                                                .items
+                                                .iter()
+                                                .map(|m| m.title.clone())
+                                                .filter(|t| t != "None"),
+                                        );
+                                        all_items = ms_items;
                                         is_loading = false;
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"

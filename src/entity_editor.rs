@@ -465,19 +465,26 @@ pub fn apply_selector_changes(
         }
         "milestone" => {
             let first_val = values.first().cloned().unwrap_or_default();
+            let is_clear = first_val.is_empty() || first_val == "None" || first_val == "0";
             if entity_type == "issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                    let m = crate::domain::issues::Milestone {
-                        title: first_val.clone(),
+                    item.milestone = if is_clear {
+                        None
+                    } else {
+                        Some(crate::domain::issues::Milestone {
+                            title: first_val.clone(),
+                        })
                     };
-                    item.milestone = Some(m);
                 }
             } else if entity_type == "mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    let m = crate::domain::mr::Milestone {
-                        title: first_val.clone(),
+                    item.milestone = if is_clear {
+                        None
+                    } else {
+                        Some(crate::domain::mr::Milestone {
+                            title: first_val.clone(),
+                        })
                     };
-                    item.milestone = Some(m);
                 }
             }
             let Some(client) = app.gitlab_client.clone() else {
@@ -692,5 +699,52 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 workflow_inputs: vec![],
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_milestone_removal_clears_milestone_field() {
+        let mut app = App::default();
+        let issue = crate::domain::issues::Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "u1".to_string(),
+            },
+            milestone: Some(crate::domain::issues::Milestone {
+                title: "v1.0".to_string(),
+            }),
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        app.issues.items = vec![issue];
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        // Clear milestone by passing empty values or "None"
+        apply_selector_changes(
+            &mut app,
+            "issue",
+            1,
+            "milestone",
+            vec!["None".to_string()],
+            &mut terminal,
+            tx,
+            crate::app::Tab::Issues,
+        );
+
+        assert!(app.issues.items[0].milestone.is_none());
     }
 }

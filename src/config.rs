@@ -1711,6 +1711,35 @@ page_size = 250
     }
 
     #[test]
+    fn test_config_load_override() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let conf_dir = temp_dir.path().join("glab-tui");
+        std::fs::create_dir_all(&conf_dir).unwrap();
+        std::fs::write(
+            conf_dir.join("config.toml"),
+            "page_size = 250\napi_per_page = 20\n",
+        )
+        .unwrap();
+
+        let old_xdg = std::env::var("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+        let cfg = Config::load();
+        if let Ok(old) = old_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+        assert_eq!(cfg.page_size, 250);
+        assert_eq!(cfg.api_per_page, 20);
+    }
+
+    #[test]
     fn revoke_mr_defaults_to_shift_a() {
         let cfg = Config::default();
         assert_eq!(cfg.keybindings.mrs.revoke_mr, "A");

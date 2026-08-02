@@ -6,11 +6,14 @@ set -euo pipefail
 # Usage: scripts/release.sh [patch|minor|major]
 #
 # With no argument, you are prompted to pick the release increment (patch is
-# the default). Walks the whole release: bumps the crate version, regenerates
-# docs and demo GIFs locally (where `gh` is authenticated), opens a prepare PR,
-# waits for you to review it, squash-merges it, tags and pushes the version,
-# waits for the CI release build, then writes the release notes and pushes the
-# Homebrew formula, Scoop manifest, Docker image, and crate.
+# the default). You are also prompted to pick the opencode model used for the
+# regenerated docs and release notes (the `opencode models` printout piped
+# through fzf; set OPENCODE_MODEL to skip the prompt). Walks the whole
+# release: bumps the crate version, regenerates docs and demo GIFs locally
+# (where `gh` is authenticated), opens a prepare PR, waits for you to review
+# it, squash-merges it, tags and pushes the version, waits for the CI release
+# build, then writes the release notes and pushes the Homebrew formula, Scoop
+# manifest, Docker image, and crate.
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -18,6 +21,7 @@ cd "$ROOT"
 REPO="rcieri/glab-tui"
 INCREMENT="${1:-}"
 RELEASE_WAIT_MIN="${RELEASE_WAIT_MIN:-45}"
+OPENCODE_MODEL_FROM_ENV="${OPENCODE_MODEL:-}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
 REQUIRED_ASSETS=(
   glab-tui-linux-amd64.tar.gz
@@ -54,6 +58,63 @@ run_opencode() {
     tail -20 "$TMP_DIR/opencode.log" >&2
     die "opencode failed (log: $TMP_DIR/opencode.log)"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# opencode model selection (fzf over the `opencode models` printout)
+# ---------------------------------------------------------------------------
+PICK_RESULT=''
+
+# pick <prompt> <default> <candidate...>; each candidate is "value<TAB>label".
+# Stores the chosen value in PICK_RESULT (defaults when nothing is picked).
+pick() {
+  local prompt="$1" default="$2"
+  shift 2
+  local -a lines=("$@")
+  local chosen="" i choice
+  if command -v fzf >/dev/null 2>&1; then
+    chosen="$(printf '%s\n' "${lines[@]}" |
+      fzf --prompt="$prompt> " --query="$default" --delimiter=$'\t' --with-nth=2 \
+          --exit-0 --height=40% --border --layout=reverse 2>/dev/null || true)"
+  else
+    printf '\n%sChoose %s%s (default: %s)\n' "$C_BOLD" "$prompt" "$C_RESET" "$default"
+    for i in "${!lines[@]}"; do
+      printf '  %s%s)%s %s\n' "$C_BOLD" "$((i + 1))" "$C_RESET" "${lines[$i]#*$'\t'}"
+    done
+    read -r -p "Select [1-${#lines[@]}], Enter for default: " choice
+    if [[ -z "$choice" ]]; then
+      chosen="$default"
+    elif [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#lines[@]})); then
+      chosen="${lines[$((choice - 1))]}"
+    else
+      die "invalid selection '$choice'"
+    fi
+  fi
+  PICK_RESULT="${chosen%%$'\t'*}"
+  if [[ -z "$PICK_RESULT" ]]; then
+    PICK_RESULT="$default"
+  fi
+}
+
+select_opencode_model() {
+  local all_models selected current
+  local -a model_lines=()
+
+  all_models="$(opencode models)"
+  [[ -n "$all_models" ]] || die "'opencode models' returned no models"
+  current="${OPENCODE_MODEL:-opencode/big-pickle}"
+
+  note "Select the opencode model used to regenerate docs and release notes"
+  while read -r id; do
+    model_lines+=("$id"$'\t'"$id")
+  done <<< "$all_models"
+  pick "model" "$current" "${model_lines[@]}"
+  selected="$PICK_RESULT"
+
+  OPENCODE_MODEL="$selected"
+  grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
+    die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
+  ok "opencode model: $OPENCODE_MODEL"
 }
 
 # ---------------------------------------------------------------------------
@@ -381,6 +442,11 @@ main() {
 
   phase "Prepare"
   next_version
+  if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
+    select_opencode_model
+  else
+    ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+  fi
   prepare
 
   phase "Review & merge"

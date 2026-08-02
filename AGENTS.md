@@ -329,4 +329,4 @@ Run `scripts/release.sh [patch|minor|major]` (default `patch`) and the script wa
 6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest. The manifest repos' scheduled auto-updaters have been removed; this local sync is the only update path.
 7. **Publish** — pushes the Docker image to GHCR and publishes the crate to crates.io.
 
-The opencode steps default to the `opencode/big-pickle` model; override with `OPENCODE_MODEL`.
+During `Prepare`, `release.sh` interactively walks through the opencode models available to the local `opencode` install (`provider -> model -> variant`) to pick the model used for the regenerated docs and release notes; set `OPENCODE_MODEL` to skip the prompt.

@@ -1,6 +1,6 @@
 [package]
 name = "glab-tui-crate"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2024"
 description = "A terminal user interface for GitLab and GitHub"
 license = "MIT"

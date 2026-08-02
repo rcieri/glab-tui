@@ -55,6 +55,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Bulk editing** — select multiple issues or merge requests with `Space`, then press `e` to apply labels, assignees, or milestone across all selected items at once
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description)
 - **Merge Requests / Pull Requests** — list, filter, create MRs from issues, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
+- **MR/PR review state at a glance** — color-coded **Approval** (`APPROVED`, `AWAITING`, `REVIEW REQ`, …), **Mergeable** (`CONFLICT`, `REBASE`, `CLEAN`), and **Workflow** (Returned / Review req / Yours / Approved / By others / Inactive) columns; rebase with `R`, revoke your approval with `A` (GitLab)
 - **Code Reviews** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, and atomic review submission
 - **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with syntax highlighting
 - **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces; trigger pipelines with `workflow_dispatch` input prompts
@@ -77,7 +78,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
-- **Themes** — 13 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
+- **Themes** — 16 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---
@@ -219,7 +220,11 @@ The generated file is fully annotated. Key sections:
 
 ```toml
 # Pick a built-in theme preset
-theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | rose-pine | rose-pine-moon | rose-pine-dawn | ...
+theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
+
+# Items per API request (1-100) — lower this if your GitLab instance truncates
+# large JSON response bodies. GitLab-only; GitHub paginates with --limit.
+# api_per_page = 100
 
 # Override individual colors (takes precedence over theme_preset)
 # [theme]

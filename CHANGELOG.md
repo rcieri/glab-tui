@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2] - 2026-08-02
+
+### Features
+- **MR/PR review state at a glance** — The MR/PR table now surfaces **Approval** (`CHG`/`CHANGES`, `AWAITING`, `APPROVED`, `REVIEW REQ`), **Mergeable** (`CONFLICT`, `REBASE`, `CLEAN`, `CHECKING`), and **Workflow** (`Returned`, `Review req`, `Yours`, `Approved`, `By others`, `Inactive`) columns with color-coded icon badges, reordered so the status indicators sit together at the front of the table. GitLab state comes from a single bulk GraphQL query; GitHub derives it from the native `gh pr list` review/merge fields. Pending approvals repeat one icon per approval still needed, and GitLab's `blocking_discussions_resolved` flag is surfaced alongside (#270, #274).
+- **Rebase & revoke approvals** — `R` rebases the source branch onto the target on both hosts (gated by mergeability: conflicted MRs must be resolved locally, already-clean MRs are skipped), and `A` revokes your approval on GitLab (`gh` has no revoke path) — both behind the standard confirm popup (#270).
+- **Filter picker aligned with the table** — Value-based column filter selectors now show the exact text the table renders (`OPEN`/`CLOSED`, `CONFLICT`/`REBASE`/`CLEAN`, `SUCCESS`/`FAILED`, …). Legacy lowercase values already saved in `config.toml` or the cache keep working through automatic `normalize_filter_value()` normalization (#274).
+- **`api_per_page` configuration** — New `api_per_page` key bounds the per-request response size (clamped to GitLab's accepted `1–100` `per_page` range) for issues, MRs, pipelines, and labels — a workaround for GitLab instances that truncate large JSON response bodies (#269, #272).
+- **Rosé Pine themes** — Three new bundled presets: `rose-pine`, `rose-pine-moon`, and `rose-pine-dawn` (16 bundled themes total) (#278).
+- **Theme polish** — The root canvas background is now painted for every theme, the `default` and `clean` presets use pure black backgrounds, and the light-theme demo GIF was re-recorded. The hardcoded in-code fallback theme was removed: `Theme::default()` now derives directly from `src/themes/default.toml`, so the bundled TOML is the single source of truth (#282).
+
+### Bug Fixes
+- **Milestone removal & attribute clearing** — Milestones can now be removed (empty / `None` selector value) and attributes cleared from the edit menu and bulk updates, and the premature tab-refresh race after edit submission was eliminated (#281).
+- **Cached filter compatibility** — Pre-existing saved column filters stored with the old lowercase display values are normalized transparently, so no config or cache migration is required after upgrading (#274).
+
+### Maintenance
+- **Release tooling** — `scripts/release.sh` now interactively selects the opencode model (provider → model → variant) used for regenerated docs and release notes, via `fzf` with a numbered-menu fallback; set `OPENCODE_MODEL` to skip the prompt (#283).
+- **Test robustness** — `workflow_dispatch` input parsing now tests against an inline fixture instead of reading a repository workflow file (#271); new unit tests cover MR keybinding collision detection, bundled-theme parsing, `api_per_page` clamping, MR state derivation, and filter normalization.
+- **Documentation** — Backend docs describe `_per_request` semantics (no-op on GitHub, which paginates via `--limit`), and the generated `config.toml` documents `api_per_page`; the README CI badge now points at `rust.yml` (#272).
+
+---
+
 ## [0.8.1] - 2026-07-31
 
 ### Fixed

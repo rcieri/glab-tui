@@ -4,7 +4,47 @@
 <img src="assets/glab-tui-banner-v2.svg" alt="glab-tui" width="560">
 </p>
 
+<p align="center">
+<a href="https://github.com/rcieri/glab-tui/actions/workflows/ci.yml"><img src="https://github.com/rcieri/glab-tui/actions/workflows/ci.yml/badge.svg" alt="CI Status"></a>
+<a href="https://crates.io/crates/glab-tui-crate"><img src="https://img.shields.io/crates/v/glab-tui-crate.svg" alt="Crates.io"></a>
+<a href="https://github.com/rcieri/glab-tui/releases/latest"><img src="https://img.shields.io/github/v/release/rcieri/glab-tui.svg" alt="GitHub Release"></a>
+<a href="https://github.com/rcieri/glab-tui/pkgs/container/glab-tui"><img src="https://img.shields.io/badge/docker-ghcr.io%2Frcieri%2Fglab--tui-blue" alt="Docker"></a>
+<a href="LICENSE.md"><img src="https://img.shields.io/github/license/rcieri/glab-tui.svg" alt="License"></a>
+</p>
+
 A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](https://gitlab.com/gitlab-org/cli) and [`gh`](https://cli.github.com/). Browse issues, pull requests / merge requests, pipelines, runners, and releases without leaving your terminal.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+  - [Package Manager Status](#package-manager-status)
+  - [From source](#from-source)
+  - [With cargo install (from crates.io)](#with-cargo-install-from-cratesio)
+  - [Install script (Linux / macOS)](#install-script-linux--macos)
+  - [Install script (Windows)](#install-script-windows)
+  - [Docker](#docker)
+  - [Homebrew](#homebrew)
+  - [Scoop (Windows)](#scoop-windows)
+- [Configuration](#configuration)
+  - [Authentication](#authentication)
+  - [Config file](#config-file)
+  - [Custom themes](#custom-themes)
+  - [Editor](#editor)
+- [Usage](#usage)
+  - [Options](#options)
+  - [CLI subcommand examples](#cli-subcommand-examples)
+- [Filtering, Grouping & Columns](#filtering-grouping--columns)
+- [Key Bindings](#key-bindings)
+- [Dependencies](#dependencies)
+- [Project Structure](#project-structure)
+- [Running Tests](#running-tests)
+- [Releasing](#releasing)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -60,6 +100,16 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ---
 
 ## Installation
+
+### Package Manager Status
+
+| Package Manager / Channel | Installation Command | Status / Latest Version |
+|---|---|---|
+| **Crates.io** | `cargo install glab-tui-crate` | [![Crates.io](https://img.shields.io/crates/v/glab-tui-crate.svg)](https://crates.io/crates/glab-tui-crate) |
+| **GitHub Releases (Binaries)** | Manual / Self-update (`glab-tui -u`) | [![GitHub Release](https://img.shields.io/github/v/release/rcieri/glab-tui.svg)](https://github.com/rcieri/glab-tui/releases/latest) |
+| **Homebrew** | `brew install rcieri/glab-tui/glab-tui` | [![Homebrew Formula](https://img.shields.io/github/v/release/rcieri/homebrew-glab-tui?label=homebrew)](https://github.com/rcieri/homebrew-glab-tui) |
+| **Scoop (Windows)** | `scoop install glab-tui` | [![Scoop Bucket](https://img.shields.io/github/v/release/rcieri/glab-tui?label=scoop)](https://github.com/rcieri/scoop-glab-tui) |
+| **Docker Container** | `docker run --rm -it ghcr.io/rcieri/glab-tui` | [![GHCR](https://img.shields.io/badge/docker-ghcr.io%2Frcieri%2Fglab--tui-blue)](https://github.com/rcieri/glab-tui/pkgs/container/glab-tui) |
 
 ### From source
 

@@ -2766,7 +2766,7 @@ impl App {
             Tab::Pipelines,
             |item, col| match col {
                 "ID" => vec![item.id().to_string()],
-                "Status" => vec![item.status().to_string()],
+                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
                 "Ref" => vec![item.ref_branch().to_string()],
                 _ => vec![],
             },
@@ -2877,7 +2877,7 @@ impl App {
             |item, col| match col {
                 "ID" => vec![item.id().to_string()],
                 "Stage" => vec![item.stage().to_string()],
-                "Status" => vec![item.status().to_string()],
+                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
                 "Name" => vec![item.name().to_string()],
                 _ => vec![],
             },
@@ -3176,7 +3176,11 @@ impl App {
         );
         Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
             match col {
-                "State" => vec![item.state.clone()],
+                "State" => vec![if item.state == "unread" || item.state == "pending" {
+                    "NEW".to_string()
+                } else {
+                    "READ".to_string()
+                }],
                 "Project" => vec![item.project_path.clone()],
                 "Type" => vec![item.target_type.clone()],
                 "ID" => vec![item.id.clone()],
@@ -3441,6 +3445,22 @@ impl App {
     /// Older config files stored lowercase API values ("opened", "Draft", …).
     /// After the display-alignment change those no longer appear in the
     /// filter-value sets, so this mapping keeps pre-existing filters working.
+    /// Maps raw API pipeline/job status strings to the uppercase display text
+    /// shown in the table cell (e.g. `"success"` → `"SUCCESS"`, `"canceled"` → `"CANCEL"`).
+    fn pipeline_status_display(raw: &str) -> &str {
+        match raw {
+            "success" => "SUCCESS",
+            "failed" => "FAILED",
+            "running" => "RUNNING",
+            "canceled" | "cancelled" => "CANCEL",
+            "pending" => "PENDING",
+            "skipped" => "SKIP",
+            "manual" => "MANUAL",
+            "created" | "waiting_for_resource" | "preparing" => "PENDING",
+            other => other,
+        }
+    }
+
     fn normalize_filter_value(v: &str) -> &str {
         match v {
             // State
@@ -3467,6 +3487,19 @@ impl App {
             "Your merge requests" => "Yours",
             "Approved by you" => "Approved",
             "Approved by others" => "By others",
+            // Pipeline/Job status (raw API → display)
+            "success" => "SUCCESS",
+            "failed" => "FAILED",
+            "running" => "RUNNING",
+            "canceled" | "cancelled" => "CANCEL",
+            "skipped" => "SKIP",
+            "manual" => "MANUAL",
+            // Todos state
+            "unread" | "done" => {
+                // "unread"→"NEW", "done"→"READ" — handled via pipeline_status_display
+                // but normalize maps them too for saved-filter compat
+                if v == "unread" { "NEW" } else { "READ" }
+            }
             other => other,
         }
     }
@@ -3568,12 +3601,12 @@ impl App {
                             values.insert(item.id().to_string());
                         }
                         "Status" => {
-                            values.insert(item.status().to_string());
+                            values.insert(Self::pipeline_status_display(item.status()).to_string());
                         }
                         "Ref" => {
                             values.insert(item.ref_branch().to_string());
                         }
-                        _ => {} // Pipeline no longer carries GitHub-specific fields
+                        _ => {}
                     }
                 }
             }
@@ -3587,7 +3620,7 @@ impl App {
                             values.insert(item.stage().to_string());
                         }
                         "Status" => {
-                            values.insert(item.status().to_string());
+                            values.insert(Self::pipeline_status_display(item.status()).to_string());
                         }
                         "Name" => {
                             values.insert(item.name().to_string());
@@ -3639,7 +3672,12 @@ impl App {
                 for item in &self.todos.items {
                     match col {
                         "State" => {
-                            values.insert(item.state.clone());
+                            let display = if item.state == "unread" || item.state == "pending" {
+                                "NEW"
+                            } else {
+                                "READ"
+                            };
+                            values.insert(display.to_string());
                         }
                         "Project" => {
                             values.insert(item.project_path.clone());

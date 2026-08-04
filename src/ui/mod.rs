@@ -895,9 +895,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     .bg(gutter_bg);
 
                 let sel_bg = if in_selection {
-                    Some(Color::Rgb(30, 50, 80))
+                    Some(THEME.read().unwrap().highlight_bg)
                 } else if updated_diff_view.search_matches.contains(&idx) {
-                    Some(Color::Rgb(75, 65, 0))
+                    Some(THEME.read().unwrap().yellow_bg)
                 } else {
                     None
                 };
@@ -1462,9 +1462,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 ];
 
                 let sel_bg = if in_selection {
-                    Some(Color::Rgb(30, 50, 80))
+                    Some(THEME.read().unwrap().highlight_bg)
                 } else if updated_diff_view.search_matches.contains(&idx) {
-                    Some(Color::Rgb(75, 65, 0))
+                    Some(THEME.read().unwrap().yellow_bg)
                 } else {
                     None
                 };

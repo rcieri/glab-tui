@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.3] - 2026-08-04
+
+### Features
+- **Real label colors from the API** — The Labels column now renders each label with its actual color returned by `glab label list` / `gh label list` (hex, normalized and persisted in the offline cache). GitHub-style background-fill colors that are too light to read as foreground text automatically fall back to the theme palette, which now ships full 10-entry palettes across all 16 bundled themes. A new `fetch_label_colors` config option (default `true`) switches back to always using the theme palette (#295).
+- **Complete theme coverage** — Every remaining hardcoded RGB value was replaced with semantic theme tokens so all surfaces honor the active theme: the diff view (unified and side-by-side addition/deletion lines, gutters, separators, empty panes, draft/current comment overlays, file-tree stats), markdown rendering (headings, list bullets, blockquotes, code), and the diff selection/search-match highlight backgrounds (#295).
+
+### Bug Fixes
+- **Windows CI test race** — Unit tests that mutate process-global environment variables (config paths, cache dirs) are now serialized on a shared `config::TEST_ENV_MUTEX`, eliminating an intermittent `page_size` assertion failure on Windows where one test's `GLAB_TUI_CONFIG` mutation leaked into another test's `Config::load()` (#296).
+
+### Maintenance
+- **Release tooling** — `scripts/release.sh` gained animated spinner and progress-bar helpers: preflight checks, release builds, demo-GIF generation, PR-merge polling, and the branch push now run with a live spinner and captured logs (auto-disabled when not a TTY), and release phases are numbered (`1/7` …) for clearer progress reporting (#296).
+- **Documentation** — README package-manager version badges (crates.io, GitHub releases, Homebrew, Scoop, Docker) consolidated into the header badge row, and the Homebrew badge re-pointed at the main repo's release tags (the tap repo publishes no releases of its own).
+- **Dependencies** — `toml` bumped `1.1.3` → `1.1.4` (#292); CI Actions `docker/login-action` `4.5.2` → `4.6.0` (#293) and `actions/stale` `10.4.0` → `11.0.0` (#294).
+
+---
+
 ## [0.8.2] - 2026-08-02
 
 ### Features

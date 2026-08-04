@@ -171,22 +171,21 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
                     .fg(theme.purple)
                     .add_modifier(Modifier::BOLD),
             )];
-            spans.extend(parse_inline_styles(content));
+            spans.extend(parse_inline_styles(content, &theme));
             lines.push(Line::from(spans));
         } else if trimmed.starts_with("> ") {
             let content = trimmed.strip_prefix("> ").unwrap_or(trimmed);
             let mut spans = vec![Span::styled("  ▌ ", Style::default().fg(theme.text_muted))];
-            spans.extend(parse_inline_styles(content));
+            spans.extend(parse_inline_styles(content, &theme));
             lines.push(Line::from(spans));
         } else {
-            lines.push(Line::from(parse_inline_styles(line)));
+            lines.push(Line::from(parse_inline_styles(line, &theme)));
         }
     }
     lines
 }
 
-fn parse_inline_styles(text: &str) -> Vec<Span<'static>> {
-    let theme = THEME.read().unwrap();
+fn parse_inline_styles(text: &str, theme: &crate::config::Theme) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let chars = text.chars().collect::<Vec<char>>();
     let mut i = 0;

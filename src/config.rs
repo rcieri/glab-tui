@@ -5,6 +5,12 @@ use std::path::PathBuf;
 use std::sync::LazyLock as Lazy;
 use std::sync::RwLock;
 
+/// Serializes tests that mutate process-global environment variables
+/// (config paths, cache dirs). Env vars are visible to every test thread,
+/// so mutating ones must never overlap with a load in another.
+#[cfg(test)]
+pub(crate) static TEST_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub bg: Color,
@@ -1721,6 +1727,7 @@ page_size = 250
 
     #[test]
     fn test_config_load_override() {
+        let _guard = TEST_ENV_MUTEX.lock().unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let conf_dir = temp_dir.path().join("glab-tui");
         std::fs::create_dir_all(&conf_dir).unwrap();

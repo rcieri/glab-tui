@@ -346,6 +346,7 @@ mod tests {
 
     #[test]
     fn test_repos_dir_env_var() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
         let temp_dir = tempdir().unwrap();
         let path_str = temp_dir.path().to_str().unwrap().to_string();
 

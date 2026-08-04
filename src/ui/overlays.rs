@@ -85,7 +85,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                     ));
                                 }
                                 let trimmed = part.trim();
-                                let label_color = get_label_color(trimmed);
+                                let label_color = get_label_color(trimmed, &app.label_colors);
                                 let mut style = Style::default()
                                     .fg(label_color)
                                     .bg(item_bg)

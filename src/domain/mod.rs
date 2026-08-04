@@ -2,6 +2,7 @@ pub mod branches;
 pub mod client;
 pub mod deployments;
 pub mod issues;
+pub mod labels;
 pub mod milestones;
 pub mod mr;
 pub mod mr_state;

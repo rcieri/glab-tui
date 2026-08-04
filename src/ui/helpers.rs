@@ -11,6 +11,7 @@ use crate::config::THEME;
 use crate::utils::format::truncate;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use std::collections::HashMap;
 
 pub(crate) fn highlight_fuzzy_match(
     text: &str,
@@ -57,7 +58,14 @@ pub(crate) fn highlight_fuzzy_match(
     spans
 }
 
-pub(crate) fn get_label_color(label: &str) -> Color {
+pub(crate) fn get_label_color(label: &str, label_colors: &HashMap<String, Color>) -> Color {
+    // Prefer the label's real color from the API when it is dark enough to
+    // read as foreground text on the active theme background.
+    if let Some(&c) = label_colors.get(label) {
+        if !is_light_color(c) {
+            return c;
+        }
+    }
     let mut hash: u32 = 5381;
     for c in label.bytes() {
         hash = ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32);
@@ -65,6 +73,19 @@ pub(crate) fn get_label_color(label: &str) -> Color {
     let palette = crate::config::THEME.read().unwrap().label_palette;
     let idx = (hash % (palette.len() as u32)) as usize;
     palette[idx]
+}
+
+/// GitHub label colors are designed as background fills; the lightest ones are
+/// unreadable as foreground text on a dark theme, so they fall back to the
+/// theme palette instead.
+fn is_light_color(color: Color) -> bool {
+    match color {
+        Color::Rgb(r, g, b) => {
+            let luminance = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b);
+            luminance > 180.0
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn floor_char_boundary(s: &str, mut index: usize) -> usize {
@@ -79,6 +100,7 @@ pub(crate) fn floor_char_boundary(s: &str, mut index: usize) -> usize {
 
 pub(crate) fn render_labels_cell(
     labels: &[String],
+    label_colors: &HashMap<String, Color>,
     query: &str,
     is_selected: bool,
     is_checked: bool,
@@ -131,7 +153,7 @@ pub(crate) fn render_labels_cell(
             current_len += comma.len();
         }
 
-        let label_color = get_label_color(label);
+        let label_color = get_label_color(label, label_colors);
         let mut label_style = Style::default()
             .fg(label_color)
             .add_modifier(Modifier::BOLD);
@@ -589,9 +611,10 @@ mod tests {
 
     #[test]
     fn test_get_label_color() {
-        let color1 = get_label_color("bug");
-        let _color2 = get_label_color("feature");
-        let color3 = get_label_color("bug");
+        let colors = HashMap::new();
+        let color1 = get_label_color("bug", &colors);
+        let _color2 = get_label_color("feature", &colors);
+        let color3 = get_label_color("bug", &colors);
 
         assert_eq!(color1, color3);
         match color1 {
@@ -601,13 +624,30 @@ mod tests {
     }
 
     #[test]
+    fn test_get_label_color_uses_api_color() {
+        let mut colors = HashMap::new();
+        colors.insert("bug".to_string(), Color::Rgb(215, 58, 74));
+        assert_eq!(get_label_color("bug", &colors), Color::Rgb(215, 58, 74));
+    }
+
+    #[test]
+    fn test_get_label_color_ignores_light_api_color() {
+        let mut colors = HashMap::new();
+        // GitHub yellow (fbca04) is too light to read as foreground text.
+        colors.insert("bug".to_string(), Color::Rgb(251, 202, 4));
+        let fallback = get_label_color("bug", &HashMap::new());
+        assert_eq!(get_label_color("bug", &colors), fallback);
+    }
+
+    #[test]
     fn test_render_labels_cell() {
         let labels = vec!["bug".to_string(), "backend".to_string()];
-        let cell_empty = render_labels_cell(&[], "", false, false, 24);
+        let colors = HashMap::new();
+        let cell_empty = render_labels_cell(&[], &colors, "", false, false, 24);
         let cell_str_empty = format!("{:?}", cell_empty);
         assert!(cell_str_empty.contains("—"));
 
-        let cell_normal = render_labels_cell(&labels, "", false, false, 24);
+        let cell_normal = render_labels_cell(&labels, &colors, "", false, false, 24);
         let cell_str = format!("{:?}", cell_normal);
         assert!(cell_str.contains("bug"));
         assert!(cell_str.contains("backend"));

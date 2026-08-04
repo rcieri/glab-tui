@@ -2,6 +2,7 @@ use super::Backend;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::Issue;
+use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest};
 use crate::domain::notifications::Notification;
@@ -2494,7 +2495,7 @@ impl Backend for GlabBackend {
 
     // ── Labels / Members / Misc ──
 
-    async fn fetch_labels(&self, project: &str, per_request: usize) -> Result<Vec<String>> {
+    async fn fetch_labels(&self, project: &str, per_request: usize) -> Result<Vec<Label>> {
         let raw = self
             .run_glab(
                 &[
@@ -2513,9 +2514,16 @@ impl Backend for GlabBackend {
         #[derive(Deserialize)]
         struct GiLabel {
             name: String,
+            color: Option<String>,
         }
         let labels: Vec<GiLabel> = serde_json::from_str(&raw)?;
-        Ok(labels.into_iter().map(|l| l.name).collect())
+        Ok(labels
+            .into_iter()
+            .map(|l| Label {
+                name: l.name,
+                color: l.color.map(|c| c.trim_start_matches('#').to_string()),
+            })
+            .collect())
     }
 
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>> {

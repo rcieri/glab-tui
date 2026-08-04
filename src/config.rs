@@ -259,7 +259,7 @@ pub enum SaveMenu {
     Cancel,
 }
 
-fn hex_to_color(s: &str) -> Option<Color> {
+pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
     let s = s.trim_start_matches('#');
     if s.len() == 6 {
         let r = u8::from_str_radix(&s[0..2], 16).ok()?;
@@ -425,11 +425,11 @@ impl ThemeToml {
                 hex_or(&self.label_palette_2, green),
                 hex_or(&self.label_palette_3, yellow),
                 hex_or(&self.label_palette_4, red),
-                hex_or(&self.label_palette_5, Color::Rgb(240, 140, 180)),
-                hex_or(&self.label_palette_6, Color::Rgb(250, 120, 80)),
-                hex_or(&self.label_palette_7, Color::Rgb(40, 200, 200)),
-                hex_or(&self.label_palette_8, Color::Rgb(180, 230, 40)),
-                hex_or(&self.label_palette_9, Color::Rgb(220, 160, 255)),
+                hex_or(&self.label_palette_5, purple),
+                hex_or(&self.label_palette_6, blue),
+                hex_or(&self.label_palette_7, green),
+                hex_or(&self.label_palette_8, yellow),
+                hex_or(&self.label_palette_9, red),
             ],
         })
     }
@@ -1092,6 +1092,10 @@ fn def_api_per_page() -> usize {
     100
 }
 
+fn def_fetch_label_colors() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1121,6 +1125,10 @@ pub struct Config {
     pub page_size: usize,
     #[serde(default = "def_api_per_page")]
     pub api_per_page: usize,
+    /// Use real label colors from `label list` when available; otherwise use
+    /// the theme palette as fallback.
+    #[serde(default = "def_fetch_label_colors")]
+    pub fetch_label_colors: bool,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
     pub issues: PaneConfig,
@@ -1145,6 +1153,7 @@ impl Default for Config {
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             api_per_page: def_api_per_page(),
+            fetch_label_colors: def_fetch_label_colors(),
             disabled_tabs: None,
             ui: UiConfig::default(),
             issues: PaneConfig::default(),
@@ -1749,6 +1758,17 @@ page_size = 250
     fn rebase_mr_defaults_to_shift_r() {
         let cfg = Config::default();
         assert_eq!(cfg.keybindings.mrs.rebase_mr, "R");
+    }
+
+    #[test]
+    fn fetch_label_colors_defaults_true_and_is_configurable() {
+        assert!(Config::default().fetch_label_colors);
+
+        let disabled: Config = toml::from_str("fetch_label_colors = false").expect("parse config");
+        assert!(!disabled.fetch_label_colors);
+
+        let empty: Config = toml::from_str("").expect("parse empty config");
+        assert!(empty.fetch_label_colors);
     }
 
     #[test]

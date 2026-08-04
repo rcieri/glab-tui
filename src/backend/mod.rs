@@ -319,7 +319,11 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<Deployment>>;
 
     // ── Labels / Members / Misc ──
-    async fn fetch_labels(&self, project: &str, per_request: usize) -> Result<Vec<String>>;
+    async fn fetch_labels(
+        &self,
+        project: &str,
+        per_request: usize,
+    ) -> Result<Vec<crate::domain::labels::Label>>;
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>>;
 
     // ── MR review state (approval + mergeability) ──

@@ -835,6 +835,13 @@ async fn main() -> Result<()> {
     app.environments.items = cache.environments;
     app.milestone_issues_cache = cache.milestone_issues;
     app.cached_labels = cache.labels;
+    if app.config.fetch_label_colors {
+        app.label_colors = cache
+            .label_colors
+            .iter()
+            .filter_map(|(name, hex)| crate::config::hex_to_color(hex).map(|c| (name.clone(), c)))
+            .collect();
+    }
     app.cached_members = cache.members;
 
     let has_any_cached = !app.issues.items.is_empty()
@@ -1425,8 +1432,24 @@ async fn main() -> Result<()> {
                 }
                 Event::RepoAttributesFetched { labels, members } => {
                     if !labels.is_empty() {
-                        app.cached_labels = labels.clone();
-                        app.project_cache.labels = labels;
+                        let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
+                        app.cached_labels = names.clone();
+                        app.project_cache.labels = names;
+                        if app.config.fetch_label_colors {
+                            let colors: std::collections::HashMap<String, String> = labels
+                                .iter()
+                                .filter_map(|l| {
+                                    l.color.as_ref().map(|c| (l.name.clone(), c.clone()))
+                                })
+                                .collect();
+                            app.project_cache.label_colors = colors.clone();
+                            app.label_colors = colors
+                                .iter()
+                                .filter_map(|(name, hex)| {
+                                    crate::config::hex_to_color(hex).map(|c| (name.clone(), c))
+                                })
+                                .collect();
+                        }
                     }
                     if !members.is_empty() {
                         app.cached_members = members.clone();
@@ -4931,9 +4954,15 @@ async fn main() -> Result<()> {
                                             let tx = events.sender();
                                             tokio::spawn(async move {
                                                 let res = match field_type.as_str() {
-                                                    "labels" => {
-                                                        client.fetch_labels(&project_context).await
-                                                    }
+                                                    "labels" => client
+                                                        .fetch_labels(&project_context)
+                                                        .await
+                                                        .map(|labels| {
+                                                            labels
+                                                                .into_iter()
+                                                                .map(|l| l.name)
+                                                                .collect()
+                                                        }),
                                                     "assignees" | "reviewers" => {
                                                         client.fetch_members(&project_context).await
                                                     }

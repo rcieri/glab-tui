@@ -203,7 +203,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List milestones | `glab milestone list --output json -R <repo> --per-page <N>` | Single call |
 | List milestone issues | `glab issue list --milestone <id> --all --output json -R <repo> --per-page <N>` | Single call |
 | List todos | `glab todo list --output=json` | Single call |
-| List labels | `glab label list --output json -R <repo> --per-page <api_per_page>` | Single call |
+| List labels | `glab label list --output json -R <repo> --per-page <api_per_page>` | Single call (label colors feed the Labels column) |
 
 #### Mutations — Native Subcommands
 
@@ -257,7 +257,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
 | List milestone issues | `gh issue list --milestone <id> --state all --json ... -R <repo> --limit <N>` | Single call |
-| List labels | `gh label list --json name -R <repo> --limit 100` | Single call |
+| List labels | `gh label list --json name,color -R <repo> --limit 100` | Single call (label colors feed the Labels column) |
 
 #### Mutations — Native Subcommands
 

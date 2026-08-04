@@ -2,6 +2,7 @@ use super::Backend;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::Issue;
+use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
 use crate::domain::notifications::Notification;
@@ -2236,11 +2237,18 @@ impl Backend for GhBackend {
 
     // ── Labels / Members / Misc ──
 
-    async fn fetch_labels(&self, project: &str, _per_request: usize) -> Result<Vec<String>> {
+    async fn fetch_labels(&self, project: &str, _per_request: usize) -> Result<Vec<Label>> {
         let raw = self
             .run_gh(
                 &[
-                    "label", "list", "--json", "name", "-R", project, "--limit", "100",
+                    "label",
+                    "list",
+                    "--json",
+                    "name,color",
+                    "-R",
+                    project,
+                    "--limit",
+                    "100",
                 ],
                 "Fetching Labels",
             )
@@ -2248,9 +2256,21 @@ impl Backend for GhBackend {
         #[derive(Deserialize)]
         struct GhLabel {
             name: String,
+            #[serde(default)]
+            color: String,
         }
         let labels: Vec<GhLabel> = serde_json::from_str(&raw)?;
-        Ok(labels.into_iter().map(|l| l.name).collect())
+        Ok(labels
+            .into_iter()
+            .map(|l| Label {
+                name: l.name,
+                color: if l.color.is_empty() {
+                    None
+                } else {
+                    Some(l.color)
+                },
+            })
+            .collect())
     }
 
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>> {

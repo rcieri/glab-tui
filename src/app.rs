@@ -4878,11 +4878,9 @@ diff --git a/foo.txt b/foo.txt
         assert_eq!(app.unresolved_threads_count_for_path("other.txt"), 0);
     }
 
-    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn test_save_layout_and_active_tab_and_group_sorting() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         let old_config = std::env::var("GLAB_TUI_CONFIG").ok();
@@ -4959,7 +4957,7 @@ diff --git a/foo.txt b/foo.txt
 
     #[test]
     fn test_save_layout_preserves_custom_settings() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let config_path = temp_dir.path().join("config.toml");
         let old_config = std::env::var("GLAB_TUI_CONFIG").ok();

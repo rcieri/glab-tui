@@ -1879,6 +1879,8 @@ pub struct App {
     pub detail_rect: Option<Rect>,
     pub overlay_stack: Vec<(OverlayKind, Rect)>,
     pub cached_labels: Vec<String>,
+    /// Real per-label colors fetched from the API (name → color).
+    pub label_colors: std::collections::HashMap<String, ratatui::style::Color>,
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
     pub pending_delete_milestone_iid: Option<u64>,
@@ -1981,6 +1983,7 @@ impl Default for App {
             detail_rect: None,
             overlay_stack: vec![],
             cached_labels: Vec::new(),
+            label_colors: std::collections::HashMap::new(),
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
             pending_delete_milestone_iid: None,

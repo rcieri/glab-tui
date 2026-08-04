@@ -166,6 +166,7 @@ pub(crate) fn render_tab_issues(
             if app.is_column_visible(Tab::Issues, "Labels") {
                 cells.push(super::helpers::render_labels_cell(
                     &i.labels,
+                    &app.label_colors,
                     &app.search_query,
                     is_selected,
                     is_checked,
@@ -390,7 +391,7 @@ pub(crate) fn render_tab_issues(
                                 Style::default().fg(THEME.read().unwrap().text_normal),
                             ));
                         }
-                        let label_color = super::helpers::get_label_color(label);
+                        let label_color = super::helpers::get_label_color(label, &app.label_colors);
                         label_spans.push(Span::styled(
                             label,
                             Style::default()
@@ -835,6 +836,7 @@ pub(crate) fn render_tab_merge_requests(
             if app.is_column_visible(Tab::MergeRequests, "Labels") {
                 cells.push(super::helpers::render_labels_cell(
                     &m.labels,
+                    &app.label_colors,
                     &app.search_query,
                     is_selected,
                     is_checked,
@@ -1463,7 +1465,7 @@ pub(crate) fn render_tab_merge_requests(
                                 Style::default().fg(THEME.read().unwrap().text_normal),
                             ));
                         }
-                        let label_color = super::helpers::get_label_color(label);
+                        let label_color = super::helpers::get_label_color(label, &app.label_colors);
                         label_spans.push(Span::styled(
                             label,
                             Style::default()

@@ -20,6 +20,8 @@ pub struct ProjectCache {
     #[serde(default)]
     pub labels: Vec<String>,
     #[serde(default)]
+    pub label_colors: HashMap<String, String>,
+    #[serde(default)]
     pub members: Vec<String>,
 }
 

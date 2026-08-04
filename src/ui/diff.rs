@@ -363,9 +363,10 @@ mod tests {
 
     #[test]
     fn test_get_label_color() {
-        let color1 = get_label_color("bug");
-        let _color2 = get_label_color("feature");
-        let color3 = get_label_color("bug");
+        let colors = std::collections::HashMap::new();
+        let color1 = get_label_color("bug", &colors);
+        let _color2 = get_label_color("feature", &colors);
+        let color3 = get_label_color("bug", &colors);
 
         assert_eq!(color1, color3);
         match color1 {
@@ -377,11 +378,12 @@ mod tests {
     #[test]
     fn test_render_labels_cell() {
         let labels = vec!["bug".to_string(), "backend".to_string()];
-        let cell_empty = render_labels_cell(&[], "", false, false, 24);
+        let colors = std::collections::HashMap::new();
+        let cell_empty = render_labels_cell(&[], &colors, "", false, false, 24);
         let cell_str_empty = format!("{:?}", cell_empty);
         assert!(cell_str_empty.contains("—"));
 
-        let cell_normal = render_labels_cell(&labels, "", false, false, 24);
+        let cell_normal = render_labels_cell(&labels, &colors, "", false, false, 24);
         let cell_str = format!("{:?}", cell_normal);
         assert!(cell_str.contains("bug"));
         assert!(cell_str.contains("backend"));

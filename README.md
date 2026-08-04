@@ -228,6 +228,11 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # large JSON response bodies. GitLab-only; GitHub paginates with --limit.
 # api_per_page = 100
 
+# Label colors: use the real colors from `label list` (GitLab/GitHub) when
+# available, falling back to the theme palette. Set to false to always use the
+# theme palette.
+# fetch_label_colors = true
+
 # Override individual colors (takes precedence over theme_preset)
 # [theme]
 # bg = "#121214"

@@ -67,7 +67,10 @@ impl GitlabClient {
         self.backend.start_job(project_path, job_id).await
     }
 
-    pub async fn fetch_labels(&self, project_path: &str) -> Result<Vec<String>> {
+    pub async fn fetch_labels(
+        &self,
+        project_path: &str,
+    ) -> Result<Vec<crate::domain::labels::Label>> {
         self.backend
             .fetch_labels(project_path, self.api_per_page)
             .await

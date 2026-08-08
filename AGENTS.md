@@ -202,8 +202,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
-| List milestones | `glab milestone list --output json -R <repo> --per-page <N>` | Single call |
-| List milestone issues | `glab issue list --milestone <id> --all --output json -R <repo> --per-page <N>` | Single call |
+| List milestones | `glab milestone list --output json --project <repo> --per-page <N>` | Single call (`milestone list` requires `--project`/`--group`, not `-R`) |
+| List milestone issues | `glab issue list --milestone <title> --all --output json -R <repo> --per-page <N>` | Single call (`--milestone` filters by milestone **title**, not iid — resolved from the selected milestone at the call site) |
 | List todos | `glab todo list --output=json` | Single call |
 | List labels | `glab label list --output json -R <repo> --per-page <api_per_page>` | Single call (label colors feed the Labels column) |
 

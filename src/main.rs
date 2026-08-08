@@ -1021,29 +1021,54 @@ async fn main() -> Result<()> {
         if app.active_tab == app::Tab::Milestones {
             if let Some(client) = &app.gitlab_client {
                 if let Some(idx) = app.milestones.state.selected() {
-                    let milestone_iid = app.filtered_milestones().get(idx).map(|m| m.iid);
-                    if let Some(iid) = milestone_iid {
-                        if app.selected_milestone_iid != Some(iid) {
-                            app.selected_milestone_iid = Some(iid);
-                            // Use cached data if available; only fetch if not yet cached
-                            if let Some(cached) = app.milestone_issues_cache.get(&iid) {
+                    let milestone = app
+                        .filtered_milestones()
+                        .get(idx)
+                        .map(|m| (m.iid, m.title.clone()));
+                    if let Some((milestone_iid, milestone_title)) = milestone {
+                        if app.selected_milestone_iid != Some(milestone_iid) {
+                            app.selected_milestone_iid = Some(milestone_iid);
+                            // Use cached data if available; only fetch if not yet cached.
+                            // An empty cached list is NOT treated as data: it is what a
+                            // failed/buggy fetch (e.g. `--milestone <iid>` matching nothing)
+                            // leaves behind, and trusting it would freeze progress at 0%.
+                            let cached = app
+                                .milestone_issues_cache
+                                .get(&milestone_iid)
+                                .filter(|c| !c.is_empty());
+                            if let Some(cached) = cached {
                                 app.selected_milestone_issues = Some(cached.clone());
                             } else {
                                 app.selected_milestone_issues = None;
                                 let client_clone = client.clone();
                                 let project_context = app.project_context.clone();
+                                // `glab issue list --milestone` filters by milestone
+                                // title, not iid — passing the title here is required
+                                // for the glab backend to return any issues.
                                 let tx = events.sender();
                                 tokio::spawn(async move {
-                                    if let Ok(issues) = domain::milestones::list_milestone_issues(
+                                    match domain::milestones::list_milestone_issues(
                                         &client_clone,
                                         &project_context,
-                                        iid,
+                                        milestone_iid,
+                                        &milestone_title,
                                     )
                                     .await
                                     {
-                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
-                                    } else {
-                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
+                                        Ok(issues) => {
+                                            let _ = tx.send(Event::MilestoneIssuesFetched(
+                                                milestone_iid,
+                                                issues,
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            // Don't silently substitute an empty list: that
+                                            // renders as 0% progress with no explanation.
+                                            let _ = tx.send(Event::FetchFailed(
+                                                app::Tab::Milestones,
+                                                format!("Failed to fetch milestone issues: {e}"),
+                                            ));
+                                        }
                                     }
                                 });
                             }
@@ -1254,7 +1279,15 @@ async fn main() -> Result<()> {
                 Event::MilestoneIssuesFetched(iid, issues) => {
                     let mut fallback_success = false;
                     if issues.is_empty() {
-                        if let Some(cached) = app.project_cache.milestone_issues.get(&iid) {
+                        // Only fall back to a cached list that actually has data;
+                        // a cached empty list is indistinguishable from a failed
+                        // fetch and must not mask a real 0% progress display.
+                        if let Some(cached) = app
+                            .project_cache
+                            .milestone_issues
+                            .get(&iid)
+                            .filter(|c| !c.is_empty())
+                        {
                             app.milestone_issues_cache.insert(iid, cached.clone());
                             if app.selected_milestone_iid == Some(iid) {
                                 app.selected_milestone_issues = Some(cached.clone());

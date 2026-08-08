@@ -1806,6 +1806,7 @@ impl Backend for GhBackend {
         &self,
         project: &str,
         milestone_iid: u64,
+        _milestone_title: &str,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
         let total = page_size * 10;

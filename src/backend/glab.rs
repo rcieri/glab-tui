@@ -1994,7 +1994,7 @@ impl Backend for GlabBackend {
                     "list",
                     "--output",
                     "json",
-                    "-R",
+                    "--project",
                     project,
                     "--per-page",
                     &page_size.to_string(),
@@ -2038,15 +2038,20 @@ impl Backend for GlabBackend {
         &self,
         project: &str,
         milestone_iid: u64,
+        milestone_title: &str,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
+        // `glab issue list --milestone` filters by milestone **title**, not
+        // iid/id — passing the iid silently returns an empty list, which made
+        // milestone progress render as 0%. The title is resolved at the call
+        // site and passed through the domain layer.
         let raw = self
             .run_glab(
                 &[
                     "issue",
                     "list",
                     "--milestone",
-                    &milestone_iid.to_string(),
+                    milestone_title,
                     "--all",
                     "--output",
                     "json",

@@ -280,7 +280,7 @@ pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
 fn color_to_hex(c: Color) -> String {
     match c {
         Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
-        _ => "#000000".to_string(),
+        _ => String::new(),
     }
 }
 

@@ -272,6 +272,7 @@ pub trait Backend: Send + Sync {
         &self,
         project: &str,
         milestone_iid: u64,
+        milestone_title: &str,
         page_size: usize,
     ) -> Result<Vec<Issue>>;
     async fn create_milestone(

@@ -31,10 +31,16 @@ pub async fn list_milestone_issues(
     client: &GitlabClient,
     project_path: &str,
     milestone_iid: u64,
+    milestone_title: &str,
 ) -> Result<Vec<Issue>> {
     client
         .backend
-        .list_milestone_issues(project_path, milestone_iid, client.page_size)
+        .list_milestone_issues(
+            project_path,
+            milestone_iid,
+            milestone_title,
+            client.page_size,
+        )
         .await
 }
 

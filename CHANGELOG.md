@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.4] - 2026-08-13
+
+### Bug Fixes
+- **Theme-safe syntax highlighting** — The diff view's syntax highlighting no longer hardcodes a fixed syntect palette. `highlight_line_syntax` now derives the highlighting theme from the active app theme (`text_normal` foreground on the theme `bg`) and strips all syntect scope colors, so highlighted code always matches the active theme — including custom and light themes — and the reset theme is no longer serialized into saved configs (#313).
+- **GitHub Enterprise backend detection** — Backend detection now parses the remote host and, for non-`github.com` hosts, probes both `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`. A new repo-local `backend = "github" | "gitlab"` config key overrides automatic detection for ambiguous remotes (SSH aliases, hosts serving both platforms), and the shared detection logic is now used at startup, in the repo switcher, for diff review submission, and by `doctor` (#312).
+- **Milestone progress rendering** — `glab milestone list` now passes `--project`/`--group` (the previous `-R` flag was silently ignored, leaving the Milestones tab empty), and milestone issues are fetched by milestone **title** instead of iid — fixing the progress column and "Issues Status" detail stuck at 0%. Stale empty milestone-issue cache entries no longer block a re-fetch, and fetch errors surface through the failure toast instead of silently substituting an empty list (#303).
+- **Merge MRs without prompting (GitLab)** — `glab mr merge` runs with `--yes` so the TUI never hangs on the CLI's interactive confirmation, and multiple selected MRs can be merged in sequence from the merge-options selector (#310).
+- **Draft/Ready status editing** — The MR/PR edit-menu status field now actually applies the change (updates the local row and calls the backend toggle) instead of silently discarding it, and the field is available for GitHub PRs as well (#308).
+- **Help overlay polish** — `q` is consumed by the help search input instead of quitting or closing the overlay, and the help screen now separates "Quit program" (the remappable quit key) from "Close active overlay" (`Esc`) (#309, #311).
+
+### Maintenance
+- **Dependencies** — `clap` bumped `4.6.4` → `4.6.6` (#307).
+- **CI** — pinned Actions refreshed: `dtolnay/rust-toolchain` and `Swatinem/rust-cache` `2.9.1` → `2.9.2` (#305, #306).
+
+---
+
 ## [0.8.3] - 2026-08-04
 
 ### Features

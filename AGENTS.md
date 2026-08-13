@@ -16,10 +16,10 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.8.3`)
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.8.4`)
 
 ### Dual-Engine Architecture
-The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
+The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
 
 The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call is extracted from the remote URL by `git_helpers::parse_project_path` ([src/git_helpers.rs](src/git_helpers.rs)), which keeps every path segment after the host so nested GitLab subgroup namespaces (`group/subgroup/project`) resolve correctly. Always use this helper — do not reimplement remote-URL parsing inline.
 
@@ -50,7 +50,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
 * [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
-* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `parse_project_path` (remote-URL → `namespace/project`), `get_current_branch`, `slugify`, `get_workflow_files`.
+* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_remote_host`, `get_current_branch`, `slugify`, `get_workflow_files`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
@@ -95,8 +95,9 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 ### Syntax Highlighting (`syntect`)
 * Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
 * `SYNTAX_SET` and `THEME_SET` are global `LazyLock` statics using `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`.
+* **Theme-safe:** `highlight_line_syntax` builds the `syntect` theme from the active `THEME` — foreground/background taken from the `text_normal`/`bg` tokens and all syntect scope colors stripped — so highlighting always matches the active theme. Never reintroduce hardcoded syntect palette colors.
 * The public function `highlight_line_syntax(file_path, line_content, ext)` returns `Option<Vec<(ratatui::style::Style, String)>>`.
-* `syntect_style_to_ratatui()` converts `syntect::highlighting::Style` → `ratatui::style::Style`.
+* `syntect_style_to_ratatui()` maps only `syntect` font modifiers (bold/italic/underline) to `ratatui::style::Modifier`; colors are intentionally ignored because they come from the theme.
 * `DiffLine` contains an optional `syntax_highlighted: Option<Vec<(Style, String)>>` field populated during parsing.
 
 ### Code Review System
@@ -122,6 +123,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 
 ### Config & Theme System
 * Config is loaded via `Config::load()` in [src/config.rs](src/config.rs) at startup and stored on `App` as `app.config`.
+* `Config` carries an optional `backend: Option<BackendKind>` (deserialized lowercase as `"github"` / `"gitlab"`). When set it overrides automatic backend detection everywhere — startup, repo switcher, diff review submission, and `doctor` — via `git_helpers::detect_backend(remote_url, config.backend)`.
 * `Config` exposes both `page_size` (total item budget per tab) and `api_per_page` (items per HTTP request, clamped to GitLab's `1–100` `per_page` range via `api_per_page_clamped()`). Thread both through the `Backend` pagination methods; `_per_request` is a no-op on GitHub, which paginates with `--limit`.
 * `fetch_label_colors` (default `true`) selects between the real label colors returned by `glab label list` / `gh label list` and the theme's label palette. The API colors are stored as a `name → Color` map on `app.label_colors` (populated from the cache at startup and refreshed on `RepoAttributesFetched`); light GitHub-style label colors fall back to the theme palette because they are unreadable as foreground text on dark themes (`is_light_color()` luminance check in [src/ui/helpers.rs](src/ui/helpers.rs)).
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` / the `save_view` keybinding), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
@@ -310,7 +312,7 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Delete MR (Glab) | `glab mr delete <iid> -R <repo>` |
 | Delete issue (GH) | `gh issue delete <iid> -R <repo> --yes` |
 | Approve MR | `gh pr review <iid> --approve` / `glab mr approve <iid>` |
-| Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --remove-source-branch --squash` |
+| Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --squash --remove-source-branch --yes` (the `--yes` flag skips the CLI's interactive confirmation; multiple selected MRs are merged in sequence through `Backend::merge_mr`) |
 | Toggle draft (→ ready) | `gh pr ready <iid>` / `glab mr update <iid> --ready` |
 | Toggle draft (→ draft) | `gh pr ready <iid> --undo` / `glab mr update <iid> --draft` |
 | Create release | `gh release create <tag> -F <changelog>` / `glab release create <tag> -F <changelog>` |

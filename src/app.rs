@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
-use crate::config::Config;
+use crate::config::{Config, THEME};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
@@ -38,8 +38,15 @@ pub fn highlight_line_syntax(
         .find_syntax_by_extension(ext)
         .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
 
-    let syntax_theme = THEME_SET.themes.values().next()?;
-    let mut highlighter = syntect::easy::HighlightLines::new(syntax, syntax_theme);
+    let mut syntax_theme = THEME_SET.themes.values().next()?.clone();
+    let theme = THEME.read().unwrap();
+    syntax_theme.settings.foreground = Some(syntect_color(theme.text_normal)?);
+    syntax_theme.settings.background = Some(syntect_color(theme.bg)?);
+    for item in &mut syntax_theme.scopes {
+        item.style.foreground = None;
+        item.style.background = None;
+    }
+    let mut highlighter = syntect::easy::HighlightLines::new(syntax, &syntax_theme);
 
     // Remove the leading +/-/space for syntax highlighting, but keep the actual code
     let code = if line_content.starts_with('+')
@@ -70,6 +77,13 @@ pub fn highlight_line_syntax(
     } else {
         Some(result)
     }
+}
+
+fn syntect_color(color: ratatui::style::Color) -> Option<syntect::highlighting::Color> {
+    let ratatui::style::Color::Rgb(r, g, b) = color else {
+        return None;
+    };
+    Some(syntect::highlighting::Color { r, g, b, a: 255 })
 }
 
 fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {

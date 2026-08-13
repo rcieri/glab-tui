@@ -3398,7 +3398,16 @@ async fn main() -> Result<()> {
                                     }
 
                                     if field_type == "merge_options" {
-                                        let mr_iid = selector.entity_iid;
+                                        let is_bulk_merge =
+                                            selector.entity_type == "bulk_merge_mrs";
+                                        let merge_iids = if is_bulk_merge {
+                                            let mut iids: Vec<u64> =
+                                                app.selected_mrs.iter().copied().collect();
+                                            iids.sort_unstable();
+                                            iids
+                                        } else {
+                                            vec![selector.entity_iid]
+                                        };
                                         let mut squash = false;
                                         let mut delete_branch = false;
                                         let mut merge_strategy: Option<&str> = None;
@@ -3418,39 +3427,52 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         app.selector = None;
-                                        let client = app.gitlab_client.clone().unwrap();
+                                        let Some(client) = app.gitlab_client.clone() else {
+                                            app.error_message = Some(
+                                                "No backend is available for merging".to_string(),
+                                            );
+                                            continue;
+                                        };
                                         let project = app.project_context.clone();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
-                                            match client
-                                                .merge_mr(
-                                                    &project,
-                                                    mr_iid,
-                                                    squash,
-                                                    delete_branch,
-                                                    merge_strategy,
-                                                )
-                                                .await
-                                            {
-                                                Ok(_) => {
-                                                    let _ = tx
-                                                        .send(Event::CommandCompleted(tab, Ok(())));
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        tab,
-                                                        Err(e.to_string()),
-                                                    ));
+                                            let mut failures = Vec::new();
+                                            for mr_iid in merge_iids {
+                                                if let Err(e) = client
+                                                    .merge_mr(
+                                                        &project,
+                                                        mr_iid,
+                                                        squash,
+                                                        delete_branch,
+                                                        merge_strategy,
+                                                    )
+                                                    .await
+                                                {
+                                                    failures.push(format!("#{}: {}", mr_iid, e));
                                                 }
                                             }
+                                            let result = if failures.is_empty() {
+                                                Ok(())
+                                            } else {
+                                                Err(format!(
+                                                    "Merge failures: {}",
+                                                    failures.join("; ")
+                                                ))
+                                            };
+                                            let _ = tx.send(Event::CommandCompleted(tab, result));
                                         });
-                                        if let Some(pos) =
-                                            app.mrs.items.iter().position(|m| m.iid == mr_iid)
-                                        {
-                                            app.mrs.items.remove(pos);
+                                        if is_bulk_merge {
+                                            app.selected_mrs.clear();
+                                        } else {
+                                            let mr_iid = selector.entity_iid;
+                                            if let Some(pos) =
+                                                app.mrs.items.iter().position(|m| m.iid == mr_iid)
+                                            {
+                                                app.mrs.items.remove(pos);
+                                            }
+                                            app.update_filter_selection();
                                         }
-                                        app.update_filter_selection();
                                         continue;
                                     }
 

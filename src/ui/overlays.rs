@@ -615,8 +615,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Global & Nav",
-                key: d(format!("q / {} / Esc", app.config.keybindings.global.quit)),
-                action: "Quit / Close overlay",
+                key: d(app.config.keybindings.global.quit.clone()),
+                action: "Quit program",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: s("Esc"),
+                action: "Close active overlay",
             },
             Shortcut {
                 category: "Global & Nav",

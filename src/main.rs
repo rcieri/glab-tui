@@ -1713,6 +1713,7 @@ async fn main() -> Result<()> {
                         && app.text_input.is_none()
                         && app.edit_menu.is_none()
                         && app.selector.is_none()
+                        && !app.show_help
                         && !app.focus_column_checklist
                     {
                         app.quit();

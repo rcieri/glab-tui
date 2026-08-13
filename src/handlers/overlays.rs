@@ -473,3 +473,25 @@ pub fn handle_date_picker(
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_help_overlay;
+    use crate::app::App;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn help_search_consumes_q_instead_of_closing_or_quitting() {
+        let mut app = App::default();
+        app.show_help = true;
+
+        let handled = handle_help_overlay(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+        );
+
+        assert!(handled);
+        assert_eq!(app.help_search_query, "q");
+        assert!(app.show_help);
+    }
+}

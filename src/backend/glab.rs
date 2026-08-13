@@ -444,6 +444,33 @@ impl GlabBackend {
             format!("query={}", query),
         ]
     }
+
+    fn merge_args(
+        project: &str,
+        iid: u64,
+        squash: bool,
+        delete_branch: bool,
+        strategy: Option<&str>,
+    ) -> Vec<String> {
+        let mut args = vec![
+            "mr".into(),
+            "merge".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        if squash {
+            args.push("--squash".into());
+        }
+        if delete_branch {
+            args.push("--remove-source-branch".into());
+        }
+        if let Some(s) = strategy {
+            args.push(format!("--{}", s));
+        }
+        args.push("--yes".into());
+        args
+    }
 }
 
 #[async_trait]
@@ -1315,22 +1342,7 @@ impl Backend for GlabBackend {
         delete_branch: bool,
         strategy: Option<&str>,
     ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "mr".into(),
-            "merge".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        if squash {
-            args.push("--squash".into());
-        }
-        if delete_branch {
-            args.push("--remove-source-branch".into());
-        }
-        if let Some(s) = strategy {
-            args.push(format!("--{}", s));
-        }
+        let args = Self::merge_args(project, iid, squash, delete_branch, strategy);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "MERGING MR").await?;
         Ok(())
@@ -2666,6 +2678,25 @@ impl Backend for GlabBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_args_skip_confirmation_prompt() {
+        let args = GlabBackend::merge_args("group/project", 42, true, true, None);
+
+        assert_eq!(
+            args,
+            vec![
+                "mr",
+                "merge",
+                "42",
+                "-R",
+                "group/project",
+                "--squash",
+                "--remove-source-branch",
+                "--yes",
+            ]
+        );
+    }
 
     // ── iid batching (GraphQL 100-node connection cap) ──
 

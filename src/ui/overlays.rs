@@ -678,7 +678,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.select_mr)),
-                action: "Toggle MR/PR selection (bulk edit with e)",
+                action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
             },
             Shortcut {
                 category: "Merge Requests",

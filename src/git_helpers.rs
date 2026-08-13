@@ -1,3 +1,5 @@
+use crate::backend::BackendKind;
+
 pub fn get_current_branch() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["symbolic-ref", "--short", "HEAD"])
@@ -45,6 +47,54 @@ pub fn parse_project_path(url: &str) -> Option<String> {
     let path = path.trim_matches('/');
     let path = path.strip_suffix(".git").unwrap_or(path);
     path.contains('/').then(|| path.to_string())
+}
+
+pub fn parse_remote_host(url: &str) -> Option<String> {
+    let url = url.trim();
+    let authority = if let Some((_, rest)) = url.split_once("://") {
+        rest.split('/').next()?
+    } else {
+        url.split_once(':')?.0
+    };
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = host.trim_matches(['[', ']']);
+    let host = host.split(':').next().unwrap_or(host);
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+pub fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> BackendKind {
+    if let Some(kind) = override_kind {
+        return kind;
+    }
+
+    let Some(host) = parse_remote_host(remote_url) else {
+        return BackendKind::GitLab;
+    };
+    if host == "github.com" {
+        return BackendKind::GitHub;
+    }
+
+    let gh_authenticated = auth_status("gh", &host, true);
+    let glab_authenticated = auth_status("glab", &host, false);
+    if gh_authenticated && !glab_authenticated {
+        BackendKind::GitHub
+    } else if glab_authenticated && !gh_authenticated {
+        BackendKind::GitLab
+    } else {
+        BackendKind::GitLab
+    }
+}
+
+fn auth_status(program: &str, host: &str, active: bool) -> bool {
+    let mut command = std::process::Command::new(program);
+    command.args(["auth", "status"]);
+    if active {
+        command.arg("--active");
+    }
+    command.args(["--hostname", host]);
+    command.output().is_ok_and(|output| output.status.success())
 }
 
 pub fn slugify(s: &str) -> String {
@@ -184,7 +234,35 @@ pub fn get_workflow_files(is_github: bool) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_project_path;
+    use super::{detect_backend, parse_project_path, parse_remote_host};
+    use crate::backend::BackendKind;
+
+    #[test]
+    fn parses_remote_hosts() {
+        assert_eq!(
+            parse_remote_host("https://github.example.com/org/repo.git").as_deref(),
+            Some("github.example.com")
+        );
+        assert_eq!(
+            parse_remote_host("git@github.example.com:org/repo.git").as_deref(),
+            Some("github.example.com")
+        );
+        assert_eq!(
+            parse_remote_host("ssh://git@gitlab.example.com:2222/org/repo.git").as_deref(),
+            Some("gitlab.example.com")
+        );
+    }
+
+    #[test]
+    fn backend_override_takes_precedence() {
+        assert_eq!(
+            detect_backend(
+                "git@github.example.com:org/repo.git",
+                Some(BackendKind::GitLab)
+            ),
+            BackendKind::GitLab
+        );
+    }
 
     #[test]
     fn keeps_nested_subgroups_over_https() {

@@ -208,6 +208,15 @@ gh auth login     # for GitHub repos
 ```
 
 The active project is detected automatically from the `origin` remote in the current working directory.
+For GitHub Enterprise or unusual hosting setups, set the backend explicitly in the repo-local config:
+
+```toml
+backend = "github" # or "gitlab"
+```
+
+The repo-local override takes precedence over automatic detection. Automatic detection recognizes
+`github.com` and checks both `gh auth status` and `glab auth status` for other hostnames; SSH aliases
+and hosts serving both platforms require the override.
 
 ### Config file
 

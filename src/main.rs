@@ -884,7 +884,7 @@ async fn main() -> Result<()> {
     }
     app.update_filter_selection();
 
-    if let Ok(mut client) = domain::client::GitlabClient::new().await {
+    if let Ok(mut client) = domain::client::GitlabClient::new(&app.config).await {
         client.page_size = app.config.page_size;
         client.api_per_page = app.config.api_per_page_clamped();
         client.tx = Some(events.sender());
@@ -1630,17 +1630,9 @@ async fn main() -> Result<()> {
                                 let mr_iid = diff_view.mr_iid;
                                 let mr_iid_str = mr_iid.to_string();
                                 tokio::spawn(async move {
-                                    let is_github = match tokio::process::Command::new("git")
-                                        .args(["remote", "get-url", "origin"])
-                                        .output()
-                                        .await
-                                        .map(|o| {
-                                            String::from_utf8_lossy(&o.stdout)
-                                                .contains("github.com")
-                                        }) {
-                                        Ok(true) => true,
-                                        _ => false,
-                                    };
+                                    let is_github = client
+                                        .as_ref()
+                                        .is_some_and(|client| client.kind().is_github());
 
                                     let program = if is_github { "gh" } else { "glab" };
                                     let (entity, sub) = if is_github {
@@ -2027,23 +2019,6 @@ async fn main() -> Result<()> {
                                                 {
                                                     let temp_str =
                                                         temp_path.to_string_lossy().to_string();
-
-                                                    let is_github =
-                                                        match tokio::process::Command::new("git")
-                                                            .args(["remote", "get-url", "origin"])
-                                                            .output()
-                                                            .await
-                                                        {
-                                                            Ok(output)
-                                                                if output.status.success() =>
-                                                            {
-                                                                let url = String::from_utf8_lossy(
-                                                                    &output.stdout,
-                                                                );
-                                                                url.contains("github.com")
-                                                            }
-                                                            _ => false,
-                                                        };
 
                                                     let program =
                                                         if is_github { "gh" } else { "glab" };
@@ -2987,7 +2962,10 @@ async fn main() -> Result<()> {
                                                         app.project_context = context;
                                                     }
                                                     if let Ok(mut client) =
-                                                        domain::client::GitlabClient::new().await
+                                                        domain::client::GitlabClient::new(
+                                                            &app.config,
+                                                        )
+                                                        .await
                                                     {
                                                         client.page_size = app.config.page_size;
                                                         client.api_per_page =

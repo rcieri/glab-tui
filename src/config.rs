@@ -1123,6 +1123,7 @@ impl Default for UiConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub backend: Option<crate::backend::BackendKind>,
     pub theme_preset: Option<String>,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
@@ -1153,6 +1154,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            backend: None,
             theme_preset: Some("default".to_string()),
             active_tab: None,
             theme: ThemeOverrides::default(),
@@ -1203,6 +1205,9 @@ theme_preset = "default"
 
 # Default request page size
 page_size = 100
+
+# Backend override for repositories where automatic detection is ambiguous.
+# backend = "github" or "gitlab"
 
 # Maximum items per API request (1-100). Lower this if your GitLab instance
 # truncates large JSON response bodies. Only affects GitLab backends.
@@ -1776,6 +1781,15 @@ page_size = 250
 
         let empty: Config = toml::from_str("").expect("parse empty config");
         assert!(empty.fetch_label_colors);
+    }
+
+    #[test]
+    fn backend_override_is_optional_and_lowercase() {
+        assert_eq!(Config::default().backend, None);
+        let github: Config = toml::from_str("backend = \"github\"").expect("parse config");
+        assert_eq!(github.backend, Some(crate::backend::BackendKind::GitHub));
+        let gitlab: Config = toml::from_str("backend = \"gitlab\"").expect("parse config");
+        assert_eq!(gitlab.backend, Some(crate::backend::BackendKind::GitLab));
     }
 
     #[test]

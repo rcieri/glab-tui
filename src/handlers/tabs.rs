@@ -577,16 +577,9 @@ pub async fn handle_active_tab_key(
                             let client = app.gitlab_client.clone();
                             let project_context = app.project_context.clone();
                             tokio::spawn(async move {
-                                let is_github = match tokio::process::Command::new("git")
-                                    .args(["remote", "get-url", "origin"])
-                                    .output()
-                                    .await
-                                    .map(|o| {
-                                        String::from_utf8_lossy(&o.stdout).contains("github.com")
-                                    }) {
-                                    Ok(true) => true,
-                                    _ => false,
-                                };
+                                let is_github = client
+                                    .as_ref()
+                                    .is_some_and(|client| client.kind().is_github());
 
                                 let program = if is_github { "gh" } else { "glab" };
                                 let (entity, sub) = if is_github {

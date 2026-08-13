@@ -463,6 +463,31 @@ pub fn apply_selector_changes(
                 }
             }
         }
+        "draft_status" => {
+            if entity_type != "mr" {
+                return;
+            }
+
+            let is_draft = values
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case("draft"));
+            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                item.draft = is_draft;
+            }
+
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let project_path = app.project_context.clone();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let result = client.toggle_mr_draft(&project_path, iid, is_draft).await;
+                let _ = tx2.send(Event::CommandCompleted(
+                    tab,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
+        }
         "milestone" => {
             let first_val = values.first().cloned().unwrap_or_default();
             let is_clear = first_val.is_empty() || first_val == "None" || first_val == "0";
@@ -637,8 +662,8 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             ];
             if !is_github {
                 fields.push(("Target Branch".to_string(), mr.target_branch.clone()));
-                fields.push(("Draft Status".to_string(), draft_status.to_string()));
             }
+            fields.push(("Status (Draft/Ready)".to_string(), draft_status.to_string()));
             fields.push((
                 "Description".to_string(),
                 mr.description.clone().unwrap_or_default(),
@@ -792,5 +817,82 @@ mod tests {
         );
 
         assert!(app.mrs.items[0].milestone.is_none());
+    }
+
+    #[test]
+    fn draft_status_updates_mr_state_and_uses_shared_field_label() {
+        let mut app = App::default();
+        app.mrs.items.push(crate::domain::mr::MergeRequest {
+            iid: 1,
+            title: "MR 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            author: crate::domain::mr::Author {
+                username: "u1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".to_string(),
+            source_branch: "feature".to_string(),
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+        });
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+        let mut terminal = ratatui::Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
+            },
+        )
+        .unwrap();
+
+        apply_selector_changes(
+            &mut app,
+            "mr",
+            1,
+            "draft_status",
+            vec!["Draft".to_string()],
+            &mut terminal,
+            tx,
+            crate::app::Tab::MergeRequests,
+        );
+
+        assert!(app.mrs.items[0].draft);
+
+        rebuild_edit_menu(&mut app, "mr", 1);
+        assert!(
+            app.edit_menu
+                .as_ref()
+                .unwrap()
+                .fields
+                .iter()
+                .any(|(label, value)| label == "Status (Draft/Ready)" && value == "Draft")
+        );
+
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: Box::new(crate::backend::gh::GhBackend::new()),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+        });
+        rebuild_edit_menu(&mut app, "mr", 1);
+        assert!(
+            app.edit_menu
+                .as_ref()
+                .unwrap()
+                .fields
+                .iter()
+                .any(|(label, value)| label == "Status (Draft/Ready)" && value == "Draft")
+        );
     }
 }

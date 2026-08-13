@@ -662,8 +662,8 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             ];
             if !is_github {
                 fields.push(("Target Branch".to_string(), mr.target_branch.clone()));
-                fields.push(("Status (Draft/Ready)".to_string(), draft_status.to_string()));
             }
+            fields.push(("Status (Draft/Ready)".to_string(), draft_status.to_string()));
             fields.push((
                 "Description".to_string(),
                 mr.description.clone().unwrap_or_default(),
@@ -868,6 +868,23 @@ mod tests {
 
         assert!(app.mrs.items[0].draft);
 
+        rebuild_edit_menu(&mut app, "mr", 1);
+        assert!(
+            app.edit_menu
+                .as_ref()
+                .unwrap()
+                .fields
+                .iter()
+                .any(|(label, value)| label == "Status (Draft/Ready)" && value == "Draft")
+        );
+
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: Box::new(crate::backend::gh::GhBackend::new()),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+        });
         rebuild_edit_menu(&mut app, "mr", 1);
         assert!(
             app.edit_menu

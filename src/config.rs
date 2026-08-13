@@ -1206,7 +1206,7 @@ theme_preset = "default"
 # Default request page size
 page_size = 100
 
-# Backend override for repositories where automatic detection is incorrect.
+# Backend override for repositories where automatic detection is ambiguous.
 # backend = "github" or "gitlab"
 
 # Maximum items per API request (1-100). Lower this if your GitLab instance

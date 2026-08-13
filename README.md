@@ -215,8 +215,8 @@ backend = "github" # or "gitlab"
 ```
 
 The repo-local override takes precedence over automatic detection. Automatic detection recognizes
-`github.com` and checks `gh` authentication for other GitHub Enterprise hostnames; SSH aliases and
-hosts serving both platforms require the override.
+`github.com` and checks both `gh auth status` and `glab auth status` for other hostnames; SSH aliases
+and hosts serving both platforms require the override.
 
 ### Config file
 

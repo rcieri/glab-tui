@@ -76,15 +76,25 @@ pub fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> B
         return BackendKind::GitHub;
     }
 
-    let authenticated = std::process::Command::new("gh")
-        .args(["auth", "status", "--active", "--hostname", &host])
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if authenticated {
+    let gh_authenticated = auth_status("gh", &host, true);
+    let glab_authenticated = auth_status("glab", &host, false);
+    if gh_authenticated && !glab_authenticated {
         BackendKind::GitHub
+    } else if glab_authenticated && !gh_authenticated {
+        BackendKind::GitLab
     } else {
         BackendKind::GitLab
     }
+}
+
+fn auth_status(program: &str, host: &str, active: bool) -> bool {
+    let mut command = std::process::Command::new(program);
+    command.args(["auth", "status"]);
+    if active {
+        command.arg("--active");
+    }
+    command.args(["--hostname", host]);
+    command.output().is_ok_and(|output| output.status.success())
 }
 
 pub fn slugify(s: &str) -> String {

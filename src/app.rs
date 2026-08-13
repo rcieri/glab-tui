@@ -38,8 +38,8 @@ pub fn highlight_line_syntax(
         .find_syntax_by_extension(ext)
         .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
 
-    let mut highlighter =
-        syntect::easy::HighlightLines::new(syntax, &THEME_SET.themes["base16-eighties.dark"]);
+    let syntax_theme = THEME_SET.themes.values().next()?;
+    let mut highlighter = syntect::easy::HighlightLines::new(syntax, syntax_theme);
 
     // Remove the leading +/-/space for syntax highlighting, but keep the actual code
     let code = if line_content.starts_with('+')
@@ -73,7 +73,6 @@ pub fn highlight_line_syntax(
 }
 
 fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
-    let fg = ratatui::style::Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
     let mut modifier = Modifier::empty();
     if style
         .font_style
@@ -93,9 +92,7 @@ fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
     {
         modifier |= Modifier::UNDERLINED;
     }
-    ratatui::style::Style::default()
-        .fg(fg)
-        .add_modifier(modifier)
+    ratatui::style::Style::default().add_modifier(modifier)
 }
 
 pub use crate::config::SaveMenu;

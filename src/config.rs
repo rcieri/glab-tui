@@ -267,6 +267,9 @@ pub enum SaveMenu {
 
 pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
     let s = s.trim_start_matches('#');
+    if s.eq_ignore_ascii_case("reset") {
+        return Some(Color::Reset);
+    }
     if s.len() == 6 {
         let r = u8::from_str_radix(&s[0..2], 16).ok()?;
         let g = u8::from_str_radix(&s[2..4], 16).ok()?;
@@ -280,7 +283,8 @@ pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
 fn color_to_hex(c: Color) -> String {
     match c {
         Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
-        _ => "#000000".to_string(),
+        Color::Reset => "reset".to_string(),
+        _ => String::new(),
     }
 }
 
@@ -1790,6 +1794,12 @@ page_size = 250
         assert_eq!(github.backend, Some(crate::backend::BackendKind::GitHub));
         let gitlab: Config = toml::from_str("backend = \"gitlab\"").expect("parse config");
         assert_eq!(gitlab.backend, Some(crate::backend::BackendKind::GitLab));
+    }
+
+    #[test]
+    fn reset_color_round_trips_without_a_rgb_fallback() {
+        assert_eq!(hex_to_color("reset"), Some(Color::Reset));
+        assert_eq!(color_to_hex(Color::Reset), "reset");
     }
 
     #[test]

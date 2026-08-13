@@ -16,7 +16,8 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BackendKind {
     GitLab,
     GitHub,

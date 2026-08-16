@@ -4526,9 +4526,8 @@ async fn main() -> Result<()> {
                         // Navigation mode (!menu.editing):
                         match key_event.code {
                             KeyCode::Esc => {
-                                // Close the edit form and drop back to the
-                                // read-only fullscreen view (not the side pane).
-                                app.details_zoomed = true;
+                                // Close the edit form and return to the table.
+                                app.details_zoomed = false;
                                 // Close menu (drop menu by not reassigning)
                             }
                             KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => {
@@ -5641,7 +5640,24 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                // Not on submit — act on the currently selected field
+                                // Not on submit — act on the currently selected field.
+                                // Non-editable fields (ReadOnly / Section) and the
+                                // spacer row are no-ops: pressing Enter on them must
+                                // never crash and must never open an editor.
+                                if menu.selected_idx < menu.fields.len() {
+                                    let f = &menu.fields[menu.selected_idx];
+                                    if f.kind == crate::app::FieldType::ReadOnly
+                                        || f.kind == crate::app::FieldType::Section
+                                    {
+                                        app.edit_menu = Some(menu);
+                                        continue;
+                                    }
+                                } else if menu.selected_idx != menu.fields.len() + 1 {
+                                    // Spacer row between fields and submit.
+                                    app.edit_menu = Some(menu);
+                                    continue;
+                                }
+
                                 let field_name = if menu.selected_idx < menu.fields.len() {
                                     menu.fields[menu.selected_idx].label.clone()
                                 } else {

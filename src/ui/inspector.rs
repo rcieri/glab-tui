@@ -278,24 +278,10 @@ fn render_content_pane(
                 _ => String::new(),
             };
 
-            let desc_border_color = if is_desc_selected {
-                theme.border_focused
-            } else {
-                theme.border
-            };
+            // Same block chrome as the read-only preview — no title, plain border.
             let desc_block = Block::default()
                 .borders(borders)
-                .border_style(Style::default().fg(desc_border_color))
-                .title(format!(" {} Description ", icons.label_details))
-                .title_style(
-                    Style::default()
-                        .fg(if is_desc_selected {
-                            theme.header_fg
-                        } else {
-                            theme.text_muted
-                        })
-                        .add_modifier(Modifier::BOLD),
-                );
+                .border_style(Style::default().fg(theme.border));
 
             let desc_inner = desc_block.inner(area);
             f.render_widget(desc_block, area);
@@ -1116,7 +1102,10 @@ pub(crate) fn build_field_list_items(
 
             let mut line_spans = vec![
                 Span::styled(format!(" {} ", icon), icon_style),
-                Span::styled(format!("{:<label_width$} ", label), label_style),
+                Span::styled(
+                    format!("{:<label_width$.label_width$} ", label),
+                    label_style,
+                ),
                 Span::styled(format!("{} ", icons.separator), sep_style),
             ];
             line_spans.extend(val_spans);

@@ -52,6 +52,56 @@ pub(crate) fn render_edit_menu_if_active(f: &mut Frame, app: &mut App, detail_re
     true
 }
 
+/// Render a vim/helix-style mode indicator in the bottom statusline.
+/// Shows `[NORMAL]` / `[PREVIEW]` / `[EDIT]` with a colored background,
+/// plus a short hint on the right when in a non-normal mode.
+fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
+    let theme = THEME.read().unwrap();
+    let icons = ICONS.read().unwrap();
+
+    let (label, bg, fg) = if app.edit_menu.is_some() {
+        (" EDIT ", theme.green, theme.bg)
+    } else if app.details_zoomed {
+        (" PREVIEW ", theme.blue, theme.bg)
+    } else {
+        (" NORMAL ", theme.inactive_bg, theme.text_muted)
+    };
+
+    let hint = if app.edit_menu.is_some() {
+        format!(
+            " {} Esc: back to table • Tab/↑↓: navigate fields ",
+            icons.label_keyboard
+        )
+    } else if app.details_zoomed {
+        format!(
+            " {} Esc: back to table • Enter: edit ",
+            icons.label_keyboard
+        )
+    } else {
+        format!(
+            " {} Enter: preview • e: edit • ?: help ",
+            icons.label_keyboard
+        )
+    };
+
+    let line = Line::from(vec![
+        Span::styled(
+            label,
+            Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(hint, Style::default().fg(theme.text_muted)),
+    ]);
+
+    let footer = Paragraph::new(line)
+        .style(Style::default().bg(theme.bg))
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(theme.border)),
+        );
+    f.render_widget(footer, area);
+}
+
 /// Render a diff line's content with per-character fuzzy search highlighting.
 fn render_diff_line_content(
     line: &DiffLine,
@@ -188,11 +238,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(2), // Top header bar
             Constraint::Min(0),    // Main workspace
-            Constraint::Length(0), // Reserved
+            Constraint::Length(1), // Mode indicator / statusline
         ])
         .split(size);
 
     let title_area = chunks[0];
+    let footer_area = chunks[2];
 
     // Top: Title & Context
     let icons = crate::config::ICONS.read().unwrap();
@@ -1850,6 +1901,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
             app.diff_view = Some(updated_diff_view);
         }
     }
+
+    // Bottom statusline: vim/helix-style mode indicator.
+    render_mode_indicator(f, app, footer_area);
 
     render_overlays(f, app, size);
 

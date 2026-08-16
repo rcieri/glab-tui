@@ -239,6 +239,95 @@ pub fn render(f: &mut Frame, app: &mut App) {
         );
     f.render_widget(title, title_area);
 
+    // If EditMenu is active, render it full-zoom filling the workspace area
+    if let Some(mut menu) = app.edit_menu.take() {
+        let label_colors = app.label_colors.clone();
+        let sidebar_width = if size.width >= 80 && app.config.ui.sidebar_visible {
+            Constraint::Length(app.config.ui.sidebar_width)
+        } else {
+            Constraint::Length(0)
+        };
+
+        let workspace_area = if sidebar_width == Constraint::Length(0) {
+            chunks[1]
+        } else {
+            let split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([sidebar_width, Constraint::Min(0)])
+                .split(chunks[1]);
+
+            // Render navigation sidebar
+            let kind = app.kind();
+            let sidebar_items: Vec<ListItem> = app
+                .available_tabs()
+                .iter()
+                .map(|t| {
+                    let title = format!(" {} ", t.title(kind).to_uppercase());
+                    if *t == app.active_tab {
+                        ListItem::new(title).style(
+                            Style::default()
+                                .bg(THEME.read().unwrap().border_focused)
+                                .fg(THEME.read().unwrap().bg)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        ListItem::new(title)
+                            .style(Style::default().fg(THEME.read().unwrap().text_muted))
+                    }
+                })
+                .collect();
+
+            let sidebar = List::new(sidebar_items).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(THEME.read().unwrap().border))
+                    .title(format!(" {} Navigation ", icons.label_navigation))
+                    .title_style(
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+            );
+            f.render_widget(sidebar, split[0]);
+            split[1]
+        };
+
+        let doc = crate::app::EntityDocument {
+            title: menu.title.clone(),
+            fields: menu.fields.clone(),
+            content: crate::app::InspectorContent::Markdown(menu.get_description_value()),
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+            .title(format!(" {} {} ", icons.label_details, menu.title))
+            .title_style(
+                Style::default()
+                    .fg(THEME.read().unwrap().header_fg)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        let inner = block.inner(workspace_area);
+        f.render_widget(block, workspace_area);
+
+        inspector::render_entity_inspector(
+            f,
+            &doc,
+            inner,
+            inspector::InspectorMode::Interactive { menu: &mut menu },
+            &label_colors,
+        );
+
+        app.overlay_stack
+            .push((crate::app::OverlayKind::EditMenu, workspace_area));
+        app.edit_menu = Some(menu);
+
+        // Render any secondary overlays like selector modals or confirmation popup
+        overlays::render_overlays(f, app, size);
+        return;
+    }
+
     // Middle: Sidebar | Main Area | Preview Area
     let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
 

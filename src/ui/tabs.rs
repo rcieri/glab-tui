@@ -546,6 +546,16 @@ pub(crate) fn render_tab_merge_requests(
                                 t.green_bg
                             })
                             .add_modifier(Modifier::BOLD),
+                        crate::domain::mr_state::MergeTone::Computing => Style::default()
+                            .fg(t.blue)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else if is_checked {
+                                t.checked_bg
+                            } else {
+                                t.blue_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
                         _ => Style::default().fg(t.text_muted),
                     }
                 };
@@ -592,6 +602,16 @@ pub(crate) fn render_tab_merge_requests(
                                 t.checked_bg
                             } else {
                                 t.green_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
+                        crate::domain::mr_state::ApprovalTone::Pending => Style::default()
+                            .fg(t.yellow)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else if is_checked {
+                                t.checked_bg
+                            } else {
+                                t.yellow_bg
                             })
                             .add_modifier(Modifier::BOLD),
                         _ => Style::default().fg(t.text_muted),
@@ -656,27 +676,43 @@ pub(crate) fn render_tab_merge_requests(
             }
             if app.is_column_visible(Tab::MergeRequests, "Workflow") {
                 let text = crate::domain::mr_state::workflow_cell(m.workflow);
-                let color = match m.workflow {
-                    Some(crate::domain::mr_state::WorkflowStatus::ReturnedToYou) => {
-                        THEME.read().unwrap().red
+                let (color, bg_color) = {
+                    let t = THEME.read().unwrap();
+                    match m.workflow {
+                        Some(crate::domain::mr_state::WorkflowStatus::ReturnedToYou) => {
+                            (t.red, Some(t.red_bg))
+                        }
+                        Some(crate::domain::mr_state::WorkflowStatus::ReviewRequested) => {
+                            (t.yellow, Some(t.yellow_bg))
+                        }
+                        Some(crate::domain::mr_state::WorkflowStatus::YourMergeRequest) => {
+                            (t.blue, Some(t.blue_bg))
+                        }
+                        Some(crate::domain::mr_state::WorkflowStatus::ApprovedByYou) => {
+                            (t.green, Some(t.green_bg))
+                        }
+                        _ => (t.text_muted, None),
                     }
-                    Some(crate::domain::mr_state::WorkflowStatus::ReviewRequested) => {
-                        THEME.read().unwrap().yellow
-                    }
-                    Some(crate::domain::mr_state::WorkflowStatus::YourMergeRequest) => {
-                        THEME.read().unwrap().blue
-                    }
-                    Some(crate::domain::mr_state::WorkflowStatus::ApprovedByYou) => {
-                        THEME.read().unwrap().green
-                    }
-                    _ => THEME.read().unwrap().text_muted,
                 };
+                let mut wf_style = Style::default().fg(color);
+                if let Some(bg) = bg_color {
+                    let t = THEME.read().unwrap();
+                    wf_style = wf_style
+                        .bg(if is_selected {
+                            t.highlight_bg
+                        } else if is_checked {
+                            t.checked_bg
+                        } else {
+                            bg
+                        })
+                        .add_modifier(Modifier::BOLD);
+                }
                 cells.push(super::helpers::render_fuzzy_cell(
                     &text,
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(color),
+                    wf_style,
                     Alignment::Center,
                 ));
             }
@@ -1434,7 +1470,7 @@ pub(crate) fn render_tab_jobs(
             let mut row_cells = Vec::new();
             if app.is_column_visible(Tab::Jobs, "ID") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &j.id().to_string(),
+                    &format!("#{}", j.id()),
                     &app.search_query,
                     is_job_selected,
                     is_checked,
@@ -1916,7 +1952,7 @@ pub(crate) fn render_tab_runners(
             let mut row_cells = Vec::new();
             if app.is_column_visible(Tab::Runners, "ID") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &r.id.to_string(),
+                    &format!("#{}", r.id),
                     &app.search_query,
                     is_row_highlighted,
                     false,
@@ -2388,8 +2424,13 @@ pub(crate) fn render_tab_todos(
                 ));
             }
             if app.is_column_visible(Tab::Todos, "ID") {
+                let prefix = if n.target_type == "MergeRequest" {
+                    "!"
+                } else {
+                    "#"
+                };
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &format!("#{}", n.target_iid),
+                    &format!("{}{}", prefix, n.target_iid),
                     &app.search_query,
                     is_row_highlighted,
                     false,
@@ -2582,7 +2623,7 @@ pub(crate) fn render_tab_milestones(
                     match *col {
                         "ID" => {
                             cells.push(super::helpers::render_fuzzy_cell(
-                                &m.iid.to_string(),
+                                &format!("%{}", m.iid),
                                 &app.search_query,
                                 is_selected,
                                 false,

@@ -16,35 +16,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ICONS.read().unwrap();
     let label_colors = app.label_colors.clone();
-    if let Some(menu) = &mut app.edit_menu {
-        let has_description = menu
-            .fields
-            .iter()
-            .any(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text);
-        let (body, edit_menu_area) = if has_description {
-            modal_area(f, &menu.title, 80, 85, 52, 16, size)
-        } else {
-            let field_rows = menu.fields.len().max(3) as u16;
-            let target_h = (field_rows + 7).min(size.height.saturating_sub(4));
-            modal_area(f, &menu.title, 55, 65, 48, target_h, size)
-        };
-        app.overlay_stack
-            .push((crate::app::OverlayKind::EditMenu, edit_menu_area));
-
-        let doc = crate::app::EntityDocument {
-            title: menu.title.clone(),
-            fields: menu.fields.clone(),
-            content: crate::app::InspectorContent::Markdown(menu.get_description_value()),
-        };
-
-        super::inspector::render_entity_inspector(
-            f,
-            &doc,
-            body,
-            super::inspector::InspectorMode::Interactive { menu },
-            &label_colors,
-        );
-    }
+    // EditMenu is now rendered as full-zoom view in main UI (ui/mod.rs)
 
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {

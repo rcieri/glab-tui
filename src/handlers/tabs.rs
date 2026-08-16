@@ -797,7 +797,6 @@ pub async fn handle_active_tab_key(
                     "Branch / Ref",
                     current_branch.clone(),
                 )];
-                fields.push(crate::app::Field::section("Options"));
                 if is_github {
                     fields.push(crate::app::Field::text("Workflow File", String::new()));
                 } else {
@@ -806,7 +805,6 @@ pub async fn handle_active_tab_key(
                         "No".to_string(),
                     ));
                 }
-                fields.push(crate::app::Field::section("Variables"));
                 fields.push(crate::app::Field::text("Inputs", String::new()));
                 fields.push(crate::app::Field::text("Variables", String::new()));
 

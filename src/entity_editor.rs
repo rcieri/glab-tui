@@ -497,11 +497,17 @@ pub fn build_todo_document(
     todo: &crate::domain::notifications::Notification,
 ) -> crate::app::EntityDocument {
     let fields = vec![
-        crate::app::Field::read_only("ID", todo.id.clone()),
+        crate::app::Field::read_only("ID", format!("#{}", todo.id)),
         crate::app::Field::text("Title", todo.title.clone()),
         crate::app::Field::read_only(
             "Target",
-            format!("{} #{}", todo.target_type, todo.target_iid),
+            if todo.target_type == "MergeRequest" {
+                format!("!{}", todo.target_iid)
+            } else if todo.target_type == "Issue" {
+                format!("#{}", todo.target_iid)
+            } else {
+                format!("{} #{}", todo.target_type, todo.target_iid)
+            },
         ),
         crate::app::Field::read_only("State", todo.state.to_uppercase()),
         crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&todo.updated_at)),

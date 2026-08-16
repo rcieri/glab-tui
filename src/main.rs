@@ -4345,15 +4345,150 @@ async fn main() -> Result<()> {
                     }
 
                     if let Some(mut menu) = app.edit_menu.take() {
-                        match key_event.code {
-                            KeyCode::Esc => {
-                                if menu.editing {
+                        if menu.editing {
+                            match key_event.code {
+                                KeyCode::Esc | KeyCode::Enter => {
                                     menu.editing = false;
                                     app.edit_menu = Some(menu);
                                 }
-                                // else: close menu (drop menu by not reassigning)
+                                KeyCode::Left => {
+                                    if menu.selected_idx < menu.fields.len()
+                                        && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description")
+                                    {
+                                        menu.cursor_pos = menu.cursor_pos.saturating_sub(1);
+                                    }
+                                    app.edit_menu = Some(menu);
+                                }
+                                KeyCode::Right => {
+                                    if menu.selected_idx < menu.fields.len()
+                                        && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description")
+                                    {
+                                        let max = menu.fields[menu.selected_idx].value.len();
+                                        if menu.cursor_pos < max {
+                                            menu.cursor_pos += 1;
+                                        }
+                                    }
+                                    app.edit_menu = Some(menu);
+                                }
+                                KeyCode::Home => {
+                                    if menu.selected_idx < menu.fields.len()
+                                        && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description")
+                                    {
+                                        menu.cursor_pos = 0;
+                                    }
+                                    app.edit_menu = Some(menu);
+                                }
+                                KeyCode::End => {
+                                    if menu.selected_idx < menu.fields.len()
+                                        && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description")
+                                    {
+                                        menu.cursor_pos =
+                                            menu.fields[menu.selected_idx].value.len();
+                                    }
+                                    app.edit_menu = Some(menu);
+                                }
+                                KeyCode::Backspace => {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Title" || field_name == "Description" {
+                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                            if menu.cursor_pos > 0 {
+                                                f.value.remove(menu.cursor_pos - 1);
+                                                menu.cursor_pos -= 1;
+                                            }
+                                        }
+                                    }
+                                    app.edit_menu = Some(menu);
+                                }
+                                KeyCode::Delete => {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Title" || field_name == "Description" {
+                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                            if menu.cursor_pos < f.value.len() {
+                                                f.value.remove(menu.cursor_pos);
+                                            }
+                                        }
+                                    }
+                                    app.edit_menu = Some(menu);
+                                }
+                                KeyCode::Char(c)
+                                    if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                                        && c == 'e' =>
+                                {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Description" {
+                                        let desc = if let Some(f) = menu.fields.iter().find(|f| {
+                                            f.label == "Description"
+                                                && f.kind == crate::app::FieldType::Text
+                                        }) {
+                                            f.value.clone()
+                                        } else {
+                                            String::new()
+                                        };
+                                        app.edit_menu = Some(menu);
+                                        if let Some(new_desc) =
+                                            crate::editor::edit_in_editor(&desc, &mut terminal)
+                                        {
+                                            if let Some(menu) = &mut app.edit_menu {
+                                                if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                    f.label == "Description"
+                                                        && f.kind == crate::app::FieldType::Text
+                                                }) {
+                                                    f.value = new_desc;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        app.edit_menu = Some(menu);
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    let field_name = if menu.selected_idx < menu.fields.len() {
+                                        menu.fields[menu.selected_idx].label.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    if field_name == "Title" || field_name == "Description" {
+                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                            f.value.insert(menu.cursor_pos, c);
+                                            menu.cursor_pos += 1;
+                                        }
+                                    }
+                                    app.edit_menu = Some(menu);
+                                }
+                                _ => {
+                                    // Disable all navigation buttons in edit mode
+                                    app.edit_menu = Some(menu);
+                                }
                             }
-                            KeyCode::Char('j') | KeyCode::Down => {
+                            continue;
+                        }
+
+                        // Navigation mode (!menu.editing):
+                        match key_event.code {
+                            KeyCode::Esc => {
+                                // Close menu (drop menu by not reassigning)
+                            }
+                            KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => {
                                 let is_new =
                                     menu.entity_iid == 0 || menu.entity_kind.needs_submit();
                                 let max_idx = if is_new {
@@ -4389,7 +4524,7 @@ async fn main() -> Result<()> {
                                 app.edit_menu = Some(menu);
                             }
                             // h: jump to left pane (first non-section field)
-                            KeyCode::Char('h') => {
+                            KeyCode::Char('h') | KeyCode::Left => {
                                 // Find Title or first non-section field
                                 let target = menu
                                     .fields
@@ -4402,7 +4537,7 @@ async fn main() -> Result<()> {
                                 app.edit_menu = Some(menu);
                             }
                             // l: jump to right pane (Description field)
-                            KeyCode::Char('l') => {
+                            KeyCode::Char('l') | KeyCode::Right => {
                                 let target = menu
                                     .fields
                                     .iter()
@@ -4425,7 +4560,7 @@ async fn main() -> Result<()> {
                                 menu.desc_scroll = menu.desc_scroll.saturating_sub(1);
                                 app.edit_menu = Some(menu);
                             }
-                            KeyCode::Char('k') | KeyCode::Up => {
+                            KeyCode::Char('k') | KeyCode::Up | KeyCode::BackTab => {
                                 let is_new =
                                     menu.entity_iid == 0 || menu.entity_kind.needs_submit();
                                 let max_idx = if is_new {
@@ -4459,49 +4594,6 @@ async fn main() -> Result<()> {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
                                     }
-                                }
-                                app.edit_menu = Some(menu);
-                            }
-                            KeyCode::Left => {
-                                if menu.editing
-                                    && menu.selected_idx < menu.fields.len()
-                                    && (menu.fields[menu.selected_idx].label == "Title"
-                                        || menu.fields[menu.selected_idx].label == "Description")
-                                {
-                                    menu.cursor_pos = menu.cursor_pos.saturating_sub(1);
-                                }
-                                app.edit_menu = Some(menu);
-                            }
-                            KeyCode::Right => {
-                                if menu.editing
-                                    && menu.selected_idx < menu.fields.len()
-                                    && (menu.fields[menu.selected_idx].label == "Title"
-                                        || menu.fields[menu.selected_idx].label == "Description")
-                                {
-                                    let max = menu.fields[menu.selected_idx].value.len();
-                                    if menu.cursor_pos < max {
-                                        menu.cursor_pos += 1;
-                                    }
-                                }
-                                app.edit_menu = Some(menu);
-                            }
-                            KeyCode::Home => {
-                                if menu.editing
-                                    && menu.selected_idx < menu.fields.len()
-                                    && (menu.fields[menu.selected_idx].label == "Title"
-                                        || menu.fields[menu.selected_idx].label == "Description")
-                                {
-                                    menu.cursor_pos = 0;
-                                }
-                                app.edit_menu = Some(menu);
-                            }
-                            KeyCode::End => {
-                                if menu.editing
-                                    && menu.selected_idx < menu.fields.len()
-                                    && (menu.fields[menu.selected_idx].label == "Title"
-                                        || menu.fields[menu.selected_idx].label == "Description")
-                                {
-                                    menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
                                 }
                                 app.edit_menu = Some(menu);
                             }

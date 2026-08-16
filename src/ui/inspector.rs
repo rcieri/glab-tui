@@ -146,9 +146,21 @@ pub(crate) fn render_entity_inspector(
             } else {
                 theme.bg
             };
+            let hint_text = if menu.editing {
+                " Esc/Enter: Done Editing | Ctrl+E: External Editor "
+            } else {
+                " j/k: Navigate | Enter: Edit Field / Submit | Esc: Cancel "
+            };
             let submit_block = Block::default()
                 .borders(Borders::TOP)
-                .border_style(Style::default().fg(theme.text_muted));
+                .border_style(Style::default().fg(theme.text_muted))
+                .title_bottom(
+                    Line::from(vec![Span::styled(
+                        hint_text,
+                        Style::default().fg(theme.text_muted),
+                    )])
+                    .alignment(Alignment::Right),
+                );
             f.render_widget(
                 Paragraph::new(Line::from(vec![Span::styled(
                     btn_text,

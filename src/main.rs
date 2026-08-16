@@ -5643,75 +5643,11 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                // Title / Branch Name: Enter toggles inline edit mode
-                                if field_name == "Title" || field_name == "Branch Name" {
-                                    if menu.editing {
-                                        menu.editing = false;
-                                    } else {
-                                        menu.editing = true;
-                                        if let Some(f) = menu.fields.get(menu.selected_idx) {
-                                            menu.cursor_pos = f.value.len();
-                                        }
-                                    }
-                                    app.edit_menu = Some(menu);
-                                    continue;
-                                }
-
-                                // Description: If empty on new entity, offer template selector
-                                if field_name == "Description" {
-                                    let is_new = entity_iid == 0 || entity_type.starts_with("new_");
-                                    let raw_val = menu
-                                        .fields
-                                        .get(menu.selected_idx)
-                                        .map(|f| f.value.clone())
-                                        .unwrap_or_default();
-                                    if is_new && raw_val.trim().is_empty() {
-                                        let tmpl_kind = if entity_type.contains("mr") {
-                                            "mr"
-                                        } else {
-                                            "issue"
-                                        };
-                                        let templates = list_templates(tmpl_kind);
-                                        if !templates.is_empty() {
-                                            let template_names: Vec<String> =
-                                                std::iter::once("None (blank)".to_string())
-                                                    .chain(templates.iter().map(|(n, _)| n.clone()))
-                                                    .collect();
-                                            let field_type = if tmpl_kind == "mr" {
-                                                "mr_template_selector"
-                                            } else {
-                                                "issue_template_selector"
-                                            };
-                                            app.selector = Some(crate::app::Selector {
-                                                title: format!(
-                                                    " Select {} Template ",
-                                                    if tmpl_kind == "mr" {
-                                                        "Merge Request"
-                                                    } else {
-                                                        "Issue"
-                                                    }
-                                                ),
-                                                all_items: template_names,
-                                                selected_items: std::collections::HashSet::new(),
-                                                cursor_idx: 0,
-                                                search_query: String::new(),
-                                                is_filtering: false,
-                                                is_loading: false,
-                                                entity_iid: 0,
-                                                entity_type: entity_type.clone(),
-                                                field_type: field_type.to_string(),
-                                                multi_select: false,
-                                                state: {
-                                                    let mut s = ListState::default();
-                                                    s.select(Some(0));
-                                                    s
-                                                },
-                                            });
-                                            app.edit_menu = Some(menu);
-                                            continue;
-                                        }
-                                    }
-
+                                // Title / Branch Name / Description: Enter toggles inline edit mode
+                                if field_name == "Title"
+                                    || field_name == "Branch Name"
+                                    || field_name == "Description"
+                                {
                                     if menu.editing {
                                         menu.editing = false;
                                     } else {

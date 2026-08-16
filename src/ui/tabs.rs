@@ -2731,7 +2731,10 @@ pub(crate) fn render_tab_milestones(
         if let Some(selected_idx) = app.milestones.state.selected() {
             if let Some(m) = filtered_milestones.get(selected_idx) {
                 let is_github = app.is_github();
-                let issues = app.selected_milestone_issues.as_deref();
+                let issues = app
+                    .selected_milestone_issues
+                    .as_deref()
+                    .or_else(|| app.milestone_issues_cache.get(&m.iid).map(|v| v.as_slice()));
                 let doc = crate::entity_editor::build_milestone_document(m, issues, is_github);
                 super::inspector::render_entity_inspector(
                     f,

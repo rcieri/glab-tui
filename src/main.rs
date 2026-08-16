@@ -4432,7 +4432,10 @@ async fn main() -> Result<()> {
                                     } else {
                                         String::new()
                                     };
-                                    if field_name == "Title" || field_name == "Description" {
+                                    if field_name == "Title"
+                                        || field_name == "Branch Name"
+                                        || field_name == "Description"
+                                    {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             if menu.cursor_pos > 0 {
                                                 f.value.remove(menu.cursor_pos - 1);
@@ -4448,7 +4451,10 @@ async fn main() -> Result<()> {
                                     } else {
                                         String::new()
                                     };
-                                    if field_name == "Title" || field_name == "Description" {
+                                    if field_name == "Title"
+                                        || field_name == "Branch Name"
+                                        || field_name == "Description"
+                                    {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             if menu.cursor_pos < f.value.len() {
                                                 f.value.remove(menu.cursor_pos);
@@ -4498,7 +4504,10 @@ async fn main() -> Result<()> {
                                     } else {
                                         String::new()
                                     };
-                                    if field_name == "Title" || field_name == "Description" {
+                                    if field_name == "Title"
+                                        || field_name == "Branch Name"
+                                        || field_name == "Description"
+                                    {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);
                                             menu.cursor_pos += 1;
@@ -4547,7 +4556,10 @@ async fn main() -> Result<()> {
                                 // Reset cursor for inline-editable fields
                                 if menu.selected_idx < menu.fields.len() {
                                     let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title" || label == "Description" {
+                                    if label == "Title"
+                                        || label == "Branch Name"
+                                        || label == "Description"
+                                    {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
                                     }
@@ -4567,19 +4579,16 @@ async fn main() -> Result<()> {
                                 menu.cursor_pos = menu.fields[target].value.len();
                                 app.edit_menu = Some(menu);
                             }
-                            // l: jump to right pane (Description field)
+                            // l: jump to right pane (Description field) if present
                             KeyCode::Char('l') | KeyCode::Right => {
-                                let target = menu
-                                    .fields
-                                    .iter()
-                                    .position(|f| {
-                                        f.label == "Description"
-                                            && f.kind == crate::app::FieldType::Text
-                                    })
-                                    .unwrap_or(menu.fields.len().saturating_sub(1));
-                                menu.selected_idx = target;
-                                menu.state.select(Some(target));
-                                menu.cursor_pos = menu.fields[target].value.len();
+                                if let Some(target) = menu.fields.iter().position(|f| {
+                                    f.label == "Description"
+                                        && f.kind == crate::app::FieldType::Text
+                                }) {
+                                    menu.selected_idx = target;
+                                    menu.state.select(Some(target));
+                                    menu.cursor_pos = menu.fields[target].value.len();
+                                }
                                 app.edit_menu = Some(menu);
                             }
                             // J/K: scroll description pane
@@ -4621,7 +4630,10 @@ async fn main() -> Result<()> {
                                 // Reset cursor for inline-editable fields
                                 if menu.selected_idx < menu.fields.len() {
                                     let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title" || label == "Description" {
+                                    if label == "Title"
+                                        || label == "Branch Name"
+                                        || label == "Description"
+                                    {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
                                     }
@@ -5631,8 +5643,8 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                // Title: Enter toggles inline edit mode
-                                if field_name == "Title" {
+                                // Title / Branch Name: Enter toggles inline edit mode
+                                if field_name == "Title" || field_name == "Branch Name" {
                                     if menu.editing {
                                         menu.editing = false;
                                     } else {
@@ -5738,6 +5750,7 @@ async fn main() -> Result<()> {
                                         "Source Branch" => "source_branch",
                                         "Target Branch" => "target_branch",
                                         "Branch / Ref" => "pipeline_branch",
+                                        "Create From" => "create_from",
                                         "Workflow File" => "workflow_file",
                                         "Tag" => "tag",
                                         _ => "",
@@ -5815,6 +5828,7 @@ async fn main() -> Result<()> {
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"
                                         || field_type == "pipeline_branch"
+                                        || field_type == "create_from"
                                     {
                                         let branch_names: Vec<String> = app
                                             .branches
@@ -6256,7 +6270,10 @@ async fn main() -> Result<()> {
                                     } else {
                                         String::new()
                                     };
-                                    if field_name == "Title" || field_name == "Description" {
+                                    if field_name == "Title"
+                                        || field_name == "Branch Name"
+                                        || field_name == "Description"
+                                    {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             if menu.cursor_pos > 0 {
                                                 f.value.remove(menu.cursor_pos - 1);
@@ -6311,7 +6328,10 @@ async fn main() -> Result<()> {
                                     } else {
                                         String::new()
                                     };
-                                    if field_name == "Title" || field_name == "Description" {
+                                    if field_name == "Title"
+                                        || field_name == "Branch Name"
+                                        || field_name == "Description"
+                                    {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);
                                             menu.cursor_pos += 1;

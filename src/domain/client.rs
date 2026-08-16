@@ -440,6 +440,17 @@ impl GitlabClient {
             .update_mr_target_branch(project, iid, branch)
             .await
     }
+    pub async fn create_branch(
+        &self,
+        project: &str,
+        branch_name: &str,
+        ref_branch: &str,
+    ) -> Result<()> {
+        self.backend
+            .create_branch(project, branch_name, ref_branch)
+            .await
+    }
+
     pub async fn update_milestone(
         &self,
         project: &str,

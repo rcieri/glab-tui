@@ -17,7 +17,17 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     let icons = ICONS.read().unwrap();
     let label_colors = app.label_colors.clone();
     if let Some(menu) = &mut app.edit_menu {
-        let (body, edit_menu_area) = modal_area(f, &menu.title, 80, 85, 52, 16, size);
+        let has_description = menu
+            .fields
+            .iter()
+            .any(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text);
+        let (body, edit_menu_area) = if has_description {
+            modal_area(f, &menu.title, 80, 85, 52, 16, size)
+        } else {
+            let field_rows = menu.fields.len().max(3) as u16;
+            let target_h = (field_rows + 7).min(size.height.saturating_sub(4));
+            modal_area(f, &menu.title, 55, 65, 48, target_h, size)
+        };
         app.overlay_stack
             .push((crate::app::OverlayKind::EditMenu, edit_menu_area));
 

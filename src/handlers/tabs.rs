@@ -1816,11 +1816,24 @@ pub async fn handle_active_tab_key(
                     let branch_name = branch.name.clone();
                     if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event)
                     {
-                        app.text_input = Some(crate::app::TextInput {
-                            title: " New Branch Name ".to_string(),
-                            value: String::new(),
-                            cursor_idx: 0,
-                            action: crate::app::TextInputAction::CreateBranch(branch_name),
+                        let create_from = branch_name.clone();
+                        let fields =
+                            crate::entity_editor::branch_fields(String::new(), create_from);
+                        app.edit_menu = Some(crate::app::EditMenu {
+                            title: "Create Branch".to_string(),
+                            fields,
+                            selected_idx: 0,
+                            entity_iid: 0,
+                            entity_kind: crate::app::EditEntityKind::CreateBranch,
+                            state: {
+                                let mut s = ListState::default();
+                                s.select(Some(0));
+                                s
+                            },
+                            workflow_inputs: vec![],
+                            cursor_pos: 0,
+                            editing: false,
+                            desc_scroll: 0,
                         });
                     } else if keybinding_matches(
                         &app.config.keybindings.branches.delete_branch,

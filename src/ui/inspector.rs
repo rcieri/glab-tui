@@ -33,7 +33,12 @@ pub(crate) fn render_entity_inspector(
             let is_new_entity = menu.is_new();
             let submit_idx = menu.fields.len() + 1;
 
-            let is_desc_selected = menu.selected_idx < menu.fields.len()
+            let has_description = menu
+                .fields
+                .iter()
+                .any(|f| f.label == "Description" && f.kind == FieldType::Text);
+            let is_desc_selected = has_description
+                && menu.selected_idx < menu.fields.len()
                 && menu.fields[menu.selected_idx].label == "Description"
                 && menu.fields[menu.selected_idx].kind == FieldType::Text;
 
@@ -44,123 +49,144 @@ pub(crate) fn render_entity_inspector(
                 .split(area);
 
             let main_area = layout[0];
-            let main_chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(main_area);
 
-            // Left pane: properties / fields
-            let fields_inner = main_chunks[0];
+            if has_description {
+                let main_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(main_area);
 
-            let field_items = build_field_list_items(
-                &menu.fields,
-                Some(menu.selected_idx),
-                menu.editing,
-                menu.cursor_pos,
-                main_chunks[0].width,
-                label_colors,
-                true,
-            );
+                // Left pane: properties / fields
+                let fields_inner = main_chunks[0];
 
-            let list = List::new(field_items).style(Style::default().bg(theme.bg));
-            let mut state = menu.state.clone();
-            f.render_stateful_widget(list, fields_inner, &mut state);
-            menu.state = state;
-
-            // Right pane: content / description
-            let desc_value = menu.get_description_value();
-            let desc_lines = if is_desc_selected && menu.editing {
-                let cursor_style = Style::default()
-                    .fg(theme.bg)
-                    .bg(theme.text_normal)
-                    .add_modifier(Modifier::SLOW_BLINK);
-                let block_cursor_style = Style::default()
-                    .fg(theme.text_normal)
-                    .add_modifier(Modifier::SLOW_BLINK);
-                let text_style = Style::default().fg(theme.text_normal);
-
-                if desc_value.is_empty() {
-                    vec![Line::from(vec![Span::styled("█", block_cursor_style)])]
-                } else {
-                    let mut lines = Vec::new();
-                    let mut line_start_offset = 0;
-                    let cursor = menu.cursor_pos.min(desc_value.len());
-                    let desc_lines_raw: Vec<&str> = desc_value.split('\n').collect();
-                    let num_lines = desc_lines_raw.len();
-
-                    for (i, line) in desc_lines_raw.iter().enumerate() {
-                        let line_len = line.len();
-                        let line_end_offset = line_start_offset + line_len;
-
-                        let is_cursor_line = cursor >= line_start_offset
-                            && (cursor < line_end_offset
-                                || (cursor == line_end_offset
-                                    && (i == num_lines - 1 || cursor <= line_end_offset)));
-
-                        if is_cursor_line {
-                            let col = cursor.saturating_sub(line_start_offset).min(line_len);
-                            let before = &line[..col];
-                            let mut spans = Vec::new();
-                            if !before.is_empty() {
-                                spans.push(Span::styled(before.to_string(), text_style));
-                            }
-                            if col < line_len {
-                                let mut after_chars = line[col..].chars();
-                                let cursor_ch = after_chars.next().unwrap_or(' ');
-                                let rest = after_chars.as_str();
-                                spans.push(Span::styled(cursor_ch.to_string(), cursor_style));
-                                if !rest.is_empty() {
-                                    spans.push(Span::styled(rest.to_string(), text_style));
-                                }
-                            } else {
-                                spans.push(Span::styled("█".to_string(), block_cursor_style));
-                            }
-                            lines.push(Line::from(spans));
-                        } else {
-                            lines
-                                .push(Line::from(vec![Span::styled(line.to_string(), text_style)]));
-                        }
-                        line_start_offset += line_len + 1;
-                    }
-                    lines
-                }
-            } else if desc_value.is_empty() {
-                vec![Line::from(Span::styled(
-                    "Empty — press Enter to edit, Ctrl+E for editor",
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::ITALIC),
-                ))]
-            } else {
-                render_markdown(&desc_value)
-            };
-
-            let desc_border_color = if is_desc_selected {
-                theme.border_focused
-            } else {
-                theme.border
-            };
-            let desc_block = Block::default()
-                .borders(Borders::LEFT)
-                .border_style(Style::default().fg(desc_border_color))
-                .title(format!(" {} Description ", icons.label_details))
-                .title_style(
-                    Style::default()
-                        .fg(if is_desc_selected {
-                            theme.header_fg
-                        } else {
-                            theme.text_muted
-                        })
-                        .add_modifier(Modifier::BOLD),
+                let field_items = build_field_list_items(
+                    &menu.fields,
+                    Some(menu.selected_idx),
+                    menu.editing,
+                    menu.cursor_pos,
+                    main_chunks[0].width,
+                    label_colors,
+                    true,
                 );
 
-            f.render_widget(
-                Paragraph::new(desc_lines)
-                    .block(desc_block)
-                    .scroll((menu.desc_scroll, 0))
-                    .wrap(ratatui::widgets::Wrap { trim: true }),
-                main_chunks[1],
-            );
+                let list = List::new(field_items).style(Style::default().bg(theme.bg));
+                let mut state = menu.state.clone();
+                f.render_stateful_widget(list, fields_inner, &mut state);
+                menu.state = state;
+
+                // Right pane: content / description
+                let desc_value = menu.get_description_value();
+                let desc_lines = if is_desc_selected && menu.editing {
+                    let cursor_style = Style::default()
+                        .fg(theme.bg)
+                        .bg(theme.text_normal)
+                        .add_modifier(Modifier::SLOW_BLINK);
+                    let block_cursor_style = Style::default()
+                        .fg(theme.text_normal)
+                        .add_modifier(Modifier::SLOW_BLINK);
+                    let text_style = Style::default().fg(theme.text_normal);
+
+                    if desc_value.is_empty() {
+                        vec![Line::from(vec![Span::styled("█", block_cursor_style)])]
+                    } else {
+                        let mut lines = Vec::new();
+                        let mut line_start_offset = 0;
+                        let cursor = menu.cursor_pos.min(desc_value.len());
+                        let desc_lines_raw: Vec<&str> = desc_value.split('\n').collect();
+                        let num_lines = desc_lines_raw.len();
+
+                        for (i, line) in desc_lines_raw.iter().enumerate() {
+                            let line_len = line.len();
+                            let line_end_offset = line_start_offset + line_len;
+
+                            let is_cursor_line = cursor >= line_start_offset
+                                && (cursor < line_end_offset
+                                    || (cursor == line_end_offset
+                                        && (i == num_lines - 1 || cursor <= line_end_offset)));
+
+                            if is_cursor_line {
+                                let col = cursor.saturating_sub(line_start_offset).min(line_len);
+                                let before = &line[..col];
+                                let mut spans = Vec::new();
+                                if !before.is_empty() {
+                                    spans.push(Span::styled(before.to_string(), text_style));
+                                }
+                                if col < line_len {
+                                    let mut after_chars = line[col..].chars();
+                                    let cursor_ch = after_chars.next().unwrap_or(' ');
+                                    let rest = after_chars.as_str();
+                                    spans.push(Span::styled(cursor_ch.to_string(), cursor_style));
+                                    if !rest.is_empty() {
+                                        spans.push(Span::styled(rest.to_string(), text_style));
+                                    }
+                                } else {
+                                    spans.push(Span::styled("█".to_string(), block_cursor_style));
+                                }
+                                lines.push(Line::from(spans));
+                            } else {
+                                lines.push(Line::from(vec![Span::styled(
+                                    line.to_string(),
+                                    text_style,
+                                )]));
+                            }
+                            line_start_offset += line_len + 1;
+                        }
+                        lines
+                    }
+                } else if desc_value.is_empty() {
+                    vec![Line::from(Span::styled(
+                        "Empty — press Enter to edit, Ctrl+E for editor",
+                        Style::default()
+                            .fg(theme.text_muted)
+                            .add_modifier(Modifier::ITALIC),
+                    ))]
+                } else {
+                    render_markdown(&desc_value)
+                };
+
+                let desc_border_color = if is_desc_selected {
+                    theme.border_focused
+                } else {
+                    theme.border
+                };
+                let desc_block = Block::default()
+                    .borders(Borders::LEFT)
+                    .border_style(Style::default().fg(desc_border_color))
+                    .title(format!(" {} Description ", icons.label_details))
+                    .title_style(
+                        Style::default()
+                            .fg(if is_desc_selected {
+                                theme.header_fg
+                            } else {
+                                theme.text_muted
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    );
+
+                f.render_widget(
+                    Paragraph::new(desc_lines)
+                        .block(desc_block)
+                        .scroll((menu.desc_scroll, 0))
+                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                    main_chunks[1],
+                );
+            } else {
+                // Single pane: fields take 100% width cleanly
+                let field_items = build_field_list_items(
+                    &menu.fields,
+                    Some(menu.selected_idx),
+                    menu.editing,
+                    menu.cursor_pos,
+                    main_area.width,
+                    label_colors,
+                    true,
+                );
+
+                let list = List::new(field_items).style(Style::default().bg(theme.bg));
+                let mut state = menu.state.clone();
+                f.render_stateful_widget(list, main_area, &mut state);
+                menu.state = state;
+            }
 
             // Submit button
             let submit_chunk = layout[1];
@@ -621,275 +647,347 @@ pub(crate) fn build_field_list_items(
                         ));
                     }
                     FieldType::Text | FieldType::ReadOnly => {
-                        let mut badge_bg: Option<Color> = None;
-                        let mut formatted_val: Option<String> = None;
+                        if label == "Progress" && val.contains('[') && val.contains(']') {
+                            if let (Some(open_b), Some(close_b)) = (val.find('['), val.find(']')) {
+                                let before_b = &val[..open_b];
+                                let bar_inner = &val[open_b + 1..close_b];
+                                let after_b = &val[close_b + 1..];
 
-                        let (val_fg, is_bold) = match label.as_str() {
-                            "State" => match val.to_lowercase().as_str() {
-                                "opened" | "open" | "active" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val = Some(format!(" {} OPEN ", icons.state_open));
-                                    (theme.green, true)
-                                }
-                                "closed" | "close" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} CLOSED ", icons.state_closed));
-                                    (theme.red, true)
-                                }
-                                "merged" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.purple_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} MERGED ", icons.state_merged));
-                                    (theme.purple, true)
-                                }
-                                _ => (theme.text_normal, false),
-                            },
-                            "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-                                "success" | "online" | "ready" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} SUCCESS ", icons.status_success));
-                                    (theme.green, true)
-                                }
-                                "failed" | "offline" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} FAILED ", icons.status_failed));
-                                    (theme.red, true)
-                                }
-                                "running" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.blue_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} RUNNING ", icons.status_running));
-                                    (theme.blue, true)
-                                }
-                                "pending" | "waiting" | "draft" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} PENDING ", icons.status_pending));
-                                    (theme.yellow, true)
-                                }
-                                "canceled" | "cancelled" => {
-                                    badge_bg = Some(item_bg);
-                                    formatted_val =
-                                        Some(format!(" {} CANCELED ", icons.status_canceled));
-                                    (theme.text_muted, false)
-                                }
-                                "paused" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} PAUSED ", icons.runner_paused));
-                                    (theme.yellow, true)
-                                }
-                                _ => (theme.text_normal, false),
-                            },
-                            "Approval" => match val.to_uppercase().as_str() {
-                                "APPROVED" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} APPROVED ", icons.approval_approved));
-                                    (theme.green, true)
-                                }
-                                "CHANGES" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} CHANGES ", icons.approval_changes));
-                                    (theme.red, true)
-                                }
-                                "YOURS" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.blue_bg
-                                    });
-                                    formatted_val = Some(format!(" \u{f007} YOURS "));
-                                    (theme.blue, true)
-                                }
-                                "AWAITING" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} AWAITING ", icons.approval_pending));
-                                    (theme.yellow, true)
-                                }
-                                _ => (theme.text_normal, false),
-                            },
-                            "Mergeable" => match val.to_uppercase().as_str() {
-                                "CLEAN" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val = Some(format!(" {} CLEAN ", icons.merge_clean));
-                                    (theme.green, true)
-                                }
-                                "CONFLICT" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} CONFLICT ", icons.merge_conflict));
-                                    (theme.red, true)
-                                }
-                                "REBASE" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} REBASE ", icons.merge_rebase));
-                                    (theme.yellow, true)
-                                }
-                                "BLOCKED" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} BLOCKED ", icons.merge_conflict));
-                                    (theme.red, true)
-                                }
-                                "BEHIND" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} BEHIND ", icons.merge_rebase));
-                                    (theme.yellow, true)
-                                }
-                                _ => (theme.text_normal, false),
-                            },
-                            "Workflow" => match val.to_uppercase().as_str() {
-                                "APPROVED" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} APPROVED ", icons.approval_approved));
-                                    (theme.green, true)
-                                }
-                                "REVIEW" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.blue_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} REVIEW ", icons.workflow_review));
-                                    (theme.blue, true)
-                                }
-                                "CHANGES" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val =
-                                        Some(format!(" {} CHANGES ", icons.approval_changes));
-                                    (theme.red, true)
-                                }
-                                "DRAFT" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val = Some(format!(" {} DRAFT ", icons.status_draft));
-                                    (theme.yellow, true)
-                                }
-                                _ => (theme.text_normal, false),
-                            },
-                            "Default" | "Protected" | "Can Push" | "Active" | "Confidential" => {
-                                if val == "YES" || val == "Yes" || val == "true" {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val = Some(format!(" {} YES ", icons.check_on));
-                                    (theme.green, true)
+                                let filled_count = bar_inner.chars().filter(|&c| c == '█').count();
+                                let total_count = bar_inner.chars().count();
+                                let pct = if total_count > 0 {
+                                    (filled_count as f32 / total_count as f32) * 100.0
                                 } else {
-                                    badge_bg = Some(item_bg);
-                                    formatted_val = Some(format!(" {} NO ", icons.check_off));
-                                    (theme.text_muted, false)
+                                    0.0
+                                };
+                                let bar_color = if pct <= 33.0 {
+                                    theme.red
+                                } else if pct <= 66.0 {
+                                    theme.yellow
+                                } else {
+                                    theme.green
+                                };
+
+                                let mut spans = Vec::new();
+                                if !before_b.is_empty() {
+                                    spans.push(Span::styled(
+                                        format!(" {}", before_b),
+                                        Style::default().fg(theme.text_normal).bg(item_bg),
+                                    ));
                                 }
+                                spans.push(Span::styled(
+                                    " [",
+                                    Style::default().fg(theme.border).bg(item_bg),
+                                ));
+                                let filled_str: String =
+                                    bar_inner.chars().filter(|&c| c == '█').collect();
+                                let empty_str: String =
+                                    bar_inner.chars().filter(|&c| c != '█').collect();
+                                if !filled_str.is_empty() {
+                                    spans.push(Span::styled(
+                                        filled_str,
+                                        Style::default()
+                                            .fg(bar_color)
+                                            .bg(item_bg)
+                                            .add_modifier(Modifier::BOLD),
+                                    ));
+                                }
+                                if !empty_str.is_empty() {
+                                    spans.push(Span::styled(
+                                        empty_str,
+                                        Style::default().fg(theme.text_muted).bg(item_bg),
+                                    ));
+                                }
+                                spans.push(Span::styled(
+                                    "]",
+                                    Style::default().fg(theme.border).bg(item_bg),
+                                ));
+                                if !after_b.is_empty() {
+                                    spans.push(Span::styled(
+                                        after_b.to_string(),
+                                        Style::default()
+                                            .fg(theme.text_normal)
+                                            .bg(item_bg)
+                                            .add_modifier(Modifier::BOLD),
+                                    ));
+                                }
+                                val_spans = spans;
                             }
-                            "Milestone" | "Branch" | "Ref" | "Deploy Ref" | "Stage" => {
-                                (theme.purple, false)
-                            }
-                            "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target"
-                            | "Project" => (theme.blue, false),
-                            "Updated" | "Created" | "Duration" | "Released" | "Deployed"
-                            | "Date" | "Due Date" | "Start Date" | "Avg Wait" => {
-                                (theme.yellow, false)
-                            }
-                            "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA"
-                            | "Deploy ID" => (theme.blue, false),
-                            _ => (theme.text_normal, false),
-                        };
+                        } else {
+                            let mut badge_bg: Option<Color> = None;
+                            let mut formatted_val: Option<String> = None;
 
-                        let current_bg = badge_bg.unwrap_or(item_bg);
-                        let mut style = Style::default().fg(val_fg).bg(current_bg);
-                        if is_selected || is_bold {
-                            style = style.add_modifier(Modifier::BOLD);
+                            let (val_fg, is_bold) = match label.as_str() {
+                                "State" => match val.to_lowercase().as_str() {
+                                    "opened" | "open" | "active" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.green_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} OPEN ", icons.state_open));
+                                        (theme.green, true)
+                                    }
+                                    "closed" | "close" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.red_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} CLOSED ", icons.state_closed));
+                                        (theme.red, true)
+                                    }
+                                    "merged" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.purple_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} MERGED ", icons.state_merged));
+                                        (theme.purple, true)
+                                    }
+                                    _ => (theme.text_normal, false),
+                                },
+                                "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
+                                    "success" | "online" | "ready" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.green_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} SUCCESS ", icons.status_success));
+                                        (theme.green, true)
+                                    }
+                                    "failed" | "offline" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.red_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} FAILED ", icons.status_failed));
+                                        (theme.red, true)
+                                    }
+                                    "running" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.blue_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} RUNNING ", icons.status_running));
+                                        (theme.blue, true)
+                                    }
+                                    "pending" | "waiting" | "draft" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.yellow_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} PENDING ", icons.status_pending));
+                                        (theme.yellow, true)
+                                    }
+                                    "canceled" | "cancelled" => {
+                                        badge_bg = Some(item_bg);
+                                        formatted_val =
+                                            Some(format!(" {} CANCELED ", icons.status_canceled));
+                                        (theme.text_muted, false)
+                                    }
+                                    "paused" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.yellow_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} PAUSED ", icons.runner_paused));
+                                        (theme.yellow, true)
+                                    }
+                                    _ => (theme.text_normal, false),
+                                },
+                                "Approval" => match val.to_uppercase().as_str() {
+                                    "APPROVED" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.green_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} APPROVED ", icons.approval_approved));
+                                        (theme.green, true)
+                                    }
+                                    "CHANGES" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.red_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} CHANGES ", icons.approval_changes));
+                                        (theme.red, true)
+                                    }
+                                    "YOURS" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.blue_bg
+                                        });
+                                        formatted_val = Some(format!(" \u{f007} YOURS "));
+                                        (theme.blue, true)
+                                    }
+                                    "AWAITING" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.yellow_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} AWAITING ", icons.approval_pending));
+                                        (theme.yellow, true)
+                                    }
+                                    _ => (theme.text_normal, false),
+                                },
+                                "Mergeable" => match val.to_uppercase().as_str() {
+                                    "CLEAN" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.green_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} CLEAN ", icons.merge_clean));
+                                        (theme.green, true)
+                                    }
+                                    "CONFLICT" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.red_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} CONFLICT ", icons.merge_conflict));
+                                        (theme.red, true)
+                                    }
+                                    "REBASE" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.yellow_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} REBASE ", icons.merge_rebase));
+                                        (theme.yellow, true)
+                                    }
+                                    "BLOCKED" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.red_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} BLOCKED ", icons.merge_conflict));
+                                        (theme.red, true)
+                                    }
+                                    "BEHIND" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.yellow_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} BEHIND ", icons.merge_rebase));
+                                        (theme.yellow, true)
+                                    }
+                                    _ => (theme.text_normal, false),
+                                },
+                                "Workflow" => match val.to_uppercase().as_str() {
+                                    "APPROVED" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.green_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} APPROVED ", icons.approval_approved));
+                                        (theme.green, true)
+                                    }
+                                    "REVIEW" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.blue_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} REVIEW ", icons.workflow_review));
+                                        (theme.blue, true)
+                                    }
+                                    "CHANGES" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.red_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} CHANGES ", icons.approval_changes));
+                                        (theme.red, true)
+                                    }
+                                    "DRAFT" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.yellow_bg
+                                        });
+                                        formatted_val =
+                                            Some(format!(" {} DRAFT ", icons.status_draft));
+                                        (theme.yellow, true)
+                                    }
+                                    _ => (theme.text_normal, false),
+                                },
+                                "Default" | "Protected" | "Can Push" | "Active"
+                                | "Confidential" => {
+                                    if val == "YES" || val == "Yes" || val == "true" {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.green_bg
+                                        });
+                                        formatted_val = Some(format!(" {} YES ", icons.check_on));
+                                        (theme.green, true)
+                                    } else {
+                                        badge_bg = Some(item_bg);
+                                        formatted_val = Some(format!(" {} NO ", icons.check_off));
+                                        (theme.text_muted, false)
+                                    }
+                                }
+                                "Milestone" | "Branch" | "Ref" | "Deploy Ref" | "Stage" => {
+                                    (theme.purple, false)
+                                }
+                                "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target"
+                                | "Project" => (theme.blue, false),
+                                "Updated" | "Created" | "Duration" | "Released" | "Deployed"
+                                | "Date" | "Due Date" | "Start Date" | "Avg Wait" => {
+                                    (theme.yellow, false)
+                                }
+                                "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA"
+                                | "Deploy ID" => (theme.blue, false),
+                                _ => (theme.text_normal, false),
+                            };
+
+                            let current_bg = badge_bg.unwrap_or(item_bg);
+                            let mut style = Style::default().fg(val_fg).bg(current_bg);
+                            if is_selected || is_bold {
+                                style = style.add_modifier(Modifier::BOLD);
+                            }
+
+                            let display_text =
+                                formatted_val.unwrap_or_else(|| format!(" {}", truncated));
+                            val_spans.push(Span::styled(display_text, style));
                         }
-
-                        let display_text =
-                            formatted_val.unwrap_or_else(|| format!(" {}", truncated));
-                        val_spans.push(Span::styled(display_text, style));
                     }
                 }
             }

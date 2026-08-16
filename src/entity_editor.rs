@@ -1,3 +1,10 @@
+pub fn branch_fields(branch_name: String, create_from: String) -> Vec<crate::app::Field> {
+    vec![
+        crate::app::Field::text("Branch Name", branch_name),
+        crate::app::Field::ref_field("Create From", create_from),
+    ]
+}
+
 use crate::AppTerminal;
 use crate::app::App;
 use crate::editor::edit_in_editor;
@@ -371,14 +378,35 @@ pub fn build_milestone_document(
         } else {
             0.0
         };
+        let bar_segments = 10;
+        let filled_len = if total > 0 {
+            (closed * bar_segments) / total
+        } else {
+            0
+        };
+        let bar = format!(
+            "[{}{}] {:.0}% ({}/{} closed)",
+            "█".repeat(filled_len),
+            "░".repeat(bar_segments - filled_len),
+            pct,
+            closed,
+            total
+        );
         fields.push(crate::app::Field::section("Issues"));
-        fields.push(crate::app::Field::read_only(
-            "Progress",
-            format!("{}/{} closed ({:.0}%)", closed, total, pct),
-        ));
+        fields.push(crate::app::Field::read_only("Progress", bar));
         fields.push(crate::app::Field::read_only(
             "Open Issues",
             open.to_string(),
+        ));
+        fields.push(crate::app::Field::read_only(
+            "Closed Issues",
+            closed.to_string(),
+        ));
+    } else {
+        fields.push(crate::app::Field::section("Issues"));
+        fields.push(crate::app::Field::read_only(
+            "Progress",
+            "[░░░░░░░░░░] 0% (Loading...)".to_string(),
         ));
     }
     crate::app::EntityDocument {

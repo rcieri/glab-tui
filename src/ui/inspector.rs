@@ -414,14 +414,42 @@ pub(crate) fn build_field_list_items(
                     }
                     FieldType::Toggle => {
                         let (display, fg, bg) = match val.to_lowercase().as_str() {
-                            "yes" | "true" | "confidential" => (" YES ", theme.bg, theme.red),
-                            "no" | "false" | "public" => ("  NO ", theme.bg, theme.green),
-                            "draft" => (" DRAFT ", theme.bg, theme.yellow),
-                            "ready" => (" READY ", theme.bg, theme.green),
-                            _ => (val.as_str(), theme.text_muted, theme.bg),
+                            "yes" | "true" | "confidential" => (
+                                format!(" {} YES ", icons.check_on),
+                                theme.green,
+                                if is_selected {
+                                    theme.highlight_bg
+                                } else {
+                                    theme.green_bg
+                                },
+                            ),
+                            "no" | "false" | "public" => (
+                                format!(" {} NO ", icons.check_off),
+                                theme.text_muted,
+                                item_bg,
+                            ),
+                            "draft" => (
+                                format!(" {} DRAFT ", icons.status_draft),
+                                theme.yellow,
+                                if is_selected {
+                                    theme.highlight_bg
+                                } else {
+                                    theme.yellow_bg
+                                },
+                            ),
+                            "ready" => (
+                                format!(" {} READY ", icons.status_ready),
+                                theme.green,
+                                if is_selected {
+                                    theme.highlight_bg
+                                } else {
+                                    theme.green_bg
+                                },
+                            ),
+                            _ => (format!(" {} ", val), theme.text_muted, item_bg),
                         };
                         val_spans.push(Span::styled(
-                            display.to_string(),
+                            display,
                             Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
                         ));
                     }
@@ -449,26 +477,164 @@ pub(crate) fn build_field_list_items(
                         ));
                     }
                     FieldType::Text | FieldType::ReadOnly => {
+                        let mut badge_bg: Option<Color> = None;
+                        let mut formatted_val: Option<String> = None;
+
                         let (val_fg, is_bold) = match label.as_str() {
-                            "State" | "Status" | "Deploy Status" | "Action" => {
-                                match val.to_lowercase().as_str() {
-                                    "opened" | "open" | "active" | "online" | "success"
-                                    | "ready" | "passed" => (theme.green, true),
-                                    "closed" | "close" | "failed" | "offline" | "canceled"
-                                    | "cancelled" => (theme.red, true),
-                                    "merged" => (theme.purple, true),
-                                    "running" => (theme.blue, true),
-                                    "pending" | "waiting" | "draft" | "paused" | "unread"
-                                    | "new" => (theme.yellow, true),
-                                    _ => (theme.text_normal, true),
+                            "State" => match val.to_lowercase().as_str() {
+                                "opened" | "open" | "active" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(" {} OPEN ", icons.state_open));
+                                    (theme.green, true)
                                 }
-                            }
+                                "closed" | "close" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} CLOSED ", icons.state_closed));
+                                    (theme.red, true)
+                                }
+                                "merged" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.purple_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} MERGED ", icons.state_merged));
+                                    (theme.purple, true)
+                                }
+                                _ => (theme.text_normal, true),
+                            },
+                            "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
+                                "success" | "online" | "passed" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(
+                                        " {} {} ",
+                                        icons.status_success,
+                                        val.to_uppercase()
+                                    ));
+                                    (theme.green, true)
+                                }
+                                "ready" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(" {} READY ", icons.status_ready));
+                                    (theme.green, true)
+                                }
+                                "failed" | "offline" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val = Some(format!(
+                                        " {} {} ",
+                                        icons.status_failed,
+                                        val.to_uppercase()
+                                    ));
+                                    (theme.red, true)
+                                }
+                                "running" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.blue_bg
+                                    });
+                                    formatted_val = Some(format!(
+                                        " {} {} ",
+                                        icons.status_running,
+                                        val.to_uppercase()
+                                    ));
+                                    (theme.blue, true)
+                                }
+                                "pending" | "waiting" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val = Some(format!(
+                                        " {} {} ",
+                                        icons.status_pending,
+                                        val.to_uppercase()
+                                    ));
+                                    (theme.yellow, true)
+                                }
+                                "draft" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val = Some(format!(" {} DRAFT ", icons.status_draft));
+                                    (theme.yellow, true)
+                                }
+                                "paused" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} PAUSED ", icons.runner_paused));
+                                    (theme.yellow, true)
+                                }
+                                "canceled" | "cancelled" => {
+                                    badge_bg = Some(item_bg);
+                                    formatted_val =
+                                        Some(format!(" {} CANCELED ", icons.status_canceled));
+                                    (theme.text_muted, true)
+                                }
+                                "unread" | "new" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(" NEW ".to_string());
+                                    (theme.green, true)
+                                }
+                                _ => (theme.text_normal, true),
+                            },
                             "Approval" => {
                                 if val.contains("APPROVED") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.green, true)
                                 } else if val.contains("CHANGES") || val.contains("CHG") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.red, true)
                                 } else if val.contains("AWAITING") || val.contains("REVIEW REQ") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.yellow, true)
                                 } else {
                                     (theme.text_normal, false)
@@ -476,10 +642,28 @@ pub(crate) fn build_field_list_items(
                             }
                             "Mergeable" => {
                                 if val.contains("CLEAN") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.green, true)
                                 } else if val.contains("CONFLICT") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.red, true)
                                 } else if val.contains("REBASE") || val.contains("CHECKING") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.yellow, true)
                                 } else {
                                     (theme.text_normal, false)
@@ -487,12 +671,36 @@ pub(crate) fn build_field_list_items(
                             }
                             "Workflow" => {
                                 if val.contains("Approved") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.green, true)
                                 } else if val.contains("Returned") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.red, true)
                                 } else if val.contains("Review") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.yellow, true)
                                 } else if val.contains("Yours") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.blue_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.blue, true)
                                 } else {
                                     (theme.text_muted, false)
@@ -500,15 +708,35 @@ pub(crate) fn build_field_list_items(
                             }
                             "Threads" => {
                                 if val.contains("0") || val.contains("all resolved") {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.green, true)
                                 } else {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val = Some(format!(" {} ", val));
                                     (theme.red, true)
                                 }
                             }
                             "Default" | "Protected" | "Can Push" | "Active" | "Confidential" => {
                                 if val == "YES" || val == "Yes" || val == "true" {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val = Some(format!(" {} YES ", icons.check_on));
                                     (theme.green, true)
                                 } else {
+                                    badge_bg = Some(item_bg);
+                                    formatted_val = Some(format!(" {} NO ", icons.check_off));
                                     (theme.text_muted, false)
                                 }
                             }
@@ -525,7 +753,9 @@ pub(crate) fn build_field_list_items(
                             | "Deploy ID" => (theme.blue, false),
                             _ => (theme.text_normal, false),
                         };
-                        let mut style = Style::default().fg(val_fg).bg(item_bg);
+
+                        let current_bg = badge_bg.unwrap_or(item_bg);
+                        let mut style = Style::default().fg(val_fg).bg(current_bg);
                         if is_selected || is_bold {
                             style = style.add_modifier(Modifier::BOLD);
                         }
@@ -561,7 +791,9 @@ pub(crate) fn build_field_list_items(
                             ));
                             val_spans.push(Span::styled(after, style));
                         } else {
-                            val_spans.push(Span::styled(truncated, style));
+                            let display_text =
+                                formatted_val.unwrap_or_else(|| format!(" {}", truncated));
+                            val_spans.push(Span::styled(display_text, style));
                         }
                     }
                 }

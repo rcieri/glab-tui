@@ -50,11 +50,7 @@ pub(crate) fn render_entity_inspector(
                 .split(main_area);
 
             // Left pane: properties / fields
-            let fields_block = Block::default()
-                .borders(Borders::RIGHT)
-                .border_style(Style::default().fg(theme.border));
-            let fields_inner = fields_block.inner(main_chunks[0]);
-            f.render_widget(fields_block, main_chunks[0]);
+            let fields_inner = main_chunks[0];
 
             let field_items = build_field_list_items(
                 &menu.fields,
@@ -213,7 +209,9 @@ pub(crate) fn render_entity_inspector(
             scroll,
             title_suffix,
         } => {
-            let title = if title_suffix.is_empty() {
+            let title = if !doc.title.is_empty() {
+                format!(" {} Preview: {} ", icons.label_details, doc.title)
+            } else if title_suffix.is_empty() {
                 format!(" {} Preview ", icons.label_details)
             } else {
                 format!(" {} Preview{} ", icons.label_details, title_suffix)
@@ -727,26 +725,6 @@ pub(crate) fn build_field_list_items(
                                 }
                                 _ => (theme.text_normal, false),
                             },
-                            "Default" | "Protected" | "Can Push" => {
-                                match val.to_lowercase().as_str() {
-                                    "yes" | "true" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        });
-                                        formatted_val = Some(format!(" {} YES ", icons.check_on));
-                                        (theme.green, true)
-                                    }
-                                    "no" | "false" => {
-                                        badge_bg = Some(item_bg);
-                                        formatted_val = Some(" NO ".to_string());
-                                        (theme.text_muted, false)
-                                    }
-                                    _ => (theme.text_normal, false),
-                                }
-                            }
-                            "Commit" | "SHA" | "Deploy SHA" => (theme.purple, false),
                             "Approval" => match val.to_uppercase().as_str() {
                                 "APPROVED" => {
                                     badge_bg = Some(if is_selected {
@@ -1124,6 +1102,7 @@ pub(crate) fn render_inspector_content(
     area: Rect,
     scroll: u16,
 ) {
+    let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
 
     match content {
@@ -1163,13 +1142,35 @@ pub(crate) fn render_inspector_content(
             )]));
             lines.push(Line::from(""));
             for job in jobs {
-                let status_style = match job.status.as_str() {
-                    "success" => Style::default()
-                        .fg(theme.green)
-                        .add_modifier(Modifier::BOLD),
-                    "failed" => Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
-                    "running" => Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
-                    _ => Style::default().fg(theme.text_muted),
+                let (status_text, status_style) = match job.status.as_str() {
+                    "success" => (
+                        format!("{} SUCCESS", icons.status_success),
+                        Style::default()
+                            .fg(theme.green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    "failed" => (
+                        format!("{} FAILED", icons.status_failed),
+                        Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+                    ),
+                    "running" => (
+                        format!("{} RUNNING", icons.status_running),
+                        Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
+                    ),
+                    "pending" | "waiting" => (
+                        format!("{} PENDING", icons.status_pending),
+                        Style::default()
+                            .fg(theme.yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    "canceled" | "cancelled" => (
+                        format!("{} CANCELED", icons.status_canceled),
+                        Style::default().fg(theme.text_muted),
+                    ),
+                    _ => (
+                        job.status.to_uppercase(),
+                        Style::default().fg(theme.text_normal),
+                    ),
                 };
                 lines.push(Line::from(vec![
                     Span::styled(
@@ -1180,7 +1181,7 @@ pub(crate) fn render_inspector_content(
                         format!("{:<24} ", job.name),
                         Style::default().fg(theme.text_normal),
                     ),
-                    Span::styled(job.status.to_uppercase(), status_style),
+                    Span::styled(status_text, status_style),
                 ]));
             }
             f.render_widget(

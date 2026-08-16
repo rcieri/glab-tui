@@ -80,7 +80,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .fg(border_color_search)
                         .bg(THEME.read().unwrap().bg),
                 )
-                .title(" Filter (press 'f' or '/' to focus) ");
+                .title(" Filter ");
 
             let search_text = if selector.is_filtering {
                 format!("{}▋", selector.search_query)
@@ -988,7 +988,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let search_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
-            .title(" Filter Shortcuts (Type to filter, Esc/Enter to exit) ")
+            .title(" Filter Shortcuts ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -1151,10 +1151,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 " {} Configure View: {} ",
                 icons.label_configure,
                 tab.title(kind)
-            ))
-            .title_bottom(Span::styled(
-                " Space: toggle · Enter: filter/set · J/K: jump · Esc: close ",
-                Style::default().fg(THEME.read().unwrap().text_muted),
             ))
             .title_style(
                 Style::default()
@@ -1542,7 +1538,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .fg(border_color_search)
                         .bg(THEME.read().unwrap().bg),
                 )
-                .title(" Filter (press 'f' or '/' to focus) ");
+                .title(" Filter ");
 
             let search_text = if selector.is_filtering {
                 format!("{}▋", selector.search_query)

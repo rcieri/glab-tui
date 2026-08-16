@@ -1108,6 +1108,12 @@ pub(crate) fn build_field_list_items(
                 ),
                 Span::styled(format!("{} ", icons.separator), sep_style),
             ];
+            // Mute ReadOnly field values in interactive mode so they recede.
+            if interactive && f.kind == crate::app::FieldType::ReadOnly {
+                for span in val_spans.iter_mut() {
+                    span.style = span.style.fg(theme.text_muted);
+                }
+            }
             line_spans.extend(val_spans);
             ListItem::new(Line::from(line_spans)).style(Style::default().bg(item_bg))
         })

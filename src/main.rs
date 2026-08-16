@@ -4543,10 +4543,12 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx + 1
                                 };
-                                // Skip section headers, Description, and spacer row
+                                // Skip section headers, ReadOnly fields, Description, and spacer row.
                                 while menu.selected_idx < menu.fields.len()
                                     && (menu.fields[menu.selected_idx].kind
                                         == crate::app::FieldType::Section
+                                        || menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::ReadOnly
                                         || menu.fields[menu.selected_idx].label == "Description")
                                 {
                                     menu.selected_idx += 1;
@@ -4570,11 +4572,14 @@ async fn main() -> Result<()> {
                             }
                             // h: jump to left pane (first non-section field)
                             KeyCode::Char('h') | KeyCode::Left => {
-                                // Find Title or first non-section field
+                                // Find Title or first editable (non-section, non-readonly) field
                                 let target = menu
                                     .fields
                                     .iter()
-                                    .position(|f| f.kind != crate::app::FieldType::Section)
+                                    .position(|f| {
+                                        f.kind != crate::app::FieldType::Section
+                                            && f.kind != crate::app::FieldType::ReadOnly
+                                    })
                                     .unwrap_or(0);
                                 menu.selected_idx = target;
                                 menu.state.select(Some(target));
@@ -4615,10 +4620,12 @@ async fn main() -> Result<()> {
                                 } else {
                                     menu.selected_idx - 1
                                 };
-                                // Skip section headers and Description
+                                // Skip section headers, ReadOnly fields, and Description
                                 while menu.selected_idx < menu.fields.len()
                                     && (menu.fields[menu.selected_idx].kind
                                         == crate::app::FieldType::Section
+                                        || menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::ReadOnly
                                         || menu.fields[menu.selected_idx].label == "Description")
                                     && menu.selected_idx > 0
                                 {

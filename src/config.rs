@@ -709,6 +709,8 @@ pub struct KeybindingPipelines {
     pub retry: String,
     #[serde(default)]
     pub cancel: String,
+    #[serde(default)]
+    pub open_workflow: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -763,6 +765,10 @@ pub struct KeybindingJobs {
     pub view_trace: String,
     #[serde(default)]
     pub toggle_trace_wrap: String,
+    #[serde(default)]
+    pub trace_search: String,
+    #[serde(default)]
+    pub toggle_trace_follow: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -870,6 +876,7 @@ keybind_defaults! {
     def_trigger_pipeline = "p",
     def_retry = "r",
     def_cancel = "d",
+    def_open_workflow = "W",
     def_create_release = "n",
     def_edit_release = "e",
     def_delete_release = "d",
@@ -890,6 +897,8 @@ keybind_defaults! {
     def_view_trace_editor = "e",
     def_view_trace = "Enter",
     def_toggle_trace_wrap = "w",
+    def_trace_search = "/",
+    def_toggle_trace_follow = "f",
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
@@ -959,6 +968,7 @@ impl Default for KeybindingPipelines {
             trigger_pipeline: def_trigger_pipeline(),
             retry: def_retry(),
             cancel: def_cancel(),
+            open_workflow: def_open_workflow(),
         }
     }
 }
@@ -1001,6 +1011,8 @@ impl Default for KeybindingJobs {
             view_trace_editor: def_view_trace_editor(),
             view_trace: def_view_trace(),
             toggle_trace_wrap: def_toggle_trace_wrap(),
+            trace_search: def_trace_search(),
+            toggle_trace_follow: def_toggle_trace_follow(),
         }
     }
 }
@@ -1277,6 +1289,7 @@ delete_entity = "d"
 trigger_pipeline = "p"
 retry = "r"
 cancel = "d"
+open_workflow = "W"
 
 [keybindings.releases]
 create_release = "n"
@@ -1304,6 +1317,8 @@ open_in_browser = "o"
 view_trace_editor = "e"
 view_trace = "Enter"
 toggle_trace_wrap = "w"
+trace_search = "/"
+toggle_trace_follow = "f"
 
 [keybindings.runners]
 pause = "p"

@@ -435,6 +435,14 @@ impl EditMenu {
     pub fn is_new(&self) -> bool {
         self.entity_kind.needs_submit()
     }
+
+    pub fn get_description_value(&self) -> String {
+        self.fields
+            .iter()
+            .find(|f| f.label == "Description" && f.kind == FieldType::Text)
+            .map(|f| f.value.clone())
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -445,6 +453,23 @@ pub enum FieldType {
     Toggle,
     Ref,
     Section,
+    ReadOnly,
+}
+
+#[derive(Clone, Debug)]
+pub enum InspectorContent {
+    Markdown(String),
+    AnsiTrace { trace: String, wrap: bool },
+    PipelineStages(Vec<crate::domain::pipelines::Job>),
+    Custom(Vec<ratatui::text::Line<'static>>),
+    Empty(&'static str),
+}
+
+#[derive(Clone, Debug)]
+pub struct EntityDocument {
+    pub title: String,
+    pub fields: Vec<Field>,
+    pub content: InspectorContent,
 }
 
 #[derive(Clone, Debug)]
@@ -496,6 +521,16 @@ impl Field {
             kind: FieldType::Section,
             value: String::new(),
         }
+    }
+    pub fn read_only(label: &str, value: String) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::ReadOnly,
+            value,
+        }
+    }
+    pub fn is_editable(&self) -> bool {
+        self.kind != FieldType::Section && self.kind != FieldType::ReadOnly
     }
 }
 
@@ -1935,6 +1970,10 @@ pub struct App {
     pub job_trace_needs_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
     pub job_trace_wrap: bool,
+    pub job_trace_search_query: String,
+    pub job_trace_searching: bool,
+    pub job_trace_follow: bool,
+    pub job_trace_last_refresh: std::time::Instant,
 
     pub show_help: bool,
     pub help_search_query: String,
@@ -2032,6 +2071,10 @@ impl Default for App {
             job_trace_needs_scroll_to_bottom: false,
             job_trace_loading: false,
             job_trace_wrap: false,
+            job_trace_search_query: String::new(),
+            job_trace_searching: false,
+            job_trace_follow: false,
+            job_trace_last_refresh: std::time::Instant::now(),
 
             show_help: false,
             help_search_query: String::new(),

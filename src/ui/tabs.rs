@@ -1850,6 +1850,44 @@ pub(crate) fn render_tab_pipelines(
         if let Some(selected) = app.pipelines.state.selected() {
             if let Some(p) = filtered_pipelines.get(selected) {
                 let mut text = Vec::new();
+                if is_github
+                    && app
+                        .group_by_column
+                        .get(&Tab::Pipelines)
+                        .and_then(|column| column.as_deref())
+                        == Some("Name")
+                    && !p.name().is_empty()
+                {
+                    let group = filtered_pipelines
+                        .iter()
+                        .filter(|pipeline| pipeline.name() == p.name())
+                        .collect::<Vec<_>>();
+                    let success = group
+                        .iter()
+                        .filter(|pipeline| pipeline.status() == "success")
+                        .count();
+                    let failed = group
+                        .iter()
+                        .filter(|pipeline| pipeline.status() == "failed")
+                        .count();
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Workflow group: ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            format!("{} ({})", p.name(), group.len()),
+                            Style::default()
+                                .fg(THEME.read().unwrap().blue)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("  {} passed  {} failed", success, failed),
+                            Style::default().fg(THEME.read().unwrap().text_normal),
+                        ),
+                    ]));
+                    text.push(Line::from(""));
+                }
                 text.push(Line::from(vec![
                     Span::styled(
                         if is_github {
@@ -2348,14 +2386,27 @@ pub(crate) fn render_tab_jobs(
             };
 
             let help_text = if app.job_trace_wrap {
-                " Esc: Back | Enter: Zoom | j/k: Scroll | w: No-wrap "
+                " Esc: Back | Enter: Zoom | j/k: Scroll | /: Search | f: Follow | w: No-wrap "
             } else {
-                " Esc: Back | Enter: Zoom | j/k: Scroll | w: Wrap "
+                " Esc: Back | Enter: Zoom | j/k: Scroll | /: Search | f: Follow | w: Wrap "
+            };
+            let search_suffix = if app.job_trace_search_query.is_empty() {
+                String::new()
+            } else {
+                format!(" [Search: {}]", app.job_trace_search_query)
+            };
+            let follow_suffix = if app.job_trace_follow {
+                " [FOLLOW]"
+            } else {
+                ""
             };
 
             let preview_block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" Details / Trace{} ", title_suffix))
+                .title(format!(
+                    " Details / Trace{}{}{} ",
+                    title_suffix, search_suffix, follow_suffix
+                ))
                 .title_style(
                     Style::default()
                         .fg(THEME.read().unwrap().text_muted)

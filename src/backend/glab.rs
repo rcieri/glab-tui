@@ -2587,6 +2587,15 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
+    async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()> {
+        self.run_glab(
+            &["ci", "view", workflow, "-R", project, "-w"],
+            "OPENING PIPELINE IN BROWSER",
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn open_job_in_browser(&self, _project: &str, id: &str) -> Result<()> {
         self.run_glab(&["job", "view", id, "-w"], "OPENING IN BROWSER")
             .await?;

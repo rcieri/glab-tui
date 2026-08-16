@@ -663,7 +663,7 @@ pub async fn handle_active_tab_key(
                                 );
                             }
                         }
-                        KeyCode::Char('o') => {
+                        _ if key_event.code == KeyCode::Char('o') => {
                             let is_github = app.is_github();
                             let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
@@ -936,7 +936,47 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        KeyCode::Char('o') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.pipelines.open_workflow,
+                            key_event,
+                        ) =>
+                        {
+                            if !app.is_github() {
+                                app.error_message = Some(
+                                    "Workflow browser is only available for GitHub Actions"
+                                        .to_string(),
+                                );
+                                return;
+                            }
+                            let workflow = app
+                                .pipelines
+                                .items
+                                .iter()
+                                .find(|pipeline| pipeline.id() == pipe_id)
+                                .map(|pipeline| pipeline.name().to_string())
+                                .filter(|name| !name.is_empty());
+                            let Some(workflow) = workflow else {
+                                app.error_message =
+                                    Some("Selected pipeline has no workflow name".to_string());
+                                return;
+                            };
+                            let Some(client) = app.gitlab_client.clone() else {
+                                return;
+                            };
+                            let project_context = app.project_context.clone();
+                            let tx2 = tx.clone();
+                            tokio::spawn(async move {
+                                let result = client
+                                    .backend
+                                    .open_workflow_in_browser(&project_context, &workflow)
+                                    .await;
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::Pipelines,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
+                        }
+                        _ if key_event.code == KeyCode::Char('o') => {
                             let is_github = app.is_github();
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
@@ -1304,6 +1344,16 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             app.job_trace_wrap = !app.job_trace_wrap;
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.toggle_trace_follow,
+                            key_event,
+                        ) =>
+                        {
+                            app.job_trace_follow = !app.job_trace_follow;
+                            if app.job_trace_follow {
+                                app.job_trace_needs_scroll_to_bottom = true;
+                            }
                         }
                         _ => handled = false,
                     }

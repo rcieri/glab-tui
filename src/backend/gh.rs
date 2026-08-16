@@ -2379,6 +2379,15 @@ impl Backend for GhBackend {
         Ok(())
     }
 
+    async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()> {
+        self.run_gh(
+            &["workflow", "view", workflow, "-R", project, "--web"],
+            "OPENING WORKFLOW IN BROWSER",
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn open_job_in_browser(&self, _project: &str, id: &str) -> Result<()> {
         self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
             .await?;

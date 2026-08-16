@@ -1100,6 +1100,34 @@ async fn main() -> Result<()> {
             match event {
                 Event::Tick => {
                     app.tick();
+                    if app.active_tab == app::Tab::Jobs
+                        && app.job_trace_follow
+                        && app.job_trace.is_some()
+                        && !app.job_trace_loading
+                        && app.job_trace_last_refresh.elapsed() >= std::time::Duration::from_secs(5)
+                    {
+                        if let Some(selected) = app.jobs.state.selected() {
+                            if let Some(job) = app.filtered_jobs().get(selected) {
+                                if let Some(client) = app.gitlab_client.clone() {
+                                    let project = app.project_context.clone();
+                                    let tx = events.sender();
+                                    let job_id = job.id();
+                                    app.job_trace_loading = true;
+                                    app.job_trace_last_refresh = std::time::Instant::now();
+                                    tokio::spawn(async move {
+                                        let result = domain::pipelines::get_job_trace(
+                                            &client, &project, job_id,
+                                        )
+                                        .await;
+                                        let _ = tx.send(Event::JobTraceFetched(
+                                            job_id,
+                                            result.map_err(|e| e.to_string()),
+                                        ));
+                                    });
+                                }
+                            }
+                        }
+                    }
                     if app.active_tab != last_active_tab {
                         last_active_tab = app.active_tab;
                         last_refresh = std::time::Instant::now();
@@ -1196,7 +1224,8 @@ async fn main() -> Result<()> {
                         match result {
                             Ok(trace) => {
                                 app.job_trace = Some(trace);
-                                app.job_trace_needs_scroll_to_bottom = true;
+                                app.job_trace_needs_scroll_to_bottom = app.job_trace_follow;
+                                app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
                             }
@@ -6752,6 +6781,42 @@ async fn main() -> Result<()> {
                             }
                             _ => {}
                         }
+                        continue;
+                    }
+
+                    if app.job_trace_searching {
+                        match key_event.code {
+                            KeyCode::Enter | KeyCode::Esc => {
+                                app.job_trace_searching = false;
+                            }
+                            KeyCode::Backspace => {
+                                app.job_trace_search_query.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                app.job_trace_search_query.push(c);
+                            }
+                            _ => {}
+                        }
+                        if !app.job_trace_search_query.is_empty() {
+                            let query = app.job_trace_search_query.to_lowercase();
+                            if let Some(trace) = &app.job_trace {
+                                if let Some(line) = trace
+                                    .lines()
+                                    .position(|line| line.to_lowercase().contains(&query))
+                                {
+                                    app.detail_scroll = line as u16;
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    if app.active_tab == app::Tab::Jobs
+                        && app.job_trace.is_some()
+                        && keybinding_matches(&app.config.keybindings.jobs.trace_search, &key_event)
+                    {
+                        app.job_trace_search_query.clear();
+                        app.job_trace_searching = true;
                         continue;
                     }
 

@@ -312,10 +312,19 @@ pub(crate) fn build_field_list_items(
 
     let label_width = fields
         .iter()
+        .filter(|f| {
+            if f.kind == FieldType::Section {
+                return false;
+            }
+            if skip_description && f.kind == FieldType::Text && f.label == "Description" {
+                return false;
+            }
+            true
+        })
         .map(|f| f.label.len())
         .max()
-        .unwrap_or(16)
-        .max(12);
+        .unwrap_or(6)
+        .clamp(6, 12);
 
     fields
         .iter()
@@ -334,22 +343,12 @@ pub(crate) fn build_field_list_items(
             let is_selected = selected_idx == Some(i);
 
             if f.kind == FieldType::Section {
-                let available = (pane_width.saturating_sub(4) as usize) / 2;
-                let label_text = format!(" {} ", label.to_uppercase());
-                let pad = (available.saturating_sub(label_text.len() + 2)) / 2;
-                let line = format!(
-                    "{:\u{2500}>pad$} {} {:\u{2500}<pad$}",
-                    "",
-                    label_text,
-                    "",
-                    pad = pad.max(1)
-                );
-                return ListItem::new(Line::from(Span::styled(
-                    line,
+                return ListItem::new(Line::from(vec![Span::styled(
+                    format!("  {}", label.to_uppercase()),
                     Style::default()
-                        .fg(theme.text_muted)
+                        .fg(theme.header_fg)
                         .add_modifier(Modifier::BOLD),
-                )));
+                )]));
             }
 
             let item_bg = if is_selected {
@@ -375,6 +374,95 @@ pub(crate) fn build_field_list_items(
             } else {
                 Style::default().fg(theme.text_muted).bg(item_bg)
             };
+
+            let icon = match f.kind {
+                FieldType::Section => "",
+                FieldType::MultiSelect => {
+                    if label == "Labels" {
+                        "\u{f02b}"
+                    } else if label == "Assignees" || label == "Reviewers" || label == "Author" {
+                        "\u{f007}"
+                    } else {
+                        icons.check_on.as_str()
+                    }
+                }
+                FieldType::Toggle => icons.radio_on.as_str(),
+                FieldType::Date => "\u{f073}",
+                FieldType::Ref => icons.label_branch.as_str(),
+                FieldType::Text | FieldType::ReadOnly => match label.as_str() {
+                    "Title" | "Description" | "Name" => icons.label_details.as_str(),
+                    "State" => match val.to_lowercase().as_str() {
+                        "opened" | "open" | "active" => icons.state_open.as_str(),
+                        "closed" | "close" => icons.state_closed.as_str(),
+                        "merged" => icons.state_merged.as_str(),
+                        _ => icons.label_details.as_str(),
+                    },
+                    "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
+                        "success" | "online" | "ready" => icons.status_success.as_str(),
+                        "failed" | "offline" => icons.status_failed.as_str(),
+                        "running" => icons.status_running.as_str(),
+                        "pending" | "waiting" | "draft" => icons.status_pending.as_str(),
+                        "canceled" | "cancelled" => icons.status_canceled.as_str(),
+                        "paused" => icons.runner_paused.as_str(),
+                        _ => icons.label_details.as_str(),
+                    },
+                    "Author" | "Assignees" | "Reviewers" | "Deployer" => "\u{f007}",
+                    "Milestone" => icons.label_milestone.as_str(),
+                    "Branch" | "Ref" | "Deploy Ref" => icons.label_branch.as_str(),
+                    "Environment" => icons.label_environment.as_str(),
+                    "Approval" => icons.approval_approved.as_str(),
+                    "Mergeable" => icons.merge_clean.as_str(),
+                    "Workflow" => icons.workflow_review.as_str(),
+                    "Threads" => icons.thread_unresolved.as_str(),
+                    "Created" | "Updated" | "Date" | "Due Date" | "Start Date" | "Released"
+                    | "Deployed" => "\u{f073}",
+                    "Duration" | "Avg Wait" => "\u{f017}",
+                    "ID" | "SHA" | "Commit" | "Deploy SHA" | "Deploy ID" | "Runner" | "Tag" => {
+                        "\u{f029}"
+                    }
+                    "Metrics" | "Utilization" | "Queue Depth" | "Active Jobs" | "Progress" => {
+                        "\u{f080}"
+                    }
+                    _ => icons.label_details.as_str(),
+                },
+            };
+
+            if (label == "Title" || label == "Name") && !val.is_empty() {
+                let available_width = (pane_width as usize)
+                    .saturating_sub(label_width + 8)
+                    .max(12);
+                let val_style = Style::default()
+                    .fg(theme.text_normal)
+                    .bg(item_bg)
+                    .add_modifier(if is_selected {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    });
+                let cursor_style = Style::default()
+                    .fg(theme.bg)
+                    .bg(theme.text_normal)
+                    .add_modifier(Modifier::SLOW_BLINK);
+
+                let wrapped_lines = build_wrapped_text_lines(
+                    val,
+                    is_selected && editing,
+                    cursor_pos,
+                    available_width,
+                    icon,
+                    label,
+                    label_width,
+                    &icons.separator,
+                    label_style,
+                    sep_style,
+                    val_style,
+                    cursor_style,
+                );
+
+                if wrapped_lines.len() > 1 || (is_selected && editing) {
+                    return ListItem::new(wrapped_lines).style(Style::default().bg(item_bg));
+                }
+            }
 
             let mut val_spans = Vec::new();
             if val.is_empty() && f.kind != FieldType::Text && f.kind != FieldType::ReadOnly {
@@ -523,29 +611,17 @@ pub(crate) fn build_field_list_items(
                                         Some(format!(" {} MERGED ", icons.state_merged));
                                     (theme.purple, true)
                                 }
-                                _ => (theme.text_normal, true),
+                                _ => (theme.text_normal, false),
                             },
                             "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-                                "success" | "online" | "passed" => {
+                                "success" | "online" | "ready" => {
                                     badge_bg = Some(if is_selected {
                                         theme.highlight_bg
                                     } else {
                                         theme.green_bg
                                     });
-                                    formatted_val = Some(format!(
-                                        " {} {} ",
-                                        icons.status_success,
-                                        val.to_uppercase()
-                                    ));
-                                    (theme.green, true)
-                                }
-                                "ready" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val = Some(format!(" {} READY ", icons.status_ready));
+                                    formatted_val =
+                                        Some(format!(" {} SUCCESS ", icons.status_success));
                                     (theme.green, true)
                                 }
                                 "failed" | "offline" => {
@@ -554,11 +630,8 @@ pub(crate) fn build_field_list_items(
                                     } else {
                                         theme.red_bg
                                     });
-                                    formatted_val = Some(format!(
-                                        " {} {} ",
-                                        icons.status_failed,
-                                        val.to_uppercase()
-                                    ));
+                                    formatted_val =
+                                        Some(format!(" {} FAILED ", icons.status_failed));
                                     (theme.red, true)
                                 }
                                 "running" => {
@@ -567,34 +640,25 @@ pub(crate) fn build_field_list_items(
                                     } else {
                                         theme.blue_bg
                                     });
-                                    formatted_val = Some(format!(
-                                        " {} {} ",
-                                        icons.status_running,
-                                        val.to_uppercase()
-                                    ));
+                                    formatted_val =
+                                        Some(format!(" {} RUNNING ", icons.status_running));
                                     (theme.blue, true)
                                 }
-                                "pending" | "waiting" => {
+                                "pending" | "waiting" | "draft" => {
                                     badge_bg = Some(if is_selected {
                                         theme.highlight_bg
                                     } else {
                                         theme.yellow_bg
                                     });
-                                    formatted_val = Some(format!(
-                                        " {} {} ",
-                                        icons.status_pending,
-                                        val.to_uppercase()
-                                    ));
+                                    formatted_val =
+                                        Some(format!(" {} PENDING ", icons.status_pending));
                                     (theme.yellow, true)
                                 }
-                                "draft" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val = Some(format!(" {} DRAFT ", icons.status_draft));
-                                    (theme.yellow, true)
+                                "canceled" | "cancelled" => {
+                                    badge_bg = Some(item_bg);
+                                    formatted_val =
+                                        Some(format!(" {} CANCELED ", icons.status_canceled));
+                                    (theme.text_muted, false)
                                 }
                                 "paused" => {
                                     badge_bg = Some(if is_selected {
@@ -606,137 +670,144 @@ pub(crate) fn build_field_list_items(
                                         Some(format!(" {} PAUSED ", icons.runner_paused));
                                     (theme.yellow, true)
                                 }
-                                "canceled" | "cancelled" => {
-                                    badge_bg = Some(item_bg);
-                                    formatted_val =
-                                        Some(format!(" {} CANCELED ", icons.status_canceled));
-                                    (theme.text_muted, true)
-                                }
-                                "unread" | "new" => {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val = Some(" NEW ".to_string());
-                                    (theme.green, true)
-                                }
-                                _ => (theme.text_normal, true),
+                                _ => (theme.text_normal, false),
                             },
-                            "Approval" => {
-                                if val.contains("APPROVED") {
+                            "Approval" => match val.to_uppercase().as_str() {
+                                "APPROVED" => {
                                     badge_bg = Some(if is_selected {
                                         theme.highlight_bg
                                     } else {
                                         theme.green_bg
                                     });
-                                    formatted_val = Some(format!(" {} ", val));
+                                    formatted_val =
+                                        Some(format!(" {} APPROVED ", icons.approval_approved));
                                     (theme.green, true)
-                                } else if val.contains("CHANGES") || val.contains("CHG") {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val = Some(format!(" {} ", val));
-                                    (theme.red, true)
-                                } else if val.contains("AWAITING") || val.contains("REVIEW REQ") {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val = Some(format!(" {} ", val));
-                                    (theme.yellow, true)
-                                } else {
-                                    (theme.text_normal, false)
                                 }
-                            }
-                            "Mergeable" => {
-                                if val.contains("CLEAN") {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val = Some(format!(" {} ", val));
-                                    (theme.green, true)
-                                } else if val.contains("CONFLICT") {
+                                "CHANGES" => {
                                     badge_bg = Some(if is_selected {
                                         theme.highlight_bg
                                     } else {
                                         theme.red_bg
                                     });
-                                    formatted_val = Some(format!(" {} ", val));
+                                    formatted_val =
+                                        Some(format!(" {} CHANGES ", icons.approval_changes));
                                     (theme.red, true)
-                                } else if val.contains("REBASE") || val.contains("CHECKING") {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val = Some(format!(" {} ", val));
-                                    (theme.yellow, true)
-                                } else {
-                                    (theme.text_normal, false)
                                 }
-                            }
-                            "Workflow" => {
-                                if val.contains("Approved") {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.green_bg
-                                    });
-                                    formatted_val = Some(format!(" {} ", val));
-                                    (theme.green, true)
-                                } else if val.contains("Returned") {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.red_bg
-                                    });
-                                    formatted_val = Some(format!(" {} ", val));
-                                    (theme.red, true)
-                                } else if val.contains("Review") {
-                                    badge_bg = Some(if is_selected {
-                                        theme.highlight_bg
-                                    } else {
-                                        theme.yellow_bg
-                                    });
-                                    formatted_val = Some(format!(" {} ", val));
-                                    (theme.yellow, true)
-                                } else if val.contains("Yours") {
+                                "YOURS" => {
                                     badge_bg = Some(if is_selected {
                                         theme.highlight_bg
                                     } else {
                                         theme.blue_bg
                                     });
-                                    formatted_val = Some(format!(" {} ", val));
+                                    formatted_val = Some(format!(" \u{f007} YOURS "));
                                     (theme.blue, true)
-                                } else {
-                                    (theme.text_muted, false)
                                 }
-                            }
-                            "Threads" => {
-                                if val.contains("0") || val.contains("all resolved") {
+                                "AWAITING" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} AWAITING ", icons.approval_pending));
+                                    (theme.yellow, true)
+                                }
+                                _ => (theme.text_normal, false),
+                            },
+                            "Mergeable" => match val.to_uppercase().as_str() {
+                                "CLEAN" => {
                                     badge_bg = Some(if is_selected {
                                         theme.highlight_bg
                                     } else {
                                         theme.green_bg
                                     });
-                                    formatted_val = Some(format!(" {} ", val));
+                                    formatted_val = Some(format!(" {} CLEAN ", icons.merge_clean));
                                     (theme.green, true)
-                                } else {
+                                }
+                                "CONFLICT" => {
                                     badge_bg = Some(if is_selected {
                                         theme.highlight_bg
                                     } else {
                                         theme.red_bg
                                     });
-                                    formatted_val = Some(format!(" {} ", val));
+                                    formatted_val =
+                                        Some(format!(" {} CONFLICT ", icons.merge_conflict));
                                     (theme.red, true)
                                 }
-                            }
+                                "REBASE" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} REBASE ", icons.merge_rebase));
+                                    (theme.yellow, true)
+                                }
+                                "BLOCKED" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} BLOCKED ", icons.merge_conflict));
+                                    (theme.red, true)
+                                }
+                                "BEHIND" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} BEHIND ", icons.merge_rebase));
+                                    (theme.yellow, true)
+                                }
+                                _ => (theme.text_normal, false),
+                            },
+                            "Workflow" => match val.to_uppercase().as_str() {
+                                "APPROVED" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.green_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} APPROVED ", icons.approval_approved));
+                                    (theme.green, true)
+                                }
+                                "REVIEW" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.blue_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} REVIEW ", icons.workflow_review));
+                                    (theme.blue, true)
+                                }
+                                "CHANGES" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.red_bg
+                                    });
+                                    formatted_val =
+                                        Some(format!(" {} CHANGES ", icons.approval_changes));
+                                    (theme.red, true)
+                                }
+                                "DRAFT" => {
+                                    badge_bg = Some(if is_selected {
+                                        theme.highlight_bg
+                                    } else {
+                                        theme.yellow_bg
+                                    });
+                                    formatted_val = Some(format!(" {} DRAFT ", icons.status_draft));
+                                    (theme.yellow, true)
+                                }
+                                _ => (theme.text_normal, false),
+                            },
                             "Default" | "Protected" | "Can Push" | "Active" | "Confidential" => {
                                 if val == "YES" || val == "Yes" || val == "true" {
                                     badge_bg = Some(if is_selected {
@@ -772,155 +843,24 @@ pub(crate) fn build_field_list_items(
                             style = style.add_modifier(Modifier::BOLD);
                         }
 
-                        if label == "Title" && is_selected && editing {
-                            let cursor = cursor_pos.min(val.len());
-                            let before = if cursor > 0 && cursor <= val.len() {
-                                val[..cursor].to_string()
-                            } else {
-                                String::new()
-                            };
-                            let at_cursor = val
-                                .chars()
-                                .nth(cursor)
-                                .map(|ch| ch.to_string())
-                                .unwrap_or_else(|| " ".to_string());
-                            let after = if cursor < val.len() {
-                                val[cursor + at_cursor.len()..].to_string()
-                            } else {
-                                String::new()
-                            };
-                            val_spans.push(Span::styled(before, style));
-                            val_spans.push(Span::styled(
-                                if at_cursor.is_empty() {
-                                    " ".to_string()
-                                } else {
-                                    at_cursor
-                                },
-                                Style::default()
-                                    .fg(theme.bg)
-                                    .bg(val_fg)
-                                    .add_modifier(Modifier::SLOW_BLINK),
-                            ));
-                            val_spans.push(Span::styled(after, style));
-                        } else {
-                            let display_text =
-                                formatted_val.unwrap_or_else(|| format!(" {}", truncated));
-                            val_spans.push(Span::styled(display_text, style));
-                        }
+                        let display_text =
+                            formatted_val.unwrap_or_else(|| format!(" {}", truncated));
+                        val_spans.push(Span::styled(display_text, style));
                     }
-                }
-            }
-
-            let icon = match f.kind {
-                FieldType::Section => "",
-                FieldType::MultiSelect => {
-                    if label == "Labels" {
-                        "\u{f02b}"
-                    } else if label == "Assignees" || label == "Reviewers" || label == "Author" {
-                        "\u{f007}"
-                    } else {
-                        icons.check_on.as_str()
-                    }
-                }
-                FieldType::Toggle => icons.radio_on.as_str(),
-                FieldType::Date => "\u{f073}",
-                FieldType::Ref => icons.label_branch.as_str(),
-                FieldType::Text | FieldType::ReadOnly => match label.as_str() {
-                    "Title" | "Description" | "Name" => icons.label_details.as_str(),
-                    "State" => match val.to_lowercase().as_str() {
-                        "opened" | "open" | "active" => icons.state_open.as_str(),
-                        "closed" | "close" => icons.state_closed.as_str(),
-                        "merged" => icons.state_merged.as_str(),
-                        _ => icons.label_details.as_str(),
-                    },
-                    "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-                        "success" | "online" | "ready" => icons.status_success.as_str(),
-                        "failed" | "offline" => icons.status_failed.as_str(),
-                        "running" => icons.status_running.as_str(),
-                        "pending" | "waiting" | "draft" => icons.status_pending.as_str(),
-                        "canceled" | "cancelled" => icons.status_canceled.as_str(),
-                        "paused" => icons.runner_paused.as_str(),
-                        _ => icons.label_details.as_str(),
-                    },
-                    "Author" | "Assignees" | "Reviewers" | "Deployer" => "\u{f007}",
-                    "Milestone" => icons.label_milestone.as_str(),
-                    "Branch" | "Ref" | "Deploy Ref" => icons.label_branch.as_str(),
-                    "Environment" => icons.label_environment.as_str(),
-                    "Approval" => icons.approval_approved.as_str(),
-                    "Mergeable" => icons.merge_clean.as_str(),
-                    "Workflow" => icons.workflow_review.as_str(),
-                    "Threads" => icons.thread_unresolved.as_str(),
-                    "Created" | "Updated" | "Date" | "Due Date" | "Start Date" | "Released"
-                    | "Deployed" => "\u{f073}",
-                    "Duration" | "Avg Wait" => "\u{f017}",
-                    "ID" | "SHA" | "Commit" | "Deploy SHA" | "Deploy ID" | "Runner" | "Tag" => {
-                        "\u{f029}"
-                    }
-                    "Metrics" | "Utilization" | "Queue Depth" | "Active Jobs" | "Progress" => {
-                        "\u{f080}"
-                    }
-                    _ => icons.label_details.as_str(),
-                },
-            };
-
-            if (label == "Title" || label == "Name") && !(is_selected && editing) && !val.is_empty()
-            {
-                let available_width = (pane_width as usize)
-                    .saturating_sub(label_width + 8)
-                    .max(12);
-                let wrapped_chunks = wrap_text(val, available_width);
-                if wrapped_chunks.len() > 1 {
-                    let mut lines = Vec::new();
-                    for (idx, chunk) in wrapped_chunks.into_iter().enumerate() {
-                        let val_style = Style::default()
-                            .fg(theme.text_normal)
-                            .bg(item_bg)
-                            .add_modifier(if is_selected {
-                                Modifier::BOLD
-                            } else {
-                                Modifier::empty()
-                            });
-
-                        if idx == 0 {
-                            lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!(
-                                        " {} {:label_width$} ",
-                                        icon,
-                                        label,
-                                        label_width = label_width
-                                    ),
-                                    label_style,
-                                ),
-                                Span::styled(format!(" {} ", icons.separator), sep_style),
-                                Span::styled(format!(" {}", chunk), val_style),
-                            ]));
-                        } else {
-                            lines.push(Line::from(vec![
-                                Span::styled(
-                                    format!(" {:<width$} ", "", width = label_width + 2),
-                                    label_style,
-                                ),
-                                Span::styled(format!(" {} ", icons.separator), sep_style),
-                                Span::styled(format!(" {}", chunk), val_style),
-                            ]));
-                        }
-                    }
-                    return ListItem::new(lines).style(Style::default().bg(item_bg));
                 }
             }
 
             let mut line_spans = vec![
                 Span::styled(
                     format!(
-                        " {} {:label_width$} ",
+                        " {} {:<label_width$} ",
                         icon,
                         label,
                         label_width = label_width
                     ),
                     label_style,
                 ),
-                Span::styled(format!(" {} ", icons.separator), sep_style),
+                Span::styled(format!("{} ", icons.separator), sep_style),
             ];
             line_spans.extend(val_spans);
             ListItem::new(Line::from(line_spans)).style(Style::default().bg(item_bg))
@@ -928,59 +868,171 @@ pub(crate) fn build_field_list_items(
         .collect()
 }
 
-fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
-    if text.is_empty() || max_width == 0 {
-        return vec![text.to_string()];
-    }
-    let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let words: Vec<&str> = paragraph.split_whitespace().collect();
-        if words.is_empty() {
-            lines.push(String::new());
-            continue;
+fn build_wrapped_text_lines(
+    text: &str,
+    is_editing: bool,
+    cursor_pos: usize,
+    max_width: usize,
+    icon: &str,
+    label: &str,
+    label_width: usize,
+    separator: &str,
+    label_style: Style,
+    sep_style: Style,
+    val_style: Style,
+    cursor_style: Style,
+) -> Vec<Line<'static>> {
+    let chunks = wrap_text_with_offsets(text, max_width);
+    if chunks.is_empty() {
+        let mut spans = vec![
+            Span::styled(format!(" {} {:<label_width$} ", icon, label), label_style),
+            Span::styled(format!("{} ", separator), sep_style),
+        ];
+        if is_editing {
+            spans.push(Span::styled(" ", cursor_style));
         }
-        let mut current_line = String::new();
-        for word in words {
-            if current_line.is_empty() {
-                if word.len() > max_width {
-                    let mut w = word;
-                    while w.len() > max_width {
-                        let (chunk, rest) = w.split_at(max_width);
-                        lines.push(chunk.to_string());
-                        w = rest;
-                    }
-                    current_line.push_str(w);
-                } else {
-                    current_line.push_str(word);
-                }
-            } else if current_line.len() + 1 + word.len() <= max_width {
-                current_line.push(' ');
-                current_line.push_str(word);
-            } else {
-                lines.push(current_line);
-                current_line = String::new();
-                if word.len() > max_width {
-                    let mut w = word;
-                    while w.len() > max_width {
-                        let (chunk, rest) = w.split_at(max_width);
-                        lines.push(chunk.to_string());
-                        w = rest;
-                    }
-                    current_line.push_str(w);
-                } else {
-                    current_line.push_str(word);
-                }
+        return vec![Line::from(spans)];
+    }
+
+    let mut lines = Vec::new();
+    let num_chunks = chunks.len();
+
+    let active_cursor_chunk = if is_editing {
+        let mut found = None;
+        for (i, (start, chunk)) in chunks.iter().enumerate() {
+            let end = start + chunk.len();
+            if cursor_pos >= *start
+                && (cursor_pos < end || (cursor_pos == end && i == num_chunks - 1))
+            {
+                found = Some(i);
+                break;
             }
         }
-        if !current_line.is_empty() {
-            lines.push(current_line);
+        found.or(Some(num_chunks.saturating_sub(1)))
+    } else {
+        None
+    };
+
+    for (idx, (start_offset, chunk)) in chunks.into_iter().enumerate() {
+        let mut line_spans = Vec::new();
+
+        if idx == 0 {
+            line_spans.push(Span::styled(
+                format!(" {} {:<label_width$} ", icon, label),
+                label_style,
+            ));
+            line_spans.push(Span::styled(format!("{} ", separator), sep_style));
+        } else {
+            // Continuation line indentation without repeating the separator icon
+            line_spans.push(Span::styled(
+                format!(" {:<width$}   ", "", width = label_width + 2),
+                label_style,
+            ));
+        }
+
+        if is_editing && active_cursor_chunk == Some(idx) {
+            let chunk_len = chunk.len();
+            let relative_cursor = cursor_pos.saturating_sub(start_offset).min(chunk_len);
+            let before = &chunk[..relative_cursor];
+            if !before.is_empty() {
+                line_spans.push(Span::styled(before.to_string(), val_style));
+            }
+            if relative_cursor < chunk_len {
+                let mut after_chars = chunk[relative_cursor..].chars();
+                let cursor_ch = after_chars.next().unwrap_or(' ');
+                let rest = after_chars.as_str();
+                line_spans.push(Span::styled(cursor_ch.to_string(), cursor_style));
+                if !rest.is_empty() {
+                    line_spans.push(Span::styled(rest.to_string(), val_style));
+                }
+            } else {
+                line_spans.push(Span::styled(" ".to_string(), cursor_style));
+            }
+        } else {
+            line_spans.push(Span::styled(chunk, val_style));
+        }
+
+        lines.push(Line::from(line_spans));
+    }
+
+    lines
+}
+
+fn wrap_text_with_offsets(text: &str, max_width: usize) -> Vec<(usize, String)> {
+    if text.is_empty() || max_width == 0 {
+        return vec![(0, text.to_string())];
+    }
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_start = 0;
+    let mut search_from = 0;
+
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return vec![(0, text.to_string())];
+    }
+
+    for word in words {
+        let word_offset = match text[search_from..].find(word) {
+            Some(pos) => search_from + pos,
+            None => search_from,
+        };
+        search_from = word_offset + word.len();
+
+        if current_line.is_empty() {
+            current_start = word_offset;
+            if word.len() > max_width {
+                let mut w = word;
+                let mut sub_offset = word_offset;
+                while w.len() > max_width {
+                    let (chunk, rest) = w.split_at(max_width);
+                    lines.push((sub_offset, chunk.to_string()));
+                    sub_offset += chunk.len();
+                    w = rest;
+                }
+                current_line.push_str(w);
+                current_start = sub_offset;
+            } else {
+                current_line.push_str(word);
+            }
+        } else if current_line.len() + 1 + word.len() <= max_width {
+            current_line.push(' ');
+            current_line.push_str(word);
+        } else {
+            lines.push((current_start, current_line));
+            current_line = String::new();
+            current_start = word_offset;
+            if word.len() > max_width {
+                let mut w = word;
+                let mut sub_offset = word_offset;
+                while w.len() > max_width {
+                    let (chunk, rest) = w.split_at(max_width);
+                    lines.push((sub_offset, chunk.to_string()));
+                    sub_offset += chunk.len();
+                    w = rest;
+                }
+                current_line.push_str(w);
+                current_start = sub_offset;
+            } else {
+                current_line.push_str(word);
+            }
         }
     }
+    if !current_line.is_empty() {
+        lines.push((current_start, current_line));
+    }
     if lines.is_empty() {
-        vec![text.to_string()]
+        vec![(0, text.to_string())]
     } else {
         lines
     }
+}
+
+pub(crate) fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    wrap_text_with_offsets(text, max_width)
+        .into_iter()
+        .map(|(_, s)| s)
+        .collect()
 }
 
 pub(crate) fn render_inspector_content(
@@ -1182,6 +1234,33 @@ mod tests {
         let label_colors = HashMap::new();
         // pane_width 40 will force wrapping of the long title
         let items = build_field_list_items(&fields, None, false, 0, 40, &label_colors, true);
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_build_field_list_items_editing_wrapping() {
+        let fields = vec![
+            Field::text(
+                "Title",
+                "Refactor UI and unify all preview components across the entire repository"
+                    .to_string(),
+            ),
+            Field::read_only("State", "OPEN".to_string()),
+        ];
+        let label_colors = HashMap::new();
+        // Active editing at cursor position 10
+        let items = build_field_list_items(&fields, Some(0), true, 10, 40, &label_colors, true);
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_section_header_clean_rendering() {
+        let fields = vec![
+            Field::section("Details"),
+            Field::read_only("State", "OPEN".to_string()),
+        ];
+        let label_colors = HashMap::new();
+        let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true);
         assert_eq!(items.len(), 2);
     }
 }

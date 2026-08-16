@@ -449,21 +449,84 @@ pub(crate) fn build_field_list_items(
                         ));
                     }
                     FieldType::Text | FieldType::ReadOnly => {
-                        let val_fg = match label.as_str() {
-                            "State" => match val.to_lowercase().as_str() {
-                                "opened" | "open" | "active" | "online" => theme.green,
-                                "closed" | "close" | "failed" | "offline" => theme.red,
-                                "merged" => theme.purple,
-                                _ => theme.text_normal,
-                            },
-                            "Milestone" => theme.purple,
-                            "Author" | "Assignees" | "Reviewers" => theme.blue,
-                            "Updated" | "Created" | "Duration" | "Released" => theme.yellow,
-                            "ID" | "SHA" | "Commit" | "Runner" => theme.blue,
-                            _ => theme.text_normal,
+                        let (val_fg, is_bold) = match label.as_str() {
+                            "State" | "Status" | "Deploy Status" | "Action" => {
+                                match val.to_lowercase().as_str() {
+                                    "opened" | "open" | "active" | "online" | "success"
+                                    | "ready" | "passed" => (theme.green, true),
+                                    "closed" | "close" | "failed" | "offline" | "canceled"
+                                    | "cancelled" => (theme.red, true),
+                                    "merged" => (theme.purple, true),
+                                    "running" => (theme.blue, true),
+                                    "pending" | "waiting" | "draft" | "paused" | "unread"
+                                    | "new" => (theme.yellow, true),
+                                    _ => (theme.text_normal, true),
+                                }
+                            }
+                            "Approval" => {
+                                if val.contains("APPROVED") {
+                                    (theme.green, true)
+                                } else if val.contains("CHANGES") || val.contains("CHG") {
+                                    (theme.red, true)
+                                } else if val.contains("AWAITING") || val.contains("REVIEW REQ") {
+                                    (theme.yellow, true)
+                                } else {
+                                    (theme.text_normal, false)
+                                }
+                            }
+                            "Mergeable" => {
+                                if val.contains("CLEAN") {
+                                    (theme.green, true)
+                                } else if val.contains("CONFLICT") {
+                                    (theme.red, true)
+                                } else if val.contains("REBASE") || val.contains("CHECKING") {
+                                    (theme.yellow, true)
+                                } else {
+                                    (theme.text_normal, false)
+                                }
+                            }
+                            "Workflow" => {
+                                if val.contains("Approved") {
+                                    (theme.green, true)
+                                } else if val.contains("Returned") {
+                                    (theme.red, true)
+                                } else if val.contains("Review") {
+                                    (theme.yellow, true)
+                                } else if val.contains("Yours") {
+                                    (theme.blue, true)
+                                } else {
+                                    (theme.text_muted, false)
+                                }
+                            }
+                            "Threads" => {
+                                if val.contains("0") || val.contains("all resolved") {
+                                    (theme.green, true)
+                                } else {
+                                    (theme.red, true)
+                                }
+                            }
+                            "Default" | "Protected" | "Can Push" | "Active" | "Confidential" => {
+                                if val == "YES" || val == "Yes" || val == "true" {
+                                    (theme.green, true)
+                                } else {
+                                    (theme.text_muted, false)
+                                }
+                            }
+                            "Milestone" | "Branch" | "Ref" | "Deploy Ref" | "Stage" => {
+                                (theme.purple, false)
+                            }
+                            "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target"
+                            | "Project" => (theme.blue, false),
+                            "Updated" | "Created" | "Duration" | "Released" | "Deployed"
+                            | "Date" | "Due Date" | "Start Date" | "Avg Wait" => {
+                                (theme.yellow, false)
+                            }
+                            "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA"
+                            | "Deploy ID" => (theme.blue, false),
+                            _ => (theme.text_normal, false),
                         };
                         let mut style = Style::default().fg(val_fg).bg(item_bg);
-                        if is_selected {
+                        if is_selected || is_bold {
                             style = style.add_modifier(Modifier::BOLD);
                         }
 
@@ -506,11 +569,54 @@ pub(crate) fn build_field_list_items(
 
             let icon = match f.kind {
                 FieldType::Section => "",
-                FieldType::MultiSelect => icons.check_on.as_str(),
+                FieldType::MultiSelect => {
+                    if label == "Labels" {
+                        "\u{f02b}"
+                    } else if label == "Assignees" || label == "Reviewers" || label == "Author" {
+                        "\u{f007}"
+                    } else {
+                        icons.check_on.as_str()
+                    }
+                }
                 FieldType::Toggle => icons.radio_on.as_str(),
                 FieldType::Date => "\u{f073}",
                 FieldType::Ref => icons.label_branch.as_str(),
-                FieldType::Text | FieldType::ReadOnly => icons.label_details.as_str(),
+                FieldType::Text | FieldType::ReadOnly => match label.as_str() {
+                    "Title" | "Description" | "Name" => icons.label_details.as_str(),
+                    "State" => match val.to_lowercase().as_str() {
+                        "opened" | "open" | "active" => icons.state_open.as_str(),
+                        "closed" | "close" => icons.state_closed.as_str(),
+                        "merged" => icons.state_merged.as_str(),
+                        _ => icons.label_details.as_str(),
+                    },
+                    "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
+                        "success" | "online" | "ready" => icons.status_success.as_str(),
+                        "failed" | "offline" => icons.status_failed.as_str(),
+                        "running" => icons.status_running.as_str(),
+                        "pending" | "waiting" | "draft" => icons.status_pending.as_str(),
+                        "canceled" | "cancelled" => icons.status_canceled.as_str(),
+                        "paused" => icons.runner_paused.as_str(),
+                        _ => icons.label_details.as_str(),
+                    },
+                    "Author" | "Assignees" | "Reviewers" | "Deployer" => "\u{f007}",
+                    "Milestone" => icons.label_milestone.as_str(),
+                    "Branch" | "Ref" | "Deploy Ref" => icons.label_branch.as_str(),
+                    "Environment" => icons.label_environment.as_str(),
+                    "Approval" => icons.approval_approved.as_str(),
+                    "Mergeable" => icons.merge_clean.as_str(),
+                    "Workflow" => icons.workflow_review.as_str(),
+                    "Threads" => icons.thread_unresolved.as_str(),
+                    "Created" | "Updated" | "Date" | "Due Date" | "Start Date" | "Released"
+                    | "Deployed" => "\u{f073}",
+                    "Duration" | "Avg Wait" => "\u{f017}",
+                    "ID" | "SHA" | "Commit" | "Deploy SHA" | "Deploy ID" | "Runner" | "Tag" => {
+                        "\u{f029}"
+                    }
+                    "Metrics" | "Utilization" | "Queue Depth" | "Active Jobs" | "Progress" => {
+                        "\u{f080}"
+                    }
+                    _ => icons.label_details.as_str(),
+                },
             };
 
             let mut line_spans = vec![

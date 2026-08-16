@@ -2,7 +2,7 @@ Output assets/demo-search.gif
 
 Set FontSize 18
 Set FontFamily "JetBrainsMono Nerd Font"
-Set Theme "Builtin Dark"
+Set Theme "rose-pine-dawn"
 Set Width 1920
 Set Height 1200
 Set Framerate 10

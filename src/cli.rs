@@ -556,7 +556,11 @@ fn detect_github() -> bool {
         .args(["remote", "get-url", "origin"])
         .output()
     {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).contains("github.com"),
+        Ok(o) if o.status.success() => crate::git_helpers::detect_backend(
+            &String::from_utf8_lossy(&o.stdout),
+            crate::config::Config::load().backend,
+        )
+        .is_github(),
         _ => false,
     }
 }

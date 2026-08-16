@@ -22,7 +22,7 @@ pub enum Event {
     ReleasesFetched(Vec<crate::domain::releases::Release>),
     SelectorItemsFetched(Vec<String>),
     RepoAttributesFetched {
-        labels: Vec<String>,
+        labels: Vec<crate::domain::labels::Label>,
         members: Vec<String>,
     },
     FetchFailed(crate::app::Tab, String),

@@ -2,6 +2,7 @@ use super::Backend;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::Issue;
+use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
 use crate::domain::notifications::Notification;
@@ -12,6 +13,7 @@ use crate::event::Event;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::collections::HashMap;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -28,6 +30,117 @@ fn normalize_labels(s: &str) -> String {
     s.replace(", ", ",")
 }
 
+/// `None` for anything that is not a usable login, so an unknown user can
+/// never be mistaken for a known one. Never returns `Some("")`.
+fn parse_gh_login(raw: &str) -> Option<String> {
+    let login = raw.trim();
+    if login.is_empty() {
+        None
+    } else {
+        Some(login.to_string())
+    }
+}
+
+/// Splits `latestReviews` into (every review's author, approving authors only).
+///
+/// Two lists because they answer different questions: `you_reviewed` must be
+/// true for any review including a rejection, while `approved_by` must not
+/// credit someone who only commented.
+fn split_review_authors(latest_reviews: &[serde_json::Value]) -> (Vec<String>, Vec<String>) {
+    let all_authors: Vec<String> = latest_reviews
+        .iter()
+        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
+        .collect();
+    let approved_authors: Vec<String> = latest_reviews
+        .iter()
+        .filter(|r| {
+            r.get("state")
+                .and_then(|s| s.as_str())
+                .map(|s| s.eq_ignore_ascii_case("APPROVED"))
+                .unwrap_or(false)
+        })
+        .filter_map(|r| r.get("author")?.get("login")?.as_str().map(String::from))
+        .collect();
+    (all_authors, approved_authors)
+}
+
+/// Map GitHub's list fields onto the host-neutral state structs.
+///
+/// `mergeStateStatus == "BLOCKED"` means blocked by branch protection, NOT a
+/// merge conflict — conflicts come only from `mergeable == "CONFLICTING"`.
+pub fn gh_state_from_fields(
+    review_decision: Option<&str>,
+    mergeable: Option<&str>,
+    merge_state_status: Option<&str>,
+    latest_review_authors: Vec<String>,
+    current_user: Option<&str>,
+    approved_authors: &[String],
+) -> (
+    Option<crate::domain::mr_state::ApprovalState>,
+    Option<crate::domain::mr_state::MergeabilityState>,
+) {
+    use crate::domain::mr_state::{ApprovalState, MergeabilityState};
+
+    let decision = review_decision.unwrap_or_default();
+    let approved = decision.eq_ignore_ascii_case("APPROVED");
+
+    let you_reviewed = current_user
+        .map(|me| latest_review_authors.iter().any(|a| a == me))
+        .unwrap_or(false);
+
+    // `approved_authors` (unlike `latest_review_authors`, which includes
+    // rejections and comments) is the approvals-only list, so this is the
+    // one place the workflow cascade's `you_approved` input can be derived
+    // correctly. Without it, this stayed hard-coded `false` and the cascade
+    // could never reach `ApprovedByYou` on GitHub — see the regression this
+    // guards in the tests below.
+    let you_approved = current_user
+        .map(|me| approved_authors.iter().any(|a| a == me))
+        .unwrap_or(false);
+
+    let approval = ApprovalState {
+        approved,
+        // GitHub exposes no approval counts.
+        approvals_left: None,
+        approvals_required: None,
+        approved_by: if approved {
+            latest_review_authors
+        } else {
+            Vec::new()
+        },
+        changes_requested: decision.eq_ignore_ascii_case("CHANGES_REQUESTED"),
+        you_approved,
+        // Needs canApprove, which gh pr list does not provide.
+        awaiting_you: false,
+        current_user: current_user.map(|s| s.to_string()),
+        you_reviewed,
+    };
+
+    let merge_raw = mergeable.unwrap_or("UNKNOWN");
+    let state_raw = merge_state_status.unwrap_or("UNKNOWN");
+    let mergeability = MergeabilityState {
+        conflicts: merge_raw.eq_ignore_ascii_case("CONFLICTING"),
+        needs_rebase: state_raw.eq_ignore_ascii_case("BEHIND"),
+        computing: merge_raw.eq_ignore_ascii_case("UNKNOWN"),
+    };
+
+    (Some(approval), Some(mergeability))
+}
+
+/// The authenticated GitHub login, resolved at most once per process.
+///
+/// Process-global rather than a field on `GhBackend`: `GitlabClient::clone`
+/// rebuilds the backend from scratch (`create_backend`, see
+/// `domain::client`'s `Clone` impl), and every refresh clones the client
+/// (`spawn_refresh_active_tab`), so a per-instance cell would start empty on
+/// every single refresh and never serve a hit. Matches the `ICONS`/`THEME`
+/// precedent of process-global state for values that do not change within a
+/// run. Holds `Option` rather than `String` so a *failed* lookup is cached
+/// too — `get_or_try_init` leaves the cell uninitialised on error and would
+/// retry on every refresh, which is the per-refresh request the design
+/// forbids.
+static GH_CURRENT_USER: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
+
 pub struct GhBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -35,6 +148,25 @@ pub struct GhBackend {
 impl GhBackend {
     pub fn new() -> Self {
         Self { tx: None }
+    }
+
+    /// `None` if the lookup fails — an unknown user must yield an unknown
+    /// workflow status, never a wrong one. The failure itself is cached
+    /// alongside a success, so this never re-issues the `gh api user` call
+    /// after the first attempt, whatever the outcome — and because the cache
+    /// is the process-global `GH_CURRENT_USER`, that holds across cloned
+    /// clients too, not just repeated calls on one instance.
+    async fn current_user(&self) -> Option<&str> {
+        GH_CURRENT_USER
+            .get_or_init(|| async {
+                let raw = self
+                    .run_gh(&["api", "user", "--jq", ".login"], "FETCHING GH USER")
+                    .await
+                    .ok()?;
+                parse_gh_login(&raw)
+            })
+            .await
+            .as_deref()
     }
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
@@ -88,11 +220,15 @@ impl Backend for GhBackend {
 
     // ── Issues ──
 
+    /// `_per_request` is unused in the GitHub backend (as with all `Backend`
+    /// methods that take it) — `gh` uses `--limit` for the total item count,
+    /// not per-page pagination. Only GitLab backends paginate per-request.
     async fn list_issues(
         &self,
         project: &str,
         show_closed: bool,
         page_size: usize,
+        _per_request: usize,
     ) -> Result<Vec<Issue>> {
         let state = if show_closed { "all" } else { "open" };
         let total = page_size * 10;
@@ -493,11 +629,14 @@ impl Backend for GhBackend {
 
     // ── Merge Requests ──
 
+    /// `_per_request` is unused in the GitHub backend — `gh` uses `--limit`
+    /// for the total item count, not per-page pagination.
     async fn list_mrs(
         &self,
         project: &str,
         show_closed: bool,
         page_size: usize,
+        _per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
         let state = if show_closed { "all" } else { "open" };
         let total = page_size * 10;
@@ -507,7 +646,7 @@ impl Backend for GhBackend {
                     "pr",
                     "list",
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests",
                     "-R",
                     project,
                     "--state",
@@ -542,6 +681,16 @@ impl Backend for GhBackend {
             #[serde(default)]
             assignees: Vec<GhLogin>,
             milestone: Option<GhMs>,
+            #[serde(rename = "reviewDecision", default)]
+            review_decision: Option<String>,
+            #[serde(rename = "latestReviews", default)]
+            latest_reviews: Vec<serde_json::Value>,
+            #[serde(default)]
+            mergeable: Option<String>,
+            #[serde(rename = "mergeStateStatus", default)]
+            merge_state_status: Option<String>,
+            #[serde(rename = "reviewRequests", default)]
+            review_requests: Vec<serde_json::Value>,
         }
         #[derive(Deserialize)]
         struct GhLogin {
@@ -552,6 +701,7 @@ impl Backend for GhBackend {
             title: String,
         }
 
+        let me = self.current_user().await;
         let gh_prs: Vec<GhPr> = serde_json::from_str(&raw)?;
         Ok(gh_prs
             .into_iter()
@@ -578,6 +728,36 @@ impl Backend for GhBackend {
                     .into_iter()
                     .map(|a| crate::domain::mr::Assignee { username: a.login })
                     .collect();
+                let (latest_review_authors, approved_authors) =
+                    split_review_authors(&gp.latest_reviews);
+                let (approval, mergeability) = gh_state_from_fields(
+                    gp.review_decision.as_deref(),
+                    gp.mergeable.as_deref(),
+                    gp.merge_state_status.as_deref(),
+                    latest_review_authors,
+                    me,
+                    &approved_authors,
+                );
+                // gh_state_from_fields derives approved_by from the same
+                // (unfiltered) list it uses for you_reviewed; restore the
+                // approvals-only view here. (you_approved was already
+                // derived correctly inside gh_state_from_fields, from this
+                // same approved_authors list passed in below.)
+                let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
+                    approved_by: approved_authors,
+                    ..a
+                });
+                let reviewers: Vec<crate::domain::mr::Reviewer> = gp
+                    .review_requests
+                    .iter()
+                    .filter_map(|r| {
+                        r.get("login").or_else(|| r.get("name"))?.as_str().map(|s| {
+                            crate::domain::mr::Reviewer {
+                                username: s.to_string(),
+                            }
+                        })
+                    })
+                    .collect();
                 MergeRequest {
                     iid: gp.number,
                     title: gp.title,
@@ -587,12 +767,16 @@ impl Backend for GhBackend {
                     author,
                     milestone,
                     assignees,
-                    reviewers: vec![],
+                    reviewers,
                     target_branch: gp.base_ref_name.unwrap_or_default(),
                     source_branch: gp.head_ref_name.unwrap_or_default(),
                     draft: gp.is_draft.unwrap_or(false),
                     description: gp.body,
                     head_pipeline: None,
+                    blocking_discussions_resolved: None,
+                    approval,
+                    mergeability,
+                    workflow: None,
                 }
             })
             .collect())
@@ -677,12 +861,18 @@ impl Backend for GhBackend {
             author,
             milestone,
             assignees,
+            // Deliberately left empty: get_mr has no UI caller, so fetching
+            // reviewRequests here would cost a request for no benefit.
             reviewers: vec![],
             target_branch: gp.base_ref_name.unwrap_or_default(),
             source_branch: gp.head_ref_name.unwrap_or_default(),
             draft: gp.is_draft.unwrap_or(false),
             description: gp.body,
             head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
         })
     }
 
@@ -799,6 +989,47 @@ impl Backend for GhBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn revoke_mr(&self, _project: &str, _iid: u64) -> Result<()> {
+        // `gh pr review` has no revoke flag. The only path is the review
+        // dismissal API, which needs a review-ID lookup and write permission,
+        // so it is deliberately out of scope.
+        anyhow::bail!("Revoking approval isn't supported on GitHub")
+    }
+
+    async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.run_gh(
+            &[
+                "pr",
+                "update-branch",
+                &iid.to_string(),
+                "-R",
+                project,
+                "--rebase",
+            ],
+            "REBASING PR",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn list_mr_state(
+        &self,
+        _project: &str,
+        _iids: &[u64],
+    ) -> Result<
+        HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    > {
+        // GitHub state rides on the existing `gh pr list --json` call instead
+        // (see list_mrs), so there is nothing extra to fetch here.
+        Ok(HashMap::new())
     }
 
     async fn merge_mr(
@@ -1091,7 +1322,14 @@ impl Backend for GhBackend {
 
     // ── Pipelines ──
 
-    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>> {
+    /// `_per_request` is unused in the GitHub backend — `gh run list` uses
+    /// `--limit` for the total item count, not per-page pagination.
+    async fn list_pipelines(
+        &self,
+        project: &str,
+        page_size: usize,
+        _per_request: usize,
+    ) -> Result<Vec<Pipeline>> {
         let total = page_size * 10;
         let raw = self
             .run_gh(
@@ -1588,6 +1826,7 @@ impl Backend for GhBackend {
         &self,
         project: &str,
         milestone_iid: u64,
+        _milestone_title: &str,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
         let total = page_size * 10;
@@ -2021,11 +2260,18 @@ impl Backend for GhBackend {
 
     // ── Labels / Members / Misc ──
 
-    async fn fetch_labels(&self, project: &str) -> Result<Vec<String>> {
+    async fn fetch_labels(&self, project: &str, _per_request: usize) -> Result<Vec<Label>> {
         let raw = self
             .run_gh(
                 &[
-                    "label", "list", "--json", "name", "-R", project, "--limit", "100",
+                    "label",
+                    "list",
+                    "--json",
+                    "name,color",
+                    "-R",
+                    project,
+                    "--limit",
+                    "100",
                 ],
                 "Fetching Labels",
             )
@@ -2033,9 +2279,21 @@ impl Backend for GhBackend {
         #[derive(Deserialize)]
         struct GhLabel {
             name: String,
+            #[serde(default)]
+            color: String,
         }
         let labels: Vec<GhLabel> = serde_json::from_str(&raw)?;
-        Ok(labels.into_iter().map(|l| l.name).collect())
+        Ok(labels
+            .into_iter()
+            .map(|l| Label {
+                name: l.name,
+                color: if l.color.is_empty() {
+                    None
+                } else {
+                    Some(l.color)
+                },
+            })
+            .collect())
     }
 
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>> {
@@ -2215,5 +2473,280 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
+    }
+
+    #[test]
+    fn parse_gh_login_reads_a_normal_login() {
+        assert_eq!(parse_gh_login("octocat"), Some("octocat".to_string()));
+    }
+
+    #[test]
+    fn parse_gh_login_trims_the_trailing_newline_jq_emits() {
+        // `gh api user --jq .login` emits the login followed by a newline.
+        assert_eq!(parse_gh_login("octocat\n"), Some("octocat".to_string()));
+    }
+
+    #[test]
+    fn parse_gh_login_empty_string_is_none() {
+        assert_eq!(parse_gh_login(""), None);
+    }
+
+    #[test]
+    fn parse_gh_login_whitespace_only_is_none_not_some_empty_string() {
+        assert_eq!(parse_gh_login("   \n"), None);
+    }
+
+    #[test]
+    fn split_review_authors_separates_approvals_from_all_reviews() {
+        // One of each: an approval, a rejection, and a non-blocking comment.
+        // `you_reviewed` must see all three; `approved_by` must see only the
+        // approver.
+        let reviews = vec![
+            serde_json::json!({"author": {"login": "approver"}, "state": "APPROVED"}),
+            serde_json::json!({"author": {"login": "rejecter"}, "state": "CHANGES_REQUESTED"}),
+            serde_json::json!({"author": {"login": "commenter"}, "state": "COMMENTED"}),
+        ];
+
+        let (all_authors, approved_authors) = split_review_authors(&reviews);
+
+        assert_eq!(
+            all_authors,
+            vec![
+                "approver".to_string(),
+                "rejecter".to_string(),
+                "commenter".to_string(),
+            ]
+        );
+        assert_eq!(approved_authors, vec!["approver".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn current_user_cache_is_shared_across_cloned_backend_instances() {
+        // Regression guard for the bug this cache exists to avoid: an earlier
+        // version cached in a `OnceCell` field *on* `GhBackend`. But
+        // `GitlabClient::clone` rebuilds the backend from scratch
+        // (`create_backend`), and every refresh clones the client
+        // (`spawn_refresh_active_tab`), so a per-instance cell would start
+        // empty on every refresh and never see a second call — zero cache
+        // hits, ever. A test that only builds one `OnceCell` locally (as the
+        // previous version of this test did) cannot see that bug: it passes
+        // identically whether the cache is shared, per-instance, or absent.
+        //
+        // This test instead exercises the actual static, `GH_CURRENT_USER`,
+        // through what stand in for two independently-cloned backends —
+        // there is nothing left to construct per-instance, which is exactly
+        // the fix: the cache no longer lives on the struct at all.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        async fn init() -> Option<String> {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            Some("cached-user".to_string())
+        }
+
+        let _first_backend = GhBackend::new();
+        let _second_backend = GhBackend::new();
+
+        let a = GH_CURRENT_USER.get_or_init(init).await.clone();
+        let b = GH_CURRENT_USER.get_or_init(init).await.clone();
+
+        assert_eq!(a, Some("cached-user".to_string()));
+        assert_eq!(a, b);
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            1,
+            "the initializer must run once total, not once per backend instance"
+        );
+    }
+
+    #[test]
+    fn blocked_merge_state_is_not_a_conflict() {
+        // REGRESSION GUARD. Every open PR sampled on ratatui/ratatui was
+        // mergeable=MERGEABLE + mergeStateStatus=BLOCKED, which means blocked
+        // by branch protection. Mapping BLOCKED to "conflict" would show false
+        // conflicts on most GitHub PRs.
+        let (_, merge) = gh_state_from_fields(
+            Some("REVIEW_REQUIRED"),
+            Some("MERGEABLE"),
+            Some("BLOCKED"),
+            vec![],
+            None,
+            &[],
+        );
+        let m = merge.unwrap();
+        assert!(!m.conflicts);
+        assert!(!m.needs_rebase);
+        assert!(!m.computing);
+    }
+
+    #[test]
+    fn conflicting_maps_to_conflicts() {
+        let (_, merge) =
+            gh_state_from_fields(None, Some("CONFLICTING"), Some("DIRTY"), vec![], None, &[]);
+        assert!(merge.unwrap().conflicts);
+    }
+
+    #[test]
+    fn behind_maps_to_needs_rebase() {
+        let (_, merge) =
+            gh_state_from_fields(None, Some("MERGEABLE"), Some("BEHIND"), vec![], None, &[]);
+        assert!(merge.unwrap().needs_rebase);
+    }
+
+    #[test]
+    fn unknown_mergeable_is_computing_not_failure() {
+        // GitHub computes mergeability asynchronously.
+        let (_, merge) =
+            gh_state_from_fields(None, Some("UNKNOWN"), Some("UNKNOWN"), vec![], None, &[]);
+        let m = merge.unwrap();
+        assert!(m.computing);
+        assert!(!m.conflicts);
+    }
+
+    #[test]
+    fn absent_mergeable_is_computing() {
+        let (_, merge) = gh_state_from_fields(None, None, None, vec![], None, &[]);
+        assert!(merge.unwrap().computing);
+    }
+
+    #[test]
+    fn review_decision_approved_maps_to_approved_with_authors() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            None,
+            &[],
+        );
+        let a = approval.unwrap();
+        assert!(a.approved);
+        assert_eq!(a.approved_by, vec!["octocat".to_string()]);
+        assert!(!a.changes_requested);
+    }
+
+    #[test]
+    fn review_decision_changes_requested_maps_through() {
+        let (approval, _) = gh_state_from_fields(
+            Some("CHANGES_REQUESTED"),
+            Some("MERGEABLE"),
+            Some("BLOCKED"),
+            vec![],
+            None,
+            &[],
+        );
+        assert!(approval.unwrap().changes_requested);
+    }
+
+    #[test]
+    fn github_never_sets_counts_or_awaiting_you() {
+        // canApprove has no gh equivalent, so the ● marker is unreachable.
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            None,
+            &[],
+        );
+        let a = approval.unwrap();
+        assert_eq!(a.approvals_required, None);
+        assert_eq!(a.approvals_left, None);
+        assert!(!a.awaiting_you);
+    }
+
+    #[test]
+    fn null_review_decision_is_pending_not_unknown() {
+        // A PR with no review yet returns null; that is "pending", and the
+        // axis is still known.
+        let (approval, _) =
+            gh_state_from_fields(None, Some("MERGEABLE"), Some("CLEAN"), vec![], None, &[]);
+        let a = approval.unwrap();
+        assert!(!a.approved);
+        assert!(!a.changes_requested);
+    }
+
+    #[test]
+    fn github_carries_the_current_user_through() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            Some("octocat"),
+            &[],
+        );
+        let a = approval.unwrap();
+        assert_eq!(a.current_user.as_deref(), Some("octocat"));
+    }
+
+    #[test]
+    fn github_you_reviewed_is_true_when_you_are_in_latest_reviews() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            Some("octocat"),
+            &[],
+        );
+        assert!(approval.unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn github_you_reviewed_is_false_when_someone_else_reviewed() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["someone.else".to_string()],
+            Some("octocat"),
+            &[],
+        );
+        assert!(!approval.unwrap().you_reviewed);
+    }
+
+    #[test]
+    fn github_unknown_current_user_leaves_it_none() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec![],
+            None,
+            &[],
+        );
+        assert_eq!(approval.unwrap().current_user, None);
+    }
+
+    // ── you_approved (CRITICAL/IMPORTANT finding: was hard-coded `false`,
+    // making `ApprovedByYou` unreachable on GitHub and rendering a PR you
+    // personally approved as blank "not yours" once you dropped out of
+    // reviewRequests) ──
+
+    #[test]
+    fn github_you_approved_is_true_when_you_are_in_approved_authors() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["octocat".to_string()],
+            Some("octocat"),
+            &["octocat".to_string()],
+        );
+        assert!(approval.unwrap().you_approved);
+    }
+
+    #[test]
+    fn github_you_approved_is_false_when_only_someone_else_approved() {
+        let (approval, _) = gh_state_from_fields(
+            Some("APPROVED"),
+            Some("MERGEABLE"),
+            Some("CLEAN"),
+            vec!["someone.else".to_string()],
+            Some("octocat"),
+            &["someone.else".to_string()],
+        );
+        assert!(!approval.unwrap().you_approved);
     }
 }

@@ -1,6 +1,52 @@
-# glab-tui
+# glab-tui <img src="assets/terminal_trove_tool_of_the_week_green_on_black_bg.png" alt="Terminal Trove — Tool of the Week" width="180" align="right">
+
+<p align="center">
+<img src="assets/glab-tui-banner-v2.svg" alt="glab-tui" width="560">
+</p>
+
+<p align="center">
+<a href="https://github.com/rcieri/glab-tui/actions/workflows/rust.yml"><img src="https://github.com/rcieri/glab-tui/actions/workflows/rust.yml/badge.svg" alt="CI Status"></a>
+<a href="https://crates.io/crates/glab-tui-crate"><img src="https://img.shields.io/crates/v/glab-tui-crate.svg" alt="Crates.io"></a>
+<a href="https://github.com/rcieri/glab-tui/releases/latest"><img src="https://img.shields.io/github/v/release/rcieri/glab-tui.svg" alt="GitHub Release"></a>
+<a href="https://github.com/rcieri/homebrew-glab-tui"><img src="https://img.shields.io/github/v/release/rcieri/glab-tui?label=homebrew" alt="Homebrew"></a>
+<a href="https://github.com/rcieri/scoop-glab-tui"><img src="https://img.shields.io/github/v/release/rcieri/glab-tui?label=scoop" alt="Scoop"></a>
+<a href="https://github.com/rcieri/glab-tui/pkgs/container/glab-tui"><img src="https://img.shields.io/badge/docker-ghcr.io%2Frcieri%2Fglab--tui-blue" alt="Docker"></a>
+<a href="LICENSE.md"><img src="https://img.shields.io/github/license/rcieri/glab-tui.svg" alt="License"></a>
+</p>
 
 A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](https://gitlab.com/gitlab-org/cli) and [`gh`](https://cli.github.com/). Browse issues, pull requests / merge requests, pipelines, runners, and releases without leaving your terminal.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+  - [Package Manager](#package-manager)
+  - [From source](#from-source)
+  - [With cargo install (from crates.io)](#with-cargo-install-from-cratesio)
+  - [Install script (Linux / macOS)](#install-script-linux--macos)
+  - [Install script (Windows)](#install-script-windows)
+  - [Docker](#docker)
+  - [Homebrew](#homebrew)
+  - [Scoop (Windows)](#scoop-windows)
+- [Configuration](#configuration)
+  - [Authentication](#authentication)
+  - [Config file](#config-file)
+  - [Custom themes](#custom-themes)
+  - [Editor](#editor)
+- [Usage](#usage)
+  - [Options](#options)
+  - [CLI subcommand examples](#cli-subcommand-examples)
+- [Filtering, Grouping & Columns](#filtering-grouping--columns)
+- [Key Bindings](#key-bindings)
+- [Dependencies](#dependencies)
+- [Project Structure](#project-structure)
+- [Running Tests](#running-tests)
+- [Releasing](#releasing)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -8,9 +54,10 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
-- **Bulk editing** — select multiple issues or merge requests and apply batch operations (close, reopen, label, assign)
+- **Bulk editing** — select multiple issues or merge requests with `Space`, then press `e` to apply labels, assignees, or milestone across all selected items at once
 - **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description)
 - **Merge Requests / Pull Requests** — list, filter, create MRs from issues, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
+- **MR/PR review state at a glance** — color-coded **Approval** (`APPROVED`, `AWAITING`, `REVIEW REQ`, …), **Mergeable** (`CONFLICT`, `REBASE`, `CLEAN`), and **Workflow** (Returned / Review req / Yours / Approved / By others / Inactive) columns; rebase with `R`, revoke your approval with `A` (GitLab)
 - **Code Reviews** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, and atomic review submission
 - **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with syntax highlighting
 - **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces; trigger pipelines with `workflow_dispatch` input prompts
@@ -18,16 +65,22 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Releases** — browse project releases and view details in the terminal
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
-- **Multi-colored Labels** — table columns render labels with their individual unique hashed colors, preserving search highlights
-- **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility, group by any column, and set sort order
-- **Value-based Column Filtering** — filter table rows by specific column values from the configure popup
+- **Branches** — browse branches with default/protected markers; create and delete branches inline
+- **Environments & Deployments** — browse environments and their deployment status, drilling into deployment history with `Enter`
+- **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status
+- **Real label colors** — the Labels column renders each label with its actual color from the API (`glab label list` / `gh label list`), falling back to the theme palette for light GitHub-style background-fill colors; toggle with `fetch_label_colors` in `config.toml`
+- **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
+- **Value-based Column Filtering** — press `Enter` on any column inside the configure popup to filter rows by that column's values (e.g. Issues → `State` → `opened`); multi-select supports multiple values per column
 - **Live Search** — fuzzy-filter across all visible columns by pressing `/`
+- **Global Search** — press `Ctrl+P` to fuzzy-search across all loaded issues and MRs from any tab
+- **Switch Repository** — press `Ctrl+S` to switch to another local repository without restarting
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
-- **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `open` (open entity in browser)
+- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
+- **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
-- **Themes** — 13 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
+- **Themes** — 16 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---
@@ -50,6 +103,16 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ---
 
 ## Installation
+
+### Package Manager
+
+| Package Manager / Channel | Installation Command |
+|---|---|
+| **Crates.io** | `cargo install glab-tui-crate` |
+| **GitHub Releases (Binaries)** | Manual / Self-update (`glab-tui -u`) |
+| **Homebrew** | `brew install rcieri/glab-tui/glab-tui` |
+| **Scoop (Windows)** | `scoop install glab-tui` |
+| **Docker Container** | `docker run --rm -it ghcr.io/rcieri/glab-tui` |
 
 ### From source
 
@@ -145,6 +208,15 @@ gh auth login     # for GitHub repos
 ```
 
 The active project is detected automatically from the `origin` remote in the current working directory.
+For GitHub Enterprise or unusual hosting setups, set the backend explicitly in the repo-local config:
+
+```toml
+backend = "github" # or "gitlab"
+```
+
+The repo-local override takes precedence over automatic detection. Automatic detection recognizes
+`github.com` and checks both `gh auth status` and `glab auth status` for other hostnames; SSH aliases
+and hosts serving both platforms require the override.
 
 ### Config file
 
@@ -159,7 +231,16 @@ The generated file is fully annotated. Key sections:
 
 ```toml
 # Pick a built-in theme preset
-theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula
+theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
+
+# Items per API request (1-100) — lower this if your GitLab instance truncates
+# large JSON response bodies. GitLab-only; GitHub paginates with --limit.
+# api_per_page = 100
+
+# Label colors: use the real colors from `label list` (GitLab/GitHub) when
+# available, falling back to the theme palette. Set to false to always use the
+# theme palette.
+# fetch_label_colors = true
 
 # Override individual colors (takes precedence over theme_preset)
 # [theme]
@@ -177,15 +258,23 @@ create_issue = "n"
 edit_entity = "e"
 # ...
 
-# Persist default column visibility / grouping per pane
+# Persist default column visibility / grouping / filters per pane
 # [issues]
 # columns = ["ID", "State", "Title", "Labels"]
 # group_by_column = "State"
+# group_ascending = true
+# [issues.column_filters]
+# State = ["opened"]
+
+# [mrs]
+# columns = ["ID", "State", "Status", "Title", "Labels"]
+# [mrs.column_filters]
+# State = ["opened"]
 ```
 
 ### Custom themes
 
-Drop any `<name>.toml` file into `~/.config/glab-tui/themes/` and set `theme_preset = "<name>"` in `config.toml`. The file must define the same 19 color tokens as the bundled themes.
+Drop any `<name>.toml` file into `~/.config/glab-tui/themes/` and set `theme_preset = "<name>"` in `config.toml`. The file must define the same 29 color tokens as the bundled themes: the 19 semantic tokens (backgrounds, borders, text, status colors) plus the 10-entry `label_palette_0`…`label_palette_9` used for label and fallback rendering. The theme's `bg` token paints the table backgrounds, popup overlays (edit menus, selectors, confirm dialogs), and the diff view, so custom themes render consistently even on terminals whose default background differs.
 
 ### Editor
 
@@ -214,56 +303,113 @@ glab-tui --dir /path/to/other/repo
 ### Options
 
 | Flag / Subcommand | Argument | Description |
-|---|---|---|---|
-| `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
-| `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
-| `--update` | | Check for and install updates |
+|---|---|---|
+| `-r`, `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
+| `-d`, `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
+| `-u`, `--update` | | Check for and install updates |
 | `-h`, `--help` | | Print usage help details |
-| `doctor` | *(subcommand)* | Check system health — dependency availability, config integrity, cache status |
-| `clean-cache` | `[--dry-run]` | Remove stale cache entries for repos that no longer exist |
+| `-V`, `--version` | | Print version information |
+| `doctor` | *(subcommand)* | Check system health — backend CLI availability, config integrity, cache status |
+| `clean-cache` | `[-n, --dry-run]` | Remove stale cache entries for repos that no longer exist (preview with `--dry-run`) |
 | `cache` | *(subcommand)* | List cached data files with sizes |
-| `open` | `<entity> <id>` | Open an entity (issue/MR/pipeline) in the browser |
+| `open` | `<entity> <id>` | Open an entity in the browser **without launching the TUI** — valid entities: `issue`, `mr`, `pr`, `pipeline`, `job`, `milestone` |
+| `repos` | *(subcommand)* | List recently-used and sibling repositories |
 
 The TUI will launch in the terminal, auto-detecting the project context and fetching the Issues tab immediately.
+
+### CLI subcommand examples
+
+```sh
+glab-tui doctor                     # run system diagnostics
+glab-tui clean-cache --dry-run      # preview stale-cache cleanup
+glab-tui clean-cache                # actually remove stale cache entries
+glab-tui cache                      # list cached data files with sizes
+glab-tui open issue 42              # open issue #42 in your browser
+glab-tui open mr 7                  # open MR/PR #7 in your browser
+glab-tui repos                      # list recently-used repositories
+```
+
+---
+
+## Filtering, Grouping & Columns
+
+Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Milestones, Branches, Environments) can be tailored with column visibility, value-based filters, grouping, and sort order — all from a single **Configure View** popup.
+
+### Column configuration & value-based filtering
+
+1. Press **`Tab`** (or **`,`**) to open the **Configure View** popup.
+2. The **COLUMNS** section lists every available column for the active tab. Use `j`/`k` (or arrows) to move through it.
+   - **`Space`** toggles whether a column is shown in the table.
+   - **`Enter`** opens a **value-based filter** for that column: a searchable multi-select of the distinct values currently loaded. For example, on the Issues tab, `Enter` on the `State` column lets you filter to just `opened` issues — or on the `Labels` column, to specific labels.
+3. Inside the filter selector: `Space` toggles values on/off, `/` or `f` fuzzy-searches the values, `Enter` applies the filter, `Esc` cancels. Selecting multiple values is supported (e.g. `opened` **and** `closed`).
+4. Applied filters are shown as a count next to the column, e.g. `[x] State (1)`. Re-open the column and uncheck values to widen or clear the filter.
+
+### Grouping & sort order
+
+- The **GROUP BY** section lets you group rows by any column: move to a column and press **`Space`** or **`Enter`** to toggle grouping. Grouped rows are visually separated by headers.
+- The **ORDER** section toggles between **Ascending** and **Descending** sort order for the current group-by column (or the default ordering when no group is set).
+
+### Page size & theme
+
+- **PAGE SIZE** controls how many items are fetched per tab. **`Enter`** on it puts it into edit mode.
+- **THEME** lets you switch the color theme on the fly; selections persist via **Save View** below.
+
+### Saving & persistence
+
+- The **Save View** button at the bottom of the popup writes the current layout — enabled columns, group-by, order, filters, and page size — to `config.toml` (repo-local `.glab-tui/config.toml` or global `~/.config/glab-tui/config.toml`).
+
+### A note on filtering
+
+> Column filters are applied **client-side, after data is fetched** — they only ever see the rows that were loaded. If you have many closed/merged items and want more open ones in the list, raise the **PAGE SIZE** in the Configure View popup (or set `page_size` in `config.toml`) so more rows are fetched to filter across.
 
 ---
 
 ## Key Bindings
 
+> All tables below show the **default** keys. The **Config** column shows the key name to remap in `config.toml` (e.g. under `[keybindings.issues]`, `create_issue = "n"`). `—` means the binding is fixed and **not** remappable.
+
 ### Global
 
-> All keys below are the defaults. Every binding is remappable in `config.toml` under `[keybindings.global]`.
+> Remappable via `[keybindings.global]` in `config.toml`.
 
-| Key | Action |
-|---|---|
-| `l` / `→` | Next tab |
-| `h` / `←` | Previous tab |
-| `Tab` / `,` | Toggle column configure popup (columns, group, order) |
-| `Esc` | Close configure popup / overlay |
-| `j` / `↓` | Move selection down |
-| `k` / `↑` | Move selection up |
-| `J` | Scroll description panel down |
-| `K` | Scroll description panel up |
-| `f` / `/` | Open search / filter bar |
-| `Enter` / `Esc` (in search) | Close search bar |
-| `?` | Show help |
-| `F5` / `Ctrl+R` | Refresh current tab |
-| `q` / `Esc` | Quit (or close current overlay) |
+| Key | Action | Config |
+|---|---|---|
+| `l` / `→` | Next tab | `next_tab` |
+| `h` / `←` | Previous tab | `prev_tab` |
+| `Tab` / `,` | Open column configure popup (`Space` toggle column, `Enter` filter by column values) | `configure` |
+| `Esc` | Close configure popup / overlay | — |
+| `j` / `↓` | Move selection down | — |
+| `k` / `↑` | Move selection up | — |
+| `J` | Scroll description panel down | `scroll_down` |
+| `K` | Scroll description panel up | `scroll_up` |
+| `f` / `/` | Open search / filter bar | `search` |
+| `Enter` / `Esc` (in search) | Close search bar | — |
+| `?` / `F1` | Show help | `help` |
+| `Ctrl+P` | Global search across all loaded issues & MRs | `global_search` |
+| `Ctrl+S` | Switch repository | — |
+| `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
+| `s` | Save view layout to config | `save_view` |
+| `u` | Check for updates | — |
+| `q` / `Esc` | Quit (or close current overlay) | `quit` |
 
 ---
 
 ### Issues tab
 
-| Key | Action |
-|---|---|
-| `n` | Create new issue (prompts for title) |
-| `e` | Open edit menu for selected issue |
-| `m` | Create MR/PR from selected issue |
-| `c` | Close selected issue |
-| `r` | Reopen selected issue |
-| `Space` | Select issue for bulk editing |
-| `J` | Scroll description panel down |
-| `K` | Scroll description panel up |
+> Remappable via `[keybindings.issues]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create new issue (prompts for title) | `create_issue` |
+| `e` | Open edit menu for selected issue (opens bulk edit menu when multiple are selected) | `edit_entity` |
+| `m` | Create MR/PR from selected issue | `create_mr` |
+| `c` | Close selected issue | `close_entity` |
+| `r` | Reopen selected issue | `reopen_entity` |
+| `d` | Delete selected issue (with confirmation) | `delete_entity` |
+| `o` | Open selected issue in browser | — |
+| `Space` | Select issue for bulk editing | `select_issue` |
+| `J` | Scroll description panel down | `scroll_down` |
+| `K` | Scroll description panel up | `scroll_up` |
 
 **Issue edit menu fields**
 
@@ -282,26 +428,26 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 
 ### Merge Requests tab
 
-| Key | Action |
-|---|---|
-| `n` | Create MR from issue ID (prompts for issue IID) |
-| `e` | Open edit menu for selected MR |
-| `a` | Approve selected MR |
-| `m` | Merge selected MR (squash + remove source branch) |
-| `v` | View diff of selected MR in terminal |
-| `P` | View related pipelines from MR detail |
-| `Space` | Select MR for bulk editing |
-| `o` | Open selected MR in browser |
-| `s` | Toggle Draft / Ready status |
-| `c` | Close selected MR |
-| `r` | Reopen selected MR |
-| `J` | Scroll description panel down |
-| `K` | Scroll description panel up |
-| `d` | Toggle unified/side-by-side diff layout (inside diff view) |
-| `c` | Add comment on selected line range (inside diff view) |
-| `e` | Add code suggestion (inside diff view) |
-| `a` | Open comment actions menu (inside diff view) |
-| `r` | Submit pending review (inside diff view) |
+> Remappable via `[keybindings.mrs]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create MR from issue ID (prompts for issue IID) | `create_mr` |
+| `e` | Open edit menu for selected MR (opens bulk edit menu when multiple are selected) | `edit_entity` |
+| `a` | Approve selected MR | `approve_mr` |
+| `A` | Revoke your approval *(GitLab only)* | `revoke_mr` |
+| `R` | Rebase source branch onto target | `rebase_mr` |
+| `m` | Merge selected MR (squash + remove source branch) | `merge_mr` |
+| `v` | View diff of selected MR in terminal | `view_diff` |
+| `P` | View related pipelines from MR detail | `view_related_pipelines` |
+| `Space` | Select MR for bulk editing | `select_mr` |
+| `o` | Open selected MR in browser | — |
+| `s` | Toggle Draft / Ready status | `toggle_draft` |
+| `c` | Close selected MR | `close_entity` |
+| `r` | Reopen selected MR | `reopen_entity` |
+| `d` | Delete selected MR (with confirmation) | `delete_entity` |
+| `J` | Scroll description panel down | `scroll_down` |
+| `K` | Scroll description panel up | `scroll_up` |
 
 **MR edit menu fields**
 
@@ -318,56 +464,173 @@ The TUI will launch in the terminal, auto-detecting the project context and fetc
 
 ---
 
-### Pipelines tab
+### Diff View
+
+Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
+
+> Diff View keys are **fixed** and not remappable in `config.toml`.
 
 | Key | Action |
 |---|---|
-| `Enter` | Drill into selected pipeline (show its jobs) |
-| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) |
-| `p` | Trigger a new pipeline (`glab ci run --mr`) |
-| `r` | Retry selected pipeline (or all checked pipelines) |
-| `d` | Cancel selected pipeline |
-| `o` | Open pipeline in browser |
-| `Space` | Check/uncheck pipeline for bulk retry |
-| `j` / `↓` | (in job view) move down |
-| `k` / `↑` | (in job view) move up |
+| `q` / `Esc` | Exit diff view (or cancel current selection / search) |
+| `Tab` | Toggle focus between file tree and diff pane |
+| `h` / `←` | In file tree: collapse directory; in diff: focus file tree |
+| `l` / `→` | In file tree: expand directory / open file |
+| `j` / `↓` | Move down (file tree or diff lines) |
+| `k` / `↑` | Move up (file tree or diff lines) |
+| `J` / `K` | Scroll 10 lines / jump 10 files |
+| `Enter` / `Space` | In file tree: open file; in diff: toggle zoom (hide/show file tree) |
+| `[` / `]` | Previous / next hunk |
+| `z` / `Z` | Collapse / expand all files |
+| `d` | Toggle unified / side-by-side layout |
+| `v` / `V` | Start / stop multi-line selection for comments |
+| `c` | Add comment on current line / selection |
+| `C` | Add comment via external `$EDITOR` |
+| `e` | Add code suggestion via `$EDITOR` |
+| `a` | Open comment actions menu (reply, resolve, edit, delete) |
+| `r` | Submit review (Approve / Request Changes / Comment) |
+| `/` / `f` | Search within diff |
+| `Ctrl+N` | Next search match |
+| `Ctrl+Shift+N` | Previous search match |
+| `?` / `F1` | Show help |
+
+---
+
+### Pipelines tab
+
+> Remappable via `[keybindings.pipelines]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Drill into selected pipeline (show its jobs) | — |
+| `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | — |
+| `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | — |
+| `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) | `trigger_pipeline` |
+| `r` | Retry selected pipeline (or all checked pipelines) | `retry` |
+| `d` | Cancel selected pipeline | `cancel` |
+| `o` | Open pipeline in browser | — |
+| `Space` | Check/uncheck pipeline for bulk retry | — |
+| `j` / `↓` | (in job view) move down | — |
+| `k` / `↑` | (in job view) move up | — |
 
 **Inside a pipeline (job view)**
 
-| Key | Action |
-|---|---|
-| `Enter` | Fetch and display job trace |
-| `r` | Retry selected job (or all checked jobs) |
-| `S` | Start manual (blocked) GitLab CI job |
-| `d` | Download job artifact |
-| `o` | Open job in browser |
-| `e` | Open job trace in `$EDITOR` |
-| `Space` | Check/uncheck job for bulk retry |
-| `j` / `↓` | (in trace view) scroll down |
-| `k` / `↑` | (in trace view) scroll up |
+> Remappable via `[keybindings.jobs]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Fetch and display job trace (toggle zoom when trace is open) | `view_trace` |
+| `r` | Retry selected job (or all checked jobs) | `retry` |
+| `S` | Start manual (blocked) GitLab CI job | `start_job` |
+| `c` | Cancel selected job (or all checked jobs) | `cancel` |
+| `d` | Download job artifact | `download_artifact` |
+| `o` | Open job in browser | `open_in_browser` |
+| `e` | Open job trace in `$EDITOR` | `view_trace_editor` |
+| `p` | Switch to pipeline selector | `enter_pipeline` |
+| `s` | Select all jobs in the current stage | `select_stage` |
+| `w` | Toggle trace word wrap | `toggle_trace_wrap` |
+| `m` | Collapse / expand matrix jobs | — |
+| `Space` | Check/uncheck job for bulk retry/cancel | `select_job` |
+| `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | — |
+| `j` / `↓` | (in trace view) scroll down | — |
+| `k` / `↑` | (in trace view) scroll up | — |
 
 ---
 
 ### Runners tab
 
-| Key | Action |
-|---|---|
-| `p` | Pause selected runner |
-| `r` | Resume (un-pause) selected runner |
-| `e` | Edit runner description (inline text input) |
+> Remappable via `[keybindings.runners]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `p` | Pause selected runner | `pause` |
+| `r` | Resume (un-pause) selected runner | `resume` |
+| `e` | Edit runner description (inline text input) | `edit_description` |
 
 ---
 
 ### Releases tab
 
-| Key | Action |
-|---|---|
-| `Enter` | View release details in terminal |
-| `o` | Open release in browser |
+> Remappable via `[keybindings.releases]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | View release details in terminal | — |
+| `n` | Create a new release (tag, name, description) | `create_release` |
+| `e` | Edit selected release | `edit_release` |
+| `d` | Delete selected release (with confirmation) | `delete_release` |
+| `o` | Open release in browser | `open_in_browser` |
+
+---
+
+### Milestones tab
+
+> Remappable via `[keybindings.milestones]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create new milestone (title, description, start & due date) | `create_milestone` |
+| `e` | Edit selected milestone | `edit_milestone` |
+| `c` | Close selected milestone | `close_milestone` |
+| `r` | Reopen selected milestone | `reopen_milestone` |
+| `d` | Delete selected milestone (with confirmation) | `delete_milestone` |
+| `o` | Open milestone in browser | `open_in_browser` |
+
+---
+
+### Todos tab
+
+On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
+
+> Remappable via `[keybindings.todos]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Mark item as read and jump to its target (issue / MR) | `mark_as_read` |
+| `o` | Open item in browser | `open_in_browser` |
+
+---
+
+### Branches tab
+
+> Remappable via `[keybindings.branches]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `n` | Create a new branch (prompts for name; based on the selected branch) | `create_branch` |
+| `d` | Delete selected branch (with confirmation) | `delete_branch` |
+
+---
+
+### Environments tab
+
+> Remappable via `[keybindings.environments]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `Enter` | Fetch and view the deployments list for the selected environment | `view_deployments` |
+
+---
+
+### Terminal tab
+
+Logs every `glab` / `gh` command the TUI executes, with success/failure status.
+
+> Remappable via `[keybindings.terminal]` in `config.toml`.
+
+| Key | Action | Config |
+|---|---|---|
+| `j` / `↓` | Scroll log down | — |
+| `k` / `↑` | Scroll log up | — |
+| `w` | Toggle line wrapping | `toggle_wrap` |
 
 ---
 
 ### Selector overlays (labels, assignees, etc.)
+
+Searchable multi-select popups are used for choosing labels, assignees, reviewers, milestones, and for **value-based column filtering** (see [Filtering, Grouping & Columns](#filtering-grouping--columns)).
+
+> Selector keys are **fixed** and not remappable in `config.toml`.
 
 | Key | Action |
 |---|---|
@@ -415,10 +678,11 @@ src/
 ├── config.rs        # Config/Theme loading, keybinding structs, TOML generation
 ├── event.rs         # Async event handler (keyboard, tick, async data events)
 ├── fetch.rs         # Per-tab data-fetching dispatch
+├── git_helpers.rs   # Git remote parsing, current branch, workflow file detection
 ├── editor.rs        # External editor integration ($EDITOR)
 ├── entity_editor.rs # Edit-menu field change logic
 ├── templates.rs     # Default issue/MR/PR description templates
-├── cli.rs           # CLI subcommands (doctor, clean-cache)
+├── cli.rs           # CLI subcommands (doctor, clean-cache, cache, open, repos)
 ├── themes/          # Bundled theme TOML files
 ├── backend/         # CLI backend layer
 │   ├── mod.rs       # Backend trait (~40 methods)
@@ -467,6 +731,20 @@ Unit tests live in several modules:
 - [`src/domain/pipelines.rs`](src/domain/pipelines.rs) — pipeline job deduplication and stage-ordering logic.
 - [`src/domain/mr.rs`](src/domain/mr.rs) — discussion note and review comment logic.
 - [`src/app.rs`](src/app.rs) — selector fuzzy-matching and filter logic.
+
+---
+
+## Releasing
+
+Releases are prepared and distributed from a maintainer's machine; CI only builds the cross-platform release binaries.
+
+```sh
+scripts/release.sh [patch|minor|major]   # default: patch
+```
+
+`scripts/release.sh` walks the whole release in one pass: it bumps the crate version, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` and the demo GIFs via a headless `opencode run`, opens a `chore: prepare release vX.Y.Z` PR, pauses for you to review it, squash-merges it, tags and pushes the version, waits for the CI release build, then writes the release notes and pushes the Homebrew formula, Scoop manifest, Docker image, and crate.
+
+Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final publish step), `jq`, and `vhs`/`ttyd`/`ffmpeg`/JetBrainsMono Nerd Font for the demo recordings. The script fails fast with a clear message when a prerequisite is missing.
 
 ---
 

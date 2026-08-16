@@ -1,6 +1,6 @@
 use super::diff::{centered_rect_fixed, centered_rect_min};
 use super::helpers::{get_label_color, highlight_fuzzy_match};
-use super::modal::modal_area;
+use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
@@ -8,11 +8,9 @@ use crate::utils::format::render_markdown;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table,
-    },
+    widgets::{Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
@@ -80,7 +78,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 let item_bg = if is_selected {
                     THEME.read().unwrap().highlight_bg
                 } else {
-                    Color::Reset
+                    THEME.read().unwrap().bg
                 };
 
                 let label_style = if is_selected {
@@ -140,7 +138,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                     }
                                     let trimmed = part.trim();
                                     let color = if label == "Labels" {
-                                        get_label_color(trimmed)
+                                        get_label_color(trimmed, &app.label_colors)
                                     } else {
                                         THEME.read().unwrap().blue
                                     };
@@ -175,7 +173,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                     THEME.read().unwrap().bg,
                                     THEME.read().unwrap().green,
                                 ),
-                                _ => (&val[..], THEME.read().unwrap().text_muted, Color::Reset),
+                                _ => (
+                                    &val[..],
+                                    THEME.read().unwrap().text_muted,
+                                    THEME.read().unwrap().bg,
+                                ),
                             };
                             val_spans.push(Span::styled(
                                 display,
@@ -410,7 +412,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let submit_bg = if is_submit_selected {
                 THEME.read().unwrap().green
             } else {
-                Color::Reset
+                THEME.read().unwrap().bg
             };
             let submit_block = Block::default()
                 .borders(Borders::TOP)
@@ -469,7 +471,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(Color::Reset))
+                .border_style(
+                    Style::default()
+                        .fg(border_color_search)
+                        .bg(THEME.read().unwrap().bg),
+                )
                 .title(" Filter (press 'f' or '/' to focus) ");
 
             let search_text = if selector.is_filtering {
@@ -483,12 +489,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let search_style = if selector.search_query.is_empty() && !selector.is_filtering {
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
-                    .bg(Color::Reset)
+                    .bg(THEME.read().unwrap().bg)
                     .add_modifier(Modifier::ITALIC)
             } else {
                 Style::default()
                     .fg(THEME.read().unwrap().text_normal)
-                    .bg(Color::Reset)
+                    .bg(THEME.read().unwrap().bg)
             };
 
             let search_p = Paragraph::new(search_text)
@@ -505,7 +511,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .style(
                         Style::default()
                             .fg(THEME.read().unwrap().text_muted)
-                            .bg(Color::Reset)
+                            .bg(THEME.read().unwrap().bg)
                             .add_modifier(Modifier::ITALIC),
                     )
                     .wrap(ratatui::widgets::Wrap { trim: true });
@@ -517,7 +523,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .style(
                             Style::default()
                                 .fg(THEME.read().unwrap().text_muted)
-                                .bg(Color::Reset)
+                                .bg(THEME.read().unwrap().bg)
                                 .add_modifier(Modifier::ITALIC),
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true });
@@ -548,7 +554,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             let item_bg = if i == selector.cursor_idx {
                                 THEME.read().unwrap().highlight_bg
                             } else {
-                                Color::Reset
+                                THEME.read().unwrap().bg
                             };
 
                             let style = if i == selector.cursor_idx {
@@ -598,7 +604,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         })
                         .collect();
 
-                    let list = List::new(items).style(Style::default().bg(Color::Reset));
+                    let list =
+                        List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
                     let mut state = selector.state.clone();
                     f.render_stateful_widget(list, list_chunk, &mut state);
                     selector.state = state;
@@ -617,10 +624,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let area = centered_rect_min(60, 60, 28, 4, size);
-        f.render_widget(ratatui::widgets::Clear, area);
+        clear_area(f, area);
         f.render_widget(block, area);
 
         let chunks = Layout::default()
@@ -645,7 +652,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_normal)
-                    .bg(Color::Reset),
+                    .bg(THEME.read().unwrap().bg),
             )
             .wrap(ratatui::widgets::Wrap { trim: true });
 
@@ -662,7 +669,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         // 36 columns wide, 11 rows high
         let area = centered_rect_fixed(36, 11, size);
@@ -762,7 +769,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .header(table_header)
             .column_spacing(1);
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(block, area);
         f.render_widget(header_p, chunks[0]);
         f.render_widget(table, chunks[1]);
@@ -793,7 +800,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Global & Nav",
                 key: d(format!("{}", app.config.keybindings.global.configure)),
-                action: "Toggle columns config popup",
+                action: "Toggle columns config popup (filter / group / sort)",
             },
             Shortcut {
                 category: "Global & Nav",
@@ -849,8 +856,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Global & Nav",
-                key: d(format!("q / {} / Esc", app.config.keybindings.global.quit)),
-                action: "Quit / Close overlay",
+                key: d(app.config.keybindings.global.quit.clone()),
+                action: "Quit program",
+            },
+            Shortcut {
+                category: "Global & Nav",
+                key: s("Esc"),
+                action: "Close active overlay",
             },
             Shortcut {
                 category: "Global & Nav",
@@ -907,7 +919,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Shortcut {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.select_mr)),
-                action: "Toggle MR/PR selection (bulk edit with e)",
+                action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
             },
             Shortcut {
                 category: "Merge Requests",
@@ -918,6 +930,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.approve_mr)),
                 action: "Approve selected MR",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.revoke_mr)),
+                action: "Revoke your approval (GitLab only)",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.rebase_mr)),
+                action: "Rebase source branch onto target",
             },
             Shortcut {
                 category: "Merge Requests",
@@ -990,14 +1012,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 category: "Pipelines",
                 key: d(format!("{}", app.config.keybindings.pipelines.cancel)),
                 action: "Cancel pipeline execution",
-            },
-            Shortcut {
-                category: "Pipelines",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.pipelines.download_artifact
-                )),
-                action: "Download pipeline artifact",
             },
             Shortcut {
                 category: "Pipelines",
@@ -1123,11 +1137,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     app.config.keybindings.milestones.open_in_browser
                 )),
                 action: "Open milestone in browser",
-            },
-            Shortcut {
-                category: "Milestones",
-                key: s("J / K"),
-                action: "Scroll milestone issues list",
             },
             // ── Runners ──
             Shortcut {
@@ -1349,7 +1358,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
             .border_type(BorderType::Double)
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let area = centered_rect_fixed(72, 30, size);
         app.overlay_stack
@@ -1503,7 +1512,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .row_highlight_style(Style::default())
             .column_spacing(2);
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(search_p, help_chunks[0]);
         f.render_widget(table, help_chunks[1]);
     }
@@ -1523,7 +1532,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let group_end = cols_end + group_cols.len();
         let themes = crate::config::all_theme_presets();
         let theme_list_len = themes.len();
-        let width = 48;
+        let width = 64;
         let height =
             (columns_list.len() + group_cols.len() + theme_list_len + 4 + 2 + 2 + 6 + 6) as u16;
         let area = centered_rect_fixed(width, height, size);
@@ -1533,10 +1542,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let checklist_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+            .style(Style::default().bg(THEME.read().unwrap().bg))
             .title(format!(
                 " {} Configure View: {} ",
                 icons.label_configure,
                 tab.title(kind)
+            ))
+            .title_bottom(Span::styled(
+                " Space: toggle · Enter: filter/set · J/K: jump · Esc: close ",
+                Style::default().fg(THEME.read().unwrap().text_muted),
             ))
             .title_style(
                 Style::default()
@@ -1544,7 +1558,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .add_modifier(Modifier::BOLD),
             );
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(checklist_block.clone(), area);
 
         let inner_area = checklist_block.inner(area);
@@ -1837,7 +1851,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .fg(THEME.read().unwrap().border_focused)
                         .add_modifier(Modifier::BOLD),
                 );
-            f.render_widget(Clear, submenu_area);
+            clear_area(f, submenu_area);
             f.render_widget(submenu_block.clone(), submenu_area);
             let submenu_inner = submenu_block.inner(submenu_area);
 
@@ -1893,7 +1907,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 )
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-                .style(Style::default().bg(Color::Reset));
+                .style(Style::default().bg(THEME.read().unwrap().bg));
 
             let area = centered_rect_fixed(44, 44, size);
             app.overlay_stack
@@ -1919,7 +1933,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color_search).bg(Color::Reset))
+                .border_style(
+                    Style::default()
+                        .fg(border_color_search)
+                        .bg(THEME.read().unwrap().bg),
+                )
                 .title(" Filter (press 'f' or '/' to focus) ");
 
             let search_text = if selector.is_filtering {
@@ -1933,7 +1951,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .block(search_block)
                 .style(Style::default().fg(THEME.read().unwrap().text_normal));
 
-            f.render_widget(Clear, area);
+            clear_area(f, area);
             f.render_widget(block, area);
             f.render_widget(search_p, search_chunk);
 
@@ -1959,7 +1977,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     let item_bg = if i == selector.cursor_idx {
                         THEME.read().unwrap().highlight_bg
                     } else {
-                        Color::Reset
+                        THEME.read().unwrap().bg
                     };
 
                     let style = if i == selector.cursor_idx {
@@ -2008,7 +2026,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 })
                 .collect();
 
-            let list = List::new(items).style(Style::default().bg(Color::Reset));
+            let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
             let mut state = selector.state.clone();
             f.render_stateful_widget(list, list_chunk, &mut state);
             selector.state = state;
@@ -2068,6 +2086,30 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     format!("Are you sure you want to merge {mr_short} #{}?", iid),
                 )
             }
+            crate::app::ConfirmAction::RevokeMr(iid) => (
+                format!(" {} Revoke Approval? ", icons.action_review),
+                format!(
+                    "Are you sure you want to revoke your approval on MR #{}?",
+                    iid
+                ),
+            ),
+            crate::app::ConfirmAction::RebaseMr(iid) => {
+                let mr_short = kind.term("mr_short");
+                // GitLab refers to merge requests as `!N`, GitHub to pull
+                // requests as `#N` -- match whichever host we're on.
+                let marker = if kind.is_github() { "#" } else { "!" };
+                let target = app
+                    .mrs
+                    .items
+                    .iter()
+                    .find(|m| m.iid == *iid)
+                    .map(|m| m.target_branch.as_str())
+                    .unwrap_or("target");
+                (
+                    format!(" {} Rebase {mr_short}? ", icons.merge_rebase),
+                    format!("Rebase {marker}{iid} onto {target}?"),
+                )
+            }
             crate::app::ConfirmAction::SubmitReview(_) => (
                 format!(" {} Submit Review? ", icons.action_review),
                 "You have pending draft comments. Would you like to submit your review now?"
@@ -2085,7 +2127,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
             .border_type(BorderType::Double)
-            .style(Style::default().bg(Color::Reset));
+            .style(Style::default().bg(THEME.read().unwrap().bg));
 
         let area = centered_rect_fixed(60, 9, size);
         app.overlay_stack
@@ -2117,7 +2159,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .bg(if app.confirm_popup_selected_yes {
                         THEME.read().unwrap().border_focused
                     } else {
-                        Color::Reset
+                        THEME.read().unwrap().bg
                     })
                     .add_modifier(Modifier::BOLD),
             ),
@@ -2133,14 +2175,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .bg(if !app.confirm_popup_selected_yes {
                         THEME.read().unwrap().border_focused
                     } else {
-                        Color::Reset
+                        THEME.read().unwrap().bg
                     })
                     .add_modifier(Modifier::BOLD),
             ),
         ]))
         .alignment(Alignment::Center);
 
-        f.render_widget(Clear, area);
+        clear_area(f, area);
         f.render_widget(block, area);
         f.render_widget(message_p, chunks[0]);
         f.render_widget(footer_p, chunks[1]);

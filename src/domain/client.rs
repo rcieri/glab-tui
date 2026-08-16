@@ -1,4 +1,5 @@
 use crate::backend::{Backend, BackendKind};
+use crate::config::Config;
 use anyhow::{Context, Result};
 
 pub struct GitlabClient {
@@ -6,6 +7,7 @@ pub struct GitlabClient {
     pub backend: Box<dyn Backend>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub page_size: usize,
+    pub api_per_page: usize,
 }
 
 impl GitlabClient {
@@ -13,7 +15,7 @@ impl GitlabClient {
         self.backend.kind()
     }
 
-    pub async fn new() -> Result<Self> {
+    pub async fn new(config: &Config) -> Result<Self> {
         let is_github = match tokio::process::Command::new("git")
             .args(["remote", "get-url", "origin"])
             .output()
@@ -21,9 +23,9 @@ impl GitlabClient {
         {
             Ok(output) if output.status.success() => {
                 let url = String::from_utf8_lossy(&output.stdout);
-                url.contains("github.com")
+                crate::git_helpers::detect_backend(&url, config.backend).is_github()
             }
-            _ => false,
+            _ => config.backend.is_some_and(BackendKind::is_github),
         };
         let backend = crate::backend::create_backend(is_github);
         Ok(Self {
@@ -31,6 +33,7 @@ impl GitlabClient {
             backend,
             tx: None,
             page_size: 100,
+            api_per_page: 100,
         })
     }
 
@@ -65,8 +68,13 @@ impl GitlabClient {
         self.backend.start_job(project_path, job_id).await
     }
 
-    pub async fn fetch_labels(&self, project_path: &str) -> Result<Vec<String>> {
-        self.backend.fetch_labels(project_path).await
+    pub async fn fetch_labels(
+        &self,
+        project_path: &str,
+    ) -> Result<Vec<crate::domain::labels::Label>> {
+        self.backend
+            .fetch_labels(project_path, self.api_per_page)
+            .await
     }
 
     pub async fn fetch_members(&self, project_path: &str) -> Result<Vec<String>> {
@@ -152,6 +160,30 @@ impl GitlabClient {
 
     pub async fn approve_mr(&self, project: &str, iid: u64) -> Result<()> {
         self.backend.approve_mr(project, iid).await
+    }
+
+    pub async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.revoke_mr(project, iid).await
+    }
+
+    pub async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
+        self.backend.rebase_mr(project, iid).await
+    }
+
+    pub async fn list_mr_state(
+        &self,
+        project: &str,
+        iids: &[u64],
+    ) -> Result<
+        std::collections::HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    > {
+        self.backend.list_mr_state(project, iids).await
     }
 
     pub async fn merge_mr(
@@ -472,12 +504,18 @@ impl GitlabClient {
         iids: &[u64],
         milestone: &str,
     ) -> Result<()> {
-        if milestone.trim().is_empty() {
+        let trimmed = milestone.trim();
+        if trimmed.is_empty() {
             return Ok(());
         }
+        let target = if trimmed.eq_ignore_ascii_case("none") || trimmed == "0" {
+            "None"
+        } else {
+            trimmed
+        };
         for &iid in iids {
             self.backend
-                .update_issue_milestone(project, iid, milestone)
+                .update_issue_milestone(project, iid, target)
                 .await?;
         }
         Ok(())
@@ -533,12 +571,18 @@ impl GitlabClient {
         iids: &[u64],
         milestone: &str,
     ) -> Result<()> {
-        if milestone.trim().is_empty() {
+        let trimmed = milestone.trim();
+        if trimmed.is_empty() {
             return Ok(());
         }
+        let target = if trimmed.eq_ignore_ascii_case("none") || trimmed == "0" {
+            "None"
+        } else {
+            trimmed
+        };
         for &iid in iids {
             self.backend
-                .update_mr_milestone(project, iid, milestone)
+                .update_mr_milestone(project, iid, target)
                 .await?;
         }
         Ok(())
@@ -556,6 +600,7 @@ impl Clone for GitlabClient {
             backend,
             tx: self.tx.clone(),
             page_size: self.page_size,
+            api_per_page: self.api_per_page,
         }
     }
 }
@@ -579,23 +624,10 @@ pub async fn get_project_context() -> Result<String> {
         return Ok("unknown/unknown".to_string());
     }
 
-    let url = String::from_utf8(output.stdout)?.trim().to_string();
+    let url = String::from_utf8(output.stdout)?;
 
-    // Parse url to extract namespace/repo
-    let path = if url.starts_with("git@") {
-        url.split(':').nth(1).unwrap_or("unknown/unknown")
-    } else if url.starts_with("http") {
-        let parts: Vec<&str> = url.split('/').collect();
-        if parts.len() >= 2 {
-            let p = format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]);
-            return Ok(p.trim_end_matches(".git").to_string());
-        }
-        "unknown/unknown"
-    } else {
-        "unknown/unknown"
-    };
-
-    Ok(path.trim_end_matches(".git").to_string())
+    Ok(crate::git_helpers::parse_project_path(&url)
+        .unwrap_or_else(|| "unknown/unknown".to_string()))
 }
 
 #[cfg(test)]

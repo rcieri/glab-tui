@@ -451,6 +451,26 @@ fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
                             ));
                         });
                     }
+                    crate::app::ConfirmAction::RevokeMr(iid) => {
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client.revoke_mr(&project_path, iid).await;
+                            let _ = tx2.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                    crate::app::ConfirmAction::RebaseMr(iid) => {
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let result = client.rebase_mr(&project_path, iid).await;
+                            let _ = tx2.send(crate::event::Event::CommandCompleted(
+                                crate::app::Tab::MergeRequests,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
                     crate::app::ConfirmAction::SubmitReview(mr_iid) => {
                         app.selector = Some(crate::app::Selector {
                             title: " Submit Pull Request Review ".to_string(),
@@ -817,6 +837,10 @@ async fn main() -> Result<()> {
     app.project_cache = cache.clone();
     app.issues.items = cache.issues;
     app.mrs.items = cache.mrs;
+    // workflow is #[serde(skip)] — cached rows arrive with it unset even
+    // though the approval state it derives from was persisted and just
+    // loaded above.
+    crate::fetch::derive_workflow(&mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
     app.runners.items = cache.runners;
     app.releases.items = cache.releases;
@@ -827,6 +851,13 @@ async fn main() -> Result<()> {
     app.environments.items = cache.environments;
     app.milestone_issues_cache = cache.milestone_issues;
     app.cached_labels = cache.labels;
+    if app.config.fetch_label_colors {
+        app.label_colors = cache
+            .label_colors
+            .iter()
+            .filter_map(|(name, hex)| crate::config::hex_to_color(hex).map(|c| (name.clone(), c)))
+            .collect();
+    }
     app.cached_members = cache.members;
 
     let has_any_cached = !app.issues.items.is_empty()
@@ -869,8 +900,9 @@ async fn main() -> Result<()> {
     }
     app.update_filter_selection();
 
-    if let Ok(mut client) = domain::client::GitlabClient::new().await {
+    if let Ok(mut client) = domain::client::GitlabClient::new(&app.config).await {
         client.page_size = app.config.page_size;
+        client.api_per_page = app.config.api_per_page_clamped();
         client.tx = Some(events.sender());
         app.gitlab_client = Some(client.clone());
         let tx = events.sender();
@@ -1005,33 +1037,54 @@ async fn main() -> Result<()> {
         if app.active_tab == app::Tab::Milestones {
             if let Some(client) = &app.gitlab_client {
                 if let Some(idx) = app.milestones.state.selected() {
-                    let milestone_iid = app.filtered_milestones().get(idx).map(|m| m.iid);
-                    if let Some(iid) = milestone_iid {
-                        if app.selected_milestone_iid != Some(iid) {
-                            app.selected_milestone_iid = Some(iid);
-                            // Use cached data if available; only fetch if not yet cached
-                            if let Some(cached) = app.milestone_issues_cache.get(&iid) {
+                    let milestone = app
+                        .filtered_milestones()
+                        .get(idx)
+                        .map(|m| (m.iid, m.title.clone()));
+                    if let Some((milestone_iid, milestone_title)) = milestone {
+                        if app.selected_milestone_iid != Some(milestone_iid) {
+                            app.selected_milestone_iid = Some(milestone_iid);
+                            // Use cached data if available; only fetch if not yet cached.
+                            // An empty cached list is NOT treated as data: it is what a
+                            // failed/buggy fetch (e.g. `--milestone <iid>` matching nothing)
+                            // leaves behind, and trusting it would freeze progress at 0%.
+                            let cached = app
+                                .milestone_issues_cache
+                                .get(&milestone_iid)
+                                .filter(|c| !c.is_empty());
+                            if let Some(cached) = cached {
                                 app.selected_milestone_issues = Some(cached.clone());
                             } else {
                                 app.selected_milestone_issues = None;
                                 let client_clone = client.clone();
                                 let project_context = app.project_context.clone();
+                                // `glab issue list --milestone` filters by milestone
+                                // title, not iid — passing the title here is required
+                                // for the glab backend to return any issues.
                                 let tx = events.sender();
                                 tokio::spawn(async move {
-                                    if let Ok(issues) = domain::milestones::list_milestone_issues(
+                                    match domain::milestones::list_milestone_issues(
                                         &client_clone,
                                         &project_context,
-                                        iid,
+                                        milestone_iid,
+                                        &milestone_title,
                                     )
                                     .await
                                     {
-                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, issues));
-                                    } else {
-                                        let _ = tx.send(Event::FetchFailed(
-                                            crate::app::Tab::Milestones,
-                                            format!("Failed to fetch milestone #{} issues", iid),
-                                        ));
-                                        let _ = tx.send(Event::MilestoneIssuesFetched(iid, vec![]));
+                                        Ok(issues) => {
+                                            let _ = tx.send(Event::MilestoneIssuesFetched(
+                                                milestone_iid,
+                                                issues,
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            // Don't silently substitute an empty list: that
+                                            // renders as 0% progress with no explanation.
+                                            let _ = tx.send(Event::FetchFailed(
+                                                app::Tab::Milestones,
+                                                format!("Failed to fetch milestone issues: {e}"),
+                                            ));
+                                        }
                                     }
                                 });
                             }
@@ -1242,7 +1295,15 @@ async fn main() -> Result<()> {
                 Event::MilestoneIssuesFetched(iid, issues) => {
                     let mut fallback_success = false;
                     if issues.is_empty() {
-                        if let Some(cached) = app.project_cache.milestone_issues.get(&iid) {
+                        // Only fall back to a cached list that actually has data;
+                        // a cached empty list is indistinguishable from a failed
+                        // fetch and must not mask a real 0% progress display.
+                        if let Some(cached) = app
+                            .project_cache
+                            .milestone_issues
+                            .get(&iid)
+                            .filter(|c| !c.is_empty())
+                        {
                             app.milestone_issues_cache.insert(iid, cached.clone());
                             if app.selected_milestone_iid == Some(iid) {
                                 app.selected_milestone_issues = Some(cached.clone());
@@ -1410,7 +1471,13 @@ async fn main() -> Result<()> {
                         }
                         crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
-                            selector.all_items = items;
+                            if selector.field_type == "milestone" {
+                                let mut ms_items = vec!["None".to_string()];
+                                ms_items.extend(items.into_iter().filter(|i| i != "None"));
+                                selector.all_items = ms_items;
+                            } else {
+                                selector.all_items = items;
+                            }
                             selector.is_loading = false;
                             app.selector = Some(selector);
                         }
@@ -1418,8 +1485,24 @@ async fn main() -> Result<()> {
                 }
                 Event::RepoAttributesFetched { labels, members } => {
                     if !labels.is_empty() {
-                        app.cached_labels = labels.clone();
-                        app.project_cache.labels = labels;
+                        let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
+                        app.cached_labels = names.clone();
+                        app.project_cache.labels = names;
+                        if app.config.fetch_label_colors {
+                            let colors: std::collections::HashMap<String, String> = labels
+                                .iter()
+                                .filter_map(|l| {
+                                    l.color.as_ref().map(|c| (l.name.clone(), c.clone()))
+                                })
+                                .collect();
+                            app.project_cache.label_colors = colors.clone();
+                            app.label_colors = colors
+                                .iter()
+                                .filter_map(|(name, hex)| {
+                                    crate::config::hex_to_color(hex).map(|c| (name.clone(), c))
+                                })
+                                .collect();
+                        }
                     }
                     if !members.is_empty() {
                         app.cached_members = members.clone();
@@ -1567,17 +1650,9 @@ async fn main() -> Result<()> {
                                 let mr_iid = diff_view.mr_iid;
                                 let mr_iid_str = mr_iid.to_string();
                                 tokio::spawn(async move {
-                                    let is_github = match tokio::process::Command::new("git")
-                                        .args(["remote", "get-url", "origin"])
-                                        .output()
-                                        .await
-                                        .map(|o| {
-                                            String::from_utf8_lossy(&o.stdout)
-                                                .contains("github.com")
-                                        }) {
-                                        Ok(true) => true,
-                                        _ => false,
-                                    };
+                                    let is_github = client
+                                        .as_ref()
+                                        .is_some_and(|client| client.kind().is_github());
 
                                     let program = if is_github { "gh" } else { "glab" };
                                     let (entity, sub) = if is_github {
@@ -1650,6 +1725,7 @@ async fn main() -> Result<()> {
                         && app.text_input.is_none()
                         && app.edit_menu.is_none()
                         && app.selector.is_none()
+                        && !app.show_help
                         && !app.focus_column_checklist
                     {
                         app.quit();
@@ -1963,23 +2039,6 @@ async fn main() -> Result<()> {
                                                 {
                                                     let temp_str =
                                                         temp_path.to_string_lossy().to_string();
-
-                                                    let is_github =
-                                                        match tokio::process::Command::new("git")
-                                                            .args(["remote", "get-url", "origin"])
-                                                            .output()
-                                                            .await
-                                                        {
-                                                            Ok(output)
-                                                                if output.status.success() =>
-                                                            {
-                                                                let url = String::from_utf8_lossy(
-                                                                    &output.stdout,
-                                                                );
-                                                                url.contains("github.com")
-                                                            }
-                                                            _ => false,
-                                                        };
 
                                                     let program =
                                                         if is_github { "gh" } else { "glab" };
@@ -2923,9 +2982,14 @@ async fn main() -> Result<()> {
                                                         app.project_context = context;
                                                     }
                                                     if let Ok(mut client) =
-                                                        domain::client::GitlabClient::new().await
+                                                        domain::client::GitlabClient::new(
+                                                            &app.config,
+                                                        )
+                                                        .await
                                                     {
                                                         client.page_size = app.config.page_size;
+                                                        client.api_per_page =
+                                                            app.config.api_per_page_clamped();
                                                         client.tx = Some(events.sender());
                                                         client.backend.set_tx(events.sender());
                                                         app.gitlab_client = Some(client.clone());
@@ -2956,6 +3020,11 @@ async fn main() -> Result<()> {
                                                     app.project_cache = cache.clone();
                                                     app.issues.items = cache.issues;
                                                     app.mrs.items = cache.mrs;
+                                                    // workflow is #[serde(skip)] — see the
+                                                    // comment at the startup cache load.
+                                                    crate::fetch::derive_workflow(
+                                                        &mut app.mrs.items,
+                                                    );
                                                     app.pipelines.items = cache.pipelines;
                                                     app.runners.items = cache.runners;
                                                     app.releases.items = cache.releases;
@@ -3557,7 +3626,16 @@ async fn main() -> Result<()> {
                                     }
 
                                     if field_type == "merge_options" {
-                                        let mr_iid = selector.entity_iid;
+                                        let is_bulk_merge =
+                                            selector.entity_type == "bulk_merge_mrs";
+                                        let merge_iids = if is_bulk_merge {
+                                            let mut iids: Vec<u64> =
+                                                app.selected_mrs.iter().copied().collect();
+                                            iids.sort_unstable();
+                                            iids
+                                        } else {
+                                            vec![selector.entity_iid]
+                                        };
                                         let mut squash = false;
                                         let mut delete_branch = false;
                                         let mut merge_strategy: Option<&str> = None;
@@ -3577,39 +3655,52 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         app.selector = None;
-                                        let client = app.gitlab_client.clone().unwrap();
+                                        let Some(client) = app.gitlab_client.clone() else {
+                                            app.error_message = Some(
+                                                "No backend is available for merging".to_string(),
+                                            );
+                                            continue;
+                                        };
                                         let project = app.project_context.clone();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
-                                            match client
-                                                .merge_mr(
-                                                    &project,
-                                                    mr_iid,
-                                                    squash,
-                                                    delete_branch,
-                                                    merge_strategy,
-                                                )
-                                                .await
-                                            {
-                                                Ok(_) => {
-                                                    let _ = tx
-                                                        .send(Event::CommandCompleted(tab, Ok(())));
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        tab,
-                                                        Err(e.to_string()),
-                                                    ));
+                                            let mut failures = Vec::new();
+                                            for mr_iid in merge_iids {
+                                                if let Err(e) = client
+                                                    .merge_mr(
+                                                        &project,
+                                                        mr_iid,
+                                                        squash,
+                                                        delete_branch,
+                                                        merge_strategy,
+                                                    )
+                                                    .await
+                                                {
+                                                    failures.push(format!("#{}: {}", mr_iid, e));
                                                 }
                                             }
+                                            let result = if failures.is_empty() {
+                                                Ok(())
+                                            } else {
+                                                Err(format!(
+                                                    "Merge failures: {}",
+                                                    failures.join("; ")
+                                                ))
+                                            };
+                                            let _ = tx.send(Event::CommandCompleted(tab, result));
                                         });
-                                        if let Some(pos) =
-                                            app.mrs.items.iter().position(|m| m.iid == mr_iid)
-                                        {
-                                            app.mrs.items.remove(pos);
+                                        if is_bulk_merge {
+                                            app.selected_mrs.clear();
+                                        } else {
+                                            let mr_iid = selector.entity_iid;
+                                            if let Some(pos) =
+                                                app.mrs.items.iter().position(|m| m.iid == mr_iid)
+                                            {
+                                                app.mrs.items.remove(pos);
+                                            }
+                                            app.update_filter_selection();
                                         }
-                                        app.update_filter_selection();
                                         continue;
                                     }
 
@@ -4095,7 +4186,9 @@ async fn main() -> Result<()> {
                                                     selected_list = vec![query];
                                                 }
                                             }
-                                        } else if !selector.multi_select && selected_list.is_empty()
+                                        } else if !selector.multi_select
+                                            && selected_list.is_empty()
+                                            && selector.field_type != "milestone"
                                         {
                                             selected_list.push(item.clone());
                                         }
@@ -4210,15 +4303,6 @@ async fn main() -> Result<()> {
                                             events.sender(),
                                             active_tab,
                                         );
-
-                                        if let Some(client) = &app.gitlab_client {
-                                            spawn_refresh_active_tab(
-                                                client,
-                                                &app.project_context,
-                                                app.active_tab,
-                                                events.sender(),
-                                            );
-                                        }
 
                                         rebuild_edit_menu(&mut app, &entity_type, entity_iid);
                                     }
@@ -5085,12 +5169,15 @@ async fn main() -> Result<()> {
                                             is_loading = false;
                                         }
                                     } else if field_type == "milestone" {
-                                        all_items = app
-                                            .milestones
-                                            .items
-                                            .iter()
-                                            .map(|m| m.title.clone())
-                                            .collect();
+                                        let mut ms_items = vec!["None".to_string()];
+                                        ms_items.extend(
+                                            app.milestones
+                                                .items
+                                                .iter()
+                                                .map(|m| m.title.clone())
+                                                .filter(|t| t != "None"),
+                                        );
+                                        all_items = ms_items;
                                         is_loading = false;
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"
@@ -5302,9 +5389,15 @@ async fn main() -> Result<()> {
                                             let tx = events.sender();
                                             tokio::spawn(async move {
                                                 let res = match field_type.as_str() {
-                                                    "labels" => {
-                                                        client.fetch_labels(&project_context).await
-                                                    }
+                                                    "labels" => client
+                                                        .fetch_labels(&project_context)
+                                                        .await
+                                                        .map(|labels| {
+                                                            labels
+                                                                .into_iter()
+                                                                .map(|l| l.name)
+                                                                .collect()
+                                                        }),
                                                     "assignees" | "reviewers" => {
                                                         client.fetch_members(&project_context).await
                                                     }

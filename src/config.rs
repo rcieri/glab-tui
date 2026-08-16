@@ -5,6 +5,12 @@ use std::path::PathBuf;
 use std::sync::LazyLock as Lazy;
 use std::sync::RwLock;
 
+/// Serializes tests that mutate process-global environment variables
+/// (config paths, cache dirs). Env vars are visible to every test thread,
+/// so mutating ones must never overlap with a load in another.
+#[cfg(test)]
+pub(crate) static TEST_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub bg: Color,
@@ -82,6 +88,20 @@ pub struct Icons {
     pub state_merged: String,
     pub status_draft: String,
     pub status_ready: String,
+    pub approval_approved: String,
+    pub approval_changes: String,
+    pub approval_pending: String,
+    pub merge_conflict: String,
+    pub merge_rebase: String,
+    pub merge_clean: String,
+    pub merge_checking: String,
+    pub flag_unresolved: String,
+    pub workflow_returned: String,
+    pub workflow_review: String,
+    pub workflow_yours: String,
+    pub workflow_approved: String,
+    pub workflow_inactive: String,
+    pub workflow_approved_others: String,
     pub runner_online: String,
     pub runner_paused: String,
     pub runner_offline: String,
@@ -169,6 +189,20 @@ impl Icons {
             state_merged: "\u{f419}".to_string(),
             status_draft: "\u{f4dd}".to_string(),
             status_ready: "\u{f42e}".to_string(),
+            approval_approved: "\u{f4a7}".to_string(),
+            approval_changes: "\u{f467}".to_string(),
+            approval_pending: "\u{f444}".to_string(),
+            merge_conflict: "\u{f467}".to_string(),
+            merge_rebase: "\u{f419}".to_string(),
+            merge_clean: "\u{f4a7}".to_string(),
+            merge_checking: "\u{f4a3}".to_string(),
+            flag_unresolved: "\u{f475}".to_string(),
+            workflow_returned: "\u{f460}".to_string(),
+            workflow_review: "\u{f4a3}".to_string(),
+            workflow_yours: "\u{f44a}".to_string(),
+            workflow_approved: "\u{f4a7}".to_string(),
+            workflow_inactive: "\u{f444}".to_string(),
+            workflow_approved_others: "\u{f0c0}".to_string(),
             runner_online: "\u{f444}".to_string(),
             runner_paused: "\u{f46e}".to_string(),
             runner_offline: "\u{f4c3}".to_string(),
@@ -231,7 +265,7 @@ pub enum SaveMenu {
     Cancel,
 }
 
-fn hex_to_color(s: &str) -> Option<Color> {
+pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
     let s = s.trim_start_matches('#');
     if s.len() == 6 {
         let r = u8::from_str_radix(&s[0..2], 16).ok()?;
@@ -246,7 +280,7 @@ fn hex_to_color(s: &str) -> Option<Color> {
 fn color_to_hex(c: Color) -> String {
     match c {
         Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
-        _ => "#000000".to_string(),
+        _ => String::new(),
     }
 }
 
@@ -397,11 +431,11 @@ impl ThemeToml {
                 hex_or(&self.label_palette_2, green),
                 hex_or(&self.label_palette_3, yellow),
                 hex_or(&self.label_palette_4, red),
-                hex_or(&self.label_palette_5, Color::Rgb(240, 140, 180)),
-                hex_or(&self.label_palette_6, Color::Rgb(250, 120, 80)),
-                hex_or(&self.label_palette_7, Color::Rgb(40, 200, 200)),
-                hex_or(&self.label_palette_8, Color::Rgb(180, 230, 40)),
-                hex_or(&self.label_palette_9, Color::Rgb(220, 160, 255)),
+                hex_or(&self.label_palette_5, purple),
+                hex_or(&self.label_palette_6, blue),
+                hex_or(&self.label_palette_7, green),
+                hex_or(&self.label_palette_8, yellow),
+                hex_or(&self.label_palette_9, red),
             ],
         })
     }
@@ -427,6 +461,9 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
         "everforest-dark",
         include_str!("themes/everforest-dark.toml"),
     ),
+    ("rose-pine", include_str!("themes/rose-pine.toml")),
+    ("rose-pine-moon", include_str!("themes/rose-pine-moon.toml")),
+    ("rose-pine-dawn", include_str!("themes/rose-pine-dawn.toml")),
 ];
 
 fn config_dir() -> PathBuf {
@@ -465,57 +502,18 @@ fn ensure_themes() {
     }
 }
 
-#[rustfmt::skip]
+impl Default for Theme {
+    fn default() -> Self {
+        toml::from_str::<ThemeToml>(include_str!("themes/default.toml"))
+            .expect("Bundled default.toml must be valid")
+            .to_theme()
+            .expect("Bundled default.toml must map to valid Theme")
+    }
+}
+
 impl Theme {
     pub fn default() -> Self {
-        Self {
-            bg:               Color::Rgb(18, 18, 20),
-            border:           Color::Rgb(80, 80, 88),
-            border_focused:   Color::Rgb(49, 191, 103),
-            header_fg:        Color::Rgb(49, 191, 103),
-            highlight_bg:     Color::Rgb(43, 43, 57),
-            inactive_bg:      Color::Rgb(49, 50, 68),
-            text_normal:      Color::Rgb(216, 222, 233),
-            text_muted:       Color::Rgb(130, 130, 138),
-            checked_bg:       Color::Rgb(28, 38, 55),
-            green:            Color::Rgb(49, 191, 103),
-            green_bg:         Color::Rgb(20, 45, 28),
-            red:              Color::Rgb(224, 73, 83),
-            red_bg:           Color::Rgb(50, 20, 25),
-            blue:             Color::Rgb(61, 139, 255),
-            blue_bg:          Color::Rgb(15, 35, 60),
-            yellow:           Color::Rgb(235, 180, 50),
-            yellow_bg:        Color::Rgb(45, 35, 15),
-            purple:           Color::Rgb(168, 122, 243),
-            purple_bg:        Color::Rgb(38, 25, 55),
-            diff_addition_fg: Color::Rgb(49, 191, 103),
-            diff_addition_bg: Color::Rgb(20, 45, 28),
-            diff_deletion_fg: Color::Rgb(224, 73, 83),
-            diff_deletion_bg: Color::Rgb(50, 20, 25),
-            diff_gutter_bg:   Color::Rgb(35, 35, 45),
-            diff_sep:         Color::Rgb(130, 130, 138),
-            comment_bg:       Color::Rgb(43, 43, 57),
-            comment_draft_bg: Color::Rgb(45, 35, 15),
-            modal_border:     Color::Rgb(49, 191, 103),
-            pipeline_success: Color::Rgb(49, 191, 103),
-            pipeline_failed:  Color::Rgb(224, 73, 83),
-            pipeline_running: Color::Rgb(61, 139, 255),
-            pipeline_pending: Color::Rgb(235, 180, 50),
-            pipeline_canceled:Color::Rgb(130, 130, 138),
-            pipeline_skipped: Color::Rgb(130, 130, 138),
-            label_palette: [
-                Color::Rgb(168, 122, 243),
-                Color::Rgb(61, 139, 255),
-                Color::Rgb(49, 191, 103),
-                Color::Rgb(235, 180, 50),
-                Color::Rgb(224, 73, 83),
-                Color::Rgb(240, 140, 180),
-                Color::Rgb(250, 120, 80),
-                Color::Rgb(40, 200, 200),
-                Color::Rgb(180, 230, 40),
-                Color::Rgb(220, 160, 255),
-            ],
-        }
+        Default::default()
     }
 
     pub fn preset(name: &str) -> Option<Self> {
@@ -534,7 +532,6 @@ impl Theme {
             .find(|(n, _)| *n == name)
             .and_then(|(_, toml_str)| toml::from_str::<ThemeToml>(toml_str).ok())
             .and_then(|tf| tf.to_theme())
-            .or_else(|| (name == "default").then(Self::default))
     }
 }
 
@@ -680,6 +677,10 @@ pub struct KeybindingMrs {
     pub create_mr: String,
     #[serde(default)]
     pub approve_mr: String,
+    #[serde(default = "def_revoke_mr")]
+    pub revoke_mr: String,
+    #[serde(default = "def_rebase_mr")]
+    pub rebase_mr: String,
     #[serde(default)]
     pub merge_mr: String,
     #[serde(default)]
@@ -708,8 +709,6 @@ pub struct KeybindingPipelines {
     pub retry: String,
     #[serde(default)]
     pub cancel: String,
-    #[serde(default)]
-    pub download_artifact: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -862,6 +861,8 @@ keybind_defaults! {
     def_create_mr = "n",
     def_select_mr = "Space",
     def_approve_mr = "a",
+    def_revoke_mr = "A",
+    def_rebase_mr = "R",
     def_merge_mr = "m",
     def_toggle_draft = "s",
     def_view_diff = "v",
@@ -869,7 +870,6 @@ keybind_defaults! {
     def_trigger_pipeline = "p",
     def_retry = "r",
     def_cancel = "d",
-    def_download_artifact = "d",
     def_create_release = "n",
     def_edit_release = "e",
     def_delete_release = "d",
@@ -938,6 +938,8 @@ impl Default for KeybindingMrs {
         Self {
             create_mr: def_create_mr(),
             approve_mr: def_approve_mr(),
+            revoke_mr: def_revoke_mr(),
+            rebase_mr: def_rebase_mr(),
             merge_mr: def_merge_mr(),
             toggle_draft: def_toggle_draft(),
             view_diff: def_view_diff(),
@@ -957,7 +959,6 @@ impl Default for KeybindingPipelines {
             trigger_pipeline: def_trigger_pipeline(),
             retry: def_retry(),
             cancel: def_cancel(),
-            download_artifact: def_download_artifact(),
         }
     }
 }
@@ -1093,6 +1094,14 @@ fn def_page_size() -> usize {
     100
 }
 
+fn def_api_per_page() -> usize {
+    100
+}
+
+fn def_fetch_label_colors() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1114,12 +1123,19 @@ impl Default for UiConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub backend: Option<crate::backend::BackendKind>,
     pub theme_preset: Option<String>,
     pub active_tab: Option<String>,
     pub theme: ThemeOverrides,
     pub keybindings: KeybindingConfig,
     #[serde(default = "def_page_size")]
     pub page_size: usize,
+    #[serde(default = "def_api_per_page")]
+    pub api_per_page: usize,
+    /// Use real label colors from `label list` when available; otherwise use
+    /// the theme palette as fallback.
+    #[serde(default = "def_fetch_label_colors")]
+    pub fetch_label_colors: bool,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
     pub issues: PaneConfig,
@@ -1138,11 +1154,14 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            backend: None,
             theme_preset: Some("default".to_string()),
             active_tab: None,
             theme: ThemeOverrides::default(),
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
+            api_per_page: def_api_per_page(),
+            fetch_label_colors: def_fetch_label_colors(),
             disabled_tabs: None,
             ui: UiConfig::default(),
             issues: PaneConfig::default(),
@@ -1168,6 +1187,11 @@ impl Config {
         path
     }
 
+    /// Per-request page size, clamped to GitLab's accepted `per_page` range.
+    pub fn api_per_page_clamped(&self) -> usize {
+        self.api_per_page.clamp(1, 100)
+    }
+
     fn generate_default_toml() -> String {
         let theme = Theme::default();
         format!(
@@ -1175,11 +1199,19 @@ impl Config {
 # See https://github.com/rcieri/glab-tui for documentation
 
 # Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
-# "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark"
+# "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark",
+# "rose-pine", "rose-pine-moon", "rose-pine-dawn"
 theme_preset = "default"
 
 # Default request page size
 page_size = 100
+
+# Backend override for repositories where automatic detection is ambiguous.
+# backend = "github" or "gitlab"
+
+# Maximum items per API request (1-100). Lower this if your GitLab instance
+# truncates large JSON response bodies. Only affects GitLab backends.
+# api_per_page = 100
 
 # Per-color overrides (takes precedence over theme_preset).
 # Uncomment the [theme] line and any colors you want to override.
@@ -1230,6 +1262,8 @@ delete_entity = "d"
 create_mr = "n"
 select_mr = "Space"
 approve_mr = "a"
+revoke_mr = "A"
+rebase_mr = "R"
 merge_mr = "m"
 toggle_draft = "s"
 view_diff = "v"
@@ -1243,7 +1277,6 @@ delete_entity = "d"
 trigger_pipeline = "p"
 retry = "r"
 cancel = "d"
-download_artifact = "d"
 
 [keybindings.releases]
 create_release = "n"
@@ -1429,21 +1462,10 @@ pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().
 pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Icons::default()));
 
 pub fn all_theme_presets() -> Vec<String> {
-    let mut presets: Vec<String> = vec![
-        "default".into(),
-        "clean".into(),
-        "tokyo-night".into(),
-        "gruvbox".into(),
-        "nord".into(),
-        "catppuccin-mocha".into(),
-        "dracula".into(),
-        "deep-space".into(),
-        "solarized-dark".into(),
-        "monokai".into(),
-        "one-dark".into(),
-        "synthwave-84".into(),
-        "everforest-dark".into(),
-    ];
+    let mut presets: Vec<String> = BUNDLED_THEMES
+        .iter()
+        .map(|(name, _)| name.to_string())
+        .collect();
 
     // Scan user themes directory for additional .toml files
     let dir = themes_dir();
@@ -1665,6 +1687,158 @@ pub fn set_theme_preset(name: &str) {
     if let Some(preset) = Theme::preset(name) {
         if let Ok(mut theme) = THEME.write() {
             *theme = preset;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_per_page_clamped_bounds_to_gitlab_range() {
+        let mut cfg = Config::default();
+
+        cfg.api_per_page = 0;
+        assert_eq!(cfg.api_per_page_clamped(), 1);
+
+        cfg.api_per_page = 250;
+        assert_eq!(cfg.api_per_page_clamped(), 100);
+
+        cfg.api_per_page = 20;
+        assert_eq!(cfg.api_per_page_clamped(), 20);
+
+        cfg.api_per_page = 100;
+        assert_eq!(cfg.api_per_page_clamped(), 100);
+    }
+
+    #[test]
+    fn api_per_page_defaults_to_100() {
+        assert_eq!(Config::default().api_per_page, 100);
+    }
+
+    #[test]
+    fn config_toml_missing_api_per_page_deserializes_to_default() {
+        // Mirrors an old config.toml written before `api_per_page` existed --
+        // omitting the field must not fail to parse, and must fall back to 100.
+        let toml_str = r#"
+page_size = 250
+"#;
+        let cfg: Config =
+            toml::from_str(toml_str).expect("config.toml without api_per_page must still parse");
+        assert_eq!(cfg.api_per_page, 100);
+        assert_eq!(cfg.page_size, 250);
+    }
+
+    #[test]
+    fn test_config_load_override() {
+        let _guard = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let conf_dir = temp_dir.path().join("glab-tui");
+        std::fs::create_dir_all(&conf_dir).unwrap();
+        std::fs::write(
+            conf_dir.join("config.toml"),
+            "page_size = 250\napi_per_page = 20\n",
+        )
+        .unwrap();
+
+        let old_xdg = std::env::var("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+        let cfg = Config::load();
+        if let Ok(old) = old_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+        assert_eq!(cfg.page_size, 250);
+        assert_eq!(cfg.api_per_page, 20);
+    }
+
+    #[test]
+    fn revoke_mr_defaults_to_shift_a() {
+        let cfg = Config::default();
+        assert_eq!(cfg.keybindings.mrs.revoke_mr, "A");
+    }
+
+    #[test]
+    fn rebase_mr_defaults_to_shift_r() {
+        let cfg = Config::default();
+        assert_eq!(cfg.keybindings.mrs.rebase_mr, "R");
+    }
+
+    #[test]
+    fn fetch_label_colors_defaults_true_and_is_configurable() {
+        assert!(Config::default().fetch_label_colors);
+
+        let disabled: Config = toml::from_str("fetch_label_colors = false").expect("parse config");
+        assert!(!disabled.fetch_label_colors);
+
+        let empty: Config = toml::from_str("").expect("parse empty config");
+        assert!(empty.fetch_label_colors);
+    }
+
+    #[test]
+    fn backend_override_is_optional_and_lowercase() {
+        assert_eq!(Config::default().backend, None);
+        let github: Config = toml::from_str("backend = \"github\"").expect("parse config");
+        assert_eq!(github.backend, Some(crate::backend::BackendKind::GitHub));
+        let gitlab: Config = toml::from_str("backend = \"gitlab\"").expect("parse config");
+        assert_eq!(gitlab.backend, Some(crate::backend::BackendKind::GitLab));
+    }
+
+    #[test]
+    fn mr_keybindings_do_not_collide() {
+        let cfg = Config::default();
+
+        // Enumerate fields via the struct's own `Serialize` impl instead of a
+        // hand-maintained array: a manually listed array silently excludes
+        // whatever field the author forgot to add (this happened once
+        // already -- `select_mr` was missing), so a newly added
+        // `KeybindingMrs` field is picked up automatically here with no
+        // extra step required.
+        let value = serde_json::to_value(&cfg.keybindings.mrs).expect("serialize KeybindingMrs");
+        let fields = value
+            .as_object()
+            .expect("KeybindingMrs serializes to a JSON object");
+        assert!(!fields.is_empty(), "KeybindingMrs serialized to no fields");
+
+        let mut seen: HashMap<&str, &str> = HashMap::new();
+        for (field, binding) in fields {
+            let binding = binding
+                .as_str()
+                .expect("every KeybindingMrs field is a string");
+            if let Some(other_field) = seen.insert(binding, field) {
+                panic!(
+                    "duplicate MR keybinding {binding:?}: used by both `{other_field}` and `{field}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_bundled_themes_parse_successfully() {
+        for (name, _) in BUNDLED_THEMES {
+            assert!(
+                Theme::preset(name).is_some(),
+                "Bundled theme '{name}' failed to parse into valid Theme"
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_theme_presets_includes_all_bundled() {
+        let presets = all_theme_presets();
+        for (name, _) in BUNDLED_THEMES {
+            assert!(
+                presets.contains(&name.to_string()),
+                "all_theme_presets() missing bundled theme '{name}'"
+            );
         }
     }
 }

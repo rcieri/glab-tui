@@ -1,0 +1,71 @@
+# Rosé Pine Dawn (light variant)
+# Palette: https://rosepinetheme.com/palette/
+#   base #faf4ed  surface #fffaf3  overlay #f2e9e1
+#   muted #9893a5  subtle #797593  text #464261
+#   love #b4637a  gold #ea9d34  rose #d7827e
+#   pine #286983  foam #56949f  iris #907aa9
+#   highlight low #f4ede8  med #dfdad9  high #cecacd
+#   leaf #6d8f89 (rose-pine/neovim only, not one of the site's 15 roles)
+#
+# Background tints below are the palette accents blended over `base`
+# (16-24% accent), since Dawn ships no dark surface colours.
+
+bg             = "#faf4ed"  # base
+border         = "#cecacd"  # highlight high, quiet unfocused frames
+border_focused = "#907aa9"  # iris, focus pops against the grey frames
+header_fg      = "#907aa9"  # iris
+highlight_bg   = "#dfdad9"  # highlight med, cursor row
+inactive_bg    = "#f2e9e1"  # overlay
+text_normal    = "#464261"  # text
+text_muted     = "#797593"  # subtle
+checked_bg     = "#c8d3d4"  # pine 24%, cool tint distinct from the cursor row
+
+# Dawn has no true green: pine stands in for success/additions (best contrast
+# in the palette), foam for informational blue.
+green          = "#286983"  # pine
+green_bg       = "#d8dedc"
+red            = "#b4637a"  # love
+red_bg         = "#efdddb"
+blue           = "#56949f"  # foam
+blue_bg        = "#e0e5e1"
+yellow         = "#a87125"  # gold darkened; #ea9d34 is 2.0:1 on base, unreadable
+yellow_bg      = "#f7e3c8"  # true gold tint
+purple         = "#907aa9"  # iris
+purple_bg      = "#e5dcdf"
+
+# ── Diff ──
+diff_addition_fg = "#286983"
+diff_addition_bg = "#d8dedc"
+diff_deletion_fg = "#b4637a"
+diff_deletion_bg = "#efdddb"
+diff_gutter_bg   = "#f2e9e1"  # overlay
+diff_sep         = "#cecacd"  # highlight high
+
+# ── Comments ──
+comment_bg       = "#f4ede8"  # highlight low
+comment_draft_bg = "#f7e6cf"  # gold 16%
+
+# ── Modals ──
+modal_border = "#907aa9"  # iris
+
+# ── Pipelines ──
+pipeline_success  = "#286983"  # pine
+pipeline_failed   = "#b4637a"  # love
+pipeline_running  = "#56949f"  # foam
+pipeline_pending  = "#a87125"  # gold (darkened)
+pipeline_canceled = "#797593"  # subtle
+pipeline_skipped  = "#9893a5"  # muted
+
+# ── Label palette ──
+# Six Dawn accents first, then darker in-family shades so all ten stay
+# legible on the light base.
+label_palette_0 = "#907aa9"  # iris
+label_palette_1 = "#56949f"  # foam
+label_palette_2 = "#286983"  # pine
+label_palette_3 = "#a87125"  # gold (darkened)
+label_palette_4 = "#b4637a"  # love
+label_palette_5 = "#ac6865"  # rose (darkened)
+label_palette_6 = "#736287"  # deep iris
+label_palette_7 = "#6d8f89"  # leaf
+label_palette_8 = "#8c4e5f"  # deep love
+label_palette_9 = "#797593"  # subtle

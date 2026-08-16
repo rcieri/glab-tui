@@ -1,3 +1,5 @@
+use crate::backend::BackendKind;
+
 pub fn get_current_branch() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["symbolic-ref", "--short", "HEAD"])
@@ -20,6 +22,79 @@ pub fn get_current_branch() -> Option<String> {
         }
     }
     None
+}
+
+/// Extracts the `namespace/project` path from a git remote URL.
+///
+/// Accepts `scheme://[user[:pass]@]host[:port]/namespace/project[.git]` and
+/// scp-style `git@host:namespace/project[.git]`. Every segment after the host
+/// is preserved, because GitLab namespaces can nest arbitrarily deep
+/// (`group/subgroup/subsubgroup/project`).
+///
+/// Returns `None` when the URL has no parseable namespace.
+pub fn parse_project_path(url: &str) -> Option<String> {
+    let url = url.trim();
+    // Drop everything up to and including the host, keeping the rest intact.
+    // Splitting on "://" must be tried first, since those URLs also contain ':'.
+    let path = if let Some((_scheme, rest)) = url.split_once("://") {
+        rest.split_once('/')?.1
+    } else if let Some((_host, rest)) = url.split_once(':') {
+        rest
+    } else {
+        return None;
+    };
+
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    path.contains('/').then(|| path.to_string())
+}
+
+pub fn parse_remote_host(url: &str) -> Option<String> {
+    let url = url.trim();
+    let authority = if let Some((_, rest)) = url.split_once("://") {
+        rest.split('/').next()?
+    } else {
+        url.split_once(':')?.0
+    };
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = host.trim_matches(['[', ']']);
+    let host = host.split(':').next().unwrap_or(host);
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+pub fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> BackendKind {
+    if let Some(kind) = override_kind {
+        return kind;
+    }
+
+    let Some(host) = parse_remote_host(remote_url) else {
+        return BackendKind::GitLab;
+    };
+    if host == "github.com" {
+        return BackendKind::GitHub;
+    }
+
+    let gh_authenticated = auth_status("gh", &host, true);
+    let glab_authenticated = auth_status("glab", &host, false);
+    if gh_authenticated && !glab_authenticated {
+        BackendKind::GitHub
+    } else if glab_authenticated && !gh_authenticated {
+        BackendKind::GitLab
+    } else {
+        BackendKind::GitLab
+    }
+}
+
+fn auth_status(program: &str, host: &str, active: bool) -> bool {
+    let mut command = std::process::Command::new(program);
+    command.args(["auth", "status"]);
+    if active {
+        command.arg("--active");
+    }
+    command.args(["--hostname", host]);
+    command.output().is_ok_and(|output| output.status.success())
 }
 
 pub fn slugify(s: &str) -> String {
@@ -154,5 +229,112 @@ pub fn get_workflow_files(is_github: bool) -> Vec<String> {
             .collect();
         files.sort();
         files
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_backend, parse_project_path, parse_remote_host};
+    use crate::backend::BackendKind;
+
+    #[test]
+    fn parses_remote_hosts() {
+        assert_eq!(
+            parse_remote_host("https://github.example.com/org/repo.git").as_deref(),
+            Some("github.example.com")
+        );
+        assert_eq!(
+            parse_remote_host("git@github.example.com:org/repo.git").as_deref(),
+            Some("github.example.com")
+        );
+        assert_eq!(
+            parse_remote_host("ssh://git@gitlab.example.com:2222/org/repo.git").as_deref(),
+            Some("gitlab.example.com")
+        );
+    }
+
+    #[test]
+    fn backend_override_takes_precedence() {
+        assert_eq!(
+            detect_backend(
+                "git@github.example.com:org/repo.git",
+                Some(BackendKind::GitLab)
+            ),
+            BackendKind::GitLab
+        );
+    }
+
+    #[test]
+    fn keeps_nested_subgroups_over_https() {
+        assert_eq!(
+            parse_project_path("https://gitlab.example.com/dev/cbr/salesforce/salesforce.git")
+                .as_deref(),
+            Some("dev/cbr/salesforce/salesforce")
+        );
+    }
+
+    #[test]
+    fn keeps_nested_subgroups_over_scp_style_ssh() {
+        assert_eq!(
+            parse_project_path("git@gitlab.example.com:dev/cbr/salesforce/salesforce.git")
+                .as_deref(),
+            Some("dev/cbr/salesforce/salesforce")
+        );
+    }
+
+    #[test]
+    fn parses_single_namespace_https() {
+        assert_eq!(
+            parse_project_path("https://gitlab.com/group/repo.git").as_deref(),
+            Some("group/repo")
+        );
+    }
+
+    #[test]
+    fn parses_ssh_scheme_with_port() {
+        assert_eq!(
+            parse_project_path("ssh://git@gitlab.example.com:2222/group/sub/repo.git").as_deref(),
+            Some("group/sub/repo")
+        );
+    }
+
+    #[test]
+    fn parses_https_with_port() {
+        assert_eq!(
+            parse_project_path("https://gitlab.example.com:8443/group/sub/repo.git").as_deref(),
+            Some("group/sub/repo")
+        );
+    }
+
+    #[test]
+    fn ignores_embedded_credentials() {
+        assert_eq!(
+            parse_project_path("https://user:token@gitlab.example.com/group/sub/repo.git")
+                .as_deref(),
+            Some("group/sub/repo")
+        );
+    }
+
+    #[test]
+    fn tolerates_missing_git_suffix_and_trailing_slash() {
+        assert_eq!(
+            parse_project_path("https://gitlab.example.com/group/sub/repo/").as_deref(),
+            Some("group/sub/repo")
+        );
+    }
+
+    #[test]
+    fn preserves_project_names_containing_git() {
+        assert_eq!(
+            parse_project_path("https://gitlab.example.com/group/my.github.git").as_deref(),
+            Some("group/my.github")
+        );
+    }
+
+    #[test]
+    fn rejects_urls_without_a_namespace() {
+        assert_eq!(parse_project_path("https://gitlab.example.com/"), None);
+        assert_eq!(parse_project_path("not-a-url"), None);
+        assert_eq!(parse_project_path(""), None);
     }
 }

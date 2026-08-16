@@ -13,9 +13,11 @@ use crate::domain::runners::Runner;
 use crate::event::Event;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BackendKind {
     GitLab,
     GitHub,
@@ -57,11 +59,14 @@ pub trait Backend: Send + Sync {
     fn set_tx(&mut self, tx: UnboundedSender<Event>);
 
     // ── Issues ──
+    /// `page_size` is the total item budget across all pages; `per_request` is how many
+    /// items each HTTP call asks for.
     async fn list_issues(
         &self,
         project: &str,
         show_closed: bool,
         page_size: usize,
+        per_request: usize,
     ) -> Result<Vec<Issue>>;
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue>;
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()>;
@@ -110,11 +115,14 @@ pub trait Backend: Send + Sync {
     ) -> Result<()>;
 
     // ── Merge Requests ──
+    /// `page_size` is the total item budget across all pages; `per_request` is how many
+    /// items each HTTP call asks for.
     async fn list_mrs(
         &self,
         project: &str,
         show_closed: bool,
         page_size: usize,
+        per_request: usize,
     ) -> Result<Vec<MergeRequest>>;
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest>;
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
@@ -128,6 +136,10 @@ pub trait Backend: Send + Sync {
     async fn reopen_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn approve_mr(&self, project: &str, iid: u64) -> Result<()>;
+    /// Revoke your own approval. GitLab only — see the GhBackend impl.
+    async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()>;
+    /// Rebase the source branch onto the target. Supported on both hosts.
+    async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     async fn merge_mr(
         &self,
         project: &str,
@@ -193,7 +205,14 @@ pub trait Backend: Send + Sync {
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()>;
 
     // ── Pipelines ──
-    async fn list_pipelines(&self, project: &str, page_size: usize) -> Result<Vec<Pipeline>>;
+    /// `page_size` is the total item budget across all pages; `per_request` is how many
+    /// items each HTTP call asks for.
+    async fn list_pipelines(
+        &self,
+        project: &str,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Pipeline>>;
     async fn list_pipeline_jobs(
         &self,
         project: &str,
@@ -254,6 +273,7 @@ pub trait Backend: Send + Sync {
         &self,
         project: &str,
         milestone_iid: u64,
+        milestone_title: &str,
         page_size: usize,
     ) -> Result<Vec<Issue>>;
     async fn create_milestone(
@@ -301,8 +321,31 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<Deployment>>;
 
     // ── Labels / Members / Misc ──
-    async fn fetch_labels(&self, project: &str) -> Result<Vec<String>>;
+    async fn fetch_labels(
+        &self,
+        project: &str,
+        per_request: usize,
+    ) -> Result<Vec<crate::domain::labels::Label>>;
     async fn fetch_members(&self, project: &str) -> Result<Vec<String>>;
+
+    // ── MR review state (approval + mergeability) ──
+    /// Bulk-fetch both readiness axes for the given MR iids.
+    ///
+    /// Returns a per-iid pair; either element may be `None`, meaning *unknown*.
+    /// An absent map entry likewise means unknown for that MR.
+    async fn list_mr_state(
+        &self,
+        project: &str,
+        iids: &[u64],
+    ) -> Result<
+        HashMap<
+            u64,
+            (
+                Option<crate::domain::mr_state::ApprovalState>,
+                Option<crate::domain::mr_state::MergeabilityState>,
+            ),
+        >,
+    >;
 
     // ── Raw API fallback ──
     async fn raw_api(

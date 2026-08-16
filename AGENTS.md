@@ -16,10 +16,12 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`)
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.8.4`)
 
 ### Dual-Engine Architecture
-The application detects whether the current repository is hosted on GitHub or GitLab (via `git remote get-url origin`) and instantiates either a `GlabBackend` or `GhBackend`. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
+The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
+
+The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call is extracted from the remote URL by `git_helpers::parse_project_path` ([src/git_helpers.rs](src/git_helpers.rs)), which keeps every path segment after the host so nested GitLab subgroup namespaces (`group/subgroup/project`) resolve correctly. Always use this helper — do not reimplement remote-URL parsing inline.
 
 **Rule:** Never use `glab api` or `gh api` when a native subcommand exists. Prefer native subcommands — they use built-in pagination, auth, and output formatting. Only fall back to raw API calls for endpoints with no native CLI equivalent.
 
@@ -34,9 +36,11 @@ The application detects whether the current repository is hosted on GitHub or Gi
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
 * [src/domain/](src/domain/): Domain models and top-level API functions.
-    * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, and event tx.
+    * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, api_per_page, and event tx.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
+    * [labels.rs](src/domain/labels.rs): `Label` structure carrying the API-provided color used for the Labels column.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
+    * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.
     * [pipelines.rs](src/domain/pipelines.rs): Pipeline, Job structures and job deduplication logic.
     * [runners.rs](src/domain/runners.rs): Runner structures.
     * [releases.rs](src/domain/releases.rs): Release structures.
@@ -45,7 +49,8 @@ The application detects whether the current repository is hosted on GitHub or Gi
     * [branches.rs](src/domain/branches.rs): Branch structures.
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
-* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches.
+* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
+* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_remote_host`, `get_current_branch`, `slugify`, `get_workflow_files`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
@@ -67,7 +72,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
     * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers.
     * [diff.rs](src/ui/diff.rs): Diff view render functions.
     * [modal.rs](src/ui/modal.rs): Unified modal component.
-* [src/themes/](src/themes/): 13 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84).
+* [src/themes/](src/themes/): 16 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84, rose-pine, rose-pine-moon, rose-pine-dawn).
 
 ## 3. Core Architectural Patterns
 
@@ -90,8 +95,9 @@ The application detects whether the current repository is hosted on GitHub or Gi
 ### Syntax Highlighting (`syntect`)
 * Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
 * `SYNTAX_SET` and `THEME_SET` are global `LazyLock` statics using `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`.
+* **Theme-safe:** `highlight_line_syntax` builds the `syntect` theme from the active `THEME` — foreground/background taken from the `text_normal`/`bg` tokens and all syntect scope colors stripped — so highlighting always matches the active theme. Never reintroduce hardcoded syntect palette colors.
 * The public function `highlight_line_syntax(file_path, line_content, ext)` returns `Option<Vec<(ratatui::style::Style, String)>>`.
-* `syntect_style_to_ratatui()` converts `syntect::highlighting::Style` → `ratatui::style::Style`.
+* `syntect_style_to_ratatui()` maps only `syntect` font modifiers (bold/italic/underline) to `ratatui::style::Modifier`; colors are intentionally ignored because they come from the theme.
 * `DiffLine` contains an optional `syntax_highlighted: Option<Vec<(Style, String)>>` field populated during parsing.
 
 ### Code Review System
@@ -101,19 +107,29 @@ The application detects whether the current repository is hosted on GitHub or Gi
   - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` and submitted atomically.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
   - `DiffFetched` event now uses named fields: `{ mr_iid, raw_diff, comments }`.
+  - Leaving the diff view with pending drafts opens the standard confirm popup (`ConfirmAction::SubmitReview(mr_iid)`); confirming opens the Approve / Request Changes / Comment selector, declining clears the drafts and exits review mode.
 * **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui.rs](src/ui.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
+
+### MR Review State (Approval / Mergeable / Workflow)
+* The MR/PR table's `Approval`, `Mergeable`, and `Workflow` columns are derived, not fetched. `ApprovalState` / `MergeabilityState` / `WorkflowStatus` and the display/sort/filter helpers live in [src/domain/mr_state.rs](src/domain/mr_state.rs); cell text uses ALL-CAPS display strings (e.g. `CONFLICT`, `REBASE`, `CLEAN`, `APPROVED`, `AWAITING`) that the column-filter picker also shows.
+* **Data sources:** GitLab fills both axes with one bulk `glab api graphql` query over `mergeRequests(iids: [...])` (batched by `api_per_page`); GitHub derives them from the review/merge fields returned by `gh pr list` (`reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests`) plus the current login via `gh api user --jq .login`. Either axis may be `None` (unknown) — never a guessed value.
+* `MergeRequest` carries `approval` and `mergeability` as `Option<…>` and a `#[serde(skip)]` derived `workflow`. After any load (live fetch or cache read), call `derive_workflow()` in [src/fetch.rs](src/fetch.rs) to recompute `workflow` from approval state — cached rows deserialize with it unset even though the approval state it reads was persisted.
+* **Rebase gating:** `rebase_gate()` in [src/domain/mr_state.rs](src/domain/mr_state.rs) decides whether `R` may rebase — `Allowed`, `ResolveLocally` (conflicts), or `NotNeeded` — surfaced as a confirm popup or a user-facing error toast. Revoking approval (`A`) is GitLab-only; `gh pr review` has no revoke path.
 
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
-* `ProjectCache` now stores `enabled_columns`, `group_by_column`, `group_ascending`, and `column_filters` in addition to API data.
+* `ProjectCache` now stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, and `label_colors` (a `name → hex` map used by the Labels column) in addition to API data.
 * Cache is written on every successful data fetch; read on startup.
 
 ### Config & Theme System
 * Config is loaded via `Config::load()` in [src/config.rs](src/config.rs) at startup and stored on `App` as `app.config`.
+* `Config` carries an optional `backend: Option<BackendKind>` (deserialized lowercase as `"github"` / `"gitlab"`). When set it overrides automatic backend detection everywhere — startup, repo switcher, diff review submission, and `doctor` — via `git_helpers::detect_backend(remote_url, config.backend)`.
+* `Config` exposes both `page_size` (total item budget per tab) and `api_per_page` (items per HTTP request, clamped to GitLab's `1–100` `per_page` range via `api_per_page_clamped()`). Thread both through the `Backend` pagination methods; `_per_request` is a no-op on GitHub, which paginates with `--limit`.
+* `fetch_label_colors` (default `true`) selects between the real label colors returned by `glab label list` / `gh label list` and the theme's label palette. The API colors are stored as a `name → Color` map on `app.label_colors` (populated from the cache at startup and refreshed on `RepoAttributesFetched`); light GitHub-style label colors fall back to the theme palette because they are unreadable as foreground text on dark themes (`is_light_color()` luminance check in [src/ui/helpers.rs](src/ui/helpers.rs)).
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` / the `save_view` keybinding), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
-* Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`.
+* Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`. `Theme::default()` derives directly from `src/themes/default.toml` — there is no hardcoded in-code fallback, so the bundled TOML is the single source of truth.
 * Icons: The global `ICONS` `RwLock` is initialized at startup with hardcoded nerd font defaults and is not user-configurable.
-* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES`. User themes in `~/.config/glab-tui/themes/` take precedence.
+* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (16 presets including the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens to `Theme` if needed.
 
 ### Keybinding System
@@ -132,7 +148,7 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Navigation: `h`/`l` → previous/next month, `j`/`k` → previous/next day, `Enter` → confirm, `Esc` → cancel.
 
 ### Confirmation Popup
-* Destructive actions (close issue/MR, merge MR, delete branch/release/milestone/issue/MR) show a confirmation popup before executing.
+* Destructive actions (close issue/MR, merge MR, delete branch/release/milestone/issue/MR) and review submission with pending draft comments (`ConfirmAction::SubmitReview`) show a confirmation popup before executing.
 * `ConfirmAction` enum in [src/app.rs](src/app.rs) lists all confirmable actions. The UI renders a yes/no box; the selected state is `app.confirm_popup_selected_yes: bool`.
 * Add new variants to `ConfirmAction` when introducing destructive operations. Handle the confirmation flow in [src/main.rs](src/main.rs) by checking `app.confirm_popup` before proceeding.
 
@@ -148,10 +164,11 @@ The application detects whether the current repository is hosted on GitHub or Gi
 * Column filter state is tracked via `app.column_filter_context` and `app.column_filters: HashMap<Tab, HashMap<String, Vec<String>>>`.
 * Group state is tracked via `app.group_by_column: Option<String>` and `app.group_ascending: bool`.
 * When rendering the MR/PR pipeline status column, check `is_github` to display "Pipeline" (GitLab) or "Action" (GitHub) terminology.
+* MR/PR review-state columns (`Approval`, `Mergeable`, `Workflow`) are derived in [src/domain/mr_state.rs](src/domain/mr_state.rs); see the "MR review state" note under Core Architectural Patterns below.
 
 ## 4. UI & Rendering Guidelines (`ratatui`)
 
-* **Colors & Theming:** Always use the `THEME` global (a `RwLock<Theme>` initialized from `app.config` at startup). Access it as `crate::config::THEME.read().unwrap()` or via the re-export in `ui.rs`. Do not hard-code raw RGB values; add new semantic color tokens to `src/config.rs` and all theme TOML files if needed.
+* **Colors & Theming:** Always use the `THEME` global (a `RwLock<Theme>` initialized from `app.config` at startup). Access it as `crate::config::THEME.read().unwrap()` or via the re-export in `ui.rs`. Do not hard-code raw RGB values; add new semantic color tokens to `src/config.rs` and all theme TOML files if needed. Every surface is theme-driven, including the diff view (`diff_addition_*`/`diff_deletion_*`/`diff_gutter_bg`/`diff_sep`/`comment_bg`/`comment_draft_bg`), markdown rendering, and diff selection/search-match highlights (`highlight_bg`/`yellow_bg`). Pass the resolved theme into render helpers instead of re-locking `THEME` inside them (see `render_markdown`).
 * **Fuzzy Matching:** Use `SkimMatcherV2` from the `fuzzy-matcher` crate for filtering tables and selector overlays. The `render_fuzzy_cell` helper in [src/ui.rs](src/ui.rs) handles highlighting matched characters in yellow.
 * **Columns:** Table columns are dynamically configurable. Always check `app.is_column_visible(tab, "Column Name")` before rendering a cell or header. GitHub-only or GitLab-only columns must also gate on `app.gitlab_client.is_some()` / `is_github`.
 * **Layout:** Use `ratatui::layout::Layout` to split screens. Avoid hardcoded fixed sizes where possible, use `Constraint::Percentage` or `Constraint::Fill(1)`. Use `centered_rect_min()` for overlays to ensure minimum readable dimensions on small terminals.
@@ -178,19 +195,19 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 
 | Operation | Command | Pagination |
 |---|---|---|
-| List issues | `glab issue list --output json -R <repo> --state <s> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| List issues | `glab issue list --output json -R <repo> --state <s> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Get single issue | `glab issue view <iid> --output json -R <repo>` | N/A |
-| List MRs | `glab mr list --output json -R <repo> --state <s> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| List MRs | `glab mr list --output json -R <repo> --state <s> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | Get single MR | `glab mr view <iid> --output json -R <repo>` | N/A |
 | Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
 | List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
-| List pipelines | `glab ci list --output json -R <repo> --page N --per-page 100` | Loops up to `page_size/100` pages |
+| List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
-| List milestones | `glab milestone list --output json -R <repo> --per-page <N>` | Single call |
-| List milestone issues | `glab issue list --milestone <id> --all --output json -R <repo> --per-page <N>` | Single call |
+| List milestones | `glab milestone list --output json --project <repo> --per-page <N>` | Single call (`milestone list` requires `--project`/`--group`, not `-R`) |
+| List milestone issues | `glab issue list --milestone <title> --all --output json -R <repo> --per-page <N>` | Single call (`--milestone` filters by milestone **title**, not iid — resolved from the selected milestone at the call site) |
 | List todos | `glab todo list --output=json` | Single call |
-| List labels | `glab label list --output json -R <repo> --per-page 100` | Single call |
+| List labels | `glab label list --output json -R <repo> --per-page <api_per_page>` | Single call (label colors feed the Labels column) |
 
 #### Mutations — Native Subcommands
 
@@ -205,7 +222,10 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Retry job | `glab ci retry <job_id> -R <repo>` |
 | Cancel job | `glab ci cancel job <id> -R <repo>` |
 | Start manual job | `glab ci retry <job_id> -R <repo>` |
+| Run pipeline (variables/inputs) | `glab ci run [--branch <ref>] [--mr] [--variables k:v ...] [--input k:v ...]` |
 | Mark todo done | `glab todo done <id>` |
+| Revoke MR approval | `glab mr revoke <iid> -R <repo>` |
+| Rebase MR | `glab mr rebase <iid> -R <repo>` |
 
 #### Data Fetching — Raw API (no native subcommand exists)
 
@@ -221,6 +241,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
+| MR approval/mergeability state | `glab api graphql` over `mergeRequests(iids: [...])` | `glab mr list` exposes neither axis; one bulk query fills the Approval/Mergeable columns (batched by `api_per_page`) |
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 
@@ -232,7 +253,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 |---|---|---|
 | List issues | `gh issue list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call (N = page_size × 10) |
 | Get single issue | `gh issue view <iid> --json ... -R <repo>` | N/A |
-| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call |
+| List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call; the JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
 | List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
@@ -240,7 +261,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |
 | List milestone issues | `gh issue list --milestone <id> --state all --json ... -R <repo> --limit <N>` | Single call |
-| List labels | `gh label list --json name -R <repo> --limit 100` | Single call |
+| List labels | `gh label list --json name,color -R <repo> --limit 100` | Single call (label colors feed the Labels column) |
 
 #### Mutations — Native Subcommands
 
@@ -252,12 +273,14 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Update release | `gh release edit <tag> -R <repo> -t <name> -n <desc>` |
 | Delete release | `gh release delete <tag> -R <repo> -y` |
 | Update milestone state | `gh api -X PATCH repos/{}/milestones/{} -f state=...` |
+| Rebase PR | `gh pr update-branch <iid> -R <repo> --rebase` |
 
 #### Data Fetching — Raw API (no native subcommand exists)
 
 | Operation | Endpoint | Why raw API |
 |---|---|---|
 | List PR review comments | `GET /repos/{}/pulls/{}/comments?per_page=<N>` | `gh pr view --json comments` lacks inline line/position fields needed for diff review |
+| Get current user login | `gh api user --jq .login` | Needed to derive "your" workflow/approval state for the MR/PR review columns |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
 | List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
@@ -289,7 +312,7 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Delete MR (Glab) | `glab mr delete <iid> -R <repo>` |
 | Delete issue (GH) | `gh issue delete <iid> -R <repo> --yes` |
 | Approve MR | `gh pr review <iid> --approve` / `glab mr approve <iid>` |
-| Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --remove-source-branch --squash` |
+| Merge MR | `gh pr merge <iid> --delete-branch --squash` / `glab mr merge <iid> --squash --remove-source-branch --yes` (the `--yes` flag skips the CLI's interactive confirmation; multiple selected MRs are merged in sequence through `Backend::merge_mr`) |
 | Toggle draft (→ ready) | `gh pr ready <iid>` / `glab mr update <iid> --ready` |
 | Toggle draft (→ draft) | `gh pr ready <iid> --undo` / `glab mr update <iid> --draft` |
 | Create release | `gh release create <tag> -F <changelog>` / `glab release create <tag> -F <changelog>` |
@@ -301,9 +324,28 @@ These are user-triggered mutations that shell out directly to the CLI without go
 | Reply to comment | `gh api POST repos/{}/pulls/{}/comments` / `glab api POST projects/{}/merge_requests/{}/discussions/{}/notes` |
 | Submit review | `gh api POST repos/{}/pulls/{}/reviews` / `glab api POST projects/{}/merge_requests/{}/...` |
 
+> `glab ci run` notes: variables/inputs are passed via the plural `--variables k:v` / `--input k:v` flags (not `--variable`), and `--mr` is only passed when no variables or `workflow_dispatch` inputs are set.
+
 ## 7. Development & Quality Standards
 
 * **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `app.error_message`. Do not `unwrap()` or `panic!()` in UI or event handling code.
+* **Test env isolation:** Unit tests that mutate process-global environment variables (config paths via `GLAB_TUI_CONFIG`/`XDG_CONFIG_HOME`, cache dirs) must acquire `config::TEST_ENV_MUTEX` first — env vars are visible to every test thread, and overlapping mutations caused an intermittent Windows CI failure. Never introduce a second ad-hoc mutex for env mutation; reuse the crate-wide one.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
 * **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+
+## 8. Release Process (Local-First)
+
+Releases are prepared, documented, and distributed from a maintainer's machine via a single orchestrator, `scripts/release.sh`. CI is only responsible for building the cross-platform release binaries. The demo GIFs must be recorded locally because `glab-tui` shells out to `gh`/`glab`, and CI tokens lack the permissions for a realistic recording.
+
+Run `scripts/release.sh [patch|minor|major]` (default `patch`) and the script walks the full release:
+
+1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, JetBrainsMono Nerd Font, and push access to both manifest repos (`rcieri/homebrew-glab-tui`, `rcieri/scoop-glab-tui`); exits non-zero with a clear message if a prerequisite is missing. Long-running steps run under the script's `spinner`/`progress_bar` helpers (animated spinner with captured logs, auto-disabled when not a TTY), and phases are numbered `1/7` … for progress reporting.
+2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the opencode model (provider → model → variant; see below) unless `OPENCODE_MODEL` is set, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
+3. **Review gate** — pauses for the maintainer to review the PR (CI checks run in the background); the script continues on Enter.
+4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 5-target binary matrix and uploads them to the GitHub release.
+5. **Wait for build** — polls until all 5 release assets exist (timeout: `RELEASE_WAIT_MIN`, default 45 min).
+6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest. The manifest repos' scheduled auto-updaters have been removed; this local sync is the only update path.
+7. **Publish** — pushes the Docker image to GHCR and publishes the crate to crates.io.
+
+During `Prepare`, `release.sh` interactively walks through the opencode models available to the local `opencode` install (`provider -> model -> variant`) to pick the model used for the regenerated docs and release notes; set `OPENCODE_MODEL` to skip the prompt.

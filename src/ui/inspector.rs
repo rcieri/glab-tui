@@ -190,7 +190,7 @@ pub(crate) fn render_entity_inspector(
                 .title(title)
                 .title_style(
                     Style::default()
-                        .fg(theme.text_muted)
+                        .fg(theme.header_fg)
                         .add_modifier(Modifier::BOLD),
                 );
 
@@ -359,11 +359,20 @@ pub(crate) fn build_field_list_items(
 
             let label_style = if is_selected {
                 Style::default()
-                    .fg(theme.text_normal)
+                    .fg(theme.header_fg)
                     .bg(item_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.text_muted).bg(item_bg)
+                Style::default().fg(theme.text_normal).bg(item_bg)
+            };
+
+            let icon_style = if is_selected {
+                Style::default()
+                    .fg(theme.header_fg)
+                    .bg(item_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.blue).bg(item_bg)
             };
 
             let sep_style = if is_selected {
@@ -453,6 +462,7 @@ pub(crate) fn build_field_list_items(
                     label,
                     label_width,
                     &icons.separator,
+                    icon_style,
                     label_style,
                     sep_style,
                     val_style,
@@ -851,15 +861,8 @@ pub(crate) fn build_field_list_items(
             }
 
             let mut line_spans = vec![
-                Span::styled(
-                    format!(
-                        " {} {:<label_width$} ",
-                        icon,
-                        label,
-                        label_width = label_width
-                    ),
-                    label_style,
-                ),
+                Span::styled(format!(" {} ", icon), icon_style),
+                Span::styled(format!("{:<label_width$} ", label), label_style),
                 Span::styled(format!("{} ", icons.separator), sep_style),
             ];
             line_spans.extend(val_spans);
@@ -877,6 +880,7 @@ fn build_wrapped_text_lines(
     label: &str,
     label_width: usize,
     separator: &str,
+    icon_style: Style,
     label_style: Style,
     sep_style: Style,
     val_style: Style,
@@ -917,8 +921,9 @@ fn build_wrapped_text_lines(
         let mut line_spans = Vec::new();
 
         if idx == 0 {
+            line_spans.push(Span::styled(format!(" {} ", icon), icon_style));
             line_spans.push(Span::styled(
-                format!(" {} {:<label_width$} ", icon, label),
+                format!("{:<label_width$} ", label),
                 label_style,
             ));
             line_spans.push(Span::styled(format!("{} ", separator), sep_style));

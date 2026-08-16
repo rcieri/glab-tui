@@ -19,7 +19,6 @@ pub fn issue_fields(
 ) -> Vec<crate::app::Field> {
     let mut fields = vec![
         crate::app::Field::text("Title", title),
-        crate::app::Field::section("Details"),
         crate::app::Field::multi_select("Labels", labels),
         crate::app::Field::multi_select("Assignees", assignees),
         crate::app::Field::multi_select("Milestone", milestone),
@@ -29,7 +28,6 @@ pub fn issue_fields(
         fields.push(crate::app::Field::date("Due Date", due_date));
         fields.push(crate::app::Field::text("Weight", weight));
     }
-    fields.push(crate::app::Field::section("Description"));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }
@@ -47,7 +45,6 @@ pub fn mr_fields(
 ) -> Vec<crate::app::Field> {
     let mut fields = vec![
         crate::app::Field::text("Title", title),
-        crate::app::Field::section("Details"),
         crate::app::Field::multi_select("Labels", labels),
         crate::app::Field::multi_select("Assignees", assignees),
         crate::app::Field::multi_select("Reviewers", reviewers),
@@ -60,7 +57,6 @@ pub fn mr_fields(
             draft_status,
         ));
     }
-    fields.push(crate::app::Field::section("Description"));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }
@@ -72,16 +68,11 @@ pub fn milestone_fields(
     description: String,
     is_github: bool,
 ) -> Vec<crate::app::Field> {
-    let mut fields = vec![
-        crate::app::Field::section("Details"),
-        crate::app::Field::text("Title", title),
-    ];
+    let mut fields = vec![crate::app::Field::text("Title", title)];
     if !is_github {
         fields.push(crate::app::Field::date("Start Date", start_date));
     }
-    fields.push(crate::app::Field::section("Dates"));
     fields.push(crate::app::Field::date("Due Date", due_date));
-    fields.push(crate::app::Field::section("Description"));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }
@@ -103,7 +94,6 @@ pub fn build_issue_document(
         ),
         crate::app::Field::read_only("Author", format!("@{}", issue.author.username)),
         crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&issue.updated_at)),
-        crate::app::Field::section("Details"),
         crate::app::Field::multi_select(
             "Labels",
             if issue.labels.is_empty() {
@@ -167,7 +157,6 @@ pub fn build_mr_document(
         ),
         crate::app::Field::read_only("Author", format!("@{}", mr.author.username)),
         crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&mr.updated_at)),
-        crate::app::Field::section("Details"),
         crate::app::Field::multi_select(
             "Labels",
             if mr.labels.is_empty() {

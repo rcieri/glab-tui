@@ -140,45 +140,15 @@ pub async fn handle_active_tab_key(
                 } else if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
-                        let labels = if issue.labels.is_empty() {
-                            "None".to_string()
-                        } else {
-                            issue.labels.join(", ")
-                        };
-                        let milestone = issue
-                            .milestone
-                            .as_ref()
-                            .map(|m| m.title.clone())
-                            .unwrap_or_else(|| "None".to_string());
-                        let assignees = if issue.assignees.is_empty() {
-                            "None".to_string()
-                        } else {
-                            issue
-                                .assignees
-                                .iter()
-                                .map(|a| format!("@{}", a.username))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        let is_github = app
-                            .gitlab_client
-                            .as_ref()
-                            .map(|c| c.is_github)
-                            .unwrap_or(false);
-                        let fields = crate::entity_editor::issue_fields(
-                            issue.title.clone(),
-                            labels,
-                            assignees,
-                            milestone,
-                            "Set...".to_string(),
-                            issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
-                            "Set".to_string(),
+                        let is_github = app.is_github();
+                        let mut doc = crate::entity_editor::build_issue_document(issue, is_github);
+                        doc.fields.push(crate::app::Field::text(
+                            "Description",
                             issue.description.clone().unwrap_or_default(),
-                            is_github,
-                        );
+                        ));
                         app.edit_menu = Some(crate::app::EditMenu {
-                            title: format!("Edit Issue #{}", &issue.iid.to_string()),
-                            fields,
+                            title: format!("Edit Issue #{}", issue.iid),
+                            fields: doc.fields,
                             selected_idx: 0,
                             entity_iid: issue.iid,
                             entity_kind: crate::app::EditEntityKind::EditIssue,
@@ -437,64 +407,23 @@ pub async fn handle_active_tab_key(
                 } else if let Some(selected_idx) = app.mrs.state.selected() {
                     let filtered = app.filtered_mrs();
                     if let Some(mr) = filtered.get(selected_idx) {
-                        let labels = if mr.labels.is_empty() {
-                            "None".to_string()
-                        } else {
-                            mr.labels.join(", ")
-                        };
-                        let milestone = mr
-                            .milestone
-                            .as_ref()
-                            .map(|m| m.title.clone())
-                            .unwrap_or_else(|| "None".to_string());
-                        let assignees = if mr.assignees.is_empty() {
-                            "None".to_string()
-                        } else {
-                            mr.assignees
-                                .iter()
-                                .map(|a| format!("@{}", a.username))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        let reviewers = if mr.reviewers.is_empty() {
-                            "None".to_string()
-                        } else {
-                            mr.reviewers
-                                .iter()
-                                .map(|r| format!("@{}", r.username))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        let draft_status = if mr.draft {
-                            "Draft".to_string()
-                        } else {
-                            "Ready".to_string()
-                        };
-                        let pr_suffix = if app
-                            .gitlab_client
-                            .as_ref()
-                            .map(|c| c.is_github)
-                            .unwrap_or(false)
-                        {
-                            "PR"
-                        } else {
-                            "MR"
-                        };
                         let is_github = app.is_github();
-                        let fields = crate::entity_editor::mr_fields(
-                            mr.title.clone(),
-                            labels,
-                            assignees,
-                            reviewers,
-                            milestone,
-                            mr.target_branch.clone(),
-                            draft_status,
+                        let pr_suffix = if is_github { "PR" } else { "MR" };
+                        let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid)
+                        {
+                            Some(app.unresolved_threads_count())
+                        } else {
+                            None
+                        };
+                        let mut doc =
+                            crate::entity_editor::build_mr_document(mr, is_github, unresolved);
+                        doc.fields.push(crate::app::Field::text(
+                            "Description",
                             mr.description.clone().unwrap_or_default(),
-                            is_github,
-                        );
+                        ));
                         app.edit_menu = Some(crate::app::EditMenu {
                             title: format!("Edit {} #{}", pr_suffix, mr.iid),
-                            fields,
+                            fields: doc.fields,
                             selected_idx: 0,
                             entity_iid: mr.iid,
                             entity_kind: crate::app::EditEntityKind::EditMr,
@@ -2102,8 +2031,154 @@ pub async fn handle_active_tab_key(
                     if !app.detail_visible {
                         app.detail_visible = true;
                         app.details_zoomed = false;
+                    } else if !app.details_zoomed {
+                        app.details_zoomed = true;
                     } else {
-                        app.details_zoomed = !app.details_zoomed;
+                        // Already zoomed in! Second Enter enters edit mode
+                        match app.active_tab {
+                            crate::app::Tab::Issues => {
+                                if let Some(selected_idx) = app.issues.state.selected() {
+                                    let filtered = app.filtered_issues();
+                                    if let Some(issue) = filtered.get(selected_idx) {
+                                        let is_github = app.is_github();
+                                        let mut doc = crate::entity_editor::build_issue_document(
+                                            issue, is_github,
+                                        );
+                                        doc.fields.push(crate::app::Field::text(
+                                            "Description",
+                                            issue.description.clone().unwrap_or_default(),
+                                        ));
+                                        app.edit_menu = Some(crate::app::EditMenu {
+                                            title: format!("Edit Issue #{}", issue.iid),
+                                            fields: doc.fields,
+                                            selected_idx: 0,
+                                            entity_iid: issue.iid,
+                                            entity_kind: crate::app::EditEntityKind::EditIssue,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                            workflow_inputs: vec![],
+                                            cursor_pos: 0,
+                                            editing: false,
+                                            desc_scroll: 0,
+                                        });
+                                    }
+                                }
+                            }
+                            crate::app::Tab::MergeRequests => {
+                                if let Some(selected_idx) = app.mrs.state.selected() {
+                                    let filtered = app.filtered_mrs();
+                                    if let Some(mr) = filtered.get(selected_idx) {
+                                        let is_github = app.is_github();
+                                        let pr_suffix = if is_github { "PR" } else { "MR" };
+                                        let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid)
+                                            == Some(mr.iid)
+                                        {
+                                            Some(app.unresolved_threads_count())
+                                        } else {
+                                            None
+                                        };
+                                        let mut doc = crate::entity_editor::build_mr_document(
+                                            mr, is_github, unresolved,
+                                        );
+                                        doc.fields.push(crate::app::Field::text(
+                                            "Description",
+                                            mr.description.clone().unwrap_or_default(),
+                                        ));
+                                        app.edit_menu = Some(crate::app::EditMenu {
+                                            title: format!("Edit {} #{}", pr_suffix, mr.iid),
+                                            fields: doc.fields,
+                                            selected_idx: 0,
+                                            entity_iid: mr.iid,
+                                            entity_kind: crate::app::EditEntityKind::EditMr,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                            workflow_inputs: vec![],
+                                            cursor_pos: 0,
+                                            editing: false,
+                                            desc_scroll: 0,
+                                        });
+                                    }
+                                }
+                            }
+                            crate::app::Tab::Milestones => {
+                                if let Some(selected_idx) = app.milestones.state.selected() {
+                                    let filtered = app.filtered_milestones();
+                                    if let Some(m) = filtered.get(selected_idx) {
+                                        let is_github = app.is_github();
+                                        let issues = app
+                                            .selected_milestone_issues
+                                            .as_deref()
+                                            .or_else(|| {
+                                                app.milestone_issues_cache
+                                                    .get(&m.iid)
+                                                    .map(|v| v.as_slice())
+                                            });
+                                        let mut doc =
+                                            crate::entity_editor::build_milestone_document(
+                                                m, issues, is_github,
+                                            );
+                                        doc.fields.push(crate::app::Field::text(
+                                            "Description",
+                                            m.description.clone().unwrap_or_default(),
+                                        ));
+                                        app.edit_menu = Some(crate::app::EditMenu {
+                                            title: format!("Edit Milestone %{}", m.iid),
+                                            fields: doc.fields,
+                                            selected_idx: 0,
+                                            entity_iid: m.iid,
+                                            entity_kind: crate::app::EditEntityKind::EditMilestone,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                            workflow_inputs: vec![],
+                                            cursor_pos: 0,
+                                            editing: false,
+                                            desc_scroll: 0,
+                                        });
+                                    }
+                                }
+                            }
+                            crate::app::Tab::Releases => {
+                                if let Some(selected_idx) = app.releases.state.selected() {
+                                    let filtered = app.filtered_releases();
+                                    if let Some(release) = filtered.get(selected_idx) {
+                                        let mut doc =
+                                            crate::entity_editor::build_release_document(release);
+                                        doc.fields.push(crate::app::Field::text(
+                                            "Description",
+                                            release.description.clone().unwrap_or_default(),
+                                        ));
+                                        app.edit_menu = Some(crate::app::EditMenu {
+                                            title: format!("Edit Release {}", release.tag_name),
+                                            fields: doc.fields,
+                                            selected_idx: 0,
+                                            entity_iid: 0,
+                                            entity_kind: crate::app::EditEntityKind::CreateRelease,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                            workflow_inputs: vec![],
+                                            cursor_pos: 0,
+                                            editing: false,
+                                            desc_scroll: 0,
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {
+                                app.details_zoomed = false;
+                            }
+                        }
                     }
                 }
             },

@@ -252,9 +252,13 @@ pub fn build_mr_document(
             mr.labels.join(", ")
         },
     ));
+    fields.push(crate::app::Field::read_only(
+        "Source Branch",
+        mr.source_branch.clone(),
+    ));
     fields.push(crate::app::Field::ref_field(
-        "Branch",
-        format!("{} -> {}", mr.source_branch, mr.target_branch),
+        "Target Branch",
+        mr.target_branch.clone(),
     ));
     fields.push(crate::app::Field::read_only(
         "Updated",

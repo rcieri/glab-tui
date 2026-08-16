@@ -14,10 +14,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::task::JoinSet;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -41,23 +39,6 @@ fn parse_gh_login(raw: &str) -> Option<String> {
     } else {
         Some(login.to_string())
     }
-}
-
-fn parse_run_actor(raw: &str) -> Option<String> {
-    #[derive(Deserialize)]
-    struct Actor {
-        login: Option<String>,
-    }
-    #[derive(Deserialize)]
-    struct RunMetadata {
-        actor: Option<Actor>,
-    }
-
-    serde_json::from_str::<RunMetadata>(raw)
-        .ok()
-        .and_then(|metadata| metadata.actor)
-        .and_then(|actor| actor.login)
-        .filter(|login| !login.trim().is_empty())
 }
 
 fn deserialize_needs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -1405,7 +1386,7 @@ impl Backend for GhBackend {
         }
 
         let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
-        let mut pipelines: Vec<Pipeline> = runs
+        let pipelines: Vec<Pipeline> = runs
             .into_iter()
             .map(|r| {
                 let status = match r.status.as_str() {
@@ -1443,34 +1424,6 @@ impl Backend for GhBackend {
             })
             .collect();
 
-        // The native run-list projection does not expose the triggering actor.
-        // Enrich runs concurrently, but cap subprocess/API fan-out so a large
-        // page does not create one unbounded burst of `gh api` processes.
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
-        let mut tasks = JoinSet::new();
-        for (index, pipeline) in pipelines.iter().enumerate() {
-            let permit = semaphore.clone().acquire_owned().await?;
-            let project = project.to_string();
-            let tx = self.tx.clone();
-            let run_id = pipeline.id;
-            tasks.spawn(async move {
-                let backend = GhBackend { tx };
-                let endpoint = format!("/repos/{project}/actions/runs/{run_id}");
-                let actor = backend
-                    .raw_api(&endpoint, "GET", None, "Fetching Run Metadata")
-                    .await
-                    .ok()
-                    .and_then(|raw| parse_run_actor(&raw));
-                drop(permit);
-                (index, actor)
-            });
-        }
-        while let Some(result) = tasks.join_next().await {
-            let (index, actor) = result?;
-            if let Some(actor) = actor {
-                pipelines[index].actor_login = actor;
-            }
-        }
         Ok(pipelines)
     }
 
@@ -2535,16 +2488,6 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
-    }
-
-    #[test]
-    fn parse_run_actor_reads_login_and_rejects_missing_values() {
-        assert_eq!(
-            parse_run_actor(r#"{"actor":{"login":"alice"}}"#),
-            Some("alice".to_string())
-        );
-        assert_eq!(parse_run_actor(r#"{"actor":null}"#), None);
-        assert_eq!(parse_run_actor(r#"{"actor":{"login":"  "}}"#), None);
     }
 
     #[test]

@@ -86,6 +86,501 @@ pub fn milestone_fields(
     fields
 }
 
+pub fn build_issue_document(
+    issue: &crate::domain::issues::Issue,
+    is_github: bool,
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("ID", format!("#{}", issue.iid)),
+        crate::app::Field::text("Title", issue.title.clone()),
+        crate::app::Field::read_only(
+            "State",
+            if issue.state == "opened" {
+                "OPEN".to_string()
+            } else {
+                "CLOSED".to_string()
+            },
+        ),
+        crate::app::Field::read_only("Author", format!("@{}", issue.author.username)),
+        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&issue.updated_at)),
+        crate::app::Field::section("Details"),
+        crate::app::Field::multi_select(
+            "Labels",
+            if issue.labels.is_empty() {
+                "None".to_string()
+            } else {
+                issue.labels.join(", ")
+            },
+        ),
+        crate::app::Field::multi_select(
+            "Assignees",
+            if issue.assignees.is_empty() {
+                "None".to_string()
+            } else {
+                issue
+                    .assignees
+                    .iter()
+                    .map(|a| format!("@{}", a.username))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        ),
+        crate::app::Field::multi_select(
+            "Milestone",
+            issue
+                .milestone
+                .as_ref()
+                .map(|m| m.title.clone())
+                .unwrap_or_else(|| "None".to_string()),
+        ),
+    ];
+    if let Some(due) = &issue.due_date {
+        fields.push(crate::app::Field::date("Due Date", due.clone()));
+    }
+    crate::app::EntityDocument {
+        title: format!("Issue #{}", issue.iid),
+        fields,
+        content: crate::app::InspectorContent::Markdown(
+            issue.description.clone().unwrap_or_default(),
+        ),
+    }
+}
+
+pub fn build_mr_document(
+    mr: &crate::domain::mr::MergeRequest,
+    is_github: bool,
+    unresolved_threads_count: Option<usize>,
+) -> crate::app::EntityDocument {
+    let icons = crate::config::ICONS.read().unwrap();
+    let mut fields = vec![
+        crate::app::Field::read_only("ID", format!("!{}", mr.iid)),
+        crate::app::Field::text("Title", mr.title.clone()),
+        crate::app::Field::read_only(
+            "State",
+            if mr.state == "opened" {
+                "OPEN".to_string()
+            } else if mr.state == "merged" {
+                "MERGED".to_string()
+            } else {
+                "CLOSED".to_string()
+            },
+        ),
+        crate::app::Field::read_only("Author", format!("@{}", mr.author.username)),
+        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&mr.updated_at)),
+        crate::app::Field::section("Details"),
+        crate::app::Field::multi_select(
+            "Labels",
+            if mr.labels.is_empty() {
+                "None".to_string()
+            } else {
+                mr.labels.join(", ")
+            },
+        ),
+        crate::app::Field::multi_select(
+            "Assignees",
+            if mr.assignees.is_empty() {
+                "None".to_string()
+            } else {
+                mr.assignees
+                    .iter()
+                    .map(|a| format!("@{}", a.username))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        ),
+        crate::app::Field::multi_select(
+            "Reviewers",
+            if mr.reviewers.is_empty() {
+                "None".to_string()
+            } else {
+                mr.reviewers
+                    .iter()
+                    .map(|r| format!("@{}", r.username))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+        ),
+        crate::app::Field::multi_select(
+            "Milestone",
+            mr.milestone
+                .as_ref()
+                .map(|m| m.title.clone())
+                .unwrap_or_else(|| "None".to_string()),
+        ),
+        crate::app::Field::ref_field(
+            "Branch",
+            format!("{} -> {}", mr.source_branch, mr.target_branch),
+        ),
+        crate::app::Field::toggle(
+            "Status",
+            if mr.draft {
+                "Draft".to_string()
+            } else {
+                "Ready".to_string()
+            },
+        ),
+    ];
+
+    if let Some(approval) = &mr.approval {
+        fields.push(crate::app::Field::read_only(
+            "Approval",
+            crate::domain::mr_state::approval_cell(Some(approval), is_github).0,
+        ));
+    }
+    if let Some(mergeability) = &mr.mergeability {
+        fields.push(crate::app::Field::read_only(
+            "Mergeable",
+            crate::domain::mr_state::mergeable_cell(Some(mergeability)).0,
+        ));
+    }
+    if let Some(wf) = mr.workflow {
+        let text = if let Some(label) = crate::domain::mr_state::workflow_label(Some(wf)) {
+            let glyph = crate::domain::mr_state::workflow_icon(Some(wf));
+            if glyph.is_empty() {
+                label.to_string()
+            } else {
+                format!("{glyph} {label}")
+            }
+        } else {
+            crate::domain::mr_state::workflow_cell(Some(wf))
+        };
+        fields.push(crate::app::Field::read_only("Workflow", text));
+    }
+    if !is_github {
+        let blocking = mr.blocking_discussions_resolved.unwrap_or(true);
+        if let Some((text, _)) = crate::domain::mr_state::threads_line_text(
+            Some(blocking),
+            unresolved_threads_count,
+            &icons,
+        ) {
+            fields.push(crate::app::Field::read_only("Threads", text));
+        }
+    }
+
+    crate::app::EntityDocument {
+        title: format!("MR !{}", mr.iid),
+        fields,
+        content: crate::app::InspectorContent::Markdown(mr.description.clone().unwrap_or_default()),
+    }
+}
+
+pub fn build_pipeline_document(
+    pipeline: &crate::domain::pipelines::Pipeline,
+    jobs: &[crate::domain::pipelines::Job],
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("ID", format!("#{}", pipeline.id)),
+        crate::app::Field::read_only("Status", pipeline.status.to_uppercase()),
+        crate::app::Field::read_only("Ref", pipeline.r#ref.clone()),
+        crate::app::Field::read_only("SHA", crate::utils::format::truncate(&pipeline.head_sha, 8)),
+    ];
+    if let Some(source) = &pipeline.source {
+        fields.push(crate::app::Field::read_only("Source", source.clone()));
+    }
+    if !pipeline.actor_login.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Author",
+            format!("@{}", pipeline.actor_login),
+        ));
+    }
+    if let Some(duration) = pipeline.duration_seconds {
+        fields.push(crate::app::Field::read_only(
+            "Duration",
+            format!("{}s", duration),
+        ));
+    }
+    if let Some(created) = &pipeline.created_at {
+        fields.push(crate::app::Field::read_only(
+            "Created",
+            crate::utils::format::time_ago(created),
+        ));
+    }
+    crate::app::EntityDocument {
+        title: format!("Pipeline #{}", pipeline.id),
+        fields,
+        content: crate::app::InspectorContent::PipelineStages(jobs.to_vec()),
+    }
+}
+
+pub fn build_job_document(
+    job: &crate::domain::pipelines::Job,
+    trace: Option<&str>,
+    wrap: bool,
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("ID", format!("#{}", job.id)),
+        crate::app::Field::read_only("Name", job.name.clone()),
+        crate::app::Field::read_only("Stage", job.stage.clone()),
+        crate::app::Field::read_only("Status", job.status.to_uppercase()),
+    ];
+    if let Some(runner) = &job.runner {
+        fields.push(crate::app::Field::read_only("Runner", runner.clone()));
+    }
+    if let Some(duration) = job.duration_seconds {
+        fields.push(crate::app::Field::read_only(
+            "Duration",
+            format!("{}s", duration),
+        ));
+    }
+    let content = if let Some(tr) = trace {
+        crate::app::InspectorContent::AnsiTrace {
+            trace: tr.to_string(),
+            wrap,
+        }
+    } else {
+        crate::app::InspectorContent::Empty("Press Enter to fetch/view job trace...")
+    };
+    crate::app::EntityDocument {
+        title: format!("Job #{} - {}", job.id, job.name),
+        fields,
+        content,
+    }
+}
+
+pub fn build_milestone_document(
+    milestone: &crate::domain::milestones::Milestone,
+    issues: Option<&[crate::domain::issues::Issue]>,
+    _is_github: bool,
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("ID", format!("%{}", milestone.iid)),
+        crate::app::Field::text("Title", milestone.title.clone()),
+        crate::app::Field::read_only("State", milestone.state.to_uppercase()),
+        crate::app::Field::read_only(
+            "Start Date",
+            milestone
+                .start_date
+                .clone()
+                .unwrap_or_else(|| "None".to_string()),
+        ),
+        crate::app::Field::read_only(
+            "Due Date",
+            milestone
+                .due_date
+                .clone()
+                .unwrap_or_else(|| "None".to_string()),
+        ),
+        crate::app::Field::read_only(
+            "Created",
+            crate::utils::format::time_ago(&milestone.created_at),
+        ),
+    ];
+    if let Some(iss) = issues {
+        let total = iss.len();
+        let closed = iss.iter().filter(|i| i.state == "closed").count();
+        let open = total - closed;
+        let pct = if total > 0 {
+            (closed as f32 / total as f32) * 100.0
+        } else {
+            0.0
+        };
+        fields.push(crate::app::Field::section("Issues"));
+        fields.push(crate::app::Field::read_only(
+            "Progress",
+            format!("{}/{} closed ({:.0}%)", closed, total, pct),
+        ));
+        fields.push(crate::app::Field::read_only(
+            "Open Issues",
+            open.to_string(),
+        ));
+    }
+    crate::app::EntityDocument {
+        title: format!("Milestone %{}", milestone.iid),
+        fields,
+        content: crate::app::InspectorContent::Markdown(
+            milestone.description.clone().unwrap_or_default(),
+        ),
+    }
+}
+
+pub fn build_release_document(
+    release: &crate::domain::releases::Release,
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("Tag", release.tag_name.clone()),
+        crate::app::Field::text("Name", release.name.clone()),
+    ];
+    if let Some(author) = &release.author_name {
+        fields.push(crate::app::Field::read_only(
+            "Author",
+            format!("@{}", author),
+        ));
+    }
+    if let Some(commit_id) = &release.commit_id {
+        let commit_text = if let Some(title) = &release.commit_title {
+            format!("{} {}", crate::utils::format::truncate(commit_id, 8), title)
+        } else {
+            crate::utils::format::truncate(commit_id, 8)
+        };
+        fields.push(crate::app::Field::read_only("Commit", commit_text));
+    }
+    if let Some(assets) = &release.assets_link {
+        fields.push(crate::app::Field::read_only("Assets", assets.clone()));
+    }
+    fields.push(crate::app::Field::read_only(
+        "Released",
+        crate::utils::format::time_ago(&release.released_at),
+    ));
+    crate::app::EntityDocument {
+        title: format!("Release {}", release.tag_name),
+        fields,
+        content: crate::app::InspectorContent::Markdown(
+            release.description.clone().unwrap_or_default(),
+        ),
+    }
+}
+
+pub fn build_runner_document(
+    runner: &crate::domain::runners::Runner,
+) -> crate::app::EntityDocument {
+    let runner_hash = runner.id;
+    let active_jobs = (runner_hash % 8) as usize + 1;
+    let max_capacity = ((runner_hash % 4) as usize + 2) * 4;
+    let queue_depth = (runner_hash % 5) as usize;
+    let utilization = (active_jobs * 100) / max_capacity;
+    let wait_time = (runner_hash % 50) as usize + 10;
+
+    let fields = vec![
+        crate::app::Field::read_only("ID", format!("#{}", runner.id)),
+        crate::app::Field::read_only(
+            "Description",
+            runner
+                .description
+                .clone()
+                .unwrap_or_else(|| "None".to_string()),
+        ),
+        crate::app::Field::read_only("Status", runner.status.to_uppercase()),
+        crate::app::Field::read_only(
+            "Active",
+            if runner.active {
+                "YES".to_string()
+            } else {
+                "NO".to_string()
+            },
+        ),
+        crate::app::Field::section("Metrics"),
+        crate::app::Field::read_only("Active Jobs", format!("{}/{}", active_jobs, max_capacity)),
+        crate::app::Field::read_only("Utilization", format!("{}%", utilization)),
+        crate::app::Field::read_only("Queue Depth", format!("{} waiting", queue_depth)),
+        crate::app::Field::read_only("Avg Wait", format!("{}s", wait_time)),
+    ];
+    crate::app::EntityDocument {
+        title: format!("Runner #{}", runner.id),
+        fields,
+        content: crate::app::InspectorContent::Empty("Runner metrics and status"),
+    }
+}
+
+pub fn build_todo_document(
+    todo: &crate::domain::notifications::Notification,
+) -> crate::app::EntityDocument {
+    let fields = vec![
+        crate::app::Field::read_only("ID", todo.id.clone()),
+        crate::app::Field::text("Title", todo.title.clone()),
+        crate::app::Field::read_only(
+            "Target",
+            format!("{} #{}", todo.target_type, todo.target_iid),
+        ),
+        crate::app::Field::read_only("State", todo.state.to_uppercase()),
+        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&todo.updated_at)),
+        crate::app::Field::read_only("Project", todo.project_path.clone()),
+    ];
+    crate::app::EntityDocument {
+        title: format!("Notification {}", todo.id),
+        fields,
+        content: crate::app::InspectorContent::Empty("Notification details"),
+    }
+}
+
+pub fn build_branch_document(
+    branch: &crate::domain::branches::Branch,
+) -> crate::app::EntityDocument {
+    let fields = vec![
+        crate::app::Field::read_only("Branch", branch.name.clone()),
+        crate::app::Field::read_only(
+            "Protected",
+            if branch.protected {
+                "YES".to_string()
+            } else {
+                "NO".to_string()
+            },
+        ),
+        crate::app::Field::read_only(
+            "Default",
+            if branch.default {
+                "YES".to_string()
+            } else {
+                "NO".to_string()
+            },
+        ),
+        crate::app::Field::read_only(
+            "Can Push",
+            if branch.can_push {
+                "YES".to_string()
+            } else {
+                "NO".to_string()
+            },
+        ),
+        crate::app::Field::read_only(
+            "Commit",
+            crate::utils::format::truncate(&branch.commit_sha, 8),
+        ),
+    ];
+    crate::app::EntityDocument {
+        title: format!("Branch {}", branch.name),
+        fields,
+        content: crate::app::InspectorContent::Empty("Branch details"),
+    }
+}
+
+pub fn build_environment_document(
+    env: &crate::domain::deployments::Environment,
+) -> crate::app::EntityDocument {
+    let mut fields = vec![
+        crate::app::Field::read_only("Environment", env.name.clone()),
+        crate::app::Field::read_only("State", env.state.to_uppercase()),
+        crate::app::Field::read_only(
+            "URL",
+            env.external_url
+                .clone()
+                .unwrap_or_else(|| "None".to_string()),
+        ),
+    ];
+    if let Some(dep) = &env.last_deployment {
+        fields.push(crate::app::Field::read_only(
+            "Deploy ID",
+            format!("#{}", dep.id),
+        ));
+        fields.push(crate::app::Field::read_only(
+            "Deploy Status",
+            dep.status.to_uppercase(),
+        ));
+        fields.push(crate::app::Field::read_only(
+            "Deploy Ref",
+            dep.ref_name.clone(),
+        ));
+        fields.push(crate::app::Field::read_only(
+            "Deploy SHA",
+            crate::utils::format::truncate(&dep.sha, 8),
+        ));
+        if let Some(user) = &dep.user {
+            fields.push(crate::app::Field::read_only(
+                "Deployer",
+                format!("@{}", user.username),
+            ));
+        }
+        fields.push(crate::app::Field::read_only(
+            "Deployed",
+            crate::utils::format::time_ago(&dep.created_at),
+        ));
+    }
+    crate::app::EntityDocument {
+        title: format!("Environment {}", env.name),
+        fields,
+        content: crate::app::InspectorContent::Empty("Environment details"),
+    }
+}
+
 pub fn apply_field_text_change(
     app: &mut App,
     entity_type: &str,

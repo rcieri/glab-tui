@@ -2,6 +2,7 @@
 
 mod diff;
 mod helpers;
+pub(crate) mod inspector;
 pub(crate) mod modal;
 mod overlays;
 mod tabs;

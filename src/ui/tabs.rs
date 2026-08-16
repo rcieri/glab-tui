@@ -1,6 +1,6 @@
 use crate::app::{App, Tab};
 use crate::config::THEME;
-use crate::utils::format::{format_ref, render_markdown, time_ago, truncate};
+use crate::utils::format::{format_ref, time_ago, truncate};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Rect},
@@ -279,169 +279,17 @@ pub(crate) fn render_tab_issues(
         let selected_issue_idx = app.issues.state.selected();
         if let Some(selected) = selected_issue_idx {
             if let Some(issue) = filtered_issues.get(selected) {
-                let milestone = issue
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.as_str())
-                    .unwrap_or("None");
-                let assignees = if issue.assignees.is_empty() {
-                    "None".to_string()
-                } else {
-                    issue
-                        .assignees
-                        .iter()
-                        .map(|a| format!("@{}", a.username))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                let mut text = Vec::new();
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Title:     ",
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        &issue.title,
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(""));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Author:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("@{}", issue.author.username),
-                        Style::default().fg(THEME.read().unwrap().blue),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Assignees: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(assignees, Style::default().fg(THEME.read().unwrap().blue)),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Milestone: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(milestone, Style::default().fg(THEME.read().unwrap().purple)),
-                ]));
-                if let Some(due) = &issue.due_date {
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Due Date:  ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(due, Style::default().fg(THEME.read().unwrap().yellow)),
-                    ]));
-                }
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "State:     ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        if issue.state == "opened" {
-                            "OPEN"
-                        } else {
-                            "CLOSED"
-                        },
-                        Style::default()
-                            .fg(if issue.state == "opened" {
-                                THEME.read().unwrap().green
-                            } else {
-                                THEME.read().unwrap().red
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Updated:   ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        time_ago(&issue.updated_at),
-                        Style::default().fg(THEME.read().unwrap().yellow),
-                    ),
-                ]));
-                text.push(Line::from(""));
-                let mut label_spans = vec![Span::styled(
-                    "Labels:    ",
-                    Style::default().fg(THEME.read().unwrap().text_muted),
-                )];
-                if issue.labels.is_empty() {
-                    label_spans.push(Span::styled(
-                        "None",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ));
-                } else {
-                    for (idx, label) in issue.labels.iter().enumerate() {
-                        if idx > 0 {
-                            label_spans.push(Span::styled(
-                                ", ",
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            ));
-                        }
-                        let label_color = super::helpers::get_label_color(label, &app.label_colors);
-                        label_spans.push(Span::styled(
-                            label,
-                            Style::default()
-                                .fg(label_color)
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                    }
-                }
-                text.push(Line::from(label_spans));
-                if let Some(desc) = &issue.description {
-                    if !desc.trim().is_empty() {
-                        text.push(Line::from(""));
-                        text.push(Line::from(vec![Span::styled(
-                            "Description:",
-                            Style::default()
-                                .fg(THEME.read().unwrap().header_fg)
-                                .add_modifier(Modifier::BOLD),
-                        )]));
-                        text.extend(render_markdown(desc));
-                    }
-                }
-
-                let viewport_height = detail_rect.height.saturating_sub(2) as usize;
-                let content_length = text.len();
-                let max_scroll = content_length.saturating_sub(viewport_height) as u16;
-                app.detail_scroll = app.detail_scroll.min(max_scroll);
-
-                let title_suffix = if content_length > viewport_height {
-                    let percent = (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
-                    format!(" [Shift+J/K | {}%] ", percent.min(100))
-                } else {
-                    String::new()
-                };
-
-                let preview_block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(THEME.read().unwrap().border))
-                    .title(format!(" Details{} ", title_suffix))
-                    .title_style(
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::BOLD),
-                    );
-
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .wrap(ratatui::widgets::Wrap { trim: true })
-                        .scroll((app.detail_scroll, 0)),
+                let is_github = app.is_github();
+                let doc = crate::entity_editor::build_issue_document(issue, is_github);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
@@ -456,7 +304,6 @@ pub(crate) fn render_tab_issues(
         }
     }
 }
-
 pub(crate) fn render_tab_merge_requests(
     f: &mut Frame,
     app: &mut App,
@@ -1072,450 +919,33 @@ pub(crate) fn render_tab_merge_requests(
             );
         if let Some(selected) = app.mrs.state.selected() {
             if let Some(mr) = filtered_mrs.get(selected) {
-                let milestone = mr
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.as_str())
-                    .unwrap_or("None");
-                let assignees = if mr.assignees.is_empty() {
-                    "None".to_string()
-                } else {
-                    mr.assignees
-                        .iter()
-                        .map(|a| format!("@{}", a.username))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                let reviewers = if mr.reviewers.is_empty() {
-                    "None".to_string()
-                } else {
-                    mr.reviewers
-                        .iter()
-                        .map(|r| format!("@{}", r.username))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                let draft_status = if mr.draft { "DRAFT" } else { "READY" };
-                let draft_color = if mr.draft {
-                    THEME.read().unwrap().yellow
-                } else {
-                    THEME.read().unwrap().green
-                };
-
-                let mut text = Vec::new();
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Title:     ",
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        &mr.title,
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(""));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Author:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("@{}", mr.author.username),
-                        Style::default().fg(THEME.read().unwrap().blue),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Assignees: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(assignees, Style::default().fg(THEME.read().unwrap().blue)),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Reviewers: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(reviewers, Style::default().fg(THEME.read().unwrap().blue)),
-                ]));
-
-                // Workflow — omitted entirely for `NotYours` and unknown, so
-                // MRs with no relation to you (and failed/unsupported
-                // fetches) show nothing rather than a misleading status.
-                if let Some(label) = crate::domain::mr_state::workflow_label(mr.workflow) {
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Workflow:  ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            format!(
-                                "{} {}",
-                                crate::domain::mr_state::workflow_icon(mr.workflow),
-                                label
-                            ),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        ),
-                    ]));
-                }
-
-                // Approval — omitted entirely when unknown, so a failed fetch
-                // never reads as "not approved".
-                if let Some(ap) = mr.approval.as_ref() {
-                    let (label, color) = if ap.changes_requested {
-                        (
-                            format!("{} Changes requested", icons.approval_changes),
-                            THEME.read().unwrap().red,
-                        )
-                    } else if ap.awaiting_you {
-                        let counts = match ap.approvals_required {
-                            Some(r) if r > 0 => format!("{}/{}", ap.approved_by.len(), r),
-                            _ => ap.approved_by.len().to_string(),
-                        };
-                        (
-                            format!("{} Needs approval ({})", icons.approval_pending, counts),
-                            THEME.read().unwrap().yellow,
-                        )
-                    } else if ap.approved && !ap.approved_by.is_empty() {
-                        let counts = match ap.approvals_required {
-                            Some(r) if r > 0 => format!(" ({}/{})", ap.approved_by.len(), r),
-                            _ => format!(" ({})", ap.approved_by.len()),
-                        };
-                        (
-                            format!("{} Approved{}", icons.approval_approved, counts),
-                            THEME.read().unwrap().green,
-                        )
-                    } else {
-                        (
-                            "Pending approval".to_string(),
-                            THEME.read().unwrap().text_muted,
-                        )
-                    };
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Approvals: ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(label, Style::default().fg(color)),
-                    ]));
-
-                    // The "your approval is needed" case is already carried
-                    // by the Approvals: value above (it reads
-                    // "Needs approval (0/1)" when `awaiting_you`), so no
-                    // separate marker is needed for it here.
-                    let approvers = if ap.approved_by.is_empty() {
-                        "—".to_string()
-                    } else {
-                        ap.approved_by
+                let is_github = app.is_github();
+                let unresolved_threads = if is_github {
+                    None
+                } else if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid) {
+                    Some(
+                        app.current_comments
                             .iter()
-                            .map(|u| {
-                                if ap.current_user.as_deref() == Some(u.as_str()) {
-                                    format!("@{} (you)", u)
-                                } else {
-                                    format!("@{}", u)
-                                }
+                            .filter(|c| {
+                                c.resolvable.unwrap_or(false) && !c.resolved.unwrap_or(false)
                             })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    };
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Approvers: ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(approvers, Style::default().fg(THEME.read().unwrap().blue)),
-                    ]));
-                }
-
-                // Mergeable — likewise omitted when unknown.
-                if let Some(mg) = mr.mergeability.as_ref() {
-                    let (label, color) = if mg.conflicts {
-                        (
-                            format!("{} Merge conflicts", icons.merge_conflict),
-                            THEME.read().unwrap().red,
-                        )
-                    } else if mg.needs_rebase {
-                        (
-                            format!("{} Behind target — needs rebase", icons.merge_rebase),
-                            THEME.read().unwrap().yellow,
-                        )
-                    } else if mg.computing {
-                        (
-                            format!("{} Checking…", icons.merge_checking),
-                            THEME.read().unwrap().text_muted,
-                        )
-                    } else {
-                        (
-                            format!("{} No conflicts", icons.merge_clean),
-                            THEME.read().unwrap().green,
-                        )
-                    };
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Mergeable: ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(label, Style::default().fg(color)),
-                    ]));
-                }
-
-                // One Threads line. The blocking flag is always available on
-                // GitLab; the count only after the diff has been fetched for
-                // this MR. GitHub deliberately omits this line entirely:
-                // `blocking_discussions_resolved` has no GitHub equivalent
-                // (always `None` there), and no GitHub-side count can stand
-                // in for it — `list_mr_notes` hard-codes `resolved:
-                // Some(false)` for every review comment, so
-                // `unresolved_threads_count()` on GitHub counts *all*
-                // threads, not unresolved ones. Rendering that as a threads
-                // status would be a confidently wrong number, which is worse
-                // than an absent line. (Spec: the design's Threads matrix was
-                // written assuming the flag was universally available; this
-                // omission is the corrected behavior, not a gap to fill.)
-                let count = if Some(mr.iid) == app.last_fetched_mr_iid {
-                    Some(app.unresolved_threads_count())
+                            .count(),
+                    )
                 } else {
                     None
                 };
-                if let Some((threads_text, tone)) = crate::domain::mr_state::threads_line_text(
-                    mr.blocking_discussions_resolved,
-                    count,
-                    &icons,
-                ) {
-                    let threads_color = match tone {
-                        crate::domain::mr_state::ThreadsTone::Blocking => THEME.read().unwrap().red,
-                        crate::domain::mr_state::ThreadsTone::Clean => THEME.read().unwrap().green,
-                    };
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Threads:   ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(threads_text, Style::default().fg(threads_color)),
-                    ]));
-                }
 
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Milestone: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(milestone, Style::default().fg(THEME.read().unwrap().purple)),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Target:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        &mr.target_branch,
-                        Style::default().fg(THEME.read().unwrap().purple),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "State:     ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        if mr.state == "opened" {
-                            format!("{} OPEN", icons.state_open)
-                        } else if mr.state == "merged" {
-                            format!("{} MERGED", icons.state_merged)
-                        } else {
-                            format!("{} CLOSED", icons.state_closed)
-                        },
-                        Style::default()
-                            .fg(if mr.state == "opened" {
-                                THEME.read().unwrap().green
-                            } else if mr.state == "merged" {
-                                THEME.read().unwrap().purple
-                            } else {
-                                THEME.read().unwrap().red
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" (", Style::default().fg(THEME.read().unwrap().text_muted)),
-                    Span::styled(
-                        draft_status,
-                        Style::default()
-                            .fg(draft_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(")", Style::default().fg(THEME.read().unwrap().text_muted)),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Updated:   ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        time_ago(&mr.updated_at),
-                        Style::default().fg(THEME.read().unwrap().yellow),
-                    ),
-                ]));
-                let resolved_pipe = mr.head_pipeline.as_ref().or_else(|| {
-                    if is_github {
-                        app.pipelines
-                            .items
-                            .iter()
-                            .find(|p| p.ref_branch() == mr.source_branch)
-                    } else {
-                        None
-                    }
-                });
-                if let Some(pipe) = resolved_pipe {
-                    let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&pipe.id()) {
-                        super::helpers::get_stages_dots(jobs)
-                    } else {
-                        icons.label_loading.clone()
-                    };
-
-                    if stages_dots.is_empty() {
-                        let (pipe_text, pipe_color, pipe_bg) = match pipe.status() {
-                            "success" => (
-                                format!("{} SUCCESS", icons.status_success),
-                                THEME.read().unwrap().green,
-                                THEME.read().unwrap().green_bg,
-                            ),
-                            "failed" => (
-                                format!("{} FAILED", icons.status_failed),
-                                THEME.read().unwrap().red,
-                                THEME.read().unwrap().red_bg,
-                            ),
-                            "running" => (
-                                format!("{} RUNNING", icons.status_running),
-                                THEME.read().unwrap().blue,
-                                THEME.read().unwrap().blue_bg,
-                            ),
-                            "canceled" => (
-                                format!("{} CANCEL", icons.status_canceled),
-                                THEME.read().unwrap().text_muted,
-                                THEME.read().unwrap().inactive_bg,
-                            ),
-                            "pending" => (
-                                format!("{} PENDING", icons.status_pending),
-                                THEME.read().unwrap().yellow,
-                                THEME.read().unwrap().yellow_bg,
-                            ),
-                            "skipped" => (
-                                format!("{} SKIP", icons.status_skipped),
-                                THEME.read().unwrap().text_muted,
-                                THEME.read().unwrap().inactive_bg,
-                            ),
-                            _ => (
-                                format!("{} UNKNOWN", icons.status_unknown),
-                                THEME.read().unwrap().text_muted,
-                                THEME.read().unwrap().inactive_bg,
-                            ),
-                        };
-                        text.push(Line::from(vec![
-                            Span::styled(
-                                if is_github {
-                                    "Action:    "
-                                } else {
-                                    "Pipeline:  "
-                                },
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                format!(" {} ", pipe_text),
-                                Style::default()
-                                    .fg(pipe_color)
-                                    .bg(pipe_bg)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ]));
-                    } else {
-                        text.push(Line::from(vec![
-                            Span::styled(
-                                if is_github {
-                                    "Action:    "
-                                } else {
-                                    "Pipeline:  "
-                                },
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                stages_dots,
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            ),
-                        ]));
-                    }
-                }
-                text.push(Line::from(""));
-                let mut label_spans = vec![Span::styled(
-                    "Labels:    ",
-                    Style::default().fg(THEME.read().unwrap().text_muted),
-                )];
-                if mr.labels.is_empty() {
-                    label_spans.push(Span::styled(
-                        "None",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ));
-                } else {
-                    for (idx, label) in mr.labels.iter().enumerate() {
-                        if idx > 0 {
-                            label_spans.push(Span::styled(
-                                ", ",
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            ));
-                        }
-                        let label_color = super::helpers::get_label_color(label, &app.label_colors);
-                        label_spans.push(Span::styled(
-                            label,
-                            Style::default()
-                                .fg(label_color)
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                    }
-                }
-                text.push(Line::from(label_spans));
-                if let Some(desc) = &mr.description {
-                    if !desc.trim().is_empty() {
-                        text.push(Line::from(""));
-                        text.push(Line::from(vec![Span::styled(
-                            "Description:",
-                            Style::default()
-                                .fg(THEME.read().unwrap().header_fg)
-                                .add_modifier(Modifier::BOLD),
-                        )]));
-                        text.extend(render_markdown(desc));
-                    }
-                }
-
-                let viewport_height = detail_rect.height.saturating_sub(2) as usize;
-                let content_length = text.len();
-                let max_scroll = content_length.saturating_sub(viewport_height) as u16;
-                app.detail_scroll = app.detail_scroll.min(max_scroll);
-
-                let title_suffix = if content_length > viewport_height {
-                    let percent = (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
-                    format!(" [Shift+J/K | {}%] ", percent.min(100))
-                } else {
-                    String::new()
-                };
-
-                let preview_block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(THEME.read().unwrap().border))
-                    .title(format!(" Details{} ", title_suffix))
-                    .title_style(
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::BOLD),
-                    );
-
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .wrap(ratatui::widgets::Wrap { trim: true })
-                        .scroll((app.detail_scroll, 0)),
+                let doc =
+                    crate::entity_editor::build_mr_document(mr, is_github, unresolved_threads);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
@@ -1530,7 +960,6 @@ pub(crate) fn render_tab_merge_requests(
         }
     }
 }
-
 pub(crate) fn render_tab_pipelines(
     f: &mut Frame,
     app: &mut App,
@@ -1849,190 +1278,17 @@ pub(crate) fn render_tab_pipelines(
             .border_style(Style::default().fg(THEME.read().unwrap().border));
         if let Some(selected) = app.pipelines.state.selected() {
             if let Some(p) = filtered_pipelines.get(selected) {
-                let mut text = Vec::new();
-                if is_github
-                    && app
-                        .group_by_column
-                        .get(&Tab::Pipelines)
-                        .and_then(|column| column.as_deref())
-                        == Some("Name")
-                    && !p.name().is_empty()
-                {
-                    let group = filtered_pipelines
-                        .iter()
-                        .filter(|pipeline| pipeline.name() == p.name())
-                        .collect::<Vec<_>>();
-                    let success = group
-                        .iter()
-                        .filter(|pipeline| pipeline.status() == "success")
-                        .count();
-                    let failed = group
-                        .iter()
-                        .filter(|pipeline| pipeline.status() == "failed")
-                        .count();
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Workflow group: ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            format!("{} ({})", p.name(), group.len()),
-                            Style::default()
-                                .fg(THEME.read().unwrap().blue)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!("  {} passed  {} failed", success, failed),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        ),
-                    ]));
-                    text.push(Line::from(""));
-                }
-                text.push(Line::from(vec![
-                    Span::styled(
-                        if is_github {
-                            "Run ID:     "
-                        } else {
-                            "Pipeline ID: "
-                        },
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("#{}", p.id()),
-                        Style::default()
-                            .fg(THEME.read().unwrap().blue)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Ref:         ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format_ref(p.ref_branch()),
-                        Style::default().fg(THEME.read().unwrap().purple),
-                    ),
-                ]));
-                if is_github {
-                    for (label, value) in [
-                        ("Workflow:   ", p.name()),
-                        ("Event:      ", p.event()),
-                        ("Actor:      ", p.actor_login()),
-                        ("SHA:        ", p.head_sha()),
-                    ] {
-                        if !value.is_empty() {
-                            text.push(Line::from(vec![
-                                Span::styled(
-                                    label,
-                                    Style::default().fg(THEME.read().unwrap().text_muted),
-                                ),
-                                Span::styled(
-                                    truncate(value, 60),
-                                    Style::default().fg(THEME.read().unwrap().text_normal),
-                                ),
-                            ]));
-                        }
-                    }
-                } else if let Some(source) = p.source() {
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Source:      ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            source.to_string(),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        ),
-                    ]));
-                }
-
-                let (status_text, status_color) = match p.status() {
-                    "success" => ("success", THEME.read().unwrap().green),
-                    "failed" => ("failed", THEME.read().unwrap().red),
-                    "running" => ("running", THEME.read().unwrap().blue),
-                    "canceled" => ("canceled", THEME.read().unwrap().text_muted),
-                    "pending" => ("pending", THEME.read().unwrap().yellow),
-                    _ => ("unknown", THEME.read().unwrap().text_muted),
-                };
-
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Status:      ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        status_text,
-                        Style::default()
-                            .fg(status_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                if let Some(created) = p.created_at() {
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Created:     ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            time_ago(created),
-                            Style::default().fg(THEME.read().unwrap().yellow),
-                        ),
-                    ]));
-                }
-                if let Some(dur) = p.duration_seconds() {
-                    let mins = dur / 60;
-                    let secs = dur % 60;
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Duration:    ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            format!("{}m {}s", mins, secs),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        ),
-                    ]));
-                }
-                text.push(Line::from(""));
-
-                if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
-                    let stage_label = if is_github {
-                        "Jobs Status:"
-                    } else {
-                        "Stages Success Rate:"
-                    };
-                    text.push(Line::from(vec![Span::styled(
-                        format!("{} {stage_label}", icons.label_stages),
-                        Style::default()
-                            .fg(THEME.read().unwrap().header_fg)
-                            .add_modifier(Modifier::BOLD),
-                    )]));
-                    text.push(Line::from(""));
-                    if is_github {
-                        super::helpers::append_job_summaries(&mut text, jobs);
-                    } else {
-                        super::helpers::append_stage_summaries(&mut text, jobs);
-                    }
-                } else {
-                    text.push(Line::from(vec![Span::styled(
-                        if is_github {
-                            "Loading jobs..."
-                        } else {
-                            "Loading stages..."
-                        },
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::ITALIC),
-                    )]));
-                }
-                text.push(Line::from(""));
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .scroll((app.detail_scroll, 0))
-                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                let jobs = app.pipeline_jobs.get(&p.id()).cloned().unwrap_or_default();
+                let doc = crate::entity_editor::build_pipeline_document(p, &jobs);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
@@ -2047,7 +1303,6 @@ pub(crate) fn render_tab_pipelines(
         }
     }
 }
-
 pub(crate) fn render_tab_jobs(
     f: &mut Frame,
     app: &mut App,
@@ -2765,162 +2020,16 @@ pub(crate) fn render_tab_runners(
             .border_style(Style::default().fg(THEME.read().unwrap().border));
         if let Some(selected) = app.runners.state.selected() {
             if let Some(r) = filtered_runners.get(selected) {
-                let desc = r.description.as_deref().unwrap_or("None");
-                let mut text = Vec::new();
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Runner ID:   ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        r.id.to_string(),
-                        Style::default()
-                            .fg(THEME.read().unwrap().blue)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Description: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(desc, Style::default().fg(THEME.read().unwrap().text_normal)),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Status:      ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        &r.status,
-                        Style::default()
-                            .fg(if r.status == "online" {
-                                THEME.read().unwrap().green
-                            } else if r.status == "paused" {
-                                THEME.read().unwrap().yellow
-                            } else {
-                                THEME.read().unwrap().red
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Active:      ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        r.active.to_string(),
-                        Style::default().fg(if r.active {
-                            THEME.read().unwrap().green
-                        } else {
-                            THEME.read().unwrap().red
-                        }),
-                    ),
-                ]));
-
-                text.push(Line::from(""));
-                text.push(Line::from(vec![Span::styled(
-                    format!("── {} Performance & Queue Metrics ──", icons.label_metrics),
-                    Style::default()
-                        .fg(THEME.read().unwrap().header_fg)
-                        .add_modifier(Modifier::BOLD),
-                )]));
-                text.push(Line::from(""));
-
-                let runner_hash = r.id;
-                let active_jobs = (runner_hash % 8) as usize + 1;
-                let max_capacity = ((runner_hash % 4) as usize + 2) * 4;
-                let queue_depth = (runner_hash % 5) as usize;
-                let utilization = (active_jobs * 100) / max_capacity;
-                let wait_time = (runner_hash % 50) as usize + 10;
-
-                let mut gauge_chars = String::new();
-                let filled = (active_jobs * 10) / max_capacity;
-                for idx in 0..10 {
-                    if idx < filled {
-                        gauge_chars.push('■');
-                    } else {
-                        gauge_chars.push('□');
-                    }
-                }
-
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Active Jobs: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("{}  ", gauge_chars),
-                        Style::default().fg(THEME.read().unwrap().green),
-                    ),
-                    Span::styled(
-                        format!("{}/{}", active_jobs, max_capacity),
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-
-                let util_color = if utilization > 80 {
-                    THEME.read().unwrap().red
-                } else if utilization > 50 {
-                    THEME.read().unwrap().yellow
-                } else {
-                    THEME.read().unwrap().green
-                };
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Utilization: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("{}%", utilization),
-                        Style::default().fg(util_color).add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-
-                let q_color = if queue_depth > 3 {
-                    THEME.read().unwrap().red
-                } else if queue_depth > 0 {
-                    THEME.read().unwrap().yellow
-                } else {
-                    THEME.read().unwrap().green
-                };
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Queue Depth: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("{} jobs waiting", queue_depth),
-                        Style::default().fg(q_color).add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-
-                let wait_color = if wait_time > 45 {
-                    THEME.read().unwrap().red
-                } else if wait_time > 25 {
-                    THEME.read().unwrap().yellow
-                } else {
-                    THEME.read().unwrap().green
-                };
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Avg Wait:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("{} seconds", wait_time),
-                        Style::default().fg(wait_color),
-                    ),
-                ]));
-
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                let doc = crate::entity_editor::build_runner_document(r);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
@@ -2935,7 +2044,6 @@ pub(crate) fn render_tab_runners(
         }
     }
 }
-
 pub(crate) fn render_tab_releases(
     f: &mut Frame,
     app: &mut App,
@@ -3124,96 +2232,16 @@ pub(crate) fn render_tab_releases(
             .border_style(Style::default().fg(THEME.read().unwrap().border));
         if let Some(selected) = app.releases.state.selected() {
             if let Some(r) = filtered_releases.get(selected) {
-                let mut text = Vec::new();
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Release: ",
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        &r.name,
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Tag:     ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        &r.tag_name,
-                        Style::default()
-                            .fg(THEME.read().unwrap().green)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Date:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        time_ago(&r.released_at),
-                        Style::default().fg(THEME.read().unwrap().yellow),
-                    ),
-                ]));
-                if let Some(ref author) = r.author_name {
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Author:  ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(author, Style::default().fg(THEME.read().unwrap().blue)),
-                    ]));
-                }
-                if let Some(ref cid) = r.commit_id {
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Commit:  ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            truncate(cid, 8),
-                            Style::default().fg(THEME.read().unwrap().purple),
-                        ),
-                        Span::raw(" "),
-                        Span::styled(
-                            r.commit_title.as_deref().unwrap_or(""),
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        ),
-                    ]));
-                }
-                if let Some(ref assets) = r.assets_link {
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Assets:  ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(assets, Style::default().fg(THEME.read().unwrap().blue)),
-                    ]));
-                }
-                if let Some(ref desc) = r.description {
-                    if !desc.is_empty() {
-                        text.push(Line::from(""));
-                        text.push(Line::from(Span::styled(
-                            "Description:",
-                            Style::default()
-                                .fg(THEME.read().unwrap().header_fg)
-                                .add_modifier(Modifier::BOLD),
-                        )));
-                        text.extend(render_markdown(desc));
-                    }
-                }
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .scroll((app.detail_scroll, 0))
-                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                let doc = crate::entity_editor::build_release_document(r);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
@@ -3228,7 +2256,6 @@ pub(crate) fn render_tab_releases(
         }
     }
 }
-
 pub(crate) fn render_tab_todos(
     f: &mut Frame,
     app: &mut App,
@@ -3449,89 +2476,16 @@ pub(crate) fn render_tab_todos(
             .border_style(Style::default().fg(THEME.read().unwrap().border));
         if let Some(selected) = app.todos.state.selected() {
             if let Some(n) = filtered_todos.get(selected) {
-                let mut text = Vec::new();
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Title:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        &n.title,
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Project:  ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        &n.project_path,
-                        Style::default().fg(THEME.read().unwrap().text_normal),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Target:   ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        format!("{} #{}", n.target_type, n.target_iid),
-                        Style::default().fg(THEME.read().unwrap().blue),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "State:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        if n.state == "unread" || n.state == "pending" {
-                            "NEW"
-                        } else {
-                            "READ"
-                        },
-                        Style::default().fg(if n.state == "unread" || n.state == "pending" {
-                            THEME.read().unwrap().green
-                        } else {
-                            THEME.read().unwrap().text_muted
-                        }),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Updated:  ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        time_ago(&n.updated_at),
-                        Style::default().fg(THEME.read().unwrap().yellow),
-                    ),
-                ]));
-                text.push(Line::from(""));
-                if n.state == "unread" || n.state == "pending" {
-                    text.push(Line::from(Span::styled(
-                        " Press Enter to mark read and switch to item",
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::ITALIC),
-                    )));
-                } else {
-                    text.push(Line::from(Span::styled(
-                        " Press Enter to switch to item",
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::ITALIC),
-                    )));
-                }
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .scroll((app.detail_scroll, 0))
-                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                let doc = crate::entity_editor::build_todo_document(n);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
@@ -3546,7 +2500,6 @@ pub(crate) fn render_tab_todos(
         }
     }
 }
-
 pub(crate) fn render_tab_milestones(
     f: &mut Frame,
     app: &mut App,
@@ -3777,137 +2730,25 @@ pub(crate) fn render_tab_milestones(
 
         if let Some(selected_idx) = app.milestones.state.selected() {
             if let Some(m) = filtered_milestones.get(selected_idx) {
-                let mut text = Vec::new();
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Title:       ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        &m.title,
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "State:       ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        m.state.to_uppercase(),
-                        Style::default()
-                            .fg(if m.state == "active" {
-                                THEME.read().unwrap().green
-                            } else {
-                                THEME.read().unwrap().red
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Start Date:  ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        m.start_date.as_deref().unwrap_or("N/A"),
-                        Style::default().fg(THEME.read().unwrap().blue),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Due Date:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        m.due_date.as_deref().unwrap_or("N/A"),
-                        Style::default().fg(THEME.read().unwrap().yellow),
-                    ),
-                ]));
-                if let Some(desc) = &m.description {
-                    if !desc.trim().is_empty() {
-                        text.push(Line::from(""));
-                        text.push(Line::from(Span::styled(
-                            "Description:",
-                            Style::default()
-                                .fg(THEME.read().unwrap().header_fg)
-                                .add_modifier(Modifier::BOLD),
-                        )));
-                        text.extend(render_markdown(desc));
-                    }
-                }
-                text.push(Line::from(""));
-
-                if let Some(issues) = &app.selected_milestone_issues {
-                    let total = issues.len();
-                    let closed = issues.iter().filter(|i| i.state == "closed").count();
-                    let open = total - closed;
-
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Issues Status: ",
-                            Style::default()
-                                .fg(THEME.read().unwrap().header_fg)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!("{} Closed", closed),
-                            Style::default().fg(THEME.read().unwrap().green),
-                        ),
-                        Span::raw(" / "),
-                        Span::styled(
-                            format!("{} Open", open),
-                            Style::default().fg(THEME.read().unwrap().yellow),
-                        ),
-                        Span::raw(format!(" (Total {})", total)),
-                    ]));
-
-                    let pct = if total > 0 {
-                        (closed as f32 / total as f32) * 100.0
-                    } else {
-                        0.0
-                    };
-                    let filled_len = if total > 0 { (closed * 20) / total } else { 0 };
-                    let bar = format!(
-                        "[{}{}] {:.1}%",
-                        "█".repeat(filled_len),
-                        "░".repeat(20 - filled_len),
-                        pct,
-                    );
-                    let progress_color = if pct <= 33.0 {
-                        THEME.read().unwrap().red
-                    } else if pct <= 66.0 {
-                        THEME.read().unwrap().yellow
-                    } else {
-                        THEME.read().unwrap().green
-                    };
-                    text.push(Line::from(Span::styled(
-                        bar,
-                        Style::default().fg(progress_color),
-                    )));
-                    text.push(Line::from(""));
-                } else {
-                    text.push(Line::from(Span::styled(
-                        "Loading issues details...",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    )));
-                }
-
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .scroll((app.detail_scroll, 0))
-                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                let is_github = app.is_github();
+                let issues = app.selected_milestone_issues.as_deref();
+                let doc = crate::entity_editor::build_milestone_document(m, issues, is_github);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select a milestone to view details...")
+                Paragraph::new("Select an item to view details...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -3915,7 +2756,6 @@ pub(crate) fn render_tab_milestones(
         }
     }
 }
-
 pub(crate) fn render_tab_branches(
     f: &mut Frame,
     app: &mut App,
@@ -4031,82 +2871,23 @@ pub(crate) fn render_tab_branches(
             .border_style(Style::default().fg(THEME.read().unwrap().border));
         if let Some(idx) = app.branches.state.selected() {
             if let Some(branch) = filtered.get(idx) {
-                let mut text = Vec::new();
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Branch:    ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        &branch.name,
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Default:   ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        if branch.default { "YES" } else { "NO" },
-                        Style::default().fg(if branch.default {
-                            THEME.read().unwrap().green
-                        } else {
-                            THEME.read().unwrap().text_muted
-                        }),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Protected: ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        if branch.protected { "YES" } else { "NO" },
-                        Style::default().fg(if branch.protected {
-                            THEME.read().unwrap().green
-                        } else {
-                            THEME.read().unwrap().text_muted
-                        }),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "Can Push:  ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        if branch.can_push { "YES" } else { "NO" },
-                        Style::default().fg(if branch.can_push {
-                            THEME.read().unwrap().green
-                        } else {
-                            THEME.read().unwrap().red
-                        }),
-                    ),
-                ]));
-                text.push(Line::from(vec![
-                    Span::styled(
-                        "SHA:       ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ),
-                    Span::styled(
-                        truncate(&branch.commit_sha, 8),
-                        Style::default().fg(THEME.read().unwrap().purple),
-                    ),
-                ]));
-                f.render_widget(
-                    Paragraph::new(text)
-                        .block(preview_block)
-                        .scroll((app.detail_scroll, 0))
-                        .wrap(ratatui::widgets::Wrap { trim: true }),
+                let doc = crate::entity_editor::build_branch_document(branch);
+                super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
                     detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
                 );
+            } else {
+                f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select a branch to view details...")
+                Paragraph::new("Select an item to view details...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -4114,7 +2895,6 @@ pub(crate) fn render_tab_branches(
         }
     }
 }
-
 pub(crate) fn render_tab_environments(
     f: &mut Frame,
     app: &mut App,
@@ -4238,112 +3018,16 @@ pub(crate) fn render_tab_environments(
         if app.deployments.items.is_empty() {
             if let Some(idx) = app.environments.state.selected() {
                 if let Some(env) = filtered.get(idx) {
-                    let mut text = Vec::new();
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Environment: ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            &env.name,
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "State:       ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(&env.state, Style::default().fg(THEME.read().unwrap().blue)),
-                    ]));
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "URL:         ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            env.external_url.as_deref().unwrap_or("N/A"),
-                            Style::default().fg(THEME.read().unwrap().blue),
-                        ),
-                    ]));
-                    if let Some(ref d) = env.last_deployment {
-                        text.push(Line::from(""));
-                        text.push(Line::from(vec![
-                            Span::styled(
-                                "Deployment:  ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                format!("#{}", d.iid),
-                                Style::default()
-                                    .fg(THEME.read().unwrap().blue)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ]));
-                        let status_color = match d.status.as_str() {
-                            "success" => THEME.read().unwrap().green,
-                            "failed" => THEME.read().unwrap().red,
-                            "running" => THEME.read().unwrap().blue,
-                            "canceled" => THEME.read().unwrap().text_muted,
-                            _ => THEME.read().unwrap().text_muted,
-                        };
-                        text.push(Line::from(vec![
-                            Span::styled(
-                                "Status:      ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                &d.status,
-                                Style::default()
-                                    .fg(status_color)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ]));
-                        text.push(Line::from(vec![
-                            Span::styled(
-                                "Ref:         ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                &d.ref_name,
-                                Style::default().fg(THEME.read().unwrap().purple),
-                            ),
-                        ]));
-                        text.push(Line::from(vec![
-                            Span::styled(
-                                "SHA:         ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                truncate(&d.sha, 8),
-                                Style::default().fg(THEME.read().unwrap().purple),
-                            ),
-                        ]));
-                        text.push(Line::from(vec![
-                            Span::styled(
-                                "Date:        ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                time_ago(&d.created_at),
-                                Style::default().fg(THEME.read().unwrap().yellow),
-                            ),
-                        ]));
-                    } else {
-                        text.push(Line::from(""));
-                        text.push(Line::from(Span::styled(
-                            "No deployments",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        )));
-                    }
-                    f.render_widget(
-                        Paragraph::new(text)
-                            .block(preview_block)
-                            .scroll((app.detail_scroll, 0))
-                            .wrap(ratatui::widgets::Wrap { trim: true }),
+                    let doc = crate::entity_editor::build_environment_document(env);
+                    super::inspector::render_entity_inspector(
+                        f,
+                        &doc,
                         detail_rect,
+                        super::inspector::InspectorMode::ReadOnly {
+                            scroll: app.detail_scroll,
+                            title_suffix: "",
+                        },
+                        &app.label_colors,
                     );
                 }
             } else {

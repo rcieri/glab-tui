@@ -95,9 +95,9 @@ pub async fn handle_active_tab_key(
                     app.edit_menu = Some(crate::app::EditMenu {
                         title: format!("Bulk Edit {} Issues", count),
                         fields: vec![
-                            crate::app::Field::multi_select("Labels", String::new()),
                             crate::app::Field::multi_select("Assignees", String::new()),
                             crate::app::Field::multi_select("Milestone", String::new()),
+                            crate::app::Field::multi_select("Labels", String::new()),
                         ],
                         selected_idx: 0,
                         entity_iid: 0,
@@ -293,19 +293,19 @@ pub async fn handle_active_tab_key(
                             title: format!("Create {} from #{}", pr_suffix, issue.iid),
                             fields: vec![
                                 crate::app::Field::text("Title", title_val),
+                                crate::app::Field::toggle(
+                                    "Status (Draft/Ready)",
+                                    "Draft".to_string(),
+                                ),
                                 crate::app::Field::ref_field("Source Branch", source_branch_val),
                                 crate::app::Field::ref_field(
                                     "Target Branch",
                                     get_default_branch().unwrap_or_else(|| "main".to_string()),
                                 ),
-                                crate::app::Field::multi_select("Labels", labels_val),
                                 crate::app::Field::multi_select("Assignees", assignees_val),
                                 crate::app::Field::multi_select("Reviewers", String::new()),
                                 crate::app::Field::multi_select("Milestone", milestone_val),
-                                crate::app::Field::toggle(
-                                    "Status (Draft/Ready)",
-                                    "Draft".to_string(),
-                                ),
+                                crate::app::Field::multi_select("Labels", labels_val),
                                 crate::app::Field::text("Description", description_val),
                             ],
                             selected_idx: 0,
@@ -392,9 +392,9 @@ pub async fn handle_active_tab_key(
                     app.edit_menu = Some(crate::app::EditMenu {
                         title: format!("Bulk Edit {} {}s", count, pr_suffix),
                         fields: vec![
-                            crate::app::Field::multi_select("Labels", String::new()),
                             crate::app::Field::multi_select("Assignees", String::new()),
                             crate::app::Field::multi_select("Milestone", String::new()),
+                            crate::app::Field::multi_select("Labels", String::new()),
                         ],
                         selected_idx: 0,
                         entity_iid: 0,

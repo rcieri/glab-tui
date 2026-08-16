@@ -3573,6 +3573,10 @@ async fn main() -> Result<()> {
                                             title: format!("Create {}", pr_suffix),
                                             fields: vec![
                                                 crate::app::Field::text("Title", title_val),
+                                                crate::app::Field::toggle(
+                                                    "Status (Draft/Ready)",
+                                                    "Draft".to_string(),
+                                                ),
                                                 crate::app::Field::ref_field(
                                                     "Source Branch",
                                                     source_branch_val,
@@ -3581,9 +3585,6 @@ async fn main() -> Result<()> {
                                                     "Target Branch",
                                                     get_default_branch()
                                                         .unwrap_or_else(|| "main".to_string()),
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Labels", labels_val,
                                                 ),
                                                 crate::app::Field::multi_select(
                                                     "Assignees",
@@ -3597,9 +3598,8 @@ async fn main() -> Result<()> {
                                                     "Milestone",
                                                     milestone_val,
                                                 ),
-                                                crate::app::Field::toggle(
-                                                    "Status (Draft/Ready)",
-                                                    "Draft".to_string(),
+                                                crate::app::Field::multi_select(
+                                                    "Labels", labels_val,
                                                 ),
                                                 crate::app::Field::text(
                                                     "Description",

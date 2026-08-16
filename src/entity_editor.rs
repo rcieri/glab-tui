@@ -19,9 +19,9 @@ pub fn issue_fields(
 ) -> Vec<crate::app::Field> {
     let mut fields = vec![
         crate::app::Field::text("Title", title),
-        crate::app::Field::multi_select("Labels", labels),
         crate::app::Field::multi_select("Assignees", assignees),
         crate::app::Field::multi_select("Milestone", milestone),
+        crate::app::Field::multi_select("Labels", labels),
     ];
     if !is_github {
         fields.push(crate::app::Field::toggle("Confidential", confidential));
@@ -43,20 +43,18 @@ pub fn mr_fields(
     description: String,
     is_github: bool,
 ) -> Vec<crate::app::Field> {
-    let mut fields = vec![
-        crate::app::Field::text("Title", title),
-        crate::app::Field::multi_select("Labels", labels),
-        crate::app::Field::multi_select("Assignees", assignees),
-        crate::app::Field::multi_select("Reviewers", reviewers),
-        crate::app::Field::multi_select("Milestone", milestone),
-    ];
+    let mut fields = vec![crate::app::Field::text("Title", title)];
     if !is_github {
-        fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
         fields.push(crate::app::Field::toggle(
             "Status (Draft/Ready)",
             draft_status,
         ));
+        fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
     }
+    fields.push(crate::app::Field::multi_select("Assignees", assignees));
+    fields.push(crate::app::Field::multi_select("Reviewers", reviewers));
+    fields.push(crate::app::Field::multi_select("Milestone", milestone));
+    fields.push(crate::app::Field::multi_select("Labels", labels));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }
@@ -93,15 +91,6 @@ pub fn build_issue_document(
             },
         ),
         crate::app::Field::read_only("Author", format!("@{}", issue.author.username)),
-        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&issue.updated_at)),
-        crate::app::Field::multi_select(
-            "Labels",
-            if issue.labels.is_empty() {
-                "None".to_string()
-            } else {
-                issue.labels.join(", ")
-            },
-        ),
         crate::app::Field::multi_select(
             "Assignees",
             if issue.assignees.is_empty() {
@@ -123,10 +112,22 @@ pub fn build_issue_document(
                 .map(|m| m.title.clone())
                 .unwrap_or_else(|| "None".to_string()),
         ),
+        crate::app::Field::multi_select(
+            "Labels",
+            if issue.labels.is_empty() {
+                "None".to_string()
+            } else {
+                issue.labels.join(", ")
+            },
+        ),
     ];
     if let Some(due) = &issue.due_date {
         fields.push(crate::app::Field::date("Due Date", due.clone()));
     }
+    fields.push(crate::app::Field::read_only(
+        "Updated",
+        crate::utils::format::time_ago(&issue.updated_at),
+    ));
     crate::app::EntityDocument {
         title: format!("Issue #{}", issue.iid),
         fields,
@@ -155,51 +156,6 @@ pub fn build_mr_document(
                 "CLOSED".to_string()
             },
         ),
-        crate::app::Field::read_only("Author", format!("@{}", mr.author.username)),
-        crate::app::Field::read_only("Updated", crate::utils::format::time_ago(&mr.updated_at)),
-        crate::app::Field::multi_select(
-            "Labels",
-            if mr.labels.is_empty() {
-                "None".to_string()
-            } else {
-                mr.labels.join(", ")
-            },
-        ),
-        crate::app::Field::multi_select(
-            "Assignees",
-            if mr.assignees.is_empty() {
-                "None".to_string()
-            } else {
-                mr.assignees
-                    .iter()
-                    .map(|a| format!("@{}", a.username))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        ),
-        crate::app::Field::multi_select(
-            "Reviewers",
-            if mr.reviewers.is_empty() {
-                "None".to_string()
-            } else {
-                mr.reviewers
-                    .iter()
-                    .map(|r| format!("@{}", r.username))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        ),
-        crate::app::Field::multi_select(
-            "Milestone",
-            mr.milestone
-                .as_ref()
-                .map(|m| m.title.clone())
-                .unwrap_or_else(|| "None".to_string()),
-        ),
-        crate::app::Field::ref_field(
-            "Branch",
-            format!("{} -> {}", mr.source_branch, mr.target_branch),
-        ),
         crate::app::Field::toggle(
             "Status",
             if mr.draft {
@@ -210,18 +166,6 @@ pub fn build_mr_document(
         ),
     ];
 
-    if let Some(approval) = &mr.approval {
-        fields.push(crate::app::Field::read_only(
-            "Approval",
-            crate::domain::mr_state::approval_cell(Some(approval), is_github).0,
-        ));
-    }
-    if let Some(mergeability) = &mr.mergeability {
-        fields.push(crate::app::Field::read_only(
-            "Mergeable",
-            crate::domain::mr_state::mergeable_cell(Some(mergeability)).0,
-        ));
-    }
     if let Some(wf) = mr.workflow {
         let text = if let Some(label) = crate::domain::mr_state::workflow_label(Some(wf)) {
             let glyph = crate::domain::mr_state::workflow_icon(Some(wf));
@@ -235,6 +179,18 @@ pub fn build_mr_document(
         };
         fields.push(crate::app::Field::read_only("Workflow", text));
     }
+    if let Some(approval) = &mr.approval {
+        fields.push(crate::app::Field::read_only(
+            "Approval",
+            crate::domain::mr_state::approval_cell(Some(approval), is_github).0,
+        ));
+    }
+    if let Some(mergeability) = &mr.mergeability {
+        fields.push(crate::app::Field::read_only(
+            "Mergeable",
+            crate::domain::mr_state::mergeable_cell(Some(mergeability)).0,
+        ));
+    }
     if !is_github {
         let blocking = mr.blocking_discussions_resolved.unwrap_or(true);
         if let Some((text, _)) = crate::domain::mr_state::threads_line_text(
@@ -245,6 +201,58 @@ pub fn build_mr_document(
             fields.push(crate::app::Field::read_only("Threads", text));
         }
     }
+
+    fields.push(crate::app::Field::read_only(
+        "Author",
+        format!("@{}", mr.author.username),
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Assignees",
+        if mr.assignees.is_empty() {
+            "None".to_string()
+        } else {
+            mr.assignees
+                .iter()
+                .map(|a| format!("@{}", a.username))
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Reviewers",
+        if mr.reviewers.is_empty() {
+            "None".to_string()
+        } else {
+            mr.reviewers
+                .iter()
+                .map(|r| format!("@{}", r.username))
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Milestone",
+        mr.milestone
+            .as_ref()
+            .map(|m| m.title.clone())
+            .unwrap_or_else(|| "None".to_string()),
+    ));
+    fields.push(crate::app::Field::multi_select(
+        "Labels",
+        if mr.labels.is_empty() {
+            "None".to_string()
+        } else {
+            mr.labels.join(", ")
+        },
+    ));
+    fields.push(crate::app::Field::ref_field(
+        "Branch",
+        format!("{} -> {}", mr.source_branch, mr.target_branch),
+    ));
+    fields.push(crate::app::Field::read_only(
+        "Updated",
+        crate::utils::format::time_ago(&mr.updated_at),
+    ));
 
     crate::app::EntityDocument {
         title: format!("MR !{}", mr.iid),
@@ -487,16 +495,16 @@ pub fn build_branch_document(
     let fields = vec![
         crate::app::Field::read_only("Branch", branch.name.clone()),
         crate::app::Field::read_only(
-            "Protected",
-            if branch.protected {
+            "Default",
+            if branch.default {
                 "YES".to_string()
             } else {
                 "NO".to_string()
             },
         ),
         crate::app::Field::read_only(
-            "Default",
-            if branch.default {
+            "Protected",
+            if branch.protected {
                 "YES".to_string()
             } else {
                 "NO".to_string()

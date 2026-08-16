@@ -74,13 +74,13 @@ pub(crate) fn render_entity_inspector(
                     .fg(theme.bg)
                     .bg(theme.text_normal)
                     .add_modifier(Modifier::SLOW_BLINK);
+                let block_cursor_style = Style::default()
+                    .fg(theme.text_normal)
+                    .add_modifier(Modifier::SLOW_BLINK);
                 let text_style = Style::default().fg(theme.text_normal);
 
                 if desc_value.is_empty() {
-                    vec![Line::from(vec![Span::styled(
-                        "█",
-                        Style::default().fg(theme.text_normal),
-                    )])]
+                    vec![Line::from(vec![Span::styled("█", block_cursor_style)])]
                 } else {
                     let mut lines = Vec::new();
                     let mut line_start_offset = 0;
@@ -113,10 +113,7 @@ pub(crate) fn render_entity_inspector(
                                     spans.push(Span::styled(rest.to_string(), text_style));
                                 }
                             } else {
-                                spans.push(Span::styled(
-                                    "█".to_string(),
-                                    Style::default().fg(theme.text_normal),
-                                ));
+                                spans.push(Span::styled("█".to_string(), block_cursor_style));
                             }
                             lines.push(Line::from(spans));
                         } else {
@@ -924,13 +921,15 @@ fn build_wrapped_text_lines(
     cursor_style: Style,
 ) -> Vec<Line<'static>> {
     let chunks = wrap_text_with_offsets(text, max_width);
+    let block_cursor_style = val_style.add_modifier(Modifier::SLOW_BLINK);
+
     if chunks.is_empty() {
         let mut spans = vec![
             Span::styled(format!(" {} {:<label_width$} ", icon, label), label_style),
             Span::styled(format!("{} ", separator), sep_style),
         ];
         if is_editing {
-            spans.push(Span::styled("█", val_style));
+            spans.push(Span::styled("█", block_cursor_style));
         }
         return vec![Line::from(spans)];
     }
@@ -988,7 +987,7 @@ fn build_wrapped_text_lines(
                     line_spans.push(Span::styled(rest.to_string(), val_style));
                 }
             } else {
-                line_spans.push(Span::styled("█".to_string(), val_style));
+                line_spans.push(Span::styled("█".to_string(), block_cursor_style));
             }
         } else {
             line_spans.push(Span::styled(chunk, val_style));

@@ -392,7 +392,6 @@ pub fn build_milestone_document(
             closed,
             total
         );
-        fields.push(crate::app::Field::section("Issues"));
         fields.push(crate::app::Field::read_only("Progress", bar));
         fields.push(crate::app::Field::read_only(
             "Open Issues",
@@ -403,7 +402,6 @@ pub fn build_milestone_document(
             closed.to_string(),
         ));
     } else {
-        fields.push(crate::app::Field::section("Issues"));
         fields.push(crate::app::Field::read_only(
             "Progress",
             "[░░░░░░░░░░] 0% (Loading...)".to_string(),
@@ -483,7 +481,6 @@ pub fn build_runner_document(
                 "NO".to_string()
             },
         ),
-        crate::app::Field::section("Metrics"),
         crate::app::Field::read_only("Active Jobs", format!("{}/{}", active_jobs, max_capacity)),
         crate::app::Field::read_only("Utilization", format!("{}%", utilization)),
         crate::app::Field::read_only("Queue Depth", format!("{} waiting", queue_depth)),

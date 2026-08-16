@@ -394,10 +394,10 @@ pub(crate) fn build_field_list_items(
 
             if f.kind == FieldType::Section {
                 return ListItem::new(Line::from(vec![Span::styled(
-                    format!("  {}", label.to_uppercase()),
+                    format!(" ── {} ──", label),
                     Style::default()
-                        .fg(theme.header_fg)
-                        .add_modifier(Modifier::BOLD),
+                        .fg(theme.text_muted)
+                        .add_modifier(Modifier::DIM),
                 )]));
             }
 

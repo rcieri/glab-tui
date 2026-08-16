@@ -14,8 +14,10 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::JoinSet;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -56,6 +58,21 @@ fn parse_run_actor(raw: &str) -> Option<String> {
         .and_then(|metadata| metadata.actor)
         .and_then(|actor| actor.login)
         .filter(|login| !login.trim().is_empty())
+}
+
+fn deserialize_needs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        Some(serde_json::Value::Array(items)) => Ok(items
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect()),
+        Some(serde_json::Value::String(item)) => Ok(vec![item]),
+        _ => Ok(Vec::new()),
+    }
 }
 
 /// Splits `latestReviews` into (every review's author, approving authors only).
@@ -1427,17 +1444,32 @@ impl Backend for GhBackend {
             .collect();
 
         // The native run-list projection does not expose the triggering actor.
-        // Enrich each run from the REST endpoint while keeping native listing
-        // for pagination and status normalization.
-        for pipeline in &mut pipelines {
-            let endpoint = format!("/repos/{project}/actions/runs/{}", pipeline.id);
-            let Ok(metadata) = self
-                .raw_api(&endpoint, "GET", None, "Fetching Run Metadata")
-                .await
-            else {
-                continue;
-            };
-            pipeline.actor_login = parse_run_actor(&metadata).unwrap_or_default();
+        // Enrich runs concurrently, but cap subprocess/API fan-out so a large
+        // page does not create one unbounded burst of `gh api` processes.
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
+        let mut tasks = JoinSet::new();
+        for (index, pipeline) in pipelines.iter().enumerate() {
+            let permit = semaphore.clone().acquire_owned().await?;
+            let project = project.to_string();
+            let tx = self.tx.clone();
+            let run_id = pipeline.id;
+            tasks.spawn(async move {
+                let backend = GhBackend { tx };
+                let endpoint = format!("/repos/{project}/actions/runs/{run_id}");
+                let actor = backend
+                    .raw_api(&endpoint, "GET", None, "Fetching Run Metadata")
+                    .await
+                    .ok()
+                    .and_then(|raw| parse_run_actor(&raw));
+                drop(permit);
+                (index, actor)
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            let (index, actor) = result?;
+            if let Some(actor) = actor {
+                pipelines[index].actor_login = actor;
+            }
         }
         Ok(pipelines)
     }
@@ -1478,7 +1510,7 @@ impl Backend for GhBackend {
             started_at: Option<String>,
             #[serde(rename = "completedAt")]
             completed_at: Option<String>,
-            #[serde(default)]
+            #[serde(default, deserialize_with = "deserialize_needs")]
             needs: Vec<String>,
         }
 
@@ -2517,6 +2549,40 @@ mod tests {
             None
         );
         assert_eq!(chrono_duration("invalid", "invalid"), None);
+    }
+
+    #[test]
+    fn deserialize_needs_accepts_missing_null_string_and_array_shapes() {
+        #[derive(Deserialize)]
+        struct Fixture {
+            #[serde(default, deserialize_with = "deserialize_needs")]
+            needs: Vec<String>,
+        }
+
+        assert!(
+            serde_json::from_str::<Fixture>(r#"{}"#)
+                .unwrap()
+                .needs
+                .is_empty()
+        );
+        assert!(
+            serde_json::from_str::<Fixture>(r#"{"needs":null}"#)
+                .unwrap()
+                .needs
+                .is_empty()
+        );
+        assert_eq!(
+            serde_json::from_str::<Fixture>(r#"{"needs":"build"}"#)
+                .unwrap()
+                .needs,
+            vec!["build"]
+        );
+        assert_eq!(
+            serde_json::from_str::<Fixture>(r#"{"needs":["build","test"]}"#)
+                .unwrap()
+                .needs,
+            vec!["build", "test"]
+        );
     }
 
     #[test]

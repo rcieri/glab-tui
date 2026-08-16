@@ -187,15 +187,33 @@ pub fn build_mr_document(
         fields.push(crate::app::Field::read_only("Workflow", text));
     }
     if let Some(approval) = &mr.approval {
-        fields.push(crate::app::Field::read_only(
+        let (text, tone) = crate::domain::mr_state::approval_cell(Some(approval), is_github);
+        fields.push(crate::app::Field::read_only_toned(
             "Approval",
-            crate::domain::mr_state::approval_cell(Some(approval), is_github).0,
+            text,
+            match tone {
+                crate::domain::mr_state::ApprovalTone::ChangesRequested => {
+                    crate::app::FieldTone::Red
+                }
+                crate::domain::mr_state::ApprovalTone::AwaitingYou => crate::app::FieldTone::Yellow,
+                crate::domain::mr_state::ApprovalTone::Approved => crate::app::FieldTone::Green,
+                crate::domain::mr_state::ApprovalTone::Pending => crate::app::FieldTone::Yellow,
+                crate::domain::mr_state::ApprovalTone::Unknown => crate::app::FieldTone::Muted,
+            },
         ));
     }
     if let Some(mergeability) = &mr.mergeability {
-        fields.push(crate::app::Field::read_only(
+        let (text, tone) = crate::domain::mr_state::mergeable_cell(Some(mergeability));
+        fields.push(crate::app::Field::read_only_toned(
             "Mergeable",
-            crate::domain::mr_state::mergeable_cell(Some(mergeability)).0,
+            text,
+            match tone {
+                crate::domain::mr_state::MergeTone::Conflict => crate::app::FieldTone::Red,
+                crate::domain::mr_state::MergeTone::Rebase => crate::app::FieldTone::Yellow,
+                crate::domain::mr_state::MergeTone::Clean => crate::app::FieldTone::Green,
+                crate::domain::mr_state::MergeTone::Computing => crate::app::FieldTone::Blue,
+                crate::domain::mr_state::MergeTone::Unknown => crate::app::FieldTone::Muted,
+            },
         ));
     }
     if !is_github {
@@ -354,19 +372,19 @@ pub fn build_milestone_document(
         crate::app::Field::read_only("ID", format!("%{}", milestone.iid)),
         crate::app::Field::text("Title", milestone.title.clone()),
         crate::app::Field::read_only("State", milestone.state.to_uppercase()),
-        crate::app::Field::read_only(
+        crate::app::Field::date(
             "Start Date",
             milestone
                 .start_date
                 .clone()
-                .unwrap_or_else(|| "None".to_string()),
+                .unwrap_or_else(|| "Set".to_string()),
         ),
-        crate::app::Field::read_only(
+        crate::app::Field::date(
             "Due Date",
             milestone
                 .due_date
                 .clone()
-                .unwrap_or_else(|| "None".to_string()),
+                .unwrap_or_else(|| "Set".to_string()),
         ),
         crate::app::Field::read_only(
             "Created",
@@ -376,7 +394,6 @@ pub fn build_milestone_document(
     if let Some(iss) = issues {
         let total = iss.len();
         let closed = iss.iter().filter(|i| i.state == "closed").count();
-        let open = total - closed;
         let pct = if total > 0 {
             (closed as f32 / total as f32) * 100.0
         } else {
@@ -397,14 +414,6 @@ pub fn build_milestone_document(
             total
         );
         fields.push(crate::app::Field::read_only("Progress", bar));
-        fields.push(crate::app::Field::read_only(
-            "Open Issues",
-            open.to_string(),
-        ));
-        fields.push(crate::app::Field::read_only(
-            "Closed Issues",
-            closed.to_string(),
-        ));
     } else {
         fields.push(crate::app::Field::read_only(
             "Progress",
@@ -1160,62 +1169,19 @@ pub fn apply_selector_changes(
 pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
     if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue" {
         if let Some(issue) = app.issues.items.iter().find(|i| i.iid == entity_iid) {
-            let labels = if issue.labels.is_empty() {
-                "None".to_string()
-            } else {
-                issue.labels.join(", ")
-            };
-            let milestone = issue
-                .milestone
-                .as_ref()
-                .map(|m| m.title.clone())
-                .unwrap_or_else(|| "None".to_string());
-            let assignees = if issue.assignees.is_empty() {
-                "None".to_string()
-            } else {
-                issue
-                    .assignees
-                    .iter()
-                    .map(|a| format!("@{}", a.username))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-
+            let issue = issue.clone();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
-            let fields = issue_fields(
-                issue.title.clone(),
-                if issue.labels.is_empty() {
-                    "None".to_string()
-                } else {
-                    issue.labels.join(", ")
-                },
-                if issue.assignees.is_empty() {
-                    "None".to_string()
-                } else {
-                    issue
-                        .assignees
-                        .iter()
-                        .map(|a| format!("@{}", a.username))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                },
-                issue
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .unwrap_or_else(|| "None".to_string()),
-                "No".to_string(),
-                issue.due_date.clone().unwrap_or_else(|| "Set".to_string()),
-                "Set".to_string(),
+            let mut doc = build_issue_document(&issue, is_github);
+            doc.fields.push(crate::app::Field::text(
+                "Description",
                 issue.description.clone().unwrap_or_default(),
-                is_github,
-            );
+            ));
 
             app.edit_menu = Some(crate::app::EditMenu {
                 title: format!("Edit Issue #{}", issue.iid),
-                fields,
+                fields: doc.fields,
                 selected_idx,
                 entity_iid: issue.iid,
                 entity_kind: crate::app::EditEntityKind::EditIssue,
@@ -1232,81 +1198,28 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
         }
     } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
         if let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid) {
-            let labels = if mr.labels.is_empty() {
-                "None".to_string()
-            } else {
-                mr.labels.join(", ")
-            };
-            let milestone = mr
-                .milestone
-                .as_ref()
-                .map(|m| m.title.clone())
-                .unwrap_or_else(|| "None".to_string());
-            let assignees = if mr.assignees.is_empty() {
-                "None".to_string()
-            } else {
-                mr.assignees
-                    .iter()
-                    .map(|a| format!("@{}", a.username))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-            let reviewers = if mr.reviewers.is_empty() {
-                "None".to_string()
-            } else {
-                mr.reviewers
-                    .iter()
-                    .map(|r| format!("@{}", r.username))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-            let draft_status = if mr.draft {
-                "Draft".to_string()
-            } else {
-                "Ready".to_string()
-            };
+            let mr = mr.clone();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
-            let fields = mr_fields(
-                mr.title.clone(),
-                if mr.labels.is_empty() {
-                    "None".to_string()
-                } else {
-                    mr.labels.join(", ")
-                },
-                if mr.assignees.is_empty() {
-                    "None".to_string()
-                } else {
-                    mr.assignees
-                        .iter()
-                        .map(|a| format!("@{}", a.username))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                },
-                if mr.reviewers.is_empty() {
-                    "None".to_string()
-                } else {
-                    mr.reviewers
-                        .iter()
-                        .map(|r| format!("@{}", r.username))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                },
-                mr.milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .unwrap_or_else(|| "None".to_string()),
-                mr.target_branch.clone(),
-                draft_status,
+            // Recompute the unresolved-threads hint the same way the MRs tab
+            // preview does, so the Threads field matches the live state.
+            let unresolved = if app.diff_view.as_ref().map(|d| d.mr_iid) == Some(mr.iid) {
+                Some(app.unresolved_threads_count())
+            } else {
+                None
+            };
+
+            let mut doc = build_mr_document(&mr, is_github, unresolved);
+            doc.fields.push(crate::app::Field::text(
+                "Description",
                 mr.description.clone().unwrap_or_default(),
-                is_github,
-            );
+            ));
 
             let mr_label = app.kind().term("mr_short");
             app.edit_menu = Some(crate::app::EditMenu {
                 title: format!("Edit {} #{}", mr_label, mr.iid),
-                fields,
+                fields: doc.fields,
                 selected_idx,
                 entity_iid: mr.iid,
                 entity_kind: crate::app::EditEntityKind::EditMr,
@@ -1326,26 +1239,25 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
         || entity_type == "edit_milestone"
     {
         if let Some(milestone) = app.milestones.items.iter().find(|m| m.iid == entity_iid) {
-            let is_github = app.is_github();
+            let milestone = milestone.clone();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let is_github = app.is_github();
 
-            let fields = milestone_fields(
-                milestone.title.clone(),
-                milestone
-                    .start_date
-                    .clone()
-                    .unwrap_or_else(|| "Set".to_string()),
-                milestone
-                    .due_date
-                    .clone()
-                    .unwrap_or_else(|| "Set".to_string()),
+            let issues: Option<Vec<crate::domain::issues::Issue>> = app
+                .selected_milestone_issues
+                .clone()
+                .or_else(|| app.milestone_issues_cache.get(&milestone.iid).cloned());
+            let issues_ref: Option<&[crate::domain::issues::Issue]> = issues.as_deref();
+
+            let mut doc = build_milestone_document(&milestone, issues_ref, is_github);
+            doc.fields.push(crate::app::Field::text(
+                "Description",
                 milestone.description.clone().unwrap_or_default(),
-                is_github,
-            );
+            ));
 
             app.edit_menu = Some(crate::app::EditMenu {
-                title: format!("Edit Milestone #{}", milestone.iid),
-                fields,
+                title: format!("Edit Milestone %{}", milestone.iid),
+                fields: doc.fields,
                 selected_idx,
                 entity_iid: milestone.iid,
                 entity_kind: crate::app::EditEntityKind::EditMilestone,

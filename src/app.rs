@@ -477,11 +477,24 @@ pub struct EntityDocument {
     pub content: InspectorContent,
 }
 
+/// Semantic tone used to give a preview field a colored background, mirroring
+/// the table's tone→color mapping (e.g. Approval/Mergeable columns). `None`
+/// means "render with the default field styling".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FieldTone {
+    Muted,
+    Red,
+    Yellow,
+    Green,
+    Blue,
+}
+
 #[derive(Clone, Debug)]
 pub struct Field {
     pub label: String,
     pub kind: FieldType,
     pub value: String,
+    pub tone: Option<FieldTone>,
 }
 
 impl Field {
@@ -490,6 +503,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Text,
             value,
+            tone: None,
         }
     }
     pub fn multi_select(label: &str, value: String) -> Self {
@@ -497,6 +511,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::MultiSelect,
             value,
+            tone: None,
         }
     }
     pub fn toggle(label: &str, value: String) -> Self {
@@ -504,6 +519,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Toggle,
             value,
+            tone: None,
         }
     }
     pub fn ref_field(label: &str, value: String) -> Self {
@@ -511,6 +527,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Ref,
             value,
+            tone: None,
         }
     }
     pub fn date(label: &str, value: String) -> Self {
@@ -518,6 +535,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Date,
             value,
+            tone: None,
         }
     }
     pub fn section(label: &str) -> Self {
@@ -525,6 +543,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Section,
             value: String::new(),
+            tone: None,
         }
     }
     pub fn read_only(label: &str, value: String) -> Self {
@@ -532,6 +551,18 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::ReadOnly,
             value,
+            tone: None,
+        }
+    }
+    /// Read-only field carrying a semantic `FieldTone` so the inspector renders
+    /// it with a tone-driven colored background, matching the table's styling
+    /// for the Approval/Mergeable columns.
+    pub fn read_only_toned(label: &str, value: String, tone: FieldTone) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::ReadOnly,
+            value,
+            tone: Some(tone),
         }
     }
     pub fn is_editable(&self) -> bool {

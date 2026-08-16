@@ -8,10 +8,34 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::app::{EditMenu, EntityDocument, Field, FieldType, InspectorContent};
+use crate::app::{EditMenu, EntityDocument, Field, FieldTone, FieldType, InspectorContent};
 use crate::config::{ICONS, THEME};
 use crate::ui::helpers::get_label_color;
 use crate::utils::format::{parse_ansi_trace, render_markdown};
+
+/// Map a `FieldTone` to the same `(fg, badge_bg, bold)` triple the table uses
+/// for the Approval/Mergeable columns, so a toned preview field renders with a
+/// colored background identical to its table cell. `is_selected` mirrors the
+/// table's selection override (selected → `highlight_bg`).
+fn tone_badge_style(
+    tone: &FieldTone,
+    is_selected: bool,
+    theme: &crate::config::Theme,
+) -> (Color, Option<Color>, bool) {
+    let (fg, bg, bold) = match tone {
+        FieldTone::Green => (theme.green, theme.green_bg, true),
+        FieldTone::Red => (theme.red, theme.red_bg, true),
+        FieldTone::Yellow => (theme.yellow, theme.yellow_bg, true),
+        FieldTone::Blue => (theme.blue, theme.blue_bg, true),
+        FieldTone::Muted => (theme.text_muted, theme.bg, false),
+    };
+    let badge_bg = if is_selected {
+        Some(theme.highlight_bg)
+    } else {
+        Some(bg)
+    };
+    (fg, badge_bg, bold)
+}
 
 pub enum InspectorMode<'a> {
     ReadOnly { scroll: u16, title_suffix: &'a str },
@@ -810,101 +834,133 @@ pub(crate) fn build_field_list_items(
                                     }
                                     _ => (theme.text_normal, false),
                                 },
-                                "Approval" => match val.to_uppercase().as_str() {
-                                    "APPROVED" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} APPROVED ", icons.approval_approved));
-                                        (theme.green, true)
+                                "Approval" => {
+                                    if let Some(tone) = &f.tone {
+                                        let (fg, bg, bold) =
+                                            tone_badge_style(tone, is_selected, &theme);
+                                        badge_bg = bg;
+                                        (fg, bold)
+                                    } else {
+                                        match val.to_uppercase().as_str() {
+                                            "APPROVED" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.green_bg
+                                                });
+                                                formatted_val = Some(format!(
+                                                    " {} APPROVED ",
+                                                    icons.approval_approved
+                                                ));
+                                                (theme.green, true)
+                                            }
+                                            "CHANGES" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.red_bg
+                                                });
+                                                formatted_val = Some(format!(
+                                                    " {} CHANGES ",
+                                                    icons.approval_changes
+                                                ));
+                                                (theme.red, true)
+                                            }
+                                            "YOURS" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.blue_bg
+                                                });
+                                                formatted_val = Some(format!(" \u{f007} YOURS "));
+                                                (theme.blue, true)
+                                            }
+                                            "AWAITING" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.yellow_bg
+                                                });
+                                                formatted_val = Some(format!(
+                                                    " {} AWAITING ",
+                                                    icons.approval_pending
+                                                ));
+                                                (theme.yellow, true)
+                                            }
+                                            _ => (theme.text_normal, false),
+                                        }
                                     }
-                                    "CHANGES" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.red_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} CHANGES ", icons.approval_changes));
-                                        (theme.red, true)
+                                }
+                                "Mergeable" => {
+                                    if let Some(tone) = &f.tone {
+                                        let (fg, bg, bold) =
+                                            tone_badge_style(tone, is_selected, &theme);
+                                        badge_bg = bg;
+                                        (fg, bold)
+                                    } else {
+                                        match val.to_uppercase().as_str() {
+                                            "CLEAN" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.green_bg
+                                                });
+                                                formatted_val =
+                                                    Some(format!(" {} CLEAN ", icons.merge_clean));
+                                                (theme.green, true)
+                                            }
+                                            "CONFLICT" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.red_bg
+                                                });
+                                                formatted_val = Some(format!(
+                                                    " {} CONFLICT ",
+                                                    icons.merge_conflict
+                                                ));
+                                                (theme.red, true)
+                                            }
+                                            "REBASE" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.yellow_bg
+                                                });
+                                                formatted_val = Some(format!(
+                                                    " {} REBASE ",
+                                                    icons.merge_rebase
+                                                ));
+                                                (theme.yellow, true)
+                                            }
+                                            "BLOCKED" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.red_bg
+                                                });
+                                                formatted_val = Some(format!(
+                                                    " {} BLOCKED ",
+                                                    icons.merge_conflict
+                                                ));
+                                                (theme.red, true)
+                                            }
+                                            "BEHIND" => {
+                                                badge_bg = Some(if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.yellow_bg
+                                                });
+                                                formatted_val = Some(format!(
+                                                    " {} BEHIND ",
+                                                    icons.merge_rebase
+                                                ));
+                                                (theme.yellow, true)
+                                            }
+                                            _ => (theme.text_normal, false),
+                                        }
                                     }
-                                    "YOURS" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.blue_bg
-                                        });
-                                        formatted_val = Some(format!(" \u{f007} YOURS "));
-                                        (theme.blue, true)
-                                    }
-                                    "AWAITING" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.yellow_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} AWAITING ", icons.approval_pending));
-                                        (theme.yellow, true)
-                                    }
-                                    _ => (theme.text_normal, false),
-                                },
-                                "Mergeable" => match val.to_uppercase().as_str() {
-                                    "CLEAN" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} CLEAN ", icons.merge_clean));
-                                        (theme.green, true)
-                                    }
-                                    "CONFLICT" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.red_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} CONFLICT ", icons.merge_conflict));
-                                        (theme.red, true)
-                                    }
-                                    "REBASE" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.yellow_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} REBASE ", icons.merge_rebase));
-                                        (theme.yellow, true)
-                                    }
-                                    "BLOCKED" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.red_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} BLOCKED ", icons.merge_conflict));
-                                        (theme.red, true)
-                                    }
-                                    "BEHIND" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.yellow_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} BEHIND ", icons.merge_rebase));
-                                        (theme.yellow, true)
-                                    }
-                                    _ => (theme.text_normal, false),
-                                },
+                                }
                                 "Workflow" => match val.to_uppercase().as_str() {
                                     "APPROVED" => {
                                         badge_bg = Some(if is_selected {

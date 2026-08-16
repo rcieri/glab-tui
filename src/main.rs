@@ -5596,6 +5596,7 @@ async fn main() -> Result<()> {
                                         tokio::spawn(async move {
                                             let sd = if start_date.is_empty()
                                                 || start_date == "YYYY-MM-DD"
+                                                || start_date == "Set"
                                             {
                                                 None
                                             } else {
@@ -5603,6 +5604,7 @@ async fn main() -> Result<()> {
                                             };
                                             let dd = if due_date.is_empty()
                                                 || due_date == "YYYY-MM-DD"
+                                                || due_date == "Set"
                                             {
                                                 None
                                             } else {

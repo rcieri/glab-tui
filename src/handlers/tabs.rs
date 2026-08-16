@@ -1590,12 +1590,40 @@ pub async fn handle_active_tab_key(
             ) =>
             {
                 if let Some(selected_idx) = app.milestones.state.selected() {
-                    let milestone_iid = {
-                        let filtered = app.filtered_milestones();
-                        filtered.get(selected_idx).map(|m| m.iid)
-                    };
-                    if let Some(iid) = milestone_iid {
-                        rebuild_edit_menu(app, "milestone", iid);
+                    let is_github = app.is_github();
+                    let milestone_opt: Option<crate::domain::milestones::Milestone> = app
+                        .filtered_milestones()
+                        .get(selected_idx)
+                        .map(|m| (*m).clone());
+                    if let Some(m) = milestone_opt {
+                        let issues: Option<Vec<crate::domain::issues::Issue>> = app
+                            .selected_milestone_issues
+                            .clone()
+                            .or_else(|| app.milestone_issues_cache.get(&m.iid).cloned());
+                        let issues_ref: Option<&[crate::domain::issues::Issue]> = issues.as_deref();
+                        let mut doc = crate::entity_editor::build_milestone_document(
+                            &m, issues_ref, is_github,
+                        );
+                        doc.fields.push(crate::app::Field::text(
+                            "Description",
+                            m.description.clone().unwrap_or_default(),
+                        ));
+                        app.edit_menu = Some(crate::app::EditMenu {
+                            title: format!("Edit Milestone %{}", m.iid),
+                            fields: doc.fields,
+                            selected_idx: 0,
+                            entity_iid: m.iid,
+                            entity_kind: crate::app::EditEntityKind::EditMilestone,
+                            state: {
+                                let mut s = ratatui::widgets::ListState::default();
+                                s.select(Some(0));
+                                s
+                            },
+                            workflow_inputs: vec![],
+                            cursor_pos: 0,
+                            editing: false,
+                            desc_scroll: 0,
+                        });
                     }
                 }
             }

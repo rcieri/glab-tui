@@ -492,7 +492,7 @@ pub fn build_todo_document(
 pub fn build_branch_document(
     branch: &crate::domain::branches::Branch,
 ) -> crate::app::EntityDocument {
-    let fields = vec![
+    let mut fields = vec![
         crate::app::Field::read_only("Branch", branch.name.clone()),
         crate::app::Field::read_only(
             "Default",
@@ -520,9 +520,16 @@ pub fn build_branch_document(
         ),
         crate::app::Field::read_only(
             "Commit",
-            crate::utils::format::truncate(&branch.commit_sha, 8),
+            if branch.commit_sha.is_empty() {
+                "None".to_string()
+            } else {
+                branch.commit_sha.clone()
+            },
         ),
     ];
+    if !branch.web_url.is_empty() {
+        fields.push(crate::app::Field::read_only("URL", branch.web_url.clone()));
+    }
     crate::app::EntityDocument {
         title: format!("Branch {}", branch.name),
         fields,

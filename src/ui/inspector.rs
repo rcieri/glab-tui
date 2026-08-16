@@ -451,6 +451,10 @@ pub(crate) fn build_field_list_items(
                         _ => icons.label_details.as_str(),
                     },
                     "Author" | "Assignees" | "Reviewers" | "Deployer" => "\u{f007}",
+                    "Default" => icons.radio_on.as_str(),
+                    "Protected" => "\u{f023}",
+                    "Can Push" => icons.check_on.as_str(),
+                    "URL" => "\u{f0c1}",
                     "Milestone" => icons.label_milestone.as_str(),
                     "Branch" | "Ref" | "Deploy Ref" => icons.label_branch.as_str(),
                     "Environment" => icons.label_environment.as_str(),
@@ -471,7 +475,13 @@ pub(crate) fn build_field_list_items(
                 },
             };
 
-            if label == "Title" || label == "Name" {
+            if label == "Title"
+                || label == "Name"
+                || label == "Branch"
+                || label == "Commit"
+                || label == "SHA"
+                || label == "URL"
+            {
                 let available_width = (pane_width as usize)
                     .saturating_sub(label_width + 8)
                     .max(12);
@@ -717,6 +727,26 @@ pub(crate) fn build_field_list_items(
                                 }
                                 _ => (theme.text_normal, false),
                             },
+                            "Default" | "Protected" | "Can Push" => {
+                                match val.to_lowercase().as_str() {
+                                    "yes" | "true" => {
+                                        badge_bg = Some(if is_selected {
+                                            theme.highlight_bg
+                                        } else {
+                                            theme.green_bg
+                                        });
+                                        formatted_val = Some(format!(" {} YES ", icons.check_on));
+                                        (theme.green, true)
+                                    }
+                                    "no" | "false" => {
+                                        badge_bg = Some(item_bg);
+                                        formatted_val = Some(" NO ".to_string());
+                                        (theme.text_muted, false)
+                                    }
+                                    _ => (theme.text_normal, false),
+                                }
+                            }
+                            "Commit" | "SHA" | "Deploy SHA" => (theme.purple, false),
                             "Approval" => match val.to_uppercase().as_str() {
                                 "APPROVED" => {
                                     badge_bg = Some(if is_selected {

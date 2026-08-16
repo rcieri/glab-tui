@@ -2792,7 +2792,7 @@ pub(crate) fn render_tab_branches(
             let mut cells = Vec::new();
             if app.is_column_visible(Tab::Branches, "Name") {
                 cells.push(super::helpers::render_fuzzy_cell(
-                    &b.name,
+                    &format!("{} {}", icons.label_branch, b.name),
                     &app.search_query,
                     is_selected,
                     false,
@@ -2801,26 +2801,55 @@ pub(crate) fn render_tab_branches(
                 ));
             }
             if app.is_column_visible(Tab::Branches, "Default") {
-                let text = if b.default { "YES" } else { "NO" };
-                let style = if b.default {
-                    Style::default().fg(THEME.read().unwrap().green)
+                let cell = if b.default {
+                    Cell::from(Span::styled(
+                        format!(" {} YES ", icons.radio_on),
+                        Style::default()
+                            .fg(THEME.read().unwrap().green)
+                            .bg(if is_selected {
+                                THEME.read().unwrap().highlight_bg
+                            } else {
+                                THEME.read().unwrap().green_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    ))
                 } else {
-                    Style::default().fg(THEME.read().unwrap().text_muted)
+                    Cell::from(Span::styled(
+                        " NO ",
+                        Style::default().fg(THEME.read().unwrap().text_muted),
+                    ))
                 };
-                cells.push(Cell::from(Span::styled(text, style)));
+                cells.push(cell);
             }
             if app.is_column_visible(Tab::Branches, "Protected") {
-                let text = if b.protected { "YES" } else { "NO" };
-                let style = if b.protected {
-                    Style::default().fg(THEME.read().unwrap().yellow)
+                let cell = if b.protected {
+                    Cell::from(Span::styled(
+                        format!(" \u{f023} YES "),
+                        Style::default()
+                            .fg(THEME.read().unwrap().yellow)
+                            .bg(if is_selected {
+                                THEME.read().unwrap().highlight_bg
+                            } else {
+                                THEME.read().unwrap().yellow_bg
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    ))
                 } else {
-                    Style::default().fg(THEME.read().unwrap().text_muted)
+                    Cell::from(Span::styled(
+                        " NO ",
+                        Style::default().fg(THEME.read().unwrap().text_muted),
+                    ))
                 };
-                cells.push(Cell::from(Span::styled(text, style)));
+                cells.push(cell);
             }
             if app.is_column_visible(Tab::Branches, "SHA") {
+                let sha_text = if b.commit_sha.is_empty() {
+                    "None".to_string()
+                } else {
+                    crate::utils::format::truncate(&b.commit_sha, 8)
+                };
                 cells.push(super::helpers::render_fuzzy_cell(
-                    &crate::utils::format::truncate(&b.commit_sha, 10),
+                    &sha_text,
                     &app.search_query,
                     is_selected,
                     false,
@@ -2837,9 +2866,9 @@ pub(crate) fn render_tab_branches(
             .filter(|c| app.is_column_visible(Tab::Branches, c))
             .map(|c| match *c {
                 "Name" => Constraint::Fill(1),
-                "Default" => Constraint::Length(10),
-                "Protected" => Constraint::Length(12),
-                "SHA" => Constraint::Length(14),
+                "Default" => Constraint::Length(12),
+                "Protected" => Constraint::Length(14),
+                "SHA" => Constraint::Length(12),
                 _ => Constraint::Fill(1),
             })
             .collect();

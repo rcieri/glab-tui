@@ -363,6 +363,48 @@ pub(crate) fn append_stage_summaries(
     }
 }
 
+pub(crate) fn append_job_summaries(
+    text: &mut Vec<Line<'static>>,
+    jobs: &[crate::domain::pipelines::Job],
+) {
+    for job in jobs {
+        let name = job.name().to_string();
+        let status = job.status().to_string();
+        let status_color = match status.as_str() {
+            "success" => THEME.read().unwrap().green,
+            "failed" => THEME.read().unwrap().red,
+            "running" => THEME.read().unwrap().blue,
+            "pending" => THEME.read().unwrap().yellow,
+            _ => THEME.read().unwrap().text_muted,
+        };
+        let duration = job
+            .duration_seconds()
+            .map(|d| format!("{}m {}s", d / 60, d % 60))
+            .unwrap_or_else(|| "-".to_string());
+        let needs = if job.needs().is_empty() {
+            String::new()
+        } else {
+            format!(" needs: {}", job.needs().join(", "))
+        };
+        text.push(Line::from(vec![
+            Span::styled(
+                format!("{} ", truncate(&name, 24)),
+                Style::default().fg(THEME.read().unwrap().text_normal),
+            ),
+            Span::styled(
+                status.to_uppercase(),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  {}{}", duration, needs),
+                Style::default().fg(THEME.read().unwrap().text_muted),
+            ),
+        ]));
+    }
+}
+
 #[allow(dead_code)]
 fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
     let padded_key = format!(" {:^3} ", key);

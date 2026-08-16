@@ -1689,6 +1689,16 @@ pub(crate) fn render_tab_pipelines(
                     Alignment::Left,
                 ));
             }
+            if app.is_column_visible(Tab::Pipelines, "Source") {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(p.source().unwrap_or_default(), 18),
+                    &app.search_query,
+                    is_row_highlighted,
+                    is_checked,
+                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::Pipelines, "Name") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(p.name(), 30),
@@ -1736,6 +1746,16 @@ pub(crate) fn render_tab_pipelines(
                     Style::default().fg(THEME.read().unwrap().yellow),
                 )));
             }
+            if app.is_column_visible(Tab::Pipelines, "Duration") {
+                let duration = p
+                    .duration_seconds()
+                    .map(|d| format!("{}m {}s", d / 60, d % 60))
+                    .unwrap_or_else(|| "-".to_string());
+                row_cells.push(Cell::from(Span::styled(
+                    duration,
+                    Style::default().fg(THEME.read().unwrap().text_normal),
+                )));
+            }
             if app.is_column_visible(Tab::Pipelines, "Ref") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&format_ref(p.ref_branch()), 100),
@@ -1773,6 +1793,10 @@ pub(crate) fn render_tab_pipelines(
             header_cells.push(Cell::from("Stages"));
             widths.push(Constraint::Length(14));
         }
+        if app.is_column_visible(Tab::Pipelines, "Source") {
+            header_cells.push(Cell::from("Source"));
+            widths.push(Constraint::Length(16));
+        }
         if app.is_column_visible(Tab::Pipelines, "Name") {
             header_cells.push(Cell::from("Name"));
             widths.push(Constraint::Length(22));
@@ -1792,6 +1816,10 @@ pub(crate) fn render_tab_pipelines(
         if app.is_column_visible(Tab::Pipelines, "Created") {
             header_cells.push(Cell::from("Created"));
             widths.push(Constraint::Length(15));
+        }
+        if app.is_column_visible(Tab::Pipelines, "Duration") {
+            header_cells.push(Cell::from("Duration"));
+            widths.push(Constraint::Length(14));
         }
         if app.is_column_visible(Tab::Pipelines, "Ref") {
             header_cells.push(Cell::from("Ref"));
@@ -1848,6 +1876,38 @@ pub(crate) fn render_tab_pipelines(
                         Style::default().fg(THEME.read().unwrap().purple),
                     ),
                 ]));
+                if is_github {
+                    for (label, value) in [
+                        ("Workflow:   ", p.name()),
+                        ("Event:      ", p.event()),
+                        ("Actor:      ", p.actor_login()),
+                        ("SHA:        ", p.head_sha()),
+                    ] {
+                        if !value.is_empty() {
+                            text.push(Line::from(vec![
+                                Span::styled(
+                                    label,
+                                    Style::default().fg(THEME.read().unwrap().text_muted),
+                                ),
+                                Span::styled(
+                                    truncate(value, 60),
+                                    Style::default().fg(THEME.read().unwrap().text_normal),
+                                ),
+                            ]));
+                        }
+                    }
+                } else if let Some(source) = p.source() {
+                    text.push(Line::from(vec![
+                        Span::styled(
+                            "Source:      ",
+                            Style::default().fg(THEME.read().unwrap().text_muted),
+                        ),
+                        Span::styled(
+                            source.to_string(),
+                            Style::default().fg(THEME.read().unwrap().text_normal),
+                        ),
+                    ]));
+                }
 
                 let (status_text, status_color) = match p.status() {
                     "success" => ("success", THEME.read().unwrap().green),
@@ -1911,7 +1971,11 @@ pub(crate) fn render_tab_pipelines(
                             .add_modifier(Modifier::BOLD),
                     )]));
                     text.push(Line::from(""));
-                    super::helpers::append_stage_summaries(&mut text, jobs);
+                    if is_github {
+                        super::helpers::append_job_summaries(&mut text, jobs);
+                    } else {
+                        super::helpers::append_stage_summaries(&mut text, jobs);
+                    }
                 } else {
                     text.push(Line::from(vec![Span::styled(
                         if is_github {
@@ -2363,16 +2427,18 @@ pub(crate) fn render_tab_jobs(
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ]));
-                    text.push(Line::from(vec![
-                        Span::styled(
-                            "Stage:    ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
-                        Span::styled(
-                            j.stage().to_string(),
-                            Style::default().fg(THEME.read().unwrap().purple),
-                        ),
-                    ]));
+                    if !is_github {
+                        text.push(Line::from(vec![
+                            Span::styled(
+                                "Stage:    ",
+                                Style::default().fg(THEME.read().unwrap().text_muted),
+                            ),
+                            Span::styled(
+                                j.stage().to_string(),
+                                Style::default().fg(THEME.read().unwrap().purple),
+                            ),
+                        ]));
+                    }
                     if let Some(matrix) = j.matrix() {
                         text.push(Line::from(vec![
                             Span::styled(
@@ -2439,7 +2505,11 @@ pub(crate) fn render_tab_jobs(
                     .add_modifier(Modifier::BOLD),
             )]));
             text.push(Line::from(""));
-            super::helpers::append_stage_summaries(&mut text, &app.jobs.items);
+            if is_github {
+                super::helpers::append_job_summaries(&mut text, &app.jobs.items);
+            } else {
+                super::helpers::append_stage_summaries(&mut text, &app.jobs.items);
+            }
             f.render_widget(
                 Paragraph::new(text)
                     .block(preview_block)

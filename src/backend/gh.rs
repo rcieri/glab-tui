@@ -41,6 +41,23 @@ fn parse_gh_login(raw: &str) -> Option<String> {
     }
 }
 
+fn parse_run_actor(raw: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Actor {
+        login: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct RunMetadata {
+        actor: Option<Actor>,
+    }
+
+    serde_json::from_str::<RunMetadata>(raw)
+        .ok()
+        .and_then(|metadata| metadata.actor)
+        .and_then(|actor| actor.login)
+        .filter(|login| !login.trim().is_empty())
+}
+
 /// Splits `latestReviews` into (every review's author, approving authors only).
 ///
 /// Two lists because they answer different questions: `you_reviewed` must be
@@ -1337,7 +1354,7 @@ impl Backend for GhBackend {
                     "run",
                     "list",
                     "--json",
-                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event",
+                    "databaseId,status,conclusion,headBranch,createdAt,startedAt,updatedAt,workflowName,displayTitle,headSha,event",
                     "-R",
                     project,
                     "--limit",
@@ -1359,6 +1376,8 @@ impl Backend for GhBackend {
             updated_at: String,
             #[serde(rename = "createdAt")]
             created_at: Option<String>,
+            #[serde(rename = "startedAt")]
+            started_at: Option<String>,
             #[serde(rename = "workflowName")]
             workflow_name: Option<String>,
             #[serde(rename = "displayTitle")]
@@ -1369,7 +1388,7 @@ impl Backend for GhBackend {
         }
 
         let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
-        Ok(runs
+        let mut pipelines: Vec<Pipeline> = runs
             .into_iter()
             .map(|r| {
                 let status = match r.status.as_str() {
@@ -1386,6 +1405,10 @@ impl Backend for GhBackend {
                     _ => "pending",
                 }
                 .to_string();
+                let duration = r
+                    .started_at
+                    .as_deref()
+                    .and_then(|started| chrono_duration(started, &r.updated_at));
                 Pipeline {
                     id: r.database_id,
                     status,
@@ -1396,12 +1419,27 @@ impl Backend for GhBackend {
                     event: r.event.as_deref().unwrap_or_default().to_string(),
                     head_sha: r.head_sha.unwrap_or_default(),
                     actor_login: String::new(),
-                    duration_seconds: None,
+                    duration_seconds: duration,
                     created_at: r.created_at,
                     source: r.event,
                 }
             })
-            .collect())
+            .collect();
+
+        // The native run-list projection does not expose the triggering actor.
+        // Enrich each run from the REST endpoint while keeping native listing
+        // for pagination and status normalization.
+        for pipeline in &mut pipelines {
+            let endpoint = format!("/repos/{project}/actions/runs/{}", pipeline.id);
+            let Ok(metadata) = self
+                .raw_api(&endpoint, "GET", None, "Fetching Run Metadata")
+                .await
+            else {
+                continue;
+            };
+            pipeline.actor_login = parse_run_actor(&metadata).unwrap_or_default();
+        }
+        Ok(pipelines)
     }
 
     async fn list_pipeline_jobs(
@@ -1410,26 +1448,6 @@ impl Backend for GhBackend {
         pipeline_id: u64,
         _page_size: usize,
     ) -> Result<Vec<Job>> {
-        // Fetch workflow name for this run
-        let workflow_name = self
-            .run_gh(
-                &[
-                    "run",
-                    "view",
-                    &pipeline_id.to_string(),
-                    "--json",
-                    "workflowName",
-                    "--jq",
-                    ".workflowName",
-                    "-R",
-                    project,
-                ],
-                "Fetching Workflow",
-            )
-            .await
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "actions".to_string());
-
         let raw = self
             .run_gh(
                 &[
@@ -1489,7 +1507,10 @@ impl Backend for GhBackend {
                 Job {
                     id: j.id,
                     status,
-                    stage: workflow_name.clone(),
+                    // GitHub jobs form a dependency graph, not GitLab-style
+                    // sequential stages. Keep this empty so stage grouping
+                    // cannot imply semantics that do not exist.
+                    stage: String::new(),
                     name: j.name,
                     matrix: None,
                     duration_seconds: duration,
@@ -2473,6 +2494,29 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
+    }
+
+    #[test]
+    fn parse_run_actor_reads_login_and_rejects_missing_values() {
+        assert_eq!(
+            parse_run_actor(r#"{"actor":{"login":"alice"}}"#),
+            Some("alice".to_string())
+        );
+        assert_eq!(parse_run_actor(r#"{"actor":null}"#), None);
+        assert_eq!(parse_run_actor(r#"{"actor":{"login":"  "}}"#), None);
+    }
+
+    #[test]
+    fn chrono_duration_rejects_invalid_and_negative_ranges() {
+        assert_eq!(
+            chrono_duration("2026-01-01T00:00:00Z", "2026-01-01T00:02:05Z"),
+            Some(125)
+        );
+        assert_eq!(
+            chrono_duration("2026-01-01T00:02:05Z", "2026-01-01T00:00:00Z"),
+            None
+        );
+        assert_eq!(chrono_duration("invalid", "invalid"), None);
     }
 
     #[test]

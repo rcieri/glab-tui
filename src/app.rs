@@ -263,8 +263,11 @@ impl Tab {
                     cols.push("Actor");
                 } else {
                     cols.push("Stages");
+                    cols.push("Source");
+                    cols.push("Actor");
                 }
                 cols.push("Created");
+                cols.push("Duration");
                 cols
             }
             Tab::Jobs => {
@@ -315,9 +318,11 @@ impl Tab {
             ],
             Tab::Pipelines => {
                 if kind.is_github() {
-                    vec!["Name", "Status", "Event", "Ref", "Created"]
+                    vec!["Name", "Status", "Event", "Ref", "Created", "Duration"]
                 } else {
-                    vec!["ID", "Status", "Stages", "Ref"]
+                    vec![
+                        "ID", "Status", "Stages", "Ref", "Source", "Created", "Duration",
+                    ]
                 }
             }
             Tab::Jobs => {
@@ -2807,6 +2812,16 @@ impl App {
                     check_match(&crate::utils::format::time_ago(created));
                 }
             }
+            if enabled_cols.contains("Source") {
+                if let Some(source) = item.source() {
+                    check_match(source);
+                }
+            }
+            if enabled_cols.contains("Duration") {
+                if let Some(duration) = item.duration_seconds() {
+                    check_match(&format!("{}m {}s", duration / 60, duration % 60));
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2842,6 +2857,11 @@ impl App {
                         .created_at()
                         .map(|c| crate::utils::format::time_ago(c))
                         .unwrap_or_default(),
+                    "Source" => a.source().unwrap_or_default().to_string(),
+                    "Duration" => a
+                        .duration_seconds()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2855,6 +2875,11 @@ impl App {
                     "Created" => b
                         .created_at()
                         .map(|c| crate::utils::format::time_ago(c))
+                        .unwrap_or_default(),
+                    "Source" => b.source().unwrap_or_default().to_string(),
+                    "Duration" => b
+                        .duration_seconds()
+                        .map(|d| d.to_string())
                         .unwrap_or_default(),
                     _ => String::new(),
                 };
@@ -2888,6 +2913,22 @@ impl App {
                 "ID" => vec![item.id().to_string()],
                 "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
                 "Ref" => vec![item.ref_branch().to_string()],
+                "Name" => vec![item.name().to_string()],
+                "Event" => vec![item.event().to_string()],
+                "SHA" => vec![item.head_sha().to_string()],
+                "Actor" => vec![item.actor_login().to_string()],
+                "Source" => item
+                    .source()
+                    .map(|source| vec![source.to_string()])
+                    .unwrap_or_default(),
+                "Created" => item
+                    .created_at()
+                    .map(|c| vec![crate::utils::format::time_ago(c)])
+                    .unwrap_or_default(),
+                "Duration" => item
+                    .duration_seconds()
+                    .map(|d| vec![format!("{}m {}s", d / 60, d % 60)])
+                    .unwrap_or_default(),
                 _ => vec![],
             },
         );
@@ -3765,6 +3806,16 @@ impl App {
                                 values.insert(crate::utils::format::time_ago(c));
                             }
                         }
+                        "Source" => {
+                            if let Some(source) = item.source() {
+                                values.insert(source.to_string());
+                            }
+                        }
+                        "Duration" => {
+                            if let Some(d) = item.duration_seconds() {
+                                values.insert(format!("{}m {}s", d / 60, d % 60));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -3788,6 +3839,9 @@ impl App {
                             if let Some(r) = item.runner() {
                                 values.insert(r.to_string());
                             }
+                        }
+                        "Needs" => {
+                            values.extend(item.needs().iter().cloned());
                         }
                         "Duration" => {
                             if let Some(d) = item.duration_seconds() {
@@ -5780,6 +5834,60 @@ index 123456..789012 100644
             App::filter_mrs_list(&items, "returned", &cols_without).len(),
             0,
             "the column gate must still apply"
+        );
+    }
+
+    #[test]
+    fn pipeline_metadata_columns_filter_and_offer_values() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            crate::domain::pipelines::Pipeline {
+                id: 1,
+                status: "success".to_string(),
+                r#ref: "main".to_string(),
+                updated_at: String::new(),
+                name: "CI".to_string(),
+                display_title: "Build".to_string(),
+                event: "push".to_string(),
+                head_sha: "abc123".to_string(),
+                actor_login: "alice".to_string(),
+                duration_seconds: Some(125),
+                created_at: Some("2026-01-01T00:00:00Z".to_string()),
+                source: Some("push".to_string()),
+            },
+            crate::domain::pipelines::Pipeline {
+                id: 2,
+                status: "failed".to_string(),
+                r#ref: "main".to_string(),
+                updated_at: String::new(),
+                name: "Deploy".to_string(),
+                display_title: "Release".to_string(),
+                event: "schedule".to_string(),
+                head_sha: "def456".to_string(),
+                actor_login: "bob".to_string(),
+                duration_seconds: Some(65),
+                created_at: Some("2026-01-02T00:00:00Z".to_string()),
+                source: Some("schedule".to_string()),
+            },
+        ];
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Actor".to_string(),
+                ["alice".to_string()].into_iter().collect(),
+            );
+
+        let filtered = app.filtered_pipelines();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, 1);
+        assert!(
+            app.collect_unique_column_values(Tab::Pipelines, "Duration")
+                .contains(&"2m 5s".to_string())
+        );
+        assert!(
+            app.collect_unique_column_values(Tab::Pipelines, "Source")
+                .contains(&"schedule".to_string())
         );
     }
 }

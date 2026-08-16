@@ -77,7 +77,10 @@ pub(crate) fn render_entity_inspector(
                 let text_style = Style::default().fg(theme.text_normal);
 
                 if desc_value.is_empty() {
-                    vec![Line::from(vec![Span::styled(" ", cursor_style)])]
+                    vec![Line::from(vec![Span::styled(
+                        "█",
+                        Style::default().fg(theme.text_normal),
+                    )])]
                 } else {
                     let mut lines = Vec::new();
                     let mut line_start_offset = 0;
@@ -110,7 +113,10 @@ pub(crate) fn render_entity_inspector(
                                     spans.push(Span::styled(rest.to_string(), text_style));
                                 }
                             } else {
-                                spans.push(Span::styled(" ".to_string(), cursor_style));
+                                spans.push(Span::styled(
+                                    "█".to_string(),
+                                    Style::default().fg(theme.text_normal),
+                                ));
                             }
                             lines.push(Line::from(spans));
                         } else {
@@ -924,7 +930,7 @@ fn build_wrapped_text_lines(
             Span::styled(format!("{} ", separator), sep_style),
         ];
         if is_editing {
-            spans.push(Span::styled(" ", cursor_style));
+            spans.push(Span::styled("█", val_style));
         }
         return vec![Line::from(spans)];
     }
@@ -982,7 +988,7 @@ fn build_wrapped_text_lines(
                     line_spans.push(Span::styled(rest.to_string(), val_style));
                 }
             } else {
-                line_spans.push(Span::styled(" ".to_string(), cursor_style));
+                line_spans.push(Span::styled("█".to_string(), val_style));
             }
         } else {
             line_spans.push(Span::styled(chunk, val_style));

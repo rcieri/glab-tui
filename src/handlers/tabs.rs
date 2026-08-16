@@ -60,34 +60,59 @@ pub async fn handle_active_tab_key(
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
-                let is_github = app.is_github();
-                let fields = crate::entity_editor::issue_fields(
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    "No".to_string(),
-                    String::new(),
-                    "0".to_string(),
-                    String::new(),
-                    is_github,
-                );
-                app.edit_menu = Some(crate::app::EditMenu {
-                    title: "Create Issue".to_string(),
-                    fields,
-                    selected_idx: 0,
-                    entity_iid: 0,
-                    entity_kind: crate::app::EditEntityKind::CreateIssue,
-                    state: {
-                        let mut s = ListState::default();
-                        s.select(Some(0));
-                        s
-                    },
-                    workflow_inputs: vec![],
-                    cursor_pos: 0,
-                    editing: false,
-                    desc_scroll: 0,
-                });
+                let templates = crate::templates::list_templates("issue");
+                if !templates.is_empty() {
+                    let template_names: Vec<String> = std::iter::once("None (blank)".to_string())
+                        .chain(templates.iter().map(|(n, _)| n.clone()))
+                        .collect();
+                    app.selector = Some(crate::app::Selector {
+                        title: " Select Issue Template ".to_string(),
+                        all_items: template_names,
+                        selected_items: std::collections::HashSet::new(),
+                        cursor_idx: 0,
+                        search_query: String::new(),
+                        is_filtering: false,
+                        is_loading: false,
+                        entity_iid: 0,
+                        entity_type: "new_issue".to_string(),
+                        field_type: "issue_template_selector".to_string(),
+                        multi_select: false,
+                        state: {
+                            let mut s = ListState::default();
+                            s.select(Some(0));
+                            s
+                        },
+                    });
+                } else {
+                    let is_github = app.is_github();
+                    let fields = crate::entity_editor::issue_fields(
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        "No".to_string(),
+                        String::new(),
+                        "0".to_string(),
+                        String::new(),
+                        is_github,
+                    );
+                    app.edit_menu = Some(crate::app::EditMenu {
+                        title: "Create Issue".to_string(),
+                        fields,
+                        selected_idx: 0,
+                        entity_iid: 0,
+                        entity_kind: crate::app::EditEntityKind::CreateIssue,
+                        state: {
+                            let mut s = ListState::default();
+                            s.select(Some(0));
+                            s
+                        },
+                        workflow_inputs: vec![],
+                        cursor_pos: 0,
+                        editing: false,
+                        desc_scroll: 0,
+                    });
+                }
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
                 if app.selected_issues.len() > 1 {

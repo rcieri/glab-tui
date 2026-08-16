@@ -3211,15 +3211,35 @@ async fn main() -> Result<()> {
                                             }) {
                                                 f.value = desc_val.clone();
                                             }
-                                            let field_idx = menu.selected_idx;
-                                            let cursor_idx = desc_val.len();
-                                            app.text_input = Some(crate::app::TextInput {
-                                                title: " Edit Description ".to_string(),
-                                                value: desc_val,
-                                                cursor_idx,
-                                                action: crate::app::TextInputAction::EditNewField {
-                                                    field_idx,
+                                        } else {
+                                            let is_github = app.is_github();
+                                            let fields = crate::entity_editor::issue_fields(
+                                                String::new(),
+                                                String::new(),
+                                                String::new(),
+                                                String::new(),
+                                                "No".to_string(),
+                                                String::new(),
+                                                "0".to_string(),
+                                                desc_val,
+                                                is_github,
+                                            );
+                                            app.edit_menu = Some(crate::app::EditMenu {
+                                                title: "Create Issue".to_string(),
+                                                fields,
+                                                selected_idx: 0,
+                                                entity_iid: 0,
+                                                entity_kind:
+                                                    crate::app::EditEntityKind::CreateIssue,
+                                                state: {
+                                                    let mut s = ListState::default();
+                                                    s.select(Some(0));
+                                                    s
                                                 },
+                                                workflow_inputs: vec![],
+                                                cursor_pos: 0,
+                                                editing: false,
+                                                desc_scroll: 0,
                                             });
                                         }
                                         continue;
@@ -3242,17 +3262,7 @@ async fn main() -> Result<()> {
                                                 .find(|(n, _)| n == &choice)
                                                 .map(|(_, c)| c)
                                             {
-                                                if let Some(ref mut menu) = app.edit_menu {
-                                                    let issue_iid = menu.entity_iid;
-                                                    if issue_iid > 0 {
-                                                        desc_val = format!(
-                                                            "Closes #{}\n\n{}",
-                                                            issue_iid, content
-                                                        );
-                                                    } else {
-                                                        desc_val = content.clone();
-                                                    }
-                                                }
+                                                desc_val = content.clone();
                                             }
                                         }
                                         if let Some(ref mut menu) = app.edit_menu {
@@ -3262,15 +3272,36 @@ async fn main() -> Result<()> {
                                             }) {
                                                 f.value = desc_val.clone();
                                             }
-                                            let field_idx = menu.selected_idx;
-                                            let cursor_idx = desc_val.len();
-                                            app.text_input = Some(crate::app::TextInput {
-                                                title: " Edit Description ".to_string(),
-                                                value: desc_val,
-                                                cursor_idx,
-                                                action: crate::app::TextInputAction::EditNewField {
-                                                    field_idx,
+                                        } else {
+                                            let is_github = app.is_github();
+                                            let target_branch = get_default_branch()
+                                                .unwrap_or_else(|| "main".to_string());
+                                            let fields = crate::entity_editor::mr_fields(
+                                                String::new(),
+                                                String::new(),
+                                                String::new(),
+                                                String::new(),
+                                                String::new(),
+                                                target_branch,
+                                                "Ready".to_string(),
+                                                desc_val,
+                                                is_github,
+                                            );
+                                            app.edit_menu = Some(crate::app::EditMenu {
+                                                title: "Create Merge Request".to_string(),
+                                                fields,
+                                                selected_idx: 0,
+                                                entity_iid: 0,
+                                                entity_kind: crate::app::EditEntityKind::CreateMr,
+                                                state: {
+                                                    let mut s = ListState::default();
+                                                    s.select(Some(0));
+                                                    s
                                                 },
+                                                workflow_inputs: vec![],
+                                                cursor_pos: 0,
+                                                editing: false,
+                                                desc_scroll: 0,
                                             });
                                         }
                                         continue;
@@ -3501,7 +3532,11 @@ async fn main() -> Result<()> {
                                         let mut issue_iid = 0;
 
                                         if let Some(item) = selected_val {
-                                            if item != "Create blank (No issue)" {
+                                            if item == "Create blank (No issue)" {
+                                                let mr_tmpl =
+                                                    get_default_template("mr").unwrap_or_default();
+                                                description_val = mr_tmpl;
+                                            } else {
                                                 let id_val = item.clone();
                                                 let parsed_iid = if id_val.starts_with('#') {
                                                     id_val
@@ -4219,7 +4254,7 @@ async fn main() -> Result<()> {
                                         }
                                     }
 
-                                    if entity_iid == 0 || entity_type.starts_with("new_") {
+                                    if app.edit_menu.is_some() {
                                         // Write the values directly to the active field of app.edit_menu
                                         if let Some(ref mut menu) = app.edit_menu {
                                             let target_field_name = match field_type.as_str() {
@@ -5172,6 +5207,420 @@ async fn main() -> Result<()> {
                                             });
                                         }
                                         continue;
+                                    } else if entity_type == "issue" || entity_type == "edit_issue"
+                                    {
+                                        let title = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let description = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let labels = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let assignees = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let milestone = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let due_date = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Due Date")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let weight = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Weight")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let confidential = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Confidential")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        app.edit_menu = None;
+                                        if let Some(item) = app
+                                            .issues
+                                            .items
+                                            .iter_mut()
+                                            .find(|i| i.iid == entity_iid)
+                                        {
+                                            if !title.is_empty() {
+                                                item.title = title.clone();
+                                            }
+                                            item.description = Some(description.clone());
+                                        }
+
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let tab = app.active_tab;
+                                        tokio::spawn(async move {
+                                            let mut last_err = None;
+                                            if !title.is_empty() {
+                                                if let Err(e) = client
+                                                    .update_issue_title(
+                                                        &project, entity_iid, &title,
+                                                    )
+                                                    .await
+                                                {
+                                                    last_err = Some(e.to_string());
+                                                }
+                                            }
+                                            if let Err(e) = client
+                                                .update_issue_description(
+                                                    &project,
+                                                    entity_iid,
+                                                    &description,
+                                                )
+                                                .await
+                                            {
+                                                last_err = Some(e.to_string());
+                                            }
+                                            if !labels.is_empty() && labels != "None" {
+                                                let add: Vec<String> = labels
+                                                    .split(',')
+                                                    .map(|s| s.trim().to_string())
+                                                    .filter(|s| !s.is_empty())
+                                                    .collect();
+                                                let _ = client
+                                                    .update_issue_labels(
+                                                        &project,
+                                                        entity_iid,
+                                                        &add,
+                                                        &[],
+                                                    )
+                                                    .await;
+                                            }
+                                            if !assignees.is_empty() && assignees != "None" {
+                                                let add: Vec<String> = assignees
+                                                    .split(',')
+                                                    .map(|s| {
+                                                        s.trim().trim_start_matches('@').to_string()
+                                                    })
+                                                    .filter(|s| !s.is_empty())
+                                                    .collect();
+                                                let _ = client
+                                                    .update_issue_assignees(
+                                                        &project,
+                                                        entity_iid,
+                                                        &add,
+                                                        &[],
+                                                    )
+                                                    .await;
+                                            }
+                                            if !milestone.is_empty() && milestone != "None" {
+                                                let _ = client
+                                                    .update_issue_milestone(
+                                                        &project, entity_iid, &milestone,
+                                                    )
+                                                    .await;
+                                            }
+                                            if !due_date.is_empty() && due_date != "YYYY-MM-DD" {
+                                                let _ = client
+                                                    .update_issue_due_date(
+                                                        &project, entity_iid, &due_date,
+                                                    )
+                                                    .await;
+                                            }
+                                            if !weight.is_empty() {
+                                                let _ = client
+                                                    .update_issue_weight(
+                                                        &project, entity_iid, &weight,
+                                                    )
+                                                    .await;
+                                            }
+                                            if !confidential.is_empty() {
+                                                let is_conf = confidential.to_lowercase()
+                                                    == "confidential"
+                                                    || confidential.to_lowercase() == "yes";
+                                                let _ = client
+                                                    .update_issue_confidential(
+                                                        &project, entity_iid, is_conf,
+                                                    )
+                                                    .await;
+                                            }
+
+                                            if let Some(err) = last_err {
+                                                let _ =
+                                                    tx.send(Event::CommandCompleted(tab, Err(err)));
+                                            } else {
+                                                let _ =
+                                                    tx.send(Event::CommandCompleted(tab, Ok(())));
+                                            }
+                                        });
+                                        continue;
+                                    } else if entity_type == "mr" || entity_type == "edit_mr" {
+                                        let title = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let description = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let labels = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Labels")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let assignees = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Assignees")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let reviewers = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Reviewers")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let milestone = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Milestone")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let target_branch = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Target Branch")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let status_draft = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| {
+                                                f.label == "Status (Draft/Ready)"
+                                                    || f.label == "Status"
+                                            })
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        app.edit_menu = None;
+                                        if let Some(item) =
+                                            app.mrs.items.iter_mut().find(|m| m.iid == entity_iid)
+                                        {
+                                            if !title.is_empty() {
+                                                item.title = title.clone();
+                                            }
+                                            item.description = Some(description.clone());
+                                        }
+
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let tab = app.active_tab;
+                                        tokio::spawn(async move {
+                                            let mut last_err = None;
+                                            if !title.is_empty() {
+                                                if let Err(e) = client
+                                                    .update_mr_title(&project, entity_iid, &title)
+                                                    .await
+                                                {
+                                                    last_err = Some(e.to_string());
+                                                }
+                                            }
+                                            if let Err(e) = client
+                                                .update_mr_description(
+                                                    &project,
+                                                    entity_iid,
+                                                    &description,
+                                                )
+                                                .await
+                                            {
+                                                last_err = Some(e.to_string());
+                                            }
+                                            if !labels.is_empty() && labels != "None" {
+                                                let add: Vec<String> = labels
+                                                    .split(',')
+                                                    .map(|s| s.trim().to_string())
+                                                    .filter(|s| !s.is_empty())
+                                                    .collect();
+                                                let _ = client
+                                                    .update_mr_labels(
+                                                        &project,
+                                                        entity_iid,
+                                                        &add,
+                                                        &[],
+                                                    )
+                                                    .await;
+                                            }
+                                            if !assignees.is_empty() && assignees != "None" {
+                                                let add: Vec<String> = assignees
+                                                    .split(',')
+                                                    .map(|s| {
+                                                        s.trim().trim_start_matches('@').to_string()
+                                                    })
+                                                    .filter(|s| !s.is_empty())
+                                                    .collect();
+                                                let _ = client
+                                                    .update_mr_assignees(
+                                                        &project,
+                                                        entity_iid,
+                                                        &add,
+                                                        &[],
+                                                    )
+                                                    .await;
+                                            }
+                                            if !reviewers.is_empty() && reviewers != "None" {
+                                                let add: Vec<String> = reviewers
+                                                    .split(',')
+                                                    .map(|s| {
+                                                        s.trim().trim_start_matches('@').to_string()
+                                                    })
+                                                    .filter(|s| !s.is_empty())
+                                                    .collect();
+                                                let _ = client
+                                                    .update_mr_reviewers(
+                                                        &project,
+                                                        entity_iid,
+                                                        &add,
+                                                        &[],
+                                                    )
+                                                    .await;
+                                            }
+                                            if !milestone.is_empty() && milestone != "None" {
+                                                let _ = client
+                                                    .update_mr_milestone(
+                                                        &project, entity_iid, &milestone,
+                                                    )
+                                                    .await;
+                                            }
+                                            if !target_branch.is_empty() {
+                                                let _ = client
+                                                    .update_mr_target_branch(
+                                                        &project,
+                                                        entity_iid,
+                                                        &target_branch,
+                                                    )
+                                                    .await;
+                                            }
+                                            if !status_draft.is_empty() {
+                                                let is_draft =
+                                                    status_draft.to_lowercase() == "draft";
+                                                let _ = client
+                                                    .toggle_mr_draft(&project, entity_iid, is_draft)
+                                                    .await;
+                                            }
+
+                                            if let Some(err) = last_err {
+                                                let _ =
+                                                    tx.send(Event::CommandCompleted(tab, Err(err)));
+                                            } else {
+                                                let _ =
+                                                    tx.send(Event::CommandCompleted(tab, Ok(())));
+                                            }
+                                        });
+                                        continue;
+                                    } else if entity_type == "milestone"
+                                        || entity_type == "edit_milestone"
+                                    {
+                                        let title = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Title")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let description = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| {
+                                                f.label == "Description"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let start_date = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Start Date")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let due_date = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Due Date")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        app.edit_menu = None;
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project = app.project_context.clone();
+                                        let tx = events.sender();
+                                        let tab = app.active_tab;
+                                        tokio::spawn(async move {
+                                            let sd = if start_date.is_empty()
+                                                || start_date == "YYYY-MM-DD"
+                                            {
+                                                None
+                                            } else {
+                                                Some(start_date.as_str())
+                                            };
+                                            let dd = if due_date.is_empty()
+                                                || due_date == "YYYY-MM-DD"
+                                            {
+                                                None
+                                            } else {
+                                                Some(due_date.as_str())
+                                            };
+                                            match client
+                                                .update_milestone(
+                                                    &project,
+                                                    entity_iid,
+                                                    &title,
+                                                    &description,
+                                                    sd,
+                                                    dd,
+                                                )
+                                                .await
+                                            {
+                                                Ok(_) => {
+                                                    let _ = tx
+                                                        .send(Event::CommandCompleted(tab, Ok(())));
+                                                    let _ = tx.send(Event::MilestoneUpdated);
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                }
+                                            }
+                                        });
+                                        continue;
                                     }
                                 }
 
@@ -5182,8 +5631,75 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                // Title / Description: Enter toggles inline edit mode
-                                if field_name == "Title" || field_name == "Description" {
+                                // Title: Enter toggles inline edit mode
+                                if field_name == "Title" {
+                                    if menu.editing {
+                                        menu.editing = false;
+                                    } else {
+                                        menu.editing = true;
+                                        if let Some(f) = menu.fields.get(menu.selected_idx) {
+                                            menu.cursor_pos = f.value.len();
+                                        }
+                                    }
+                                    app.edit_menu = Some(menu);
+                                    continue;
+                                }
+
+                                // Description: If empty on new entity, offer template selector
+                                if field_name == "Description" {
+                                    let is_new = entity_iid == 0 || entity_type.starts_with("new_");
+                                    let raw_val = menu
+                                        .fields
+                                        .get(menu.selected_idx)
+                                        .map(|f| f.value.clone())
+                                        .unwrap_or_default();
+                                    if is_new && raw_val.trim().is_empty() {
+                                        let tmpl_kind = if entity_type.contains("mr") {
+                                            "mr"
+                                        } else {
+                                            "issue"
+                                        };
+                                        let templates = list_templates(tmpl_kind);
+                                        if !templates.is_empty() {
+                                            let template_names: Vec<String> =
+                                                std::iter::once("None (blank)".to_string())
+                                                    .chain(templates.iter().map(|(n, _)| n.clone()))
+                                                    .collect();
+                                            let field_type = if tmpl_kind == "mr" {
+                                                "mr_template_selector"
+                                            } else {
+                                                "issue_template_selector"
+                                            };
+                                            app.selector = Some(crate::app::Selector {
+                                                title: format!(
+                                                    " Select {} Template ",
+                                                    if tmpl_kind == "mr" {
+                                                        "Merge Request"
+                                                    } else {
+                                                        "Issue"
+                                                    }
+                                                ),
+                                                all_items: template_names,
+                                                selected_items: std::collections::HashSet::new(),
+                                                cursor_idx: 0,
+                                                search_query: String::new(),
+                                                is_filtering: false,
+                                                is_loading: false,
+                                                entity_iid: 0,
+                                                entity_type: entity_type.clone(),
+                                                field_type: field_type.to_string(),
+                                                multi_select: false,
+                                                state: {
+                                                    let mut s = ListState::default();
+                                                    s.select(Some(0));
+                                                    s
+                                                },
+                                            });
+                                            app.edit_menu = Some(menu);
+                                            continue;
+                                        }
+                                    }
+
                                     if menu.editing {
                                         menu.editing = false;
                                     } else {
@@ -5640,22 +6156,9 @@ async fn main() -> Result<()> {
                                                 String::new()
                                             }
                                         };
-                                    let action =
-                                        if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            crate::app::DatePickerAction::EditNewField {
-                                                field_idx: menu.selected_idx,
-                                            }
-                                        } else {
-                                            crate::app::DatePickerAction::EditField {
-                                                entity_iid,
-                                                entity_type: entity_type.clone(),
-                                                field_type: if field_name == "Start Date" {
-                                                    "start_date".to_string()
-                                                } else {
-                                                    "due_date".to_string()
-                                                },
-                                            }
-                                        };
+                                    let action = crate::app::DatePickerAction::EditNewField {
+                                        field_idx: menu.selected_idx,
+                                    };
                                     app.date_picker = Some(crate::app::DatePicker::new(
                                         format!(" Select {}", field_name),
                                         &current_val,
@@ -5731,30 +6234,9 @@ async fn main() -> Result<()> {
                                             }
                                         };
 
-                                    let action =
-                                        if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            crate::app::TextInputAction::EditNewField {
-                                                field_idx: menu.selected_idx,
-                                            }
-                                        } else {
-                                            let field_type = match field_name.as_str() {
-                                                "Title" => "title",
-                                                "Target Branch" => "target_branch",
-                                                "Weight" => "weight",
-                                                "Release Name" => "release_name",
-                                                "Tag" => "tag",
-                                                _ => "",
-                                            };
-                                            crate::app::TextInputAction::EditField {
-                                                entity_iid,
-                                                entity_type: entity_type.clone(),
-                                                field_type: if field_name.starts_with("Input: ") {
-                                                    field_name.clone()
-                                                } else {
-                                                    field_type.to_string()
-                                                },
-                                            }
-                                        };
+                                    let action = crate::app::TextInputAction::EditNewField {
+                                        field_idx: menu.selected_idx,
+                                    };
 
                                     app.text_input = Some(crate::app::TextInput {
                                         title: format!("Edit {}", field_name),

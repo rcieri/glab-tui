@@ -715,7 +715,7 @@ pub fn apply_field_text_change(
             let et = entity_type.to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
-                let result = if et == "issue" {
+                let result = if et == "issue" || et == "edit_issue" {
                     client.update_issue_title(&project_path, iid, &value).await
                 } else {
                     client.update_mr_title(&project_path, iid, &value).await
@@ -833,7 +833,7 @@ pub fn apply_field_text_change(
             let et = entity_type.to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
-                let result = if et == "issue" {
+                let result = if et == "issue" || et == "edit_issue" {
                     client
                         .update_issue_description(&project_path, iid, &value)
                         .await
@@ -901,7 +901,7 @@ pub fn apply_selector_changes(
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
-                    let result = if et == "issue" {
+                    let result = if et == "issue" || et == "edit_issue" {
                         client
                             .update_issue_labels(&project_path, iid, &to_add, &to_remove)
                             .await
@@ -970,7 +970,7 @@ pub fn apply_selector_changes(
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
-                    let result = if et == "issue" {
+                    let result = if et == "issue" || et == "edit_issue" {
                         client
                             .update_issue_assignees(&project_path, iid, &to_add, &to_remove)
                             .await
@@ -1083,7 +1083,7 @@ pub fn apply_selector_changes(
             let et = entity_type.to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
-                let result = if et == "issue" {
+                let result = if et == "issue" || et == "edit_issue" {
                     client
                         .update_issue_milestone(&project_path, iid, &first_val)
                         .await

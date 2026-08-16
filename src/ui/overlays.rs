@@ -363,7 +363,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .border_style(Style::default().fg(THEME.read().unwrap().border));
         let fields_inner = fields_block.inner(main_chunks[0]);
         f.render_widget(fields_block, main_chunks[0]);
-        let list = List::new(field_items).style(Style::default().bg(Color::Reset));
+        let list = List::new(field_items).style(Style::default().bg(THEME.read().unwrap().bg));
         let mut state = menu.state.clone();
         f.render_stateful_widget(list, fields_inner, &mut state);
         menu.state = state;

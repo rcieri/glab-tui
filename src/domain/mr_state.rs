@@ -110,7 +110,7 @@ fn workflow_icon_and_word(s: WorkflowStatus) -> Option<(String, &'static str)> {
     })
 }
 
-/// Abbreviated cell text. Full wording lives in the Details pane, because
+/// Abbreviated cell text. Full wording lives in the Preview pane, because
 /// "Returned to you" is 16 chars and the column clamps to 10 below 90 columns.
 pub fn workflow_cell(s: Option<WorkflowStatus>) -> String {
     match s {
@@ -125,7 +125,7 @@ pub fn workflow_cell(s: Option<WorkflowStatus>) -> String {
     }
 }
 
-/// Just the glyph `workflow_cell` prefixes its text with, for the Details
+/// Just the glyph `workflow_cell` prefixes its text with, for the Preview
 /// pane — which spells out the full label separately instead of clamping
 /// icon and text together like the table column does. Reads from the same
 /// `workflow_icon_and_word` match as `workflow_cell` so the two can never
@@ -139,8 +139,8 @@ pub fn workflow_icon(s: Option<WorkflowStatus>) -> String {
     }
 }
 
-/// GitLab's full wording, for the Details pane and filter values.
-/// `None` for both `NotYours` and unknown — neither gets a Details line.
+/// GitLab's full wording, for the Preview pane and filter values.
+/// `None` for both `NotYours` and unknown — neither gets a Preview line.
 pub fn workflow_label(s: Option<WorkflowStatus>) -> Option<&'static str> {
     match s {
         Some(WorkflowStatus::ReturnedToYou) => Some("Returned to you"),
@@ -394,7 +394,7 @@ pub enum ThreadsTone {
     Clean,
 }
 
-/// The Details pane's single `Threads:` line, merging two signals that
+/// The Preview pane's single `Threads:` line, merging two signals that
 /// arrive at different times: whether unresolved threads block the merge
 /// (`resolved`, always known once the MR list loads) and how many are
 /// unresolved (`count`, known only after this MR's diff has been fetched).

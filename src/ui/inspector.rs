@@ -167,9 +167,9 @@ pub(crate) fn render_entity_inspector(
             title_suffix,
         } => {
             let title = if title_suffix.is_empty() {
-                format!(" {} Details ", icons.label_details)
+                format!(" {} Preview ", icons.label_details)
             } else {
-                format!(" {} Details{} ", icons.label_details, title_suffix)
+                format!(" {} Preview{} ", icons.label_details, title_suffix)
             };
 
             let block = Block::default()

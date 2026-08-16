@@ -39,11 +39,11 @@ pub(crate) fn render_tab_issues(
             content_area,
         );
         f.render_widget(
-            Paragraph::new("Select an item to view details...")
+            Paragraph::new("Select an item to view preview...")
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -270,7 +270,7 @@ pub(crate) fn render_tab_issues(
         let preview_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
-            .title(format!(" {} Details ", icons.label_details))
+            .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -296,7 +296,7 @@ pub(crate) fn render_tab_issues(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -326,11 +326,11 @@ pub(crate) fn render_tab_merge_requests(
             content_area,
         );
         f.render_widget(
-            Paragraph::new("Select an item to view details...")
+            Paragraph::new("Select an item to view preview...")
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -911,7 +911,7 @@ pub(crate) fn render_tab_merge_requests(
         let preview_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(THEME.read().unwrap().border))
-            .title(format!(" {} Details ", icons.label_details))
+            .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -952,7 +952,7 @@ pub(crate) fn render_tab_merge_requests(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -992,7 +992,7 @@ pub(crate) fn render_tab_pipelines(
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(format!(" {} Details ", icons.label_details))
+                    .title(format!(" {} Preview ", icons.label_details))
                     .border_style(Style::default().fg(THEME.read().unwrap().border)),
             )
             .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1269,7 +1269,7 @@ pub(crate) fn render_tab_pipelines(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} Details ", icons.label_details))
+            .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -1295,7 +1295,7 @@ pub(crate) fn render_tab_pipelines(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -1322,11 +1322,11 @@ pub(crate) fn render_tab_jobs(
             content_area,
         );
         f.render_widget(
-            Paragraph::new("Select a job to view details...")
+            Paragraph::new("Select a job to view preview...")
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1595,7 +1595,7 @@ pub(crate) fn render_tab_jobs(
         if app.job_trace_loading {
             let preview_block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" {} Details / Trace ", icons.label_details))
+                .title(format!(" {} Preview ", icons.label_details))
                 .title_style(
                     Style::default()
                         .fg(THEME.read().unwrap().text_muted)
@@ -1659,7 +1659,7 @@ pub(crate) fn render_tab_jobs(
             let preview_block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    " Details / Trace{}{}{} ",
+                    " Preview{}{}{} ",
                     title_suffix, search_suffix, follow_suffix
                 ))
                 .title_style(
@@ -1688,7 +1688,7 @@ pub(crate) fn render_tab_jobs(
         } else {
             let preview_block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" {} Details / Trace ", icons.label_details))
+                .title(format!(" {} Preview ", icons.label_details))
                 .title_style(
                     Style::default()
                         .fg(THEME.read().unwrap().text_muted)
@@ -1826,11 +1826,11 @@ pub(crate) fn render_tab_jobs(
     } else {
         f.render_widget(Paragraph::new("\n\n No jobs loaded.\n Press 'p' to manually enter a pipeline ID to fetch jobs for,\n or view a pipeline in Pipelines tab and press Enter.").alignment(Alignment::Center).block(main_block).style(Style::default().fg(THEME.read().unwrap().text_muted)), content_area);
         f.render_widget(
-            Paragraph::new("Select a job to view details...")
+            Paragraph::new("Select a job to view preview...")
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -1862,7 +1862,7 @@ pub(crate) fn render_tab_runners(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2011,7 +2011,7 @@ pub(crate) fn render_tab_runners(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} Runner Details ", icons.label_details))
+            .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2036,7 +2036,7 @@ pub(crate) fn render_tab_runners(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -2067,7 +2067,7 @@ pub(crate) fn render_tab_releases(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2223,7 +2223,7 @@ pub(crate) fn render_tab_releases(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} Details ", icons.label_details))
+            .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2248,7 +2248,7 @@ pub(crate) fn render_tab_releases(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -2297,7 +2297,7 @@ pub(crate) fn render_tab_todos(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2467,7 +2467,7 @@ pub(crate) fn render_tab_todos(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} Details ", icons.label_details))
+            .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2492,7 +2492,7 @@ pub(crate) fn render_tab_todos(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -2526,7 +2526,7 @@ pub(crate) fn render_tab_milestones(
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title(format!(" {} Details ", icons.label_details))
+                        .title(format!(" {} Preview ", icons.label_details))
                         .border_style(Style::default().fg(THEME.read().unwrap().border)),
                 )
                 .style(Style::default().fg(THEME.read().unwrap().text_muted)),
@@ -2720,7 +2720,7 @@ pub(crate) fn render_tab_milestones(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} Milestone Details ", icons.label_milestone))
+            .title(format!(" {} Preview ", icons.label_milestone))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2748,7 +2748,7 @@ pub(crate) fn render_tab_milestones(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -2862,7 +2862,7 @@ pub(crate) fn render_tab_branches(
         // Detail pane
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} Branch Details ", icons.label_branch))
+            .title(format!(" {} Preview ", icons.label_branch))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -2887,7 +2887,7 @@ pub(crate) fn render_tab_branches(
             }
         } else {
             f.render_widget(
-                Paragraph::new("Select an item to view details...")
+                Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
                     .style(Style::default().fg(THEME.read().unwrap().text_muted)),
                 detail_rect,
@@ -3008,7 +3008,7 @@ pub(crate) fn render_tab_environments(
         // Detail pane - show deployments if available
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} Environment Details ", icons.label_environment))
+            .title(format!(" {} Preview ", icons.label_environment))
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)

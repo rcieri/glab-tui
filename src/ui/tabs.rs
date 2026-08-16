@@ -29,6 +29,9 @@ pub(crate) fn render_tab_issues(
     highlight_style: Style,
     header_style: Style,
 ) {
+    if super::render_edit_menu_if_active(f, app, detail_rect) {
+        return;
+    }
     let icons = crate::config::ICONS.read().unwrap();
     if app.issues.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
@@ -313,6 +316,9 @@ pub(crate) fn render_tab_merge_requests(
     highlight_style: Style,
     header_style: Style,
 ) {
+    if super::render_edit_menu_if_active(f, app, detail_rect) {
+        return;
+    }
     let icons = crate::config::ICONS.read().unwrap();
     if app.mrs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
@@ -1005,6 +1011,9 @@ pub(crate) fn render_tab_pipelines(
     highlight_style: Style,
     header_style: Style,
 ) {
+    if super::render_edit_menu_if_active(f, app, detail_rect) {
+        return;
+    }
     let icons = crate::config::ICONS.read().unwrap();
     let is_github = app.is_github();
     if app.pipelines.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
@@ -2089,6 +2098,9 @@ pub(crate) fn render_tab_releases(
     highlight_style: Style,
     header_style: Style,
 ) {
+    if super::render_edit_menu_if_active(f, app, detail_rect) {
+        return;
+    }
     let icons = crate::config::ICONS.read().unwrap();
     if app.releases.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
@@ -2550,6 +2562,9 @@ pub(crate) fn render_tab_milestones(
     highlight_style: Style,
     header_style: Style,
 ) {
+    if super::render_edit_menu_if_active(f, app, detail_rect) {
+        return;
+    }
     let icons = crate::config::ICONS.read().unwrap();
     if app.milestones.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
@@ -2809,6 +2824,9 @@ pub(crate) fn render_tab_branches(
     highlight_style: Style,
     header_style: Style,
 ) {
+    if super::render_edit_menu_if_active(f, app, detail_rect) {
+        return;
+    }
     let icons = crate::config::ICONS.read().unwrap();
     if app.branches.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(

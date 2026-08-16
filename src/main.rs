@@ -4526,6 +4526,9 @@ async fn main() -> Result<()> {
                         // Navigation mode (!menu.editing):
                         match key_event.code {
                             KeyCode::Esc => {
+                                // Close the edit form and drop back to the
+                                // read-only fullscreen view (not the side pane).
+                                app.details_zoomed = true;
                                 // Close menu (drop menu by not reassigning)
                             }
                             KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => {

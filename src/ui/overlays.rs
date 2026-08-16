@@ -16,7 +16,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ICONS.read().unwrap();
     let label_colors = app.label_colors.clone();
-    // EditMenu is now rendered as full-zoom view in main UI (ui/mod.rs)
+    // EditMenu is rendered as a full-zoom interactive inspector in the detail
+    // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
+    // scroll/click handling so it participates in overlay z-ordering.
+    if app.edit_menu.is_some() {
+        if let Some(rect) = app.detail_rect {
+            app.overlay_stack
+                .push((crate::app::OverlayKind::EditMenu, rect));
+        }
+    }
 
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {

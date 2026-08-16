@@ -46,330 +46,394 @@ pub(crate) fn render_entity_inspector(
     f: &mut Frame,
     doc: &EntityDocument,
     area: Rect,
-    mode: InspectorMode<'_>,
+    mut mode: InspectorMode<'_>,
     label_colors: &HashMap<String, Color>,
+) {
+    let icons = ICONS.read().unwrap();
+    let theme = THEME.read().unwrap();
+
+    // The view (ReadOnly) and edit (Interactive) modes share one render path:
+    // the same outer block, the same fields/content layout, and the same field
+    // list. The mode only changes (a) the title/border styling, (b) whether a
+    // submit footer is shown, (c) field selection/cursor state, and (d) how the
+    // content pane is drawn (read-only renderer vs. editable description).
+    let (title, border_color, is_interactive) = match &mode {
+        InspectorMode::Interactive { .. } => (
+            if !doc.title.is_empty() {
+                format!(" {} {} ", icons.label_details, doc.title)
+            } else {
+                format!(" {} Edit ", icons.label_details)
+            },
+            theme.border_focused,
+            true,
+        ),
+        InspectorMode::ReadOnly { title_suffix, .. } => (
+            if !doc.title.is_empty() {
+                format!(" {} Preview: {} ", icons.label_details, doc.title)
+            } else if title_suffix.is_empty() {
+                format!(" {} Preview ", icons.label_details)
+            } else {
+                format!(" {} Preview{} ", icons.label_details, title_suffix)
+            },
+            theme.border,
+            false,
+        ),
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(theme.header_fg)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    // Reserve a footer for the submit/save button in edit mode.
+    let (main_area, submit_area) = if is_interactive {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(3)])
+            .split(inner);
+        (layout[0], layout[1])
+    } else {
+        (inner, Rect::default())
+    };
+
+    // Field-list parameters and "is there a content pane to draw" are the only
+    // mode-driven inputs to the shared layout below.
+    let (has_content, selected_idx, editing, cursor_pos, skip_description) = match &mode {
+        InspectorMode::Interactive { menu } => (
+            menu.fields
+                .iter()
+                .any(|f| f.label == "Description" && f.kind == FieldType::Text),
+            Some(menu.selected_idx),
+            menu.editing,
+            menu.cursor_pos,
+            true,
+        ),
+        InspectorMode::ReadOnly { .. } => (
+            match &doc.content {
+                InspectorContent::Empty(_) => false,
+                InspectorContent::Markdown(m) => !m.trim().is_empty(),
+                InspectorContent::AnsiTrace { trace, .. } => !trace.trim().is_empty(),
+                InspectorContent::PipelineStages(jobs) => !jobs.is_empty(),
+                InspectorContent::Custom(lines) => !lines.is_empty(),
+            },
+            None,
+            false,
+            0,
+            false,
+        ),
+    };
+
+    let has_fields = !doc.fields.is_empty();
+
+    if has_content && has_fields && inner.width >= 70 {
+        // Two panes: fields on the left, content on the right.
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(main_area);
+
+        render_fields_list(
+            f,
+            &mut mode,
+            &doc.fields,
+            selected_idx,
+            editing,
+            cursor_pos,
+            chunks[0],
+            label_colors,
+            skip_description,
+            is_interactive,
+            &theme,
+        );
+        render_content_pane(f, &mut mode, doc, chunks[1], Borders::LEFT);
+    } else if has_content && !has_fields {
+        // Only content.
+        render_content_pane(f, &mut mode, doc, main_area, Borders::NONE);
+    } else if !has_content {
+        // Only fields.
+        render_fields_list(
+            f,
+            &mut mode,
+            &doc.fields,
+            selected_idx,
+            editing,
+            cursor_pos,
+            main_area,
+            label_colors,
+            skip_description,
+            is_interactive,
+            &theme,
+        );
+    } else {
+        // Narrow terminal: stack fields above content.
+        let field_count = doc
+            .fields
+            .iter()
+            .filter(|f| !(f.kind == FieldType::Section && f.label.to_uppercase() == "DESCRIPTION"))
+            .count() as u16;
+        let split_height = (field_count + 1).min(inner.height.saturating_sub(4)).max(3);
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(split_height), Constraint::Min(3)])
+            .split(main_area);
+
+        render_fields_list(
+            f,
+            &mut mode,
+            &doc.fields,
+            selected_idx,
+            editing,
+            cursor_pos,
+            chunks[0],
+            label_colors,
+            skip_description,
+            is_interactive,
+            &theme,
+        );
+
+        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP);
+    }
+
+    // Submit/save footer (edit mode only).
+    if is_interactive {
+        render_submit_footer(f, &mut mode, submit_area, &theme, &icons);
+    }
+}
+
+/// Render the shared field list. In edit mode the list is driven by the menu's
+/// selection/state; in view mode a fresh state is used each frame.
+fn render_fields_list(
+    f: &mut Frame,
+    mode: &mut InspectorMode<'_>,
+    fields: &[Field],
+    selected_idx: Option<usize>,
+    editing: bool,
+    cursor_pos: usize,
+    area: Rect,
+    label_colors: &HashMap<String, Color>,
+    skip_description: bool,
+    interactive: bool,
+    theme: &crate::config::Theme,
+) {
+    let field_items = build_field_list_items(
+        fields,
+        selected_idx,
+        editing,
+        cursor_pos,
+        area.width,
+        label_colors,
+        skip_description,
+        interactive,
+    );
+    let list = List::new(field_items).style(Style::default().bg(theme.bg));
+
+    let mut state = match mode {
+        InspectorMode::Interactive { menu } => menu.state.clone(),
+        InspectorMode::ReadOnly { .. } => ListState::default(),
+    };
+    f.render_stateful_widget(list, area, &mut state);
+    if let InspectorMode::Interactive { menu } = mode {
+        menu.state = state;
+    }
+}
+
+/// Render the content pane. Read-only previews defer to `render_inspector_content`
+/// (markdown / ansi trace / pipeline stages / custom lines); the editable form
+/// draws its dedicated Description pane with an optional inline cursor. The
+/// `borders` argument selects the separator orientation: `LEFT` for the
+/// side-by-side layout, `TOP` for the stacked layout, `NONE` when the content
+/// fills the whole pane.
+fn render_content_pane(
+    f: &mut Frame,
+    mode: &mut InspectorMode<'_>,
+    doc: &EntityDocument,
+    area: Rect,
+    borders: ratatui::widgets::Borders,
 ) {
     let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
 
     match mode {
         InspectorMode::Interactive { menu } => {
-            let is_new_entity = menu.is_new();
-            let submit_idx = menu.fields.len() + 1;
-
-            let has_description = menu
-                .fields
-                .iter()
-                .any(|f| f.label == "Description" && f.kind == FieldType::Text);
-            let is_desc_selected = has_description
-                && menu.selected_idx < menu.fields.len()
-                && menu.fields[menu.selected_idx].label == "Description"
-                && menu.fields[menu.selected_idx].kind == FieldType::Text;
-
-            // Layout: main content + submit button
-            let layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(3)])
-                .split(area);
-
-            let main_area = layout[0];
-
-            if has_description {
-                let main_chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(main_area);
-
-                // Left pane: properties / fields
-                let fields_inner = main_chunks[0];
-
-                let field_items = build_field_list_items(
-                    &menu.fields,
-                    Some(menu.selected_idx),
-                    menu.editing,
-                    menu.cursor_pos,
-                    main_chunks[0].width,
-                    label_colors,
-                    true,
-                );
-
-                let list = List::new(field_items).style(Style::default().bg(theme.bg));
-                let mut state = menu.state.clone();
-                f.render_stateful_widget(list, fields_inner, &mut state);
-                menu.state = state;
-
-                // Right pane: content / description
-                let desc_value = menu.get_description_value();
-                let desc_lines = if is_desc_selected && menu.editing {
-                    let cursor_style = Style::default()
-                        .fg(theme.bg)
-                        .bg(theme.text_normal)
-                        .add_modifier(Modifier::SLOW_BLINK);
-                    let block_cursor_style = Style::default()
-                        .fg(theme.text_normal)
-                        .add_modifier(Modifier::SLOW_BLINK);
-                    let text_style = Style::default().fg(theme.text_normal);
-
-                    if desc_value.is_empty() {
-                        vec![Line::from(vec![Span::styled("█", block_cursor_style)])]
-                    } else {
-                        let mut lines = Vec::new();
-                        let mut line_start_offset = 0;
-                        let cursor = menu.cursor_pos.min(desc_value.len());
-                        let desc_lines_raw: Vec<&str> = desc_value.split('\n').collect();
-                        let num_lines = desc_lines_raw.len();
-
-                        for (i, line) in desc_lines_raw.iter().enumerate() {
-                            let line_len = line.len();
-                            let line_end_offset = line_start_offset + line_len;
-
-                            let is_cursor_line = cursor >= line_start_offset
-                                && (cursor < line_end_offset
-                                    || (cursor == line_end_offset
-                                        && (i == num_lines - 1 || cursor <= line_end_offset)));
-
-                            if is_cursor_line {
-                                let col = cursor.saturating_sub(line_start_offset).min(line_len);
-                                let before = &line[..col];
-                                let mut spans = Vec::new();
-                                if !before.is_empty() {
-                                    spans.push(Span::styled(before.to_string(), text_style));
-                                }
-                                if col < line_len {
-                                    let mut after_chars = line[col..].chars();
-                                    let cursor_ch = after_chars.next().unwrap_or(' ');
-                                    let rest = after_chars.as_str();
-                                    spans.push(Span::styled(cursor_ch.to_string(), cursor_style));
-                                    if !rest.is_empty() {
-                                        spans.push(Span::styled(rest.to_string(), text_style));
-                                    }
-                                } else {
-                                    spans.push(Span::styled("█".to_string(), block_cursor_style));
-                                }
-                                lines.push(Line::from(spans));
-                            } else {
-                                lines.push(Line::from(vec![Span::styled(
-                                    line.to_string(),
-                                    text_style,
-                                )]));
-                            }
-                            line_start_offset += line_len + 1;
-                        }
-                        lines
-                    }
-                } else if desc_value.is_empty() {
-                    vec![Line::from(Span::styled(
-                        "Empty — press Enter to edit, Ctrl+E for editor",
-                        Style::default()
-                            .fg(theme.text_muted)
-                            .add_modifier(Modifier::ITALIC),
-                    ))]
-                } else {
-                    render_markdown(&desc_value)
-                };
-
-                let desc_border_color = if is_desc_selected {
-                    theme.border_focused
-                } else {
-                    theme.border
-                };
-                let desc_block = Block::default()
-                    .borders(Borders::LEFT)
-                    .border_style(Style::default().fg(desc_border_color))
-                    .title(format!(" {} Description ", icons.label_details))
-                    .title_style(
-                        Style::default()
-                            .fg(if is_desc_selected {
-                                theme.header_fg
-                            } else {
-                                theme.text_muted
-                            })
-                            .add_modifier(Modifier::BOLD),
-                    );
-
-                f.render_widget(
-                    Paragraph::new(desc_lines)
-                        .block(desc_block)
-                        .scroll((menu.desc_scroll, 0))
-                        .wrap(ratatui::widgets::Wrap { trim: true }),
-                    main_chunks[1],
-                );
-            } else {
-                // Single pane: fields take 100% width cleanly
-                let field_items = build_field_list_items(
-                    &menu.fields,
-                    Some(menu.selected_idx),
-                    menu.editing,
-                    menu.cursor_pos,
-                    main_area.width,
-                    label_colors,
-                    true,
-                );
-
-                let list = List::new(field_items).style(Style::default().bg(theme.bg));
-                let mut state = menu.state.clone();
-                f.render_stateful_widget(list, main_area, &mut state);
-                menu.state = state;
-            }
-
-            // Submit button
-            let submit_chunk = layout[1];
-            let btn_text = if is_new_entity {
-                format!(" {} Submit ", icons.check_on)
-            } else {
-                format!(" {} Save ", icons.check_on)
-            };
-            let is_submit_selected = menu.selected_idx == submit_idx;
-            let submit_fg = if is_submit_selected {
-                theme.bg
-            } else {
-                theme.green
-            };
-            let submit_bg = if is_submit_selected {
-                theme.green
-            } else {
-                theme.bg
-            };
-            let submit_block = Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(theme.border));
-            f.render_widget(
-                Paragraph::new(Line::from(vec![Span::styled(
-                    btn_text,
-                    Style::default()
-                        .fg(submit_fg)
-                        .bg(submit_bg)
-                        .add_modifier(Modifier::BOLD),
-                )]))
-                .block(submit_block)
-                .alignment(Alignment::Center),
-                submit_chunk,
-            );
-        }
-        InspectorMode::ReadOnly {
-            scroll,
-            title_suffix,
-        } => {
-            let title = if !doc.title.is_empty() {
-                format!(" {} Preview: {} ", icons.label_details, doc.title)
-            } else if title_suffix.is_empty() {
-                format!(" {} Preview ", icons.label_details)
-            } else {
-                format!(" {} Preview{} ", icons.label_details, title_suffix)
+            // Description pane is driven by the document content (the helper
+            // builds the doc from the menu), keyed off the Description field.
+            let is_desc_selected = menu.selected_idx < doc.fields.len()
+                && doc.fields[menu.selected_idx].label == "Description"
+                && doc.fields[menu.selected_idx].kind == FieldType::Text;
+            let desc_value = match &doc.content {
+                InspectorContent::Markdown(m) => m.clone(),
+                _ => String::new(),
             };
 
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border))
-                .title(title)
+            let desc_border_color = if is_desc_selected {
+                theme.border_focused
+            } else {
+                theme.border
+            };
+            let desc_block = Block::default()
+                .borders(borders)
+                .border_style(Style::default().fg(desc_border_color))
+                .title(format!(" {} Description ", icons.label_details))
                 .title_style(
                     Style::default()
-                        .fg(theme.header_fg)
+                        .fg(if is_desc_selected {
+                            theme.header_fg
+                        } else {
+                            theme.text_muted
+                        })
                         .add_modifier(Modifier::BOLD),
                 );
 
-            let inner = block.inner(area);
-            f.render_widget(block, area);
+            let desc_inner = desc_block.inner(area);
+            f.render_widget(desc_block, area);
 
-            if inner.width == 0 || inner.height == 0 {
+            if desc_inner.width == 0 || desc_inner.height == 0 {
                 return;
             }
 
-            let has_content = match &doc.content {
-                InspectorContent::Empty(_) => false,
-                InspectorContent::Markdown(m) => !m.trim().is_empty(),
-                InspectorContent::AnsiTrace { trace, .. } => !trace.trim().is_empty(),
-                InspectorContent::PipelineStages(jobs) => !jobs.is_empty(),
-                InspectorContent::Custom(lines) => !lines.is_empty(),
+            let desc_lines = if is_desc_selected && menu.editing {
+                let cursor_style = Style::default()
+                    .fg(theme.bg)
+                    .bg(theme.text_normal)
+                    .add_modifier(Modifier::SLOW_BLINK);
+                let block_cursor_style = Style::default()
+                    .fg(theme.text_normal)
+                    .add_modifier(Modifier::SLOW_BLINK);
+                let text_style = Style::default().fg(theme.text_normal);
+
+                if desc_value.is_empty() {
+                    vec![Line::from(vec![Span::styled("█", block_cursor_style)])]
+                } else {
+                    let mut lines = Vec::new();
+                    let mut line_start_offset = 0;
+                    let cursor = menu.cursor_pos.min(desc_value.len());
+                    let desc_lines_raw: Vec<&str> = desc_value.split('\n').collect();
+                    let num_lines = desc_lines_raw.len();
+
+                    for (i, line) in desc_lines_raw.iter().enumerate() {
+                        let line_len = line.len();
+                        let line_end_offset = line_start_offset + line_len;
+
+                        let is_cursor_line = cursor >= line_start_offset
+                            && (cursor < line_end_offset
+                                || (cursor == line_end_offset
+                                    && (i == num_lines - 1 || cursor <= line_end_offset)));
+
+                        if is_cursor_line {
+                            let col = cursor.saturating_sub(line_start_offset).min(line_len);
+                            let before = &line[..col];
+                            let mut spans = Vec::new();
+                            if !before.is_empty() {
+                                spans.push(Span::styled(before.to_string(), text_style));
+                            }
+                            if col < line_len {
+                                let mut after_chars = line[col..].chars();
+                                let cursor_ch = after_chars.next().unwrap_or(' ');
+                                let rest = after_chars.as_str();
+                                spans.push(Span::styled(cursor_ch.to_string(), cursor_style));
+                                if !rest.is_empty() {
+                                    spans.push(Span::styled(rest.to_string(), text_style));
+                                }
+                            } else {
+                                spans.push(Span::styled("█".to_string(), block_cursor_style));
+                            }
+                            lines.push(Line::from(spans));
+                        } else {
+                            lines
+                                .push(Line::from(vec![Span::styled(line.to_string(), text_style)]));
+                        }
+                        line_start_offset += line_len + 1;
+                    }
+                    lines
+                }
+            } else if desc_value.is_empty() {
+                vec![Line::from(Span::styled(
+                    "Empty — press Enter to edit, Ctrl+E for editor",
+                    Style::default()
+                        .fg(theme.text_muted)
+                        .add_modifier(Modifier::ITALIC),
+                ))]
+            } else {
+                render_markdown(&desc_value)
             };
 
-            // If we have both fields and rich content, split into two panes if width allows
-            if has_content && inner.width >= 70 {
-                let chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-                    .split(inner);
-
-                // Left: fields list
-                let field_items = build_field_list_items(
-                    &doc.fields,
-                    None,
-                    false,
-                    0,
-                    chunks[0].width,
-                    label_colors,
-                    false,
-                );
-                let list = List::new(field_items).style(Style::default().bg(theme.bg));
-                let mut state = ListState::default();
-                f.render_stateful_widget(list, chunks[0], &mut state);
-
-                // Separator / Right Content
-                let content_block = Block::default()
-                    .borders(Borders::LEFT)
-                    .border_style(Style::default().fg(theme.border));
-                let content_inner = content_block.inner(chunks[1]);
-                f.render_widget(content_block, chunks[1]);
-
-                render_inspector_content(f, &doc.content, content_inner, scroll);
-            } else {
-                // Single pane: if only fields, render fields. If only content, render content. If both on small screen, stack.
-                if !has_content {
-                    let field_items = build_field_list_items(
-                        &doc.fields,
-                        None,
-                        false,
-                        0,
-                        inner.width,
-                        label_colors,
-                        false,
-                    );
-                    let list = List::new(field_items).style(Style::default().bg(theme.bg));
-                    let mut state = ListState::default();
-                    f.render_stateful_widget(list, inner, &mut state);
-                } else if doc.fields.is_empty() {
-                    render_inspector_content(f, &doc.content, inner, scroll);
-                } else {
-                    // Small screen stacked layout
-                    let field_count = doc
-                        .fields
-                        .iter()
-                        .filter(|f| {
-                            !(f.kind == FieldType::Section
-                                && f.label.to_uppercase() == "DESCRIPTION")
-                        })
-                        .count() as u16;
-                    let split_height = (field_count + 1).min(inner.height.saturating_sub(4)).max(3);
-
-                    let chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([Constraint::Length(split_height), Constraint::Min(3)])
-                        .split(inner);
-
-                    let field_items = build_field_list_items(
-                        &doc.fields,
-                        None,
-                        false,
-                        0,
-                        chunks[0].width,
-                        label_colors,
-                        false,
-                    );
-                    let list = List::new(field_items).style(Style::default().bg(theme.bg));
-                    let mut state = ListState::default();
-                    f.render_stateful_widget(list, chunks[0], &mut state);
-
-                    let content_block = Block::default()
-                        .borders(Borders::TOP)
-                        .border_style(Style::default().fg(theme.border));
-                    let content_inner = content_block.inner(chunks[1]);
-                    f.render_widget(content_block, chunks[1]);
-
-                    render_inspector_content(f, &doc.content, content_inner, scroll);
-                }
-            }
+            f.render_widget(
+                Paragraph::new(desc_lines)
+                    .scroll((menu.desc_scroll, 0))
+                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                desc_inner,
+            );
+        }
+        InspectorMode::ReadOnly { scroll, .. } => {
+            let content_block = Block::default()
+                .borders(borders)
+                .border_style(Style::default().fg(theme.border));
+            let content_inner = content_block.inner(area);
+            f.render_widget(content_block, area);
+            render_inspector_content(f, &doc.content, content_inner, *scroll);
         }
     }
+}
+
+/// Render the submit/save button footer for the editable form.
+fn render_submit_footer(
+    f: &mut Frame,
+    mode: &mut InspectorMode<'_>,
+    area: Rect,
+    theme: &crate::config::Theme,
+    icons: &crate::config::Icons,
+) {
+    let menu = match mode {
+        InspectorMode::Interactive { menu } => menu,
+        _ => return,
+    };
+
+    let is_new_entity = menu.is_new();
+    let submit_idx = menu.fields.len() + 1;
+    let btn_text = if is_new_entity {
+        format!(" {} Submit ", icons.check_on)
+    } else {
+        format!(" {} Save ", icons.check_on)
+    };
+    let is_submit_selected = menu.selected_idx == submit_idx;
+    let submit_fg = if is_submit_selected {
+        theme.bg
+    } else {
+        theme.green
+    };
+    let submit_bg = if is_submit_selected {
+        theme.green
+    } else {
+        theme.bg
+    };
+    let submit_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.border));
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            btn_text,
+            Style::default()
+                .fg(submit_fg)
+                .bg(submit_bg)
+                .add_modifier(Modifier::BOLD),
+        )]))
+        .block(submit_block)
+        .alignment(Alignment::Center),
+        area,
+    );
 }
 
 pub(crate) fn build_field_list_items(
@@ -380,6 +444,7 @@ pub(crate) fn build_field_list_items(
     pane_width: u16,
     label_colors: &HashMap<String, Color>,
     skip_description: bool,
+    interactive: bool,
 ) -> Vec<ListItem<'static>> {
     let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
@@ -460,6 +525,7 @@ pub(crate) fn build_field_list_items(
 
             let icon = match f.kind {
                 FieldType::Section => "",
+                FieldType::ReadOnly if interactive => icons.readonly.as_str(),
                 FieldType::MultiSelect => {
                     if label == "Labels" {
                         "\u{f02b}"
@@ -1378,7 +1444,7 @@ mod tests {
             Field::multi_select("Labels", "bug, urgent".to_string()),
         ];
         let label_colors = HashMap::new();
-        let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true);
+        let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true, true);
         assert_eq!(items.len(), 4);
     }
 
@@ -1464,7 +1530,7 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // pane_width 40 will force wrapping of the long title
-        let items = build_field_list_items(&fields, None, false, 0, 40, &label_colors, true);
+        let items = build_field_list_items(&fields, None, false, 0, 40, &label_colors, true, true);
         assert_eq!(items.len(), 2);
     }
 
@@ -1480,7 +1546,8 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Active editing at cursor position 10
-        let items = build_field_list_items(&fields, Some(0), true, 10, 40, &label_colors, true);
+        let items =
+            build_field_list_items(&fields, Some(0), true, 10, 40, &label_colors, true, true);
         assert_eq!(items.len(), 2);
     }
 
@@ -1492,7 +1559,8 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Editing empty Title at cursor position 0
-        let items = build_field_list_items(&fields, Some(0), true, 0, 40, &label_colors, true);
+        let items =
+            build_field_list_items(&fields, Some(0), true, 0, 40, &label_colors, true, true);
         assert_eq!(items.len(), 2);
     }
 
@@ -1504,7 +1572,8 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Editing spaces Title at cursor position 2
-        let items = build_field_list_items(&fields, Some(0), true, 2, 40, &label_colors, true);
+        let items =
+            build_field_list_items(&fields, Some(0), true, 2, 40, &label_colors, true, true);
         assert_eq!(items.len(), 2);
     }
 
@@ -1515,7 +1584,7 @@ mod tests {
             Field::read_only("State", "OPEN".to_string()),
         ];
         let label_colors = HashMap::new();
-        let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true);
+        let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true, true);
         assert_eq!(items.len(), 2);
     }
 }

@@ -14,8 +14,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::JoinSet;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -38,6 +41,26 @@ fn parse_gh_login(raw: &str) -> Option<String> {
         None
     } else {
         Some(login.to_string())
+    }
+}
+
+/// Cap the number of concurrent per-run metadata requests when enriching
+/// pipelines. The Pipelines tab can list hundreds of runs; without a bound
+/// each list refresh would spawn a subprocess per row.
+const MAX_GH_METADATA_CONCURRENCY: usize = 8;
+
+fn deserialize_needs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        Some(serde_json::Value::Array(items)) => Ok(items
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect()),
+        Some(serde_json::Value::String(item)) => Ok(vec![item]),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -1337,7 +1360,7 @@ impl Backend for GhBackend {
                     "run",
                     "list",
                     "--json",
-                    "databaseId,status,conclusion,headBranch,createdAt,updatedAt,workflowName,displayTitle,headSha,event",
+                    "databaseId,status,conclusion,headBranch,createdAt,startedAt,updatedAt,workflowName,displayTitle,headSha,event",
                     "-R",
                     project,
                     "--limit",
@@ -1357,6 +1380,10 @@ impl Backend for GhBackend {
             head_branch: String,
             #[serde(rename = "updatedAt")]
             updated_at: String,
+            #[serde(rename = "createdAt")]
+            created_at: Option<String>,
+            #[serde(rename = "startedAt")]
+            started_at: Option<String>,
             #[serde(rename = "workflowName")]
             workflow_name: Option<String>,
             #[serde(rename = "displayTitle")]
@@ -1367,7 +1394,7 @@ impl Backend for GhBackend {
         }
 
         let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
-        Ok(runs
+        let mut pipelines: Vec<Pipeline> = runs
             .into_iter()
             .map(|r| {
                 let status = match r.status.as_str() {
@@ -1384,6 +1411,10 @@ impl Backend for GhBackend {
                     _ => "pending",
                 }
                 .to_string();
+                let duration = r
+                    .started_at
+                    .as_deref()
+                    .and_then(|started| chrono_duration(started, &r.updated_at));
                 Pipeline {
                     id: r.database_id,
                     status,
@@ -1391,12 +1422,18 @@ impl Backend for GhBackend {
                     updated_at: r.updated_at,
                     name: r.workflow_name.unwrap_or_default(),
                     display_title: r.display_title.unwrap_or_default(),
-                    event: r.event.unwrap_or_default(),
+                    event: r.event.as_deref().unwrap_or_default().to_string(),
                     head_sha: r.head_sha.unwrap_or_default(),
                     actor_login: String::new(),
+                    duration_seconds: duration,
+                    created_at: r.created_at,
+                    source: r.event,
                 }
             })
-            .collect())
+            .collect();
+
+        enrich_pipeline_actors(project, &mut pipelines).await;
+        Ok(pipelines)
     }
 
     async fn list_pipeline_jobs(
@@ -1405,26 +1442,6 @@ impl Backend for GhBackend {
         pipeline_id: u64,
         _page_size: usize,
     ) -> Result<Vec<Job>> {
-        // Fetch workflow name for this run
-        let workflow_name = self
-            .run_gh(
-                &[
-                    "run",
-                    "view",
-                    &pipeline_id.to_string(),
-                    "--json",
-                    "workflowName",
-                    "--jq",
-                    ".workflowName",
-                    "-R",
-                    project,
-                ],
-                "Fetching Workflow",
-            )
-            .await
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "actions".to_string());
-
         let raw = self
             .run_gh(
                 &[
@@ -1449,6 +1466,14 @@ impl Backend for GhBackend {
             name: String,
             status: String,
             conclusion: Option<String>,
+            #[serde(rename = "runnerName")]
+            runner_name: Option<String>,
+            #[serde(rename = "startedAt")]
+            started_at: Option<String>,
+            #[serde(rename = "completedAt")]
+            completed_at: Option<String>,
+            #[serde(default, deserialize_with = "deserialize_needs")]
+            needs: Vec<String>,
         }
 
         let jobs: Vec<GhJob> = serde_json::from_str(&raw)?;
@@ -1469,12 +1494,22 @@ impl Backend for GhBackend {
                     _ => "pending",
                 }
                 .to_string();
+                let duration = match (&j.started_at, &j.completed_at) {
+                    (Some(start), Some(end)) => chrono_duration(start, end),
+                    _ => None,
+                };
                 Job {
                     id: j.id,
                     status,
-                    stage: workflow_name.clone(),
+                    // GitHub jobs form a dependency graph, not GitLab-style
+                    // sequential stages. Keep this empty so stage grouping
+                    // cannot imply semantics that do not exist.
+                    stage: String::new(),
                     name: j.name,
                     matrix: None,
+                    duration_seconds: duration,
+                    runner: j.runner_name,
+                    needs: j.needs,
                 }
             })
             .collect();
@@ -1978,9 +2013,11 @@ impl Backend for GhBackend {
             format!("repos/{}/milestones/{}", project, milestone_iid),
             "-f".into(),
             format!("title={}", title),
-            "-f".into(),
-            format!("description={}", description),
         ];
+        if !description.is_empty() {
+            args.push("-f".into());
+            args.push(format!("description={}", description));
+        }
         if let Some(due) = due_date {
             if !due.is_empty() {
                 let iso_due = if due.contains('T') {
@@ -2304,6 +2341,15 @@ impl Backend for GhBackend {
         Ok(())
     }
 
+    async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()> {
+        self.run_gh(
+            &["workflow", "view", workflow, "-R", project, "--web"],
+            "OPENING WORKFLOW IN BROWSER",
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn open_job_in_browser(&self, _project: &str, id: &str) -> Result<()> {
         self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
             .await?;
@@ -2421,6 +2467,78 @@ impl Backend for GhBackend {
     }
 }
 
+/// Compute duration in seconds between two ISO 8601 timestamps.
+fn chrono_duration(start: &str, end: &str) -> Option<u64> {
+    let s = chrono::DateTime::parse_from_rfc3339(start).ok()?;
+    let e = chrono::DateTime::parse_from_rfc3339(end).ok()?;
+    let diff = e.signed_duration_since(s);
+    if diff < chrono::Duration::zero() {
+        return None;
+    }
+    Some(diff.num_seconds() as u64)
+}
+
+/// Fetch the actor login for a single GitHub Actions run.
+///
+/// `gh run list` does not expose the actor, so this hits
+/// `GET repos/{}/actions/runs/{id}` and reads `actor.login`. Returns `None` on
+/// any failure rather than propagating — an unknown actor must never block the
+/// pipelines list.
+async fn fetch_actor_login(project: &str, run_id: u64) -> Option<String> {
+    let raw = Command::new("gh")
+        .args([
+            "api",
+            "-H",
+            "Accept: application/vnd.github+json",
+            &format!("repos/{project}/actions/runs/{run_id}"),
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !raw.status.success() {
+        return None;
+    }
+    let body: serde_json::Value = serde_json::from_slice(&raw.stdout).ok()?;
+    body.get("actor")
+        .and_then(|a| a.get("login"))
+        .and_then(|l| l.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Populate `actor_login` for each pipeline.
+///
+/// `gh run list` does not expose the actor login, so the bulk listing leaves
+/// every row blank. Each run needs its own fetch, but a Pipelines tab can
+/// easily hold hundreds of runs, so a `Semaphore` caps the in-flight
+/// subprocesses at `MAX_GH_METADATA_CONCURRENCY`. Failures are non-fatal: a
+/// missing actor just stays empty, which the column renders as `—`.
+async fn enrich_pipeline_actors(project: &str, pipelines: &mut [Pipeline]) {
+    let permits = Arc::new(Semaphore::new(MAX_GH_METADATA_CONCURRENCY));
+    let mut tasks: JoinSet<(u64, Option<String>)> = JoinSet::new();
+
+    for p in pipelines.iter() {
+        if !p.actor_login.is_empty() {
+            continue;
+        }
+        let id = p.id;
+        let project = project.to_string();
+        let permits = Arc::clone(&permits);
+        tasks.spawn(async move {
+            let _permit = permits.acquire_owned().await.ok();
+            let login = fetch_actor_login(&project, id).await;
+            (id, login)
+        });
+    }
+
+    while let Some(joined) = tasks.join_next().await {
+        let Ok((id, login)) = joined else { continue };
+        let Some(login) = login else { continue };
+        if let Some(p) = pipelines.iter_mut().find(|p| p.id == id) {
+            p.actor_login = login;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2440,6 +2558,53 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
+    }
+
+    #[test]
+    fn chrono_duration_rejects_invalid_and_negative_ranges() {
+        assert_eq!(
+            chrono_duration("2026-01-01T00:00:00Z", "2026-01-01T00:02:05Z"),
+            Some(125)
+        );
+        assert_eq!(
+            chrono_duration("2026-01-01T00:02:05Z", "2026-01-01T00:00:00Z"),
+            None
+        );
+        assert_eq!(chrono_duration("invalid", "invalid"), None);
+    }
+
+    #[test]
+    fn deserialize_needs_accepts_missing_null_string_and_array_shapes() {
+        #[derive(Deserialize)]
+        struct Fixture {
+            #[serde(default, deserialize_with = "deserialize_needs")]
+            needs: Vec<String>,
+        }
+
+        assert!(
+            serde_json::from_str::<Fixture>(r#"{}"#)
+                .unwrap()
+                .needs
+                .is_empty()
+        );
+        assert!(
+            serde_json::from_str::<Fixture>(r#"{"needs":null}"#)
+                .unwrap()
+                .needs
+                .is_empty()
+        );
+        assert_eq!(
+            serde_json::from_str::<Fixture>(r#"{"needs":"build"}"#)
+                .unwrap()
+                .needs,
+            vec!["build"]
+        );
+        assert_eq!(
+            serde_json::from_str::<Fixture>(r#"{"needs":["build","test"]}"#)
+                .unwrap()
+                .needs,
+            vec!["build", "test"]
+        );
     }
 
     #[test]

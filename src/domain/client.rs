@@ -440,6 +440,37 @@ impl GitlabClient {
             .update_mr_target_branch(project, iid, branch)
             .await
     }
+    pub async fn create_branch(
+        &self,
+        project: &str,
+        branch_name: &str,
+        ref_branch: &str,
+    ) -> Result<()> {
+        self.backend
+            .create_branch(project, branch_name, ref_branch)
+            .await
+    }
+
+    pub async fn update_milestone(
+        &self,
+        project: &str,
+        milestone_iid: u64,
+        title: &str,
+        description: &str,
+        start_date: Option<&str>,
+        due_date: Option<&str>,
+    ) -> Result<()> {
+        self.backend
+            .update_milestone(
+                project,
+                milestone_iid,
+                title,
+                description,
+                start_date,
+                due_date,
+            )
+            .await
+    }
     pub async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
         self.backend.open_in_browser(project, entity, id).await
     }

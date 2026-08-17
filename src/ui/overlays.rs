@@ -1,5 +1,5 @@
 use super::diff::{centered_rect_fixed, centered_rect_min};
-use super::helpers::{get_label_color, highlight_fuzzy_match};
+use super::helpers::highlight_fuzzy_match;
 use super::modal::{clear_area, modal_area};
 use crate::app::SaveMenu;
 use crate::app::{App, Tab};
@@ -15,180 +15,15 @@ use ratatui::{
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ICONS.read().unwrap();
-    if let Some(menu) = &mut app.edit_menu {
-        let is_new_entity = menu.is_new();
-        let (body, edit_menu_area) = modal_area(f, &menu.title, 52, 48, 42, 8, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::EditMenu, edit_menu_area));
-
-        let label_width = menu
-            .fields
-            .iter()
-            .map(|(l, _)| l.len())
-            .max()
-            .unwrap_or(18)
-            .max(18);
-
-        let items: Vec<ListItem> = menu
-            .fields
-            .iter()
-            .enumerate()
-            .map(|(i, (label, val))| {
-                let is_selected = i == menu.selected_idx;
-                let item_bg = if is_selected {
-                    THEME.read().unwrap().highlight_bg
-                } else {
-                    THEME.read().unwrap().bg
-                };
-
-                let label_style = if is_selected {
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_normal)
-                        .bg(item_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
-                        .bg(item_bg)
-                };
-
-                let sep_style = if is_selected {
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_normal)
-                        .bg(item_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
-                        .bg(item_bg)
-                };
-
-                let mut val_spans = Vec::new();
-                if !val.is_empty() {
-                    let truncated = if val.len() > 50 {
-                        let mut s = val[..47].to_string();
-                        s.push_str("...");
-                        s
-                    } else {
-                        val.clone()
-                    };
-                    match label.as_str() {
-                        "Labels" => {
-                            let parts: Vec<&str> = truncated.split(',').collect();
-                            for (idx, part) in parts.iter().enumerate() {
-                                if idx > 0 {
-                                    val_spans.push(Span::styled(
-                                        ", ",
-                                        Style::default()
-                                            .fg(THEME.read().unwrap().text_normal)
-                                            .bg(item_bg),
-                                    ));
-                                }
-                                let trimmed = part.trim();
-                                let label_color = get_label_color(trimmed, &app.label_colors);
-                                let mut style = Style::default()
-                                    .fg(label_color)
-                                    .bg(item_bg)
-                                    .add_modifier(Modifier::BOLD);
-                                if is_selected {
-                                    style = style.add_modifier(Modifier::UNDERLINED);
-                                }
-                                val_spans.push(Span::styled(trimmed.to_string(), style));
-                            }
-                        }
-                        "Assignees" | "Reviewers" => {
-                            let parts: Vec<&str> = truncated.split(',').collect();
-                            for (idx, part) in parts.iter().enumerate() {
-                                if idx > 0 {
-                                    val_spans.push(Span::styled(
-                                        ", ",
-                                        Style::default()
-                                            .fg(THEME.read().unwrap().text_normal)
-                                            .bg(item_bg),
-                                    ));
-                                }
-                                let trimmed = part.trim();
-                                let mut style =
-                                    Style::default().fg(THEME.read().unwrap().blue).bg(item_bg);
-                                if is_selected {
-                                    style = style.add_modifier(Modifier::BOLD);
-                                }
-                                val_spans.push(Span::styled(trimmed.to_string(), style));
-                            }
-                        }
-                        _ => {
-                            let val_fg = match label.as_str() {
-                                "Milestone" => THEME.read().unwrap().purple,
-                                "Due Date" => THEME.read().unwrap().yellow,
-                                "Status (Draft/Ready)" | "Source Branch" | "Target Branch" => {
-                                    THEME.read().unwrap().purple
-                                }
-                                "Confidential" => {
-                                    if val.to_lowercase() == "yes" {
-                                        THEME.read().unwrap().red
-                                    } else {
-                                        THEME.read().unwrap().green
-                                    }
-                                }
-                                _ => THEME.read().unwrap().text_normal,
-                            };
-                            let mut style = Style::default().fg(val_fg).bg(item_bg);
-                            if is_selected {
-                                style = style.add_modifier(Modifier::BOLD);
-                            }
-                            val_spans.push(Span::styled(truncated, style));
-                        }
-                    }
-                }
-
-                let mut line_spans = vec![
-                    Span::styled(
-                        format!("  {:label_width$} ", label, label_width = label_width),
-                        label_style,
-                    ),
-                    Span::styled(format!(" {} ", icons.separator), sep_style),
-                ];
-                line_spans.extend(val_spans);
-                let line = Line::from(line_spans);
-
-                ListItem::new(line).style(Style::default().bg(item_bg))
-            })
-            .collect();
-
-        let submit_idx = menu.fields.len() + 1;
-        let all_items: Vec<ListItem> = if is_new_entity {
-            let is_submit_selected = menu.selected_idx == submit_idx;
-            let submit_bg = if is_submit_selected {
-                THEME.read().unwrap().border_focused
-            } else {
-                THEME.read().unwrap().bg
-            };
-            let submit_fg = if is_submit_selected {
-                THEME.read().unwrap().bg
-            } else {
-                THEME.read().unwrap().border_focused
-            };
-            let submit_line = Line::from(vec![Span::styled(
-                "          [ Submit ]          ",
-                Style::default()
-                    .fg(submit_fg)
-                    .bg(submit_bg)
-                    .add_modifier(Modifier::BOLD),
-            )]);
-            let mut v = items;
-            v.push(ListItem::new(
-                Line::from("").style(Style::default().bg(THEME.read().unwrap().bg)),
-            ));
-            v.push(ListItem::new(submit_line));
-            v
-        } else {
-            items
-        };
-
-        let list = List::new(all_items).style(Style::default().bg(THEME.read().unwrap().bg));
-        let mut state = menu.state.clone();
-        f.render_stateful_widget(list, body, &mut state);
-        menu.state = state;
+    let label_colors = app.label_colors.clone();
+    // EditMenu is rendered as a full-zoom interactive inspector in the detail
+    // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
+    // scroll/click handling so it participates in overlay z-ordering.
+    if app.edit_menu.is_some() {
+        if let Some(rect) = app.detail_rect {
+            app.overlay_stack
+                .push((crate::app::OverlayKind::EditMenu, rect));
+        }
     }
 
     if app.column_filter_context.is_none() {
@@ -235,7 +70,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .fg(border_color_search)
                         .bg(THEME.read().unwrap().bg),
                 )
-                .title(" Filter (press 'f' or '/' to focus) ");
+                .title(" Filter ");
 
             let search_text = if selector.is_filtering {
                 format!("{}▋", selector.search_query)
@@ -1143,7 +978,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let search_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
-            .title(" Filter Shortcuts (Type to filter, Esc/Enter to exit) ")
+            .title(" Filter Shortcuts ")
             .title_style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_muted)
@@ -1306,10 +1141,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 " {} Configure View: {} ",
                 icons.label_configure,
                 tab.title(kind)
-            ))
-            .title_bottom(Span::styled(
-                " Space: toggle · Enter: filter/set · J/K: jump · Esc: close ",
-                Style::default().fg(THEME.read().unwrap().text_muted),
             ))
             .title_style(
                 Style::default()
@@ -1697,7 +1528,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .fg(border_color_search)
                         .bg(THEME.read().unwrap().bg),
                 )
-                .title(" Filter (press 'f' or '/' to focus) ");
+                .title(" Filter ");
 
             let search_text = if selector.is_filtering {
                 format!("{}▋", selector.search_query)

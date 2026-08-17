@@ -1,32 +1,6 @@
 pub fn list_templates(template_type: &str) -> Vec<(String, String)> {
     let mut templates: Vec<(String, String)> = Vec::new();
 
-    let paths = if template_type == "issue" {
-        vec![
-            ".github/issue_template.md",
-            ".github/ISSUE_TEMPLATE.md",
-            ".gitlab/issue_template.md",
-        ]
-    } else {
-        vec![
-            ".github/pull_request_template.md",
-            ".github/PULL_REQUEST_TEMPLATE.md",
-            ".gitlab/merge_request_template.md",
-        ]
-    };
-
-    for path in &paths {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            let name = std::path::Path::new(path)
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.to_string());
-            if !templates.iter().any(|(n, _)| n == &name) {
-                templates.push((name, content));
-            }
-        }
-    }
-
     let dirs = if template_type == "issue" {
         vec![".github/ISSUE_TEMPLATE", ".gitlab/issue_templates"]
     } else {
@@ -52,9 +26,38 @@ pub fn list_templates(template_type: &str) -> Vec<(String, String)> {
                         .file_stem()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    if !templates.iter().any(|(n, _)| n == &name) {
+                    if !templates.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) {
                         templates.push((name, content));
                     }
+                }
+            }
+        }
+    }
+
+    // Only look for root-level template fallback if no directory templates exist
+    if templates.is_empty() {
+        let paths = if template_type == "issue" {
+            vec![
+                ".github/issue_template.md",
+                ".github/ISSUE_TEMPLATE.md",
+                ".gitlab/issue_template.md",
+            ]
+        } else {
+            vec![
+                ".github/pull_request_template.md",
+                ".github/PULL_REQUEST_TEMPLATE.md",
+                ".gitlab/merge_request_template.md",
+            ]
+        };
+
+        for path in &paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let name = std::path::Path::new(path)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_string());
+                if !templates.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+                    templates.push((name, content));
                 }
             }
         }
@@ -65,7 +68,10 @@ pub fn list_templates(template_type: &str) -> Vec<(String, String)> {
 
 pub fn get_default_template(template_type: &str) -> Option<String> {
     let templates = list_templates(template_type);
-    if let Some((_, content)) = templates.iter().find(|(n, _)| n == "default") {
+    if let Some((_, content)) = templates
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case("default"))
+    {
         return Some(content.clone());
     }
     templates.into_iter().next().map(|(_, content)| content)

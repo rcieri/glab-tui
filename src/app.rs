@@ -263,16 +263,22 @@ impl Tab {
                     cols.push("Actor");
                 } else {
                     cols.push("Stages");
+                    cols.push("Source");
+                    cols.push("Actor");
                 }
+                cols.push("Created");
+                cols.push("Duration");
                 cols
             }
             Tab::Jobs => {
                 let mut cols = vec!["ID", "Status", "Name", "Matrix"];
                 if kind.is_github() {
                     cols.push("Runner");
+                    cols.push("Needs");
                 } else {
                     cols.push("Stage");
                 }
+                cols.push("Duration");
                 cols
             }
             Tab::Runners => vec!["ID", "Description", "Status", "Active"],
@@ -312,14 +318,16 @@ impl Tab {
             ],
             Tab::Pipelines => {
                 if kind.is_github() {
-                    vec!["Name", "Status", "Event", "Ref"]
+                    vec!["Name", "Status", "Event", "Ref", "Created", "Duration"]
                 } else {
-                    vec!["ID", "Status", "Stages", "Ref"]
+                    vec![
+                        "ID", "Status", "Stages", "Ref", "Source", "Created", "Duration",
+                    ]
                 }
             }
             Tab::Jobs => {
                 if kind.is_github() {
-                    vec!["Name", "Status", "Ref"]
+                    vec!["Name", "Status", "Runner", "Duration"]
                 } else {
                     vec!["ID", "Stage", "Status", "Name", "Matrix"]
                 }
@@ -339,20 +347,106 @@ impl Tab {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditEntityKind {
+    CreateIssue,
+    EditIssue,
+    BulkEditIssues,
+    CreateMr,
+    EditMr,
+    BulkEditMrs,
+    CreateMilestone,
+    EditMilestone,
+    CreateRelease,
+    CreatePipeline,
+    CreateBranch,
+}
+
+impl EditEntityKind {
+    pub fn is_create(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateIssue
+                | Self::CreateMr
+                | Self::CreateMilestone
+                | Self::CreateRelease
+                | Self::CreatePipeline
+                | Self::CreateBranch
+                | Self::BulkEditIssues
+                | Self::BulkEditMrs
+        )
+    }
+
+    pub fn needs_submit(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateIssue
+                | Self::EditIssue
+                | Self::CreateMr
+                | Self::EditMr
+                | Self::CreateMilestone
+                | Self::EditMilestone
+                | Self::CreateRelease
+                | Self::CreatePipeline
+                | Self::CreateBranch
+        )
+    }
+
+    pub fn entity_name(&self) -> &str {
+        match self {
+            Self::CreateIssue | Self::EditIssue | Self::BulkEditIssues => "issue",
+            Self::CreateMr | Self::EditMr | Self::BulkEditMrs => "mr",
+            Self::CreateMilestone | Self::EditMilestone => "milestone",
+            Self::CreateRelease => "release",
+            Self::CreatePipeline => "pipeline",
+            Self::CreateBranch => "branch",
+        }
+    }
+
+    /// Return the legacy entity_type string for backward compat.
+    pub fn legacy_string(&self) -> String {
+        match self {
+            Self::CreateIssue => "new_issue",
+            Self::EditIssue => "issue",
+            Self::BulkEditIssues => "new_bulk_edit_issues",
+            Self::CreateMr => "new_mr",
+            Self::EditMr => "mr",
+            Self::BulkEditMrs => "new_bulk_edit_mrs",
+            Self::CreateMilestone => "new_milestone",
+            Self::EditMilestone => "milestone",
+            Self::CreateRelease => "new_release",
+            Self::CreatePipeline => "new_pipeline",
+            Self::CreateBranch => "new_branch",
+        }
+        .to_string()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
-    pub fields: Vec<(String, String)>, // (Label, Value) — TODO: migrate to Vec<Field>
+    pub fields: Vec<Field>,
     pub selected_idx: usize,
     pub entity_iid: u64,
-    pub entity_type: String, // "issue", "mr"
+    pub entity_kind: EditEntityKind,
     pub state: ListState,
     pub workflow_inputs: Vec<WorkflowInput>,
+    pub cursor_pos: usize,
+    pub editing: bool,
+    pub desc_scroll: u16,
 }
 
 impl EditMenu {
     pub fn is_new(&self) -> bool {
-        self.entity_type.starts_with("new_")
+        self.entity_kind.needs_submit()
+    }
+
+    pub fn get_description_value(&self) -> String {
+        self.fields
+            .iter()
+            .find(|f| f.label == "Description" && f.kind == FieldType::Text)
+            .map(|f| f.value.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -363,6 +457,36 @@ pub enum FieldType {
     Date,
     Toggle,
     Ref,
+    Section,
+    ReadOnly,
+}
+
+#[derive(Clone, Debug)]
+pub enum InspectorContent {
+    Markdown(String),
+    AnsiTrace { trace: String, wrap: bool },
+    PipelineStages(Vec<crate::domain::pipelines::Job>),
+    Custom(Vec<ratatui::text::Line<'static>>),
+    Empty(&'static str),
+}
+
+#[derive(Clone, Debug)]
+pub struct EntityDocument {
+    pub title: String,
+    pub fields: Vec<Field>,
+    pub content: InspectorContent,
+}
+
+/// Semantic tone used to give a preview field a colored background, mirroring
+/// the table's tone→color mapping (e.g. Approval/Mergeable columns). `None`
+/// means "render with the default field styling".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FieldTone {
+    Muted,
+    Red,
+    Yellow,
+    Green,
+    Blue,
 }
 
 #[derive(Clone, Debug)]
@@ -370,6 +494,7 @@ pub struct Field {
     pub label: String,
     pub kind: FieldType,
     pub value: String,
+    pub tone: Option<FieldTone>,
 }
 
 impl Field {
@@ -378,6 +503,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Text,
             value,
+            tone: None,
         }
     }
     pub fn multi_select(label: &str, value: String) -> Self {
@@ -385,6 +511,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::MultiSelect,
             value,
+            tone: None,
         }
     }
     pub fn toggle(label: &str, value: String) -> Self {
@@ -392,6 +519,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Toggle,
             value,
+            tone: None,
         }
     }
     pub fn ref_field(label: &str, value: String) -> Self {
@@ -399,6 +527,7 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Ref,
             value,
+            tone: None,
         }
     }
     pub fn date(label: &str, value: String) -> Self {
@@ -406,7 +535,38 @@ impl Field {
             label: label.to_string(),
             kind: FieldType::Date,
             value,
+            tone: None,
         }
+    }
+    pub fn section(label: &str) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::Section,
+            value: String::new(),
+            tone: None,
+        }
+    }
+    pub fn read_only(label: &str, value: String) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::ReadOnly,
+            value,
+            tone: None,
+        }
+    }
+    /// Read-only field carrying a semantic `FieldTone` so the inspector renders
+    /// it with a tone-driven colored background, matching the table's styling
+    /// for the Approval/Mergeable columns.
+    pub fn read_only_toned(label: &str, value: String, tone: FieldTone) -> Self {
+        Self {
+            label: label.to_string(),
+            kind: FieldType::ReadOnly,
+            value,
+            tone: Some(tone),
+        }
+    }
+    pub fn is_editable(&self) -> bool {
+        self.kind != FieldType::Section && self.kind != FieldType::ReadOnly
     }
 }
 
@@ -1842,11 +2002,19 @@ pub struct App {
     pub selected_issues: std::collections::HashSet<u64>,
     pub selected_mrs: std::collections::HashSet<u64>,
     pub details_zoomed: bool,
+    /// Captured when the edit menu opens so Esc can restore the previous
+    /// zoom state (e.g. back to the zoomed PREVIEW if the user entered
+    /// edit via double-Enter, back to NORMAL if they entered via `e`).
+    pub prev_details_zoomed: bool,
     pub detail_visible: bool,
     pub job_trace_needs_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
     pub job_trace_wrap: bool,
-    pub collapse_matrix_jobs: bool,
+    pub job_trace_search_query: String,
+    pub job_trace_searching: bool,
+    pub job_trace_follow: bool,
+    pub job_trace_last_refresh: std::time::Instant,
+
     pub show_help: bool,
     pub help_search_query: String,
     pub diff_view: Option<DiffView>,
@@ -1939,11 +2107,16 @@ impl Default for App {
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
             details_zoomed: false,
+            prev_details_zoomed: false,
             detail_visible: false,
             job_trace_needs_scroll_to_bottom: false,
             job_trace_loading: false,
             job_trace_wrap: false,
-            collapse_matrix_jobs: false,
+            job_trace_search_query: String::new(),
+            job_trace_searching: false,
+            job_trace_follow: false,
+            job_trace_last_refresh: std::time::Instant::now(),
+
             show_help: false,
             help_search_query: String::new(),
             diff_view: None,
@@ -2004,6 +2177,15 @@ impl Default for App {
 }
 
 impl App {
+    /// Open an edit/create menu, capturing the current zoom state so Esc
+    /// can restore it. Use this helper instead of assigning to
+    /// `edit_menu` directly so the prev-details-zoomed bookkeeping is
+    /// consistent across all entry points (double-Enter, `e`, etc.).
+    pub fn open_edit_menu(&mut self, menu: EditMenu) {
+        self.prev_details_zoomed = self.details_zoomed;
+        self.edit_menu = Some(menu);
+    }
+
     pub fn kind(&self) -> BackendKind {
         self.gitlab_client
             .as_ref()
@@ -2263,13 +2445,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -2717,6 +2900,21 @@ impl App {
             if enabled_cols.contains("Actor") {
                 check_match(item.actor_login());
             }
+            if enabled_cols.contains("Created") {
+                if let Some(created) = item.created_at() {
+                    check_match(&crate::utils::format::time_ago(created));
+                }
+            }
+            if enabled_cols.contains("Source") {
+                if let Some(source) = item.source() {
+                    check_match(source);
+                }
+            }
+            if enabled_cols.contains("Duration") {
+                if let Some(duration) = item.duration_seconds() {
+                    check_match(&format!("{}m {}s", duration / 60, duration % 60));
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2746,6 +2944,17 @@ impl App {
                     "ID" => a.id().to_string(),
                     "Name" => a.name().to_string(),
                     "Event" => a.event().to_string(),
+                    "SHA" => a.head_sha().to_string(),
+                    "Actor" => a.actor_login().to_string(),
+                    "Created" => a
+                        .created_at()
+                        .map(|c| crate::utils::format::time_ago(c))
+                        .unwrap_or_default(),
+                    "Source" => a.source().unwrap_or_default().to_string(),
+                    "Duration" => a
+                        .duration_seconds()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2754,6 +2963,17 @@ impl App {
                     "ID" => b.id().to_string(),
                     "Name" => b.name().to_string(),
                     "Event" => b.event().to_string(),
+                    "SHA" => b.head_sha().to_string(),
+                    "Actor" => b.actor_login().to_string(),
+                    "Created" => b
+                        .created_at()
+                        .map(|c| crate::utils::format::time_ago(c))
+                        .unwrap_or_default(),
+                    "Source" => b.source().unwrap_or_default().to_string(),
+                    "Duration" => b
+                        .duration_seconds()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2786,6 +3006,22 @@ impl App {
                 "ID" => vec![item.id().to_string()],
                 "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
                 "Ref" => vec![item.ref_branch().to_string()],
+                "Name" => vec![item.name().to_string()],
+                "Event" => vec![item.event().to_string()],
+                "SHA" => vec![item.head_sha().to_string()],
+                "Actor" => vec![item.actor_login().to_string()],
+                "Source" => item
+                    .source()
+                    .map(|source| vec![source.to_string()])
+                    .unwrap_or_default(),
+                "Created" => item
+                    .created_at()
+                    .map(|c| vec![crate::utils::format::time_ago(c)])
+                    .unwrap_or_default(),
+                "Duration" => item
+                    .duration_seconds()
+                    .map(|d| vec![format!("{}m {}s", d / 60, d % 60)])
+                    .unwrap_or_default(),
                 _ => vec![],
             },
         );
@@ -2831,6 +3067,21 @@ impl App {
                     check_match(matrix);
                 }
             }
+            if enabled_cols.contains("Runner") {
+                if let Some(runner) = item.runner() {
+                    check_match(runner);
+                }
+            }
+            if enabled_cols.contains("Needs") {
+                for need in item.needs() {
+                    check_match(need);
+                }
+            }
+            if enabled_cols.contains("Duration") {
+                if let Some(dur) = item.duration_seconds() {
+                    check_match(&format!("{}m {}s", dur / 60, dur % 60));
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((score, item));
@@ -2858,6 +3109,11 @@ impl App {
                     "Stage" => a.stage().to_string(),
                     "Name" => a.name().to_string(),
                     "ID" => a.id().to_string(),
+                    "Runner" => a.runner().unwrap_or("-").to_string(),
+                    "Duration" => a
+                        .duration_seconds()
+                        .map(|d| format!("{}m", d / 60))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -2865,6 +3121,11 @@ impl App {
                     "Stage" => b.stage().to_string(),
                     "Name" => b.name().to_string(),
                     "ID" => b.id().to_string(),
+                    "Runner" => b.runner().unwrap_or("-").to_string(),
+                    "Duration" => b
+                        .duration_seconds()
+                        .map(|d| format!("{}m", d / 60))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -2901,18 +3162,7 @@ impl App {
             },
         );
 
-        if self.collapse_matrix_jobs {
-            let mut collapsed: Vec<&crate::domain::pipelines::Job> = Vec::new();
-            let mut seen_names = std::collections::HashSet::new();
-            for job in list {
-                if seen_names.insert(job.name().to_string()) {
-                    collapsed.push(job);
-                }
-            }
-            collapsed
-        } else {
-            list
-        }
+        list
     }
 
     pub fn filter_runners_list<'a>(
@@ -2923,13 +3173,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -2984,13 +3235,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3218,13 +3470,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3339,7 +3592,7 @@ impl App {
             &self.column_filters,
             Tab::Milestones,
             |item, col| match col {
-                "ID" => vec![item.id.to_string()],
+                "ID" => vec![item.iid.to_string()],
                 "Title" => vec![item.title.clone()],
                 "State" => vec![item.state.clone()],
                 _ => vec![],
@@ -3356,13 +3609,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3407,13 +3661,14 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let q = query.trim().to_lowercase();
+        let matcher = SkimMatcherV2::default();
+        let q = query.trim();
         items
             .iter()
             .filter(|item| {
                 let mut matches = false;
                 let mut check_match = |text: &str| {
-                    if text.to_lowercase().contains(&q) {
+                    if matcher.fuzzy_match(text, q).is_some() {
                         matches = true;
                     }
                 };
@@ -3627,6 +3882,33 @@ impl App {
                         "Ref" => {
                             values.insert(item.ref_branch().to_string());
                         }
+                        "Name" => {
+                            values.insert(item.name().to_string());
+                        }
+                        "Event" => {
+                            values.insert(item.event().to_string());
+                        }
+                        "SHA" => {
+                            values.insert(item.head_sha().to_string());
+                        }
+                        "Actor" => {
+                            values.insert(item.actor_login().to_string());
+                        }
+                        "Created" => {
+                            if let Some(c) = item.created_at() {
+                                values.insert(crate::utils::format::time_ago(c));
+                            }
+                        }
+                        "Source" => {
+                            if let Some(source) = item.source() {
+                                values.insert(source.to_string());
+                            }
+                        }
+                        "Duration" => {
+                            if let Some(d) = item.duration_seconds() {
+                                values.insert(format!("{}m {}s", d / 60, d % 60));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -3646,8 +3928,21 @@ impl App {
                         "Name" => {
                             values.insert(item.name().to_string());
                         }
+                        "Runner" => {
+                            if let Some(r) = item.runner() {
+                                values.insert(r.to_string());
+                            }
+                        }
+                        "Needs" => {
+                            values.extend(item.needs().iter().cloned());
+                        }
+                        "Duration" => {
+                            if let Some(d) = item.duration_seconds() {
+                                values.insert(format!("{}m {}s", d / 60, d % 60));
+                            }
+                        }
                         _ => {}
-                    }
+                    };
                 }
             }
             Tab::Runners => {
@@ -3918,9 +4213,14 @@ impl App {
                         "Status" => p.status().to_string(),
                         "Ref" => p.ref_branch().to_string(),
                         "ID" => format!("#{}", p.id()),
-                        "Name" => format!("#{}", p.id()),
-                        "Event" => "Unknown".to_string(),
-                        "SHA" => "Unknown".to_string(),
+                        "Name" => p.name().to_string(),
+                        "Event" => p.event().to_string(),
+                        "SHA" => p.head_sha().to_string(),
+                        "Actor" => p.actor_login().to_string(),
+                        "Created" => p
+                            .created_at()
+                            .map(|c| crate::utils::format::time_ago(c))
+                            .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -3937,6 +4237,11 @@ impl App {
                         "Stage" => j.stage().to_string(),
                         "Name" => j.name().to_string(),
                         "ID" => format!("#{}", j.id()),
+                        "Runner" => j.runner().unwrap_or("-").to_string(),
+                        "Duration" => j
+                            .duration_seconds()
+                            .map(|d| format!("{}m", d / 60))
+                            .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -5440,6 +5745,9 @@ index 123456..789012 100644
             event: "".to_string(),
             head_sha: "".to_string(),
             actor_login: "".to_string(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -5451,6 +5759,9 @@ index 123456..789012 100644
             event: "".to_string(),
             head_sha: "".to_string(),
             actor_login: "".to_string(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -5616,6 +5927,60 @@ index 123456..789012 100644
             App::filter_mrs_list(&items, "returned", &cols_without).len(),
             0,
             "the column gate must still apply"
+        );
+    }
+
+    #[test]
+    fn pipeline_metadata_columns_filter_and_offer_values() {
+        let mut app = App::default();
+        app.pipelines.items = vec![
+            crate::domain::pipelines::Pipeline {
+                id: 1,
+                status: "success".to_string(),
+                r#ref: "main".to_string(),
+                updated_at: String::new(),
+                name: "CI".to_string(),
+                display_title: "Build".to_string(),
+                event: "push".to_string(),
+                head_sha: "abc123".to_string(),
+                actor_login: "alice".to_string(),
+                duration_seconds: Some(125),
+                created_at: Some("2026-01-01T00:00:00Z".to_string()),
+                source: Some("push".to_string()),
+            },
+            crate::domain::pipelines::Pipeline {
+                id: 2,
+                status: "failed".to_string(),
+                r#ref: "main".to_string(),
+                updated_at: String::new(),
+                name: "Deploy".to_string(),
+                display_title: "Release".to_string(),
+                event: "schedule".to_string(),
+                head_sha: "def456".to_string(),
+                actor_login: "bob".to_string(),
+                duration_seconds: Some(65),
+                created_at: Some("2026-01-02T00:00:00Z".to_string()),
+                source: Some("schedule".to_string()),
+            },
+        ];
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Actor".to_string(),
+                ["alice".to_string()].into_iter().collect(),
+            );
+
+        let filtered = app.filtered_pipelines();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, 1);
+        assert!(
+            app.collect_unique_column_values(Tab::Pipelines, "Duration")
+                .contains(&"2m 5s".to_string())
+        );
+        assert!(
+            app.collect_unique_column_values(Tab::Pipelines, "Source")
+                .contains(&"schedule".to_string())
         );
     }
 }

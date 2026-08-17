@@ -2,8 +2,6 @@ use chrono::{DateTime, Utc};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::config::THEME;
-
 pub fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
         None => String::from(s),
@@ -133,7 +131,7 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
 }
 
 pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
-    let theme = THEME.read().unwrap();
+    let theme = &crate::config::THEME.read().unwrap();
     let mut lines = Vec::new();
     for line in markdown.lines() {
         let trimmed = line.trim();
@@ -166,20 +164,23 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
                 trimmed.strip_prefix("* ").unwrap()
             };
             let mut spans = vec![Span::styled(
-                "  • ",
+                "  \u{2022} ",
                 Style::default()
                     .fg(theme.purple)
                     .add_modifier(Modifier::BOLD),
             )];
-            spans.extend(parse_inline_styles(content, &theme));
+            spans.extend(parse_inline_styles(content, theme));
             lines.push(Line::from(spans));
         } else if trimmed.starts_with("> ") {
             let content = trimmed.strip_prefix("> ").unwrap_or(trimmed);
-            let mut spans = vec![Span::styled("  ▌ ", Style::default().fg(theme.text_muted))];
-            spans.extend(parse_inline_styles(content, &theme));
+            let mut spans = vec![Span::styled(
+                "  \u{258c} ",
+                Style::default().fg(theme.text_muted),
+            )];
+            spans.extend(parse_inline_styles(content, theme));
             lines.push(Line::from(spans));
         } else {
-            lines.push(Line::from(parse_inline_styles(line, &theme)));
+            lines.push(Line::from(parse_inline_styles(line, theme)));
         }
     }
     lines
@@ -208,7 +209,7 @@ fn parse_inline_styles(text: &str, theme: &crate::config::Theme) -> Vec<Span<'st
             }
             spans.push(Span::styled(
                 code,
-                Style::default().fg(theme.red).bg(theme.highlight_bg),
+                Style::default().fg(theme.red).bg(theme.bg),
             ));
             if i < chars.len() {
                 i += 1;

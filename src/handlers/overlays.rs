@@ -459,7 +459,7 @@ pub fn handle_date_picker(
                     crate::app::DatePickerAction::EditNewField { field_idx } => {
                         if let Some(ref mut menu) = app.edit_menu {
                             if field_idx < menu.fields.len() {
-                                menu.fields[field_idx].1 = selected_val;
+                                menu.fields[field_idx].value = selected_val;
                             }
                         }
                     }

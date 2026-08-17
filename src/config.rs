@@ -151,6 +151,7 @@ pub struct Icons {
     pub action_create: String,
     pub action_reply: String,
     pub action_review: String,
+    pub readonly: String,
     pub folder_expanded: String,
     pub folder_collapsed: String,
 }
@@ -252,6 +253,7 @@ impl Icons {
             action_create: "\u{f501}".to_string(),
             action_reply: "\u{f4a8}".to_string(),
             action_review: "\u{f4a1}".to_string(),
+            readonly: "\u{f023}".to_string(),
             folder_expanded: "\u{f07c}".to_string(),
             folder_collapsed: "\u{f07b}".to_string(),
         }
@@ -669,6 +671,8 @@ pub struct KeybindingIssues {
     pub select_issue: String,
     #[serde(default)]
     pub create_mr: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -699,16 +703,24 @@ pub struct KeybindingMrs {
     pub delete_entity: String,
     #[serde(default)]
     pub select_mr: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingPipelines {
     #[serde(default)]
     pub trigger_pipeline: String,
+    #[serde(default = "def_run_new")]
+    pub run_new: String,
     #[serde(default)]
     pub retry: String,
     #[serde(default)]
     pub cancel: String,
+    #[serde(default)]
+    pub open_workflow: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -763,6 +775,10 @@ pub struct KeybindingJobs {
     pub view_trace: String,
     #[serde(default)]
     pub toggle_trace_wrap: String,
+    #[serde(default)]
+    pub trace_search: String,
+    #[serde(default)]
+    pub toggle_trace_follow: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -870,6 +886,7 @@ keybind_defaults! {
     def_trigger_pipeline = "p",
     def_retry = "r",
     def_cancel = "d",
+    def_open_workflow = "W",
     def_create_release = "n",
     def_edit_release = "e",
     def_delete_release = "d",
@@ -879,6 +896,7 @@ keybind_defaults! {
     def_reopen_milestone = "r",
     def_delete_milestone = "d",
     def_open_in_browser = "o",
+    def_run_new = "n",
     def_enter_pipeline = "p",
     def_select_job = "Space",
     def_retry_job = "r",
@@ -890,6 +908,8 @@ keybind_defaults! {
     def_view_trace_editor = "e",
     def_view_trace = "Enter",
     def_toggle_trace_wrap = "w",
+    def_trace_search = "/",
+    def_toggle_trace_follow = "f",
     def_pause_runner = "p",
     def_resume_runner = "r",
     def_edit_description = "e",
@@ -929,6 +949,7 @@ impl Default for KeybindingIssues {
             delete_entity: def_delete_entity(),
             select_issue: def_select_issue(),
             create_mr: def_create_mr_issue(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }
@@ -949,6 +970,7 @@ impl Default for KeybindingMrs {
             reopen_entity: def_reopen_entity(),
             delete_entity: def_delete_entity(),
             select_mr: def_select_mr(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }
@@ -957,8 +979,11 @@ impl Default for KeybindingPipelines {
     fn default() -> Self {
         Self {
             trigger_pipeline: def_trigger_pipeline(),
+            run_new: def_run_new(),
             retry: def_retry(),
             cancel: def_cancel(),
+            open_workflow: def_open_workflow(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }
@@ -1001,6 +1026,8 @@ impl Default for KeybindingJobs {
             view_trace_editor: def_view_trace_editor(),
             view_trace: def_view_trace(),
             toggle_trace_wrap: def_toggle_trace_wrap(),
+            trace_search: def_trace_search(),
+            toggle_trace_follow: def_toggle_trace_follow(),
         }
     }
 }
@@ -1277,6 +1304,7 @@ delete_entity = "d"
 trigger_pipeline = "p"
 retry = "r"
 cancel = "d"
+open_workflow = "W"
 
 [keybindings.releases]
 create_release = "n"
@@ -1304,6 +1332,8 @@ open_in_browser = "o"
 view_trace_editor = "e"
 view_trace = "Enter"
 toggle_trace_wrap = "w"
+trace_search = "/"
+toggle_trace_follow = "f"
 
 [keybindings.runners]
 pause = "p"

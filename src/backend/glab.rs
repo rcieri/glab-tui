@@ -1043,6 +1043,9 @@ impl Backend for GlabBackend {
                         event: String::new(),
                         head_sha: String::new(),
                         actor_login: String::new(),
+                        duration_seconds: None,
+                        created_at: None,
+                        source: None,
                     }),
                     blocking_discussions_resolved: m.blocking_discussions_resolved,
                     approval: None,
@@ -1159,6 +1162,9 @@ impl Backend for GlabBackend {
                 event: String::new(),
                 head_sha: String::new(),
                 actor_login: String::new(),
+                duration_seconds: None,
+                created_at: None,
+                source: None,
             }),
             blocking_discussions_resolved: m.blocking_discussions_resolved,
             approval: None,
@@ -1620,24 +1626,19 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<Pipeline>> {
         let pages = page_count(page_size, per_request);
-        // Every page is issued at once, so there is no last-page detection to
-        // stop early on: a repo with fewer pipelines than the budget pays for
-        // a few requests that come back empty, which merge harmlessly. That is
-        // the price of not serialising the round trips, and at the default
-        // `api_per_page = 100` it is still a single request.
+        let encoded = Self::encode_path(project);
+
+        // `glab ci list` returns only the basic fields (id, status, ref,
+        // updated_at), so the metadata the Pipelines tab now exposes
+        // (created_at, duration, source, sha, user) requires the raw API.
+        // Concurrently fan out across pages so the first paint is not
+        // serialised on long histories. `run_glab_concurrent` already caps
+        // the in-flight subprocesses.
         let requests: Vec<Vec<String>> = (1..=pages)
             .map(|page| {
                 vec![
-                    "ci".to_string(),
-                    "list".to_string(),
-                    "--output".to_string(),
-                    "json".to_string(),
-                    "-R".to_string(),
-                    project.to_string(),
-                    "--page".to_string(),
-                    page.to_string(),
-                    "--per-page".to_string(),
-                    per_request.to_string(),
+                    "api".to_string(),
+                    format!("/projects/{encoded}/pipelines?per_page={per_request}&page={page}"),
                 ]
             })
             .collect();
@@ -1645,27 +1646,46 @@ impl Backend for GlabBackend {
             run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipelines").await,
         )?;
 
+        #[derive(Deserialize)]
+        struct GiUser {
+            username: Option<String>,
+            name: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct GiPipe {
+            id: u64,
+            status: String,
+            #[serde(rename = "ref")]
+            pipe_ref: String,
+            updated_at: String,
+            created_at: Option<String>,
+            duration: Option<f64>,
+            source: Option<String>,
+            sha: Option<String>,
+            user: Option<GiUser>,
+        }
+
         let mut all: Vec<Pipeline> = Vec::new();
         for raw in responses {
-            #[derive(Deserialize)]
-            struct GiPipe {
-                id: u64,
-                status: String,
-                #[serde(rename = "ref")]
-                pipe_ref: String,
-                updated_at: String,
-            }
-            let pipes: Vec<GiPipe> = serde_json::from_str(&raw).unwrap_or_default();
-            all.extend(pipes.into_iter().map(|p| Pipeline {
-                id: p.id,
-                status: p.status,
-                r#ref: p.pipe_ref,
-                updated_at: p.updated_at,
-                name: String::new(),
-                display_title: String::new(),
-                event: String::new(),
-                head_sha: String::new(),
-                actor_login: String::new(),
+            let pipes: Vec<GiPipe> = serde_json::from_str(&raw)?;
+            all.extend(pipes.into_iter().map(|p| {
+                Pipeline {
+                    id: p.id,
+                    status: p.status,
+                    r#ref: p.pipe_ref,
+                    updated_at: p.updated_at,
+                    name: String::new(),
+                    display_title: String::new(),
+                    event: p.source.clone().unwrap_or_default(),
+                    head_sha: p.sha.unwrap_or_default(),
+                    actor_login: p
+                        .user
+                        .and_then(|u| u.username.or(u.name))
+                        .unwrap_or_default(),
+                    duration_seconds: p.duration.map(|d| d.max(0.0) as u64),
+                    created_at: p.created_at,
+                    source: p.source,
+                }
             }));
         }
         Ok(all)
@@ -1701,6 +1721,9 @@ impl Backend for GlabBackend {
                 stage: j.stage,
                 name: j.name,
                 matrix: None,
+                duration_seconds: None,
+                runner: None,
+                needs: Vec::new(),
             })
             .collect();
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
@@ -2213,9 +2236,11 @@ impl Backend for GlabBackend {
             project.to_string(),
             "--title".into(),
             title.into(),
-            "--description".into(),
-            description.into(),
         ];
+        if !description.is_empty() {
+            args.push("--description".into());
+            args.push(description.into());
+        }
         if let Some(start) = start_date {
             if !start.is_empty() {
                 args.push("--start-date".into());
@@ -2569,6 +2594,15 @@ impl Backend for GlabBackend {
     async fn open_pipeline_in_browser(&self, _project: &str, id: &str) -> Result<()> {
         self.run_glab(&["ci", "view", id, "-w"], "OPENING IN BROWSER")
             .await?;
+        Ok(())
+    }
+
+    async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()> {
+        self.run_glab(
+            &["ci", "view", workflow, "-R", project, "-w"],
+            "OPENING PIPELINE IN BROWSER",
+        )
+        .await?;
         Ok(())
     }
 

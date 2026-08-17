@@ -363,6 +363,48 @@ pub(crate) fn append_stage_summaries(
     }
 }
 
+pub(crate) fn append_job_summaries(
+    text: &mut Vec<Line<'static>>,
+    jobs: &[crate::domain::pipelines::Job],
+) {
+    for job in jobs {
+        let name = job.name().to_string();
+        let status = job.status().to_string();
+        let status_color = match status.as_str() {
+            "success" => THEME.read().unwrap().green,
+            "failed" => THEME.read().unwrap().red,
+            "running" => THEME.read().unwrap().blue,
+            "pending" => THEME.read().unwrap().yellow,
+            _ => THEME.read().unwrap().text_muted,
+        };
+        let duration = job
+            .duration_seconds()
+            .map(|d| format!("{}m {}s", d / 60, d % 60))
+            .unwrap_or_else(|| "-".to_string());
+        let needs = if job.needs().is_empty() {
+            String::new()
+        } else {
+            format!(" needs: {}", job.needs().join(", "))
+        };
+        text.push(Line::from(vec![
+            Span::styled(
+                format!("{} ", truncate(&name, 24)),
+                Style::default().fg(THEME.read().unwrap().text_normal),
+            ),
+            Span::styled(
+                status.to_uppercase(),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  {}{}", duration, needs),
+                Style::default().fg(THEME.read().unwrap().text_muted),
+            ),
+        ]));
+    }
+}
+
 #[allow(dead_code)]
 fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
     let padded_key = format!(" {:^3} ", key);
@@ -550,6 +592,102 @@ pub(crate) fn render_fuzzy_cell(
     Cell::from(line).style(styled_base)
 }
 
+// ── Shared rendering helpers (used by detail panes AND edit menus) ──
+
+/// Return a styled span for a CI/Job status string.
+pub(crate) fn status_span(status: &str) -> Span<'static> {
+    let theme = THEME.read().unwrap();
+    let icons = crate::config::ICONS.read().unwrap();
+    match status {
+        "success" => Span::styled(
+            format!("{} SUCCESS", icons.status_success),
+            Style::default()
+                .fg(theme.green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        "failed" => Span::styled(
+            format!("{} FAILED", icons.status_failed),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+        ),
+        "running" => Span::styled(
+            format!("{} RUNNING", icons.status_running),
+            Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
+        ),
+        "canceled" => Span::styled(
+            format!("{} CANCEL", icons.status_canceled),
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::BOLD),
+        ),
+        "pending" | "preparing" => Span::styled(
+            format!("{} PENDING", icons.status_pending),
+            Style::default()
+                .fg(theme.yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        "skipped" => Span::styled(
+            format!("{} SKIP", icons.status_skipped),
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::BOLD),
+        ),
+        "manual" => Span::styled(
+            format!("{} MANUAL", icons.status_manual),
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::BOLD),
+        ),
+        _ => Span::styled(
+            format!("{} UNKNOWN", icons.status_unknown),
+            Style::default()
+                .fg(theme.text_muted)
+                .add_modifier(Modifier::BOLD),
+        ),
+    }
+}
+
+/// Return a styled yellow span for a relative timestamp.
+pub(crate) fn time_ago_span(date: &str) -> Span<'static> {
+    Span::styled(
+        crate::utils::format::time_ago(date),
+        Style::default().fg(THEME.read().unwrap().yellow),
+    )
+}
+
+/// Split comma-separated values and render each with the given color.
+pub(crate) fn comma_spans(text: &str, color: Color) -> Vec<Span<'static>> {
+    let parts: Vec<String> = text.split(',').map(|s| s.trim().to_string()).collect();
+    let mut spans = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(", "));
+        }
+        spans.push(Span::styled(
+            part.clone(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans
+}
+
+/// Split comma-separated labels and render each with its hash-based color.
+pub(crate) fn label_spans(text: &str) -> Vec<Span<'static>> {
+    let parts: Vec<String> = text.split(',').map(|s| s.trim().to_string()).collect();
+    let mut spans = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(", "));
+        }
+        spans.push(Span::styled(
+            part.clone(),
+            Style::default()
+                .fg(get_label_color(part, &HashMap::new()))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,6 +702,9 @@ mod tests {
             name: name.to_string(),
             status: status.to_string(),
             matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: Vec::new(),
         }
     }
 

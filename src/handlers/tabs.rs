@@ -183,10 +183,9 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            KeyCode::Char('o') => {
+            _ if keybinding_matches(&app.config.keybindings.issues.open_in_browser, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
-                        let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
                             return;
                         };
@@ -467,11 +466,10 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if key_event.code == KeyCode::Char('A')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.revoke_mr,
-                                key_event,
-                            ) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.revoke_mr,
+                            key_event,
+                        ) =>
                         {
                             let is_github = app
                                 .gitlab_client
@@ -487,11 +485,10 @@ pub async fn handle_active_tab_key(
                                     Some(crate::app::ConfirmAction::RevokeMr(mr_iid));
                             }
                         }
-                        _ if key_event.code == KeyCode::Char('R')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.rebase_mr,
-                                key_event,
-                            ) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.rebase_mr,
+                            key_event,
+                        ) =>
                         {
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
@@ -587,11 +584,10 @@ pub async fn handle_active_tab_key(
                                 }
                             });
                         }
-                        _ if key_event.code == KeyCode::Char('P')
-                            || keybinding_matches(
-                                &app.config.keybindings.mrs.view_related_pipelines,
-                                key_event,
-                            ) =>
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.view_related_pipelines,
+                            key_event,
+                        ) =>
                         {
                             let pipe_id = mr.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
                                 app.pipelines
@@ -611,7 +607,11 @@ pub async fn handle_active_tab_key(
                                 );
                             }
                         }
-                        _ if key_event.code == KeyCode::Char('o') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.open_in_browser,
+                            key_event,
+                        ) =>
+                        {
                             let is_github = app.is_github();
                             let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
@@ -717,7 +717,7 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Pipelines => {
-            if key_event.code == KeyCode::Char('n') {
+            if keybinding_matches(&app.config.keybindings.pipelines.run_new, key_event) {
                 let current_branch =
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
@@ -753,12 +753,10 @@ pub async fn handle_active_tab_key(
                     editing: false,
                     desc_scroll: 0,
                 });
-            } else if key_event.code == KeyCode::Char('p')
-                || keybinding_matches(
-                    &app.config.keybindings.pipelines.trigger_pipeline,
-                    &key_event,
-                )
-            {
+            } else if keybinding_matches(
+                &app.config.keybindings.pipelines.trigger_pipeline,
+                &key_event,
+            ) {
                 if let Some(client) = app.gitlab_client.clone() {
                     let branch = crate::git_helpers::get_current_branch()
                         .unwrap_or_else(|| "main".to_string());
@@ -922,7 +920,11 @@ pub async fn handle_active_tab_key(
                                 ));
                             });
                         }
-                        _ if key_event.code == KeyCode::Char('o') => {
+                        _ if keybinding_matches(
+                            &app.config.keybindings.pipelines.open_in_browser,
+                            key_event,
+                        ) =>
+                        {
                             let is_github = app.is_github();
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
@@ -2271,6 +2273,7 @@ pub async fn handle_active_tab_key(
                             let len = app.filtered_jobs().len();
                             app.jobs.next(len);
                             app.job_trace = None;
+                            app.job_trace_follow = false;
                         }
                         crate::app::Tab::Runners => {
                             app.runners.next(app.filtered_runners().len());
@@ -2315,6 +2318,7 @@ pub async fn handle_active_tab_key(
                             let len = app.filtered_jobs().len();
                             app.jobs.previous(len);
                             app.job_trace = None;
+                            app.job_trace_follow = false;
                         }
                         crate::app::Tab::Runners => {
                             app.runners.previous(app.filtered_runners().len());

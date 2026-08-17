@@ -4388,7 +4388,16 @@ async fn main() -> Result<()> {
                                             || menu.fields[menu.selected_idx].label
                                                 == "Description")
                                     {
-                                        menu.cursor_pos = menu.cursor_pos.saturating_sub(1);
+                                        if let Some(f) = menu.fields.get(menu.selected_idx) {
+                                            if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
+                                                .char_indices()
+                                                .next_back()
+                                            {
+                                                menu.cursor_pos = byte_idx;
+                                            } else {
+                                                menu.cursor_pos = 0;
+                                            }
+                                        }
                                     }
                                     app.edit_menu = Some(menu);
                                 }
@@ -4398,9 +4407,17 @@ async fn main() -> Result<()> {
                                             || menu.fields[menu.selected_idx].label
                                                 == "Description")
                                     {
-                                        let max = menu.fields[menu.selected_idx].value.len();
-                                        if menu.cursor_pos < max {
-                                            menu.cursor_pos += 1;
+                                        if let Some(f) = menu.fields.get(menu.selected_idx) {
+                                            let char_len = f.value[menu.cursor_pos..]
+                                                .chars()
+                                                .next()
+                                                .map(|c| c.len_utf8())
+                                                .unwrap_or(0);
+                                            if char_len > 0
+                                                && menu.cursor_pos + char_len <= f.value.len()
+                                            {
+                                                menu.cursor_pos += char_len;
+                                            }
                                         }
                                     }
                                     app.edit_menu = Some(menu);
@@ -4437,9 +4454,12 @@ async fn main() -> Result<()> {
                                         || field_name == "Description"
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                            if menu.cursor_pos > 0 {
-                                                f.value.remove(menu.cursor_pos - 1);
-                                                menu.cursor_pos -= 1;
+                                            if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
+                                                .char_indices()
+                                                .next_back()
+                                            {
+                                                f.value.remove(byte_idx);
+                                                menu.cursor_pos = byte_idx;
                                             }
                                         }
                                     }
@@ -4510,7 +4530,7 @@ async fn main() -> Result<()> {
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);
-                                            menu.cursor_pos += 1;
+                                            menu.cursor_pos += c.len_utf8();
                                         }
                                     }
                                     app.edit_menu = Some(menu);
@@ -6137,9 +6157,23 @@ async fn main() -> Result<()> {
                                                 String::new()
                                             }
                                         };
-                                    let action = crate::app::DatePickerAction::EditNewField {
-                                        field_idx: menu.selected_idx,
-                                    };
+                                    let action =
+                                        if entity_iid != 0 && !entity_type.starts_with("new_") {
+                                            let ft = match field_name.as_str() {
+                                                "Due Date" => "due_date",
+                                                "Start Date" => "start_date",
+                                                _ => "",
+                                            };
+                                            crate::app::DatePickerAction::EditField {
+                                                entity_iid,
+                                                entity_type: entity_type.clone(),
+                                                field_type: ft.to_string(),
+                                            }
+                                        } else {
+                                            crate::app::DatePickerAction::EditNewField {
+                                                field_idx: menu.selected_idx,
+                                            }
+                                        };
                                     app.date_picker = Some(crate::app::DatePicker::new(
                                         format!(" Select {}", field_name),
                                         &current_val,
@@ -6242,9 +6276,12 @@ async fn main() -> Result<()> {
                                         || field_name == "Description"
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                            if menu.cursor_pos > 0 {
-                                                f.value.remove(menu.cursor_pos - 1);
-                                                menu.cursor_pos -= 1;
+                                            if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
+                                                .char_indices()
+                                                .next_back()
+                                            {
+                                                f.value.remove(byte_idx);
+                                                menu.cursor_pos = byte_idx;
                                             }
                                         }
                                     }
@@ -6301,7 +6338,7 @@ async fn main() -> Result<()> {
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);
-                                            menu.cursor_pos += 1;
+                                            menu.cursor_pos += c.len_utf8();
                                         }
                                     }
                                 }

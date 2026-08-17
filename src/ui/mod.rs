@@ -53,13 +53,20 @@ pub(crate) fn render_edit_menu_if_active(f: &mut Frame, app: &mut App, detail_re
 }
 
 /// Render a vim/helix-style mode indicator in the right side of the top banner.
-/// Shows `[NORMAL]` / `[PREVIEW]` / `[EDIT]` with a colored background.
+/// Shows `[NORMAL]` / `[PREVIEW]` / `[EDIT]` / `[CREATE]` with a colored
+/// background.
 fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
     let theme = THEME.read().unwrap();
 
-    let (label, bg, fg) = if app.edit_menu.is_some() {
-        // EDIT — reuse the GROUPED badge palette (blue).
-        (" EDIT ", theme.blue, theme.bg)
+    let (label, bg, fg) = if let Some(menu) = app.edit_menu.as_ref() {
+        if menu.entity_kind.is_create() {
+            // CREATE — distinct palette so the user knows they're filling
+            // out a new entity, not editing an existing one.
+            (" CREATE ", theme.green, theme.bg)
+        } else {
+            // EDIT — reuse the GROUPED badge palette (blue).
+            (" EDIT ", theme.blue, theme.bg)
+        }
     } else if app.details_zoomed {
         // PREVIEW — reuse the SEARCHING badge palette (yellow).
         (" PREVIEW ", theme.yellow, theme.bg)

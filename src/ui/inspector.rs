@@ -505,15 +505,6 @@ pub(crate) fn build_field_list_items(
                 Style::default().fg(theme.blue).bg(item_bg)
             };
 
-            let sep_style = if is_selected {
-                Style::default()
-                    .fg(theme.text_normal)
-                    .bg(item_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text_muted).bg(item_bg)
-            };
-
             let icon = match f.kind {
                 FieldType::Section => "",
                 FieldType::ReadOnly if interactive => icons.readonly.as_str(),
@@ -602,10 +593,8 @@ pub(crate) fn build_field_list_items(
                     icon,
                     label,
                     label_width,
-                    "│ ",
                     icon_style,
                     label_style,
-                    sep_style,
                     val_style,
                     cursor_style,
                 );
@@ -1111,7 +1100,6 @@ pub(crate) fn build_field_list_items(
                     format!("{:<label_width$.label_width$} ", label),
                     label_style,
                 ),
-                Span::styled("│ ".to_string(), sep_style),
             ];
             // Mute ReadOnly field values in interactive mode so they recede.
             if interactive && f.kind == crate::app::FieldType::ReadOnly {
@@ -1133,10 +1121,8 @@ fn build_wrapped_text_lines(
     icon: &str,
     label: &str,
     label_width: usize,
-    separator: &str,
     icon_style: Style,
     label_style: Style,
-    sep_style: Style,
     val_style: Style,
     cursor_style: Style,
 ) -> Vec<Line<'static>> {
@@ -1144,10 +1130,10 @@ fn build_wrapped_text_lines(
     let block_cursor_style = val_style.add_modifier(Modifier::SLOW_BLINK);
 
     if chunks.is_empty() {
-        let mut spans = vec![
-            Span::styled(format!(" {} {:<label_width$} ", icon, label), label_style),
-            Span::styled(format!("{} ", separator), sep_style),
-        ];
+        let mut spans = vec![Span::styled(
+            format!(" {} {:<label_width$} ", icon, label),
+            label_style,
+        )];
         if is_editing {
             spans.push(Span::styled("█", block_cursor_style));
         }
@@ -1182,10 +1168,9 @@ fn build_wrapped_text_lines(
                 format!("{:<label_width$} ", label),
                 label_style,
             ));
-            line_spans.push(Span::styled(format!("{} ", separator), sep_style));
         } else {
             // Continuation line indentation that aligns exactly under the
-            // value column of the first line (past the icon + label + │ prefix).
+            // value column of the first line.
             line_spans.push(Span::styled(
                 format!(" {:<width$}   ", "", width = label_width + 3),
                 label_style,

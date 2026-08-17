@@ -671,6 +671,8 @@ pub struct KeybindingIssues {
     pub select_issue: String,
     #[serde(default)]
     pub create_mr: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -701,18 +703,24 @@ pub struct KeybindingMrs {
     pub delete_entity: String,
     #[serde(default)]
     pub select_mr: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingPipelines {
     #[serde(default)]
     pub trigger_pipeline: String,
+    #[serde(default = "def_run_new")]
+    pub run_new: String,
     #[serde(default)]
     pub retry: String,
     #[serde(default)]
     pub cancel: String,
     #[serde(default)]
     pub open_workflow: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -888,6 +896,7 @@ keybind_defaults! {
     def_reopen_milestone = "r",
     def_delete_milestone = "d",
     def_open_in_browser = "o",
+    def_run_new = "n",
     def_enter_pipeline = "p",
     def_select_job = "Space",
     def_retry_job = "r",
@@ -940,6 +949,7 @@ impl Default for KeybindingIssues {
             delete_entity: def_delete_entity(),
             select_issue: def_select_issue(),
             create_mr: def_create_mr_issue(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }
@@ -960,6 +970,7 @@ impl Default for KeybindingMrs {
             reopen_entity: def_reopen_entity(),
             delete_entity: def_delete_entity(),
             select_mr: def_select_mr(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }
@@ -968,9 +979,11 @@ impl Default for KeybindingPipelines {
     fn default() -> Self {
         Self {
             trigger_pipeline: def_trigger_pipeline(),
+            run_new: def_run_new(),
             retry: def_retry(),
             cancel: def_cancel(),
             open_workflow: def_open_workflow(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }

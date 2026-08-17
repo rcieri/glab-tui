@@ -1626,7 +1626,26 @@ impl Backend for GlabBackend {
         per_request: usize,
     ) -> Result<Vec<Pipeline>> {
         let pages = page_count(page_size, per_request);
-        let mut all: Vec<Pipeline> = Vec::new();
+        let encoded = Self::encode_path(project);
+
+        // `glab ci list` returns only the basic fields (id, status, ref,
+        // updated_at), so the metadata the Pipelines tab now exposes
+        // (created_at, duration, source, sha, user) requires the raw API.
+        // Concurrently fan out across pages so the first paint is not
+        // serialised on long histories. `run_glab_concurrent` already caps
+        // the in-flight subprocesses.
+        let requests: Vec<Vec<String>> = (1..=pages)
+            .map(|page| {
+                vec![
+                    "api".to_string(),
+                    format!("/projects/{encoded}/pipelines?per_page={per_request}&page={page}"),
+                ]
+            })
+            .collect();
+        let responses = ordered_or_first_error(
+            run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipelines").await,
+        )?;
+
         #[derive(Deserialize)]
         struct GiUser {
             username: Option<String>,
@@ -1646,15 +1665,9 @@ impl Backend for GlabBackend {
             user: Option<GiUser>,
         }
 
-        for page in 1..=pages {
-            let encoded = Self::encode_path(project);
-            let endpoint =
-                format!("/projects/{encoded}/pipelines?per_page={per_request}&page={page}");
-            let raw = self
-                .raw_api(&endpoint, "GET", None, "Fetching Pipelines")
-                .await?;
+        let mut all: Vec<Pipeline> = Vec::new();
+        for raw in responses {
             let pipes: Vec<GiPipe> = serde_json::from_str(&raw)?;
-            let count = pipes.len();
             all.extend(pipes.into_iter().map(|p| {
                 Pipeline {
                     id: p.id,
@@ -1674,9 +1687,6 @@ impl Backend for GlabBackend {
                     source: p.source,
                 }
             }));
-            if count < per_request {
-                break;
-            }
         }
         Ok(all)
     }

@@ -14,8 +14,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::JoinSet;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -40,6 +43,11 @@ fn parse_gh_login(raw: &str) -> Option<String> {
         Some(login.to_string())
     }
 }
+
+/// Cap the number of concurrent per-run metadata requests when enriching
+/// pipelines. The Pipelines tab can list hundreds of runs; without a bound
+/// each list refresh would spawn a subprocess per row.
+const MAX_GH_METADATA_CONCURRENCY: usize = 8;
 
 fn deserialize_needs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
@@ -1386,7 +1394,7 @@ impl Backend for GhBackend {
         }
 
         let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
-        let pipelines: Vec<Pipeline> = runs
+        let mut pipelines: Vec<Pipeline> = runs
             .into_iter()
             .map(|r| {
                 let status = match r.status.as_str() {
@@ -1424,6 +1432,7 @@ impl Backend for GhBackend {
             })
             .collect();
 
+        enrich_pipeline_actors(project, &mut pipelines).await;
         Ok(pipelines)
     }
 
@@ -2467,6 +2476,67 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
         return None;
     }
     Some(diff.num_seconds() as u64)
+}
+
+/// Fetch the actor login for a single GitHub Actions run.
+///
+/// `gh run list` does not expose the actor, so this hits
+/// `GET repos/{}/actions/runs/{id}` and reads `actor.login`. Returns `None` on
+/// any failure rather than propagating — an unknown actor must never block the
+/// pipelines list.
+async fn fetch_actor_login(project: &str, run_id: u64) -> Option<String> {
+    let raw = Command::new("gh")
+        .args([
+            "api",
+            "-H",
+            "Accept: application/vnd.github+json",
+            &format!("repos/{project}/actions/runs/{run_id}"),
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !raw.status.success() {
+        return None;
+    }
+    let body: serde_json::Value = serde_json::from_slice(&raw.stdout).ok()?;
+    body.get("actor")
+        .and_then(|a| a.get("login"))
+        .and_then(|l| l.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Populate `actor_login` for each pipeline.
+///
+/// `gh run list` does not expose the actor login, so the bulk listing leaves
+/// every row blank. Each run needs its own fetch, but a Pipelines tab can
+/// easily hold hundreds of runs, so a `Semaphore` caps the in-flight
+/// subprocesses at `MAX_GH_METADATA_CONCURRENCY`. Failures are non-fatal: a
+/// missing actor just stays empty, which the column renders as `—`.
+async fn enrich_pipeline_actors(project: &str, pipelines: &mut [Pipeline]) {
+    let permits = Arc::new(Semaphore::new(MAX_GH_METADATA_CONCURRENCY));
+    let mut tasks: JoinSet<(u64, Option<String>)> = JoinSet::new();
+
+    for p in pipelines.iter() {
+        if !p.actor_login.is_empty() {
+            continue;
+        }
+        let id = p.id;
+        let project = project.to_string();
+        let permits = Arc::clone(&permits);
+        tasks.spawn(async move {
+            let _permit = permits.acquire_owned().await.ok();
+            let login = fetch_actor_login(&project, id).await;
+            (id, login)
+        });
+    }
+
+    while let Some(joined) = tasks.join_next().await {
+        let Ok((id, login)) = joined else { continue };
+        let Some(login) = login else { continue };
+        if let Some(p) = pipelines.iter_mut().find(|p| p.id == id) {
+            p.actor_login = login;
+        }
+    }
 }
 
 #[cfg(test)]

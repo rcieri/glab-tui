@@ -469,13 +469,6 @@ pub fn build_release_document(
 pub fn build_runner_document(
     runner: &crate::domain::runners::Runner,
 ) -> crate::app::EntityDocument {
-    let runner_hash = runner.id;
-    let active_jobs = (runner_hash % 8) as usize + 1;
-    let max_capacity = ((runner_hash % 4) as usize + 2) * 4;
-    let queue_depth = (runner_hash % 5) as usize;
-    let utilization = (active_jobs * 100) / max_capacity;
-    let wait_time = (runner_hash % 50) as usize + 10;
-
     let fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", runner.id)),
         crate::app::Field::read_only(
@@ -494,15 +487,15 @@ pub fn build_runner_document(
                 "NO".to_string()
             },
         ),
-        crate::app::Field::read_only("Active Jobs", format!("{}/{}", active_jobs, max_capacity)),
-        crate::app::Field::read_only("Utilization", format!("{}%", utilization)),
-        crate::app::Field::read_only("Queue Depth", format!("{} waiting", queue_depth)),
-        crate::app::Field::read_only("Avg Wait", format!("{}s", wait_time)),
+        crate::app::Field::read_only("Active Jobs", "Unavailable".to_string()),
+        crate::app::Field::read_only("Utilization", "Unavailable".to_string()),
+        crate::app::Field::read_only("Queue Depth", "Unavailable".to_string()),
+        crate::app::Field::read_only("Avg Wait", "Unavailable".to_string()),
     ];
     crate::app::EntityDocument {
         title: format!("Runner #{}", runner.id),
         fields,
-        content: crate::app::InspectorContent::Empty("Runner metrics and status"),
+        content: crate::app::InspectorContent::Empty("Runner status and metadata"),
     }
 }
 

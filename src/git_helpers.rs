@@ -69,15 +69,16 @@ pub fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> B
         return kind;
     }
 
-    let Some(host) = parse_remote_host(remote_url) else {
+    let Some(raw_host) = parse_remote_host(remote_url) else {
         return BackendKind::GitLab;
     };
+    let host = raw_host.strip_prefix("www.").unwrap_or(&raw_host);
     if host == "github.com" {
         return BackendKind::GitHub;
     }
 
-    let gh_authenticated = auth_status("gh", &host, true);
-    let glab_authenticated = auth_status("glab", &host, false);
+    let gh_authenticated = auth_status("gh", &raw_host, true);
+    let glab_authenticated = auth_status("glab", &raw_host, false);
     if gh_authenticated && !glab_authenticated {
         BackendKind::GitHub
     } else if glab_authenticated && !gh_authenticated {
@@ -328,6 +329,30 @@ mod tests {
         assert_eq!(
             parse_project_path("https://gitlab.example.com/group/my.github.git").as_deref(),
             Some("group/my.github")
+        );
+    }
+
+    #[test]
+    fn www_prefix_resolves_to_github() {
+        assert_eq!(
+            detect_backend("https://www.github.com/rcieri/glab-tui", None),
+            BackendKind::GitHub
+        );
+    }
+
+    #[test]
+    fn www_prefix_on_gitlab_host_stays_gitlab() {
+        assert_eq!(
+            detect_backend("https://www.gitlab.com/org/repo.git", None),
+            BackendKind::GitLab
+        );
+    }
+
+    #[test]
+    fn www_prefix_scp_style_resolves_to_github() {
+        assert_eq!(
+            detect_backend("git@www.github.com:org/repo.git", None),
+            BackendKind::GitHub
         );
     }
 

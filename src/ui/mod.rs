@@ -52,12 +52,10 @@ pub(crate) fn render_edit_menu_if_active(f: &mut Frame, app: &mut App, detail_re
     true
 }
 
-/// Render a vim/helix-style mode indicator in the bottom statusline.
-/// Shows `[NORMAL]` / `[PREVIEW]` / `[EDIT]` with a colored background,
-/// plus a short hint on the right when in a non-normal mode.
+/// Render a vim/helix-style mode indicator in the right side of the top banner.
+/// Shows `[NORMAL]` / `[PREVIEW]` / `[EDIT]` with a colored background.
 fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
     let theme = THEME.read().unwrap();
-    let icons = ICONS.read().unwrap();
 
     let (label, bg, fg) = if app.edit_menu.is_some() {
         (" EDIT ", theme.green, theme.bg)
@@ -67,39 +65,15 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
         (" NORMAL ", theme.inactive_bg, theme.header_fg)
     };
 
-    let hint = if app.edit_menu.is_some() {
-        format!(
-            " {} Esc: back to table • Tab/↑↓: navigate fields ",
-            icons.label_keyboard
-        )
-    } else if app.details_zoomed {
-        format!(
-            " {} Esc: back to table • Enter: edit ",
-            icons.label_keyboard
-        )
-    } else {
-        format!(
-            " {} Enter: preview • e: edit • ?: help ",
-            icons.label_keyboard
-        )
-    };
+    let line = Line::from(vec![Span::styled(
+        label,
+        Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD),
+    )]);
 
-    let line = Line::from(vec![
-        Span::styled(
-            label,
-            Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(hint, Style::default().fg(theme.text_muted)),
-    ]);
-
-    let footer = Paragraph::new(line)
+    let indicator = Paragraph::new(line)
         .style(Style::default().bg(theme.bg))
-        .block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(theme.border)),
-        );
-    f.render_widget(footer, area);
+        .alignment(Alignment::Right);
+    f.render_widget(indicator, area);
 }
 
 /// Render a diff line's content with per-character fuzzy search highlighting.
@@ -238,12 +212,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(2), // Top header bar
             Constraint::Min(0),    // Main workspace
-            Constraint::Length(1), // Mode indicator / statusline
+            Constraint::Length(0), // Reserved
         ])
         .split(size);
 
     let title_area = chunks[0];
-    let footer_area = chunks[2];
 
     // Top: Title & Context
     let icons = crate::config::ICONS.read().unwrap();
@@ -309,6 +282,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ));
     }
 
+    // Top banner split into left content and a right-aligned mode indicator.
+    let banner = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(12)])
+        .split(title_area);
+
     let title = Paragraph::new(Line::from(title_spans))
         .style(Style::default().bg(THEME.read().unwrap().bg))
         .block(
@@ -316,7 +295,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .borders(Borders::BOTTOM)
                 .border_style(Style::default().fg(THEME.read().unwrap().border)),
         );
-    f.render_widget(title, title_area);
+    f.render_widget(title, banner[0]);
+    render_mode_indicator(f, app, banner[1]);
 
     // Middle: Sidebar | Main Area | Preview Area
     let can_zoom = app.active_tab != Tab::Pipelines || !app.jobs.items.is_empty();
@@ -1901,9 +1881,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
             app.diff_view = Some(updated_diff_view);
         }
     }
-
-    // Bottom statusline: vim/helix-style mode indicator.
-    render_mode_indicator(f, app, footer_area);
 
     render_overlays(f, app, size);
 

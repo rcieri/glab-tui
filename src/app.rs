@@ -2002,6 +2002,10 @@ pub struct App {
     pub selected_issues: std::collections::HashSet<u64>,
     pub selected_mrs: std::collections::HashSet<u64>,
     pub details_zoomed: bool,
+    /// Captured when the edit menu opens so Esc can restore the previous
+    /// zoom state (e.g. back to the zoomed PREVIEW if the user entered
+    /// edit via double-Enter, back to NORMAL if they entered via `e`).
+    pub prev_details_zoomed: bool,
     pub detail_visible: bool,
     pub job_trace_needs_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
@@ -2103,6 +2107,7 @@ impl Default for App {
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
             details_zoomed: false,
+            prev_details_zoomed: false,
             detail_visible: false,
             job_trace_needs_scroll_to_bottom: false,
             job_trace_loading: false,
@@ -2172,6 +2177,15 @@ impl Default for App {
 }
 
 impl App {
+    /// Open an edit/create menu, capturing the current zoom state so Esc
+    /// can restore it. Use this helper instead of assigning to
+    /// `edit_menu` directly so the prev-details-zoomed bookkeeping is
+    /// consistent across all entry points (double-Enter, `e`, etc.).
+    pub fn open_edit_menu(&mut self, menu: EditMenu) {
+        self.prev_details_zoomed = self.details_zoomed;
+        self.edit_menu = Some(menu);
+    }
+
     pub fn kind(&self) -> BackendKind {
         self.gitlab_client
             .as_ref()

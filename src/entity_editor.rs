@@ -1179,7 +1179,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 issue.description.clone().unwrap_or_default(),
             ));
 
-            app.edit_menu = Some(crate::app::EditMenu {
+            app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Issue #{}", issue.iid),
                 fields: doc.fields,
                 selected_idx,
@@ -1217,7 +1217,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             ));
 
             let mr_label = app.kind().term("mr_short");
-            app.edit_menu = Some(crate::app::EditMenu {
+            app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit {} #{}", mr_label, mr.iid),
                 fields: doc.fields,
                 selected_idx,
@@ -1255,7 +1255,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 milestone.description.clone().unwrap_or_default(),
             ));
 
-            app.edit_menu = Some(crate::app::EditMenu {
+            app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Milestone %{}", milestone.iid),
                 fields: doc.fields,
                 selected_idx,

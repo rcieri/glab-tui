@@ -3224,7 +3224,7 @@ async fn main() -> Result<()> {
                                                 desc_val,
                                                 is_github,
                                             );
-                                            app.edit_menu = Some(crate::app::EditMenu {
+                                            app.open_edit_menu(crate::app::EditMenu {
                                                 title: "Create Issue".to_string(),
                                                 fields,
                                                 selected_idx: 0,
@@ -3287,7 +3287,7 @@ async fn main() -> Result<()> {
                                                 desc_val,
                                                 is_github,
                                             );
-                                            app.edit_menu = Some(crate::app::EditMenu {
+                                            app.open_edit_menu(crate::app::EditMenu {
                                                 title: "Create Merge Request".to_string(),
                                                 fields,
                                                 selected_idx: 0,
@@ -3604,7 +3604,7 @@ async fn main() -> Result<()> {
                                             }
                                         }
 
-                                        app.edit_menu = Some(crate::app::EditMenu {
+                                        app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Create {}", pr_suffix),
                                             fields: vec![
                                                 crate::app::Field::text("Title", title_val),
@@ -4526,8 +4526,11 @@ async fn main() -> Result<()> {
                         // Navigation mode (!menu.editing):
                         match key_event.code {
                             KeyCode::Esc => {
-                                // Close the edit form and return to the table.
-                                app.details_zoomed = false;
+                                // Close the edit form and restore the zoom state
+                                // captured when the menu opened: back to PREVIEW
+                                // if entered via double-Enter, or back to NORMAL
+                                // if entered via `e`.
+                                app.details_zoomed = app.prev_details_zoomed;
                                 // Close menu (drop menu by not reassigning)
                             }
                             KeyCode::Char('j') | KeyCode::Down | KeyCode::Tab => {

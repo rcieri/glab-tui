@@ -96,7 +96,7 @@ pub async fn handle_active_tab_key(
                         String::new(),
                         is_github,
                     );
-                    app.edit_menu = Some(crate::app::EditMenu {
+                    app.open_edit_menu(crate::app::EditMenu {
                         title: "Create Issue".to_string(),
                         fields,
                         selected_idx: 0,
@@ -117,7 +117,7 @@ pub async fn handle_active_tab_key(
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
                 if app.selected_issues.len() > 1 {
                     let count = app.selected_issues.len();
-                    app.edit_menu = Some(crate::app::EditMenu {
+                    app.open_edit_menu(crate::app::EditMenu {
                         title: format!("Bulk Edit {} Issues", count),
                         fields: vec![
                             crate::app::Field::multi_select("Assignees", String::new()),
@@ -146,7 +146,7 @@ pub async fn handle_active_tab_key(
                             "Description",
                             issue.description.clone().unwrap_or_default(),
                         ));
-                        app.edit_menu = Some(crate::app::EditMenu {
+                        app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Edit Issue #{}", issue.iid),
                             fields: doc.fields,
                             selected_idx: 0,
@@ -284,7 +284,7 @@ pub async fn handle_active_tab_key(
                             }
                         };
 
-                        app.edit_menu = Some(crate::app::EditMenu {
+                        app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Create {} from #{}", pr_suffix, issue.iid),
                             fields: vec![
                                 crate::app::Field::text("Title", title_val),
@@ -384,7 +384,7 @@ pub async fn handle_active_tab_key(
                 if app.selected_mrs.len() > 1 {
                     let count = app.selected_mrs.len();
                     let pr_suffix = if app.is_github() { "PR" } else { "MR" };
-                    app.edit_menu = Some(crate::app::EditMenu {
+                    app.open_edit_menu(crate::app::EditMenu {
                         title: format!("Bulk Edit {} {}s", count, pr_suffix),
                         fields: vec![
                             crate::app::Field::multi_select("Assignees", String::new()),
@@ -421,7 +421,7 @@ pub async fn handle_active_tab_key(
                             "Description",
                             mr.description.clone().unwrap_or_default(),
                         ));
-                        app.edit_menu = Some(crate::app::EditMenu {
+                        app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Edit {} #{}", pr_suffix, mr.iid),
                             fields: doc.fields,
                             selected_idx: 0,
@@ -737,7 +737,7 @@ pub async fn handle_active_tab_key(
                 fields.push(crate::app::Field::text("Inputs", String::new()));
                 fields.push(crate::app::Field::text("Variables", String::new()));
 
-                app.edit_menu = Some(crate::app::EditMenu {
+                app.open_edit_menu(crate::app::EditMenu {
                     title: "Run Pipeline".to_string(),
                     fields,
                     selected_idx: 0,
@@ -1391,7 +1391,7 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Releases => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.releases.create_release, key_event) => {
-                app.edit_menu = Some(crate::app::EditMenu {
+                app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Release".to_string(),
                     fields: vec![
                         crate::app::Field::section("Details"),
@@ -1567,7 +1567,7 @@ pub async fn handle_active_tab_key(
                     String::new(),
                     is_github,
                 );
-                app.edit_menu = Some(crate::app::EditMenu {
+                app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Milestone".to_string(),
                     fields,
                     selected_idx: 0,
@@ -1608,7 +1608,7 @@ pub async fn handle_active_tab_key(
                             "Description",
                             m.description.clone().unwrap_or_default(),
                         ));
-                        app.edit_menu = Some(crate::app::EditMenu {
+                        app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Edit Milestone %{}", m.iid),
                             fields: doc.fields,
                             selected_idx: 0,
@@ -1774,7 +1774,7 @@ pub async fn handle_active_tab_key(
                         let create_from = branch_name.clone();
                         let fields =
                             crate::entity_editor::branch_fields(String::new(), create_from);
-                        app.edit_menu = Some(crate::app::EditMenu {
+                        app.open_edit_menu(crate::app::EditMenu {
                             title: "Create Branch".to_string(),
                             fields,
                             selected_idx: 0,
@@ -2076,7 +2076,7 @@ pub async fn handle_active_tab_key(
                                             "Description",
                                             issue.description.clone().unwrap_or_default(),
                                         ));
-                                        app.edit_menu = Some(crate::app::EditMenu {
+                                        app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit Issue #{}", issue.iid),
                                             fields: doc.fields,
                                             selected_idx: 0,
@@ -2115,7 +2115,7 @@ pub async fn handle_active_tab_key(
                                             "Description",
                                             mr.description.clone().unwrap_or_default(),
                                         ));
-                                        app.edit_menu = Some(crate::app::EditMenu {
+                                        app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit {} #{}", pr_suffix, mr.iid),
                                             fields: doc.fields,
                                             selected_idx: 0,
@@ -2155,7 +2155,7 @@ pub async fn handle_active_tab_key(
                                             "Description",
                                             m.description.clone().unwrap_or_default(),
                                         ));
-                                        app.edit_menu = Some(crate::app::EditMenu {
+                                        app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit Milestone %{}", m.iid),
                                             fields: doc.fields,
                                             selected_idx: 0,
@@ -2184,7 +2184,7 @@ pub async fn handle_active_tab_key(
                                             "Description",
                                             release.description.clone().unwrap_or_default(),
                                         ));
-                                        app.edit_menu = Some(crate::app::EditMenu {
+                                        app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit Release {}", release.tag_name),
                                             fields: doc.fields,
                                             selected_idx: 0,

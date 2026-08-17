@@ -1184,9 +1184,10 @@ fn build_wrapped_text_lines(
             ));
             line_spans.push(Span::styled(format!("{} ", separator), sep_style));
         } else {
-            // Continuation line indentation without repeating the separator icon
+            // Continuation line indentation that aligns under the value
+            // column of the first line (past the icon + label + │ prefix).
             line_spans.push(Span::styled(
-                format!(" {:<width$}   ", "", width = label_width + 2),
+                format!(" {:<width$}    ", "", width = label_width + 3),
                 label_style,
             ));
         }

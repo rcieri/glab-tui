@@ -3533,9 +3533,9 @@ async fn main() -> Result<()> {
 
                                         if let Some(item) = selected_val {
                                             if item == "Create blank (No issue)" {
-                                                let mr_tmpl =
-                                                    get_default_template("mr").unwrap_or_default();
-                                                description_val = mr_tmpl;
+                                                // Leave empty so the repo MR/PR template
+                                                // selector is offered on open.
+                                                description_val = String::new();
                                             } else {
                                                 let id_val = item.clone();
                                                 let parsed_iid = if id_val.starts_with('#') {
@@ -3578,27 +3578,12 @@ async fn main() -> Result<()> {
                                                         if let Some(ref m) = issue.milestone {
                                                             milestone_val = m.title.clone();
                                                         }
-                                                        if let Some(ref d) = issue.description {
-                                                            description_val = format!(
-                                                                "Closes #{}\n\n{}",
-                                                                issue.iid, d
-                                                            );
-                                                        } else {
-                                                            let mr_tmpl =
-                                                                get_default_template("mr")
-                                                                    .unwrap_or_default();
-                                                            if mr_tmpl.is_empty() {
-                                                                description_val = format!(
-                                                                    "Closes #{}",
-                                                                    issue.iid
-                                                                );
-                                                            } else {
-                                                                description_val = format!(
-                                                                    "Closes #{}\n\n{}",
-                                                                    issue.iid, mr_tmpl
-                                                                );
-                                                            }
-                                                        }
+                                                        // Leave the description empty so the
+                                                        // repo MR/PR template selector is
+                                                        // offered when the edit menu opens;
+                                                        // the "Closes #N" reference can come
+                                                        // from the chosen template.
+                                                        description_val = String::new();
                                                     }
                                                 }
                                             }

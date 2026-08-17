@@ -5,7 +5,6 @@ use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
-use crate::templates::get_default_template;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
@@ -272,16 +271,10 @@ pub async fn handle_active_tab_key(
                             .as_ref()
                             .map(|m| m.title.clone())
                             .unwrap_or_default();
-                        let description_val = if let Some(ref d) = issue.description {
-                            format!("Closes #{}\n\n{}", issue.iid, d)
-                        } else {
-                            let mr_tmpl = get_default_template("mr").unwrap_or_default();
-                            if mr_tmpl.is_empty() {
-                                format!("Closes #{}", issue.iid)
-                            } else {
-                                format!("Closes #{}\n\n{}", issue.iid, mr_tmpl)
-                            }
-                        };
+                        // Leave the description empty so the repo MR/PR template
+                        // selector is offered when the edit menu opens. The "Closes
+                        // #N" reference is added by the user or the chosen template.
+                        let description_val = String::new();
 
                         app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Create {} from #{}", pr_suffix, issue.iid),

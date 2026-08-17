@@ -8,9 +8,39 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
+
+/// Word-wrap text to a target width, returning a multi-line `Text` suitable for
+/// a table cell. ratatui's `Table` expands the row height to fit multi-line
+/// cells, so wrapping the action text here prevents it from being clipped.
+fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
+    let width = width.max(8);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for para in s.split('\n') {
+        if para.is_empty() {
+            lines.push(Line::from(String::new()));
+            continue;
+        }
+        let words: Vec<&str> = para.split(' ').collect();
+        let mut current = String::new();
+        for word in words {
+            if current.is_empty() {
+                current = word.to_string();
+            } else if current.chars().count() + 1 + word.chars().count() <= width as usize {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                lines.push(Line::from(std::mem::take(&mut current)));
+                current = word.to_string();
+            }
+        }
+        lines.push(Line::from(current));
+    }
+    let count = lines.len().max(1) as u16;
+    (Text::from(lines), count)
+}
 
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
@@ -970,6 +1000,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .split(area);
 
+        // Action column width: inner table width minus the two fixed columns
+        // (16 + 18) and the inter-column spacing (2 gaps of 2).
+        let action_width = help_chunks[1].width.saturating_sub(16 + 18 + 4).max(8);
+
         let border_color = if app.help_search_query.is_empty() {
             THEME.read().unwrap().border
         } else {
@@ -1004,85 +1038,93 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .block(search_block)
             .wrap(ratatui::widgets::Wrap { trim: true });
 
-        let rows: Vec<Row> = if app.help_search_query.is_empty() {
-            let mut result_rows = Vec::new();
-            let mut last_category = "";
-            for s in &filtered_shortcuts {
-                if s.category != last_category {
-                    if !last_category.is_empty() {
-                        result_rows.push(Row::new(vec![
-                            Cell::from(""),
-                            Cell::from(""),
-                            Cell::from(""),
-                        ])); // spacer
+        let rows: Vec<Row> =
+            if app.help_search_query.is_empty() {
+                let mut result_rows = Vec::new();
+                let mut last_category = "";
+                for s in &filtered_shortcuts {
+                    if s.category != last_category {
+                        if !last_category.is_empty() {
+                            result_rows.push(Row::new(vec![
+                                Cell::from(""),
+                                Cell::from(""),
+                                Cell::from(""),
+                            ])); // spacer
+                        }
+                        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+                        result_rows.push(
+                            Row::new(vec![
+                                Cell::from(Span::styled(
+                                    s.category,
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().purple)
+                                        .add_modifier(Modifier::BOLD),
+                                )),
+                                Cell::from(Span::styled(
+                                    s.key.clone(),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().text_normal)
+                                        .add_modifier(Modifier::BOLD),
+                                )),
+                                Cell::from(action_text.patch_style(
+                                    Style::default().fg(THEME.read().unwrap().text_normal),
+                                )),
+                            ])
+                            .height(action_lines),
+                        );
+                        last_category = s.category;
+                    } else {
+                        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+                        result_rows.push(
+                            Row::new(vec![
+                                Cell::from(""),
+                                Cell::from(Span::styled(
+                                    s.key.clone(),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().text_normal)
+                                        .add_modifier(Modifier::BOLD),
+                                )),
+                                Cell::from(action_text.patch_style(
+                                    Style::default().fg(THEME.read().unwrap().text_normal),
+                                )),
+                            ])
+                            .height(action_lines),
+                        );
                     }
-                    result_rows.push(Row::new(vec![
-                        Cell::from(Span::styled(
-                            s.category,
-                            Style::default()
-                                .fg(THEME.read().unwrap().purple)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::styled(
-                            s.key.clone(),
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::styled(
-                            s.action,
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        )),
-                    ]));
-                    last_category = s.category;
-                } else {
-                    result_rows.push(Row::new(vec![
-                        Cell::from(""),
-                        Cell::from(Span::styled(
-                            s.key.clone(),
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::styled(
-                            s.action,
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        )),
-                    ]));
                 }
-            }
-            result_rows
-        } else {
-            let query = app.help_search_query.to_lowercase();
-            filtered_shortcuts
-                .iter()
-                .filter(|s| {
-                    s.category.to_lowercase().contains(&query)
-                        || s.key.to_lowercase().contains(&query)
-                        || s.action.to_lowercase().contains(&query)
-                })
-                .map(|s| {
-                    Row::new(vec![
-                        Cell::from(Span::styled(
-                            s.category,
-                            Style::default()
-                                .fg(THEME.read().unwrap().purple)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::styled(
-                            s.key.clone(),
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::styled(
-                            s.action,
-                            Style::default().fg(THEME.read().unwrap().text_normal),
-                        )),
-                    ])
-                })
-                .collect()
-        };
+                result_rows
+            } else {
+                let query = app.help_search_query.to_lowercase();
+                filtered_shortcuts
+                    .iter()
+                    .filter(|s| {
+                        s.category.to_lowercase().contains(&query)
+                            || s.key.to_lowercase().contains(&query)
+                            || s.action.to_lowercase().contains(&query)
+                    })
+                    .map(|s| {
+                        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+                        Row::new(vec![
+                            Cell::from(Span::styled(
+                                s.category,
+                                Style::default()
+                                    .fg(THEME.read().unwrap().purple)
+                                    .add_modifier(Modifier::BOLD),
+                            )),
+                            Cell::from(Span::styled(
+                                s.key.clone(),
+                                Style::default()
+                                    .fg(THEME.read().unwrap().text_normal)
+                                    .add_modifier(Modifier::BOLD),
+                            )),
+                            Cell::from(action_text.patch_style(
+                                Style::default().fg(THEME.read().unwrap().text_normal),
+                            )),
+                        ])
+                        .height(action_lines)
+                    })
+                    .collect()
+            };
 
         let widths = [
             Constraint::Length(16),

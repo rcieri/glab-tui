@@ -468,12 +468,10 @@ pub(crate) fn build_field_list_items(
             let is_selected = selected_idx == Some(i);
 
             if f.kind == FieldType::Section {
-                return ListItem::new(Line::from(vec![Span::styled(
-                    format!(" ── {} ──", label),
-                    Style::default()
-                        .fg(theme.text_muted)
-                        .add_modifier(Modifier::DIM),
-                )]));
+                // Whitespace divider between field groups — no text, just a
+                // blank row that provides visual separation.
+                return ListItem::new(Line::from(vec![Span::raw(" ")]))
+                    .style(Style::default().bg(theme.bg));
             }
 
             let item_bg = if is_selected {
@@ -597,7 +595,7 @@ pub(crate) fn build_field_list_items(
                     icon,
                     label,
                     label_width,
-                    &icons.separator,
+                    "│ ",
                     icon_style,
                     label_style,
                     sep_style,
@@ -1106,7 +1104,7 @@ pub(crate) fn build_field_list_items(
                     format!("{:<label_width$.label_width$} ", label),
                     label_style,
                 ),
-                Span::styled(format!("{} ", icons.separator), sep_style),
+                Span::styled("│ ".to_string(), sep_style),
             ];
             // Mute ReadOnly field values in interactive mode so they recede.
             if interactive && f.kind == crate::app::FieldType::ReadOnly {

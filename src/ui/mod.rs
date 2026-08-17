@@ -58,11 +58,14 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
     let theme = THEME.read().unwrap();
 
     let (label, bg, fg) = if app.edit_menu.is_some() {
-        (" EDIT ", theme.green, theme.bg)
+        // EDIT — reuse the GROUPED badge palette (blue).
+        (" EDIT ", theme.blue, theme.bg)
     } else if app.details_zoomed {
-        (" PREVIEW ", theme.blue, theme.bg)
+        // PREVIEW — reuse the SEARCHING badge palette (yellow).
+        (" PREVIEW ", theme.yellow, theme.bg)
     } else {
-        (" NORMAL ", theme.text_muted, theme.bg)
+        // NORMAL — reuse the GLAB-TUI header palette (border_focused).
+        (" NORMAL ", theme.border_focused, theme.bg)
     };
 
     let line = Line::from(vec![Span::styled(

@@ -278,10 +278,17 @@ fn render_content_pane(
                 _ => String::new(),
             };
 
-            // Same block chrome as the read-only preview — no title, plain border.
+            // Block chrome matches the read-only preview, but the active side
+            // (description selected) gets a focused border so the user can tell
+            // which side of the view they're on.
+            let border_color = if is_desc_selected {
+                theme.border_focused
+            } else {
+                theme.border
+            };
             let desc_block = Block::default()
                 .borders(borders)
-                .border_style(Style::default().fg(theme.border));
+                .border_style(Style::default().fg(border_color));
 
             let desc_inner = desc_block.inner(area);
             f.render_widget(desc_block, area);

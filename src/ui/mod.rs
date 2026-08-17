@@ -64,7 +64,7 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
     } else if app.details_zoomed {
         (" PREVIEW ", theme.blue, theme.bg)
     } else {
-        (" NORMAL ", theme.inactive_bg, theme.text_muted)
+        (" NORMAL ", theme.inactive_bg, theme.header_fg)
     };
 
     let hint = if app.edit_menu.is_some() {

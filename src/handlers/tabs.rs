@@ -239,6 +239,18 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
+            _ if keybinding_matches(&app.config.keybindings.issues.selection_toggle, key_event) => {
+                if let Some(selected_idx) = app.issues.state.selected() {
+                    let iid = app.filtered_issues().get(selected_idx).map(|i| i.iid);
+                    if let Some(iid) = iid {
+                        if app.selected_issues.contains(&iid) {
+                            app.selected_issues.remove(&iid);
+                        } else {
+                            app.selected_issues.insert(iid);
+                        }
+                    }
+                }
+            }
             _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
@@ -369,6 +381,17 @@ pub async fn handle_active_tab_key(
                     }
                 }
             } else if keybinding_matches(&app.config.keybindings.mrs.select_mr, key_event) {
+                if let Some(selected_idx) = app.mrs.state.selected() {
+                    let iid = app.filtered_mrs().get(selected_idx).map(|m| m.iid);
+                    if let Some(iid) = iid {
+                        if app.selected_mrs.contains(&iid) {
+                            app.selected_mrs.remove(&iid);
+                        } else {
+                            app.selected_mrs.insert(iid);
+                        }
+                    }
+                }
+            } else if keybinding_matches(&app.config.keybindings.mrs.selection_toggle, key_event) {
                 if let Some(selected_idx) = app.mrs.state.selected() {
                     let iid = app.filtered_mrs().get(selected_idx).map(|m| m.iid);
                     if let Some(iid) = iid {

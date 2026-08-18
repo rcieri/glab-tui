@@ -5,11 +5,11 @@ use crate::app::SaveMenu;
 use crate::app::{App, Tab};
 use crate::config::{ICONS, THEME};
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
-    Frame,
 };
 
 /// Word-wrap text to a target width, returning a multi-line `Text` suitable for
@@ -1167,7 +1167,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
         let width = 64;
-        let height = (2 * columns_list.len() + 16) as u16;
+        let content_height = (columns_list.len() + group_cols.len() + 4 + 2 + 2 + 6 + 6) as u16;
+        // Cap the popup to the available terminal height so it never overflows;
+        // the column/group lists below scroll independently via ListState.
+        let height = content_height.min(size.height.saturating_sub(2)).max(18);
         let area = centered_rect_fixed(width, height, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::Configure, area));
@@ -1199,10 +1202,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let mut constraints: Vec<Constraint> = Vec::new();
         constraints.push(Constraint::Length(1)); // COLUMNS header
-        constraints.push(Constraint::Length(columns_list.len() as u16));
+        constraints.push(Constraint::Min(3)); // COLUMNS list (scrolls)
         constraints.push(Constraint::Length(1)); // spacer
         constraints.push(Constraint::Length(1)); // GROUP BY header
-        constraints.push(Constraint::Length(group_cols.len() as u16));
+        constraints.push(Constraint::Min(3)); // GROUP BY list (scrolls)
         constraints.push(Constraint::Length(1)); // spacer
         constraints.push(Constraint::Length(1)); // ORDER header
         constraints.push(Constraint::Length(2));
@@ -1223,7 +1226,17 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let mut chunk_idx = 0;
 
-        let columns_header = Paragraph::new(format!("  {} COLUMNS", icons.label_columns)).style(
+        let columns_header_text = if active_idx < cols_end {
+            format!(
+                "  {} COLUMNS  {}/{}",
+                icons.label_columns,
+                active_idx + 1,
+                cols_end
+            )
+        } else {
+            format!("  {} COLUMNS", icons.label_columns)
+        };
+        let columns_header = Paragraph::new(columns_header_text).style(
             Style::default()
                 .fg(THEME.read().unwrap().header_fg)
                 .add_modifier(Modifier::BOLD),
@@ -1263,12 +1276,30 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 ListItem::new(text).style(style)
             })
             .collect();
-        f.render_widget(List::new(col_items), popup_layout[chunk_idx]);
+        let mut col_state = ListState::default();
+        if active_idx < cols_end {
+            col_state.select(Some(active_idx));
+        }
+        f.render_stateful_widget(
+            List::new(col_items),
+            popup_layout[chunk_idx],
+            &mut col_state,
+        );
         chunk_idx += 1;
 
         chunk_idx += 1; // spacer
 
-        let group_header = Paragraph::new(format!("  {} GROUP BY", icons.label_group)).style(
+        let group_header_text = if (cols_end..group_end).contains(&active_idx) {
+            format!(
+                "  {} GROUP BY  {}/{}",
+                icons.label_group,
+                active_idx - cols_end + 1,
+                group_cols.len()
+            )
+        } else {
+            format!("  {} GROUP BY", icons.label_group)
+        };
+        let group_header = Paragraph::new(group_header_text).style(
             Style::default()
                 .fg(THEME.read().unwrap().green)
                 .add_modifier(Modifier::BOLD),
@@ -1306,7 +1337,15 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 ListItem::new(text).style(style)
             })
             .collect();
-        f.render_widget(List::new(group_items), popup_layout[chunk_idx]);
+        let mut group_state = ListState::default();
+        if (cols_end..group_end).contains(&active_idx) {
+            group_state.select(Some(active_idx - cols_end));
+        }
+        f.render_stateful_widget(
+            List::new(group_items),
+            popup_layout[chunk_idx],
+            &mut group_state,
+        );
         chunk_idx += 1;
 
         chunk_idx += 1; // spacer

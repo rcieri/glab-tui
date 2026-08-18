@@ -3496,9 +3496,8 @@ async fn main() -> Result<()> {
                                         let mut selected_val =
                                             selector.selected_items.iter().next().cloned();
                                         if selected_val.is_none() && !filtered_items.is_empty() {
-                                            selected_val = Some(
-                                                filtered_items[selector.cursor_idx].clone(),
-                                            );
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
                                         }
                                         app.selector = None;
                                         if let Some(name) = selected_val {

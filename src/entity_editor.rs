@@ -11,6 +11,16 @@ use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crossterm::event::KeyCode;
 
+/// Return a muted dash for empty values so optional fields read cleanly
+/// instead of cluttering the preview with "None" or blank rows.
+pub(crate) fn display_branch(value: &str) -> &str {
+    if value.trim().is_empty() || value == "None" {
+        "\u{2014}"
+    } else {
+        value
+    }
+}
+
 // ── Shared field builders (single source of truth for edit/creation forms) ──
 
 pub fn issue_fields(
@@ -270,13 +280,13 @@ pub fn build_mr_document(
             mr.labels.join(", ")
         },
     ));
-    fields.push(crate::app::Field::read_only(
-        "Source Branch",
-        mr.source_branch.clone(),
-    ));
     fields.push(crate::app::Field::ref_field(
-        "Target Branch",
-        mr.target_branch.clone(),
+        "Branch",
+        format!(
+            "{} \u{2192} {}",
+            display_branch(&mr.source_branch),
+            display_branch(&mr.target_branch)
+        ),
     ));
     fields.push(crate::app::Field::read_only(
         "Updated",

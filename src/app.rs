@@ -18,6 +18,10 @@ use syntect::parsing::{ParseState, ScopeStack};
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
+/// Single shared fuzzy matcher. Reusing one instance avoids allocating a
+/// `SkimMatcherV2` on every filter keystroke (the search bar filters on each
+/// key press).
+static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
 
 fn file_extension(file_path: &str) -> Option<&str> {
     let file_name = file_path.rsplit(|c| c == '/' || c == '\\').next()?;
@@ -682,7 +686,7 @@ impl Selector {
                 .collect();
         }
 
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, String, Option<Vec<usize>>)> = self
             .all_items
             .iter()
@@ -1576,7 +1580,7 @@ impl DiffView {
             line.fuzzy_indices = None;
         }
 
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, usize)> = self
             .lines
             .iter_mut()
@@ -2530,7 +2534,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -2681,7 +2685,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items = Vec::new();
 
         for item in items {
@@ -2940,7 +2944,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items: Vec<(i64, &crate::domain::pipelines::Pipeline)> = Vec::new();
 
         for item in items {
@@ -3121,7 +3125,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items: Vec<(i64, &crate::domain::pipelines::Job)> = Vec::new();
 
         for item in items {
@@ -3258,7 +3262,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3320,7 +3324,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3433,7 +3437,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, &'a crate::domain::notifications::Notification)> = items
             .iter()
             .filter_map(|item| {
@@ -3555,7 +3559,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3694,7 +3698,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3746,7 +3750,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()

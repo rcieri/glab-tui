@@ -437,7 +437,10 @@ pub struct EditMenu {
 }
 
 impl EditMenu {
-    pub fn is_new(&self) -> bool {
+    /// Whether this menu requires an explicit Submit before applying changes.
+    /// Both create and edit variants need a submit; the historical `is_new`
+    /// name was misleading because edit menus also need a submit.
+    pub fn needs_submit(&self) -> bool {
         self.entity_kind.needs_submit()
     }
 

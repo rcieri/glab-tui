@@ -122,7 +122,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                     }
                     OverlayKind::EditMenu => {
                         if let Some(ref mut menu) = app.edit_menu {
-                            let is_new = menu.is_new();
+                            let is_new = menu.needs_submit();
                             let max = if is_new {
                                 menu.fields.len()
                             } else {

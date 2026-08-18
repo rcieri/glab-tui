@@ -9,7 +9,8 @@ use crate::AppTerminal;
 use crate::app::App;
 use crate::editor::edit_in_editor;
 use crate::event::Event;
-use crossterm::event::KeyCode;
+use crate::keybinding::keybinding_matches;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 // ── Shared field builders (single source of truth for edit/creation forms) ──
 
@@ -742,12 +743,11 @@ pub fn apply_field_text_change(
 
     match field_type {
         "title" => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.title = value.clone();
                 }
-            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.title = value.clone();
                 }
@@ -771,7 +771,7 @@ pub fn apply_field_text_change(
             });
         }
         "target_branch" => {
-            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+            if entity_type == "mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.target_branch = value.clone();
                 }
@@ -792,8 +792,7 @@ pub fn apply_field_text_change(
             }
         }
         "due_date" => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 let flag_value = if value == "YYYY-MM-DD" || value.trim().is_empty() {
                     String::new()
                 } else {
@@ -823,8 +822,7 @@ pub fn apply_field_text_change(
             }
         }
         "weight" => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
@@ -860,12 +858,11 @@ pub fn apply_field_text_change(
             });
         }
         "description" => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.description = Some(value.clone());
                 }
-            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.description = Some(value.clone());
                 }
@@ -961,12 +958,11 @@ pub fn apply_selector_changes(
                 });
             }
 
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.labels = values;
                 }
-            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.labels = values;
                 }
@@ -1030,8 +1026,7 @@ pub fn apply_selector_changes(
                 });
             }
 
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     item.assignees = clean_values
                         .iter()
@@ -1040,7 +1035,7 @@ pub fn apply_selector_changes(
                         })
                         .collect();
                 }
-            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     item.assignees = clean_values
                         .iter()
@@ -1052,7 +1047,7 @@ pub fn apply_selector_changes(
             }
         }
         "reviewers" => {
-            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+            if entity_type == "mr" || entity_type == "edit_mr" {
                 let clean_values: Vec<String> = values
                     .iter()
                     .map(|v| v.trim_start_matches('@').to_string())
@@ -1104,15 +1099,14 @@ pub fn apply_selector_changes(
         }
         "milestone" => {
             let first_val = values.first().cloned().unwrap_or_default();
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                     let m = crate::domain::issues::Milestone {
                         title: first_val.clone(),
                     };
                     item.milestone = Some(m);
                 }
-            } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+            } else if entity_type == "mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                     let m = crate::domain::mr::Milestone {
                         title: first_val.clone(),
@@ -1143,8 +1137,7 @@ pub fn apply_selector_changes(
             });
         }
         "confidential" => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 let is_confidential = values.iter().any(|v| v == "Yes" || v == "true");
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
@@ -1167,7 +1160,7 @@ pub fn apply_selector_changes(
 }
 
 pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
-    if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue" {
+    if entity_type == "issue" || entity_type == "edit_issue" {
         if let Some(issue) = app.issues.items.iter().find(|i| i.iid == entity_iid) {
             let issue = issue.clone();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
@@ -1196,7 +1189,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 desc_scroll: 0,
             });
         }
-    } else if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+    } else if entity_type == "mr" || entity_type == "edit_mr" {
         if let Some(mr) = app.mrs.items.iter().find(|m| m.iid == entity_iid) {
             let mr = mr.clone();
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
@@ -1284,8 +1277,12 @@ pub async fn handle_entity_update(
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
+    let ev = KeyEvent::new(code, KeyModifiers::NONE);
     match code {
-        KeyCode::Char('t') => {
+        KeyCode::Char('t')
+            if keybinding_matches(&app.config.keybindings.issues.edit_title, &ev)
+                || keybinding_matches(&app.config.keybindings.mrs.edit_title, &ev) =>
+        {
             let current_title = if entity_type == "issue"
                 || entity_type == "edit_issue"
                 || entity_type == "edit_issue"
@@ -1341,8 +1338,8 @@ pub async fn handle_entity_update(
                 }
             }
         }
-        KeyCode::Char('s') => {
-            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+        KeyCode::Char('s') if keybinding_matches(&app.config.keybindings.mrs.toggle_draft, &ev) => {
+            if entity_type == "mr" || entity_type == "edit_mr" {
                 let is_draft = app
                     .mrs
                     .items
@@ -1363,8 +1360,10 @@ pub async fn handle_entity_update(
                 }
             }
         }
-        KeyCode::Char('g') => {
-            if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
+        KeyCode::Char('g')
+            if keybinding_matches(&app.config.keybindings.mrs.edit_target_branch, &ev) =>
+        {
+            if entity_type == "mr" || entity_type == "edit_mr" {
                 let current_branch = app
                     .mrs
                     .items
@@ -1391,8 +1390,7 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('c') => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(res) = edit_in_editor("public", terminal) {
                     let flag = if res.to_lowercase().contains("confidential") {
                         "--confidential"
@@ -1415,8 +1413,7 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('u') => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(due_date) = edit_in_editor("YYYY-MM-DD", terminal) {
                     let flag_value = if due_date == "YYYY-MM-DD" || due_date.is_empty() {
                         ""
@@ -1437,8 +1434,7 @@ pub async fn handle_entity_update(
             }
         }
         KeyCode::Char('w') => {
-            if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
-            {
+            if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(weight) = edit_in_editor("0", terminal) {
                     let Some(client) = app.gitlab_client.clone() else {
                         return;

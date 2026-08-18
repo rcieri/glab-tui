@@ -358,6 +358,7 @@ pub enum EditEntityKind {
     CreateMilestone,
     EditMilestone,
     CreateRelease,
+    EditRelease,
     CreatePipeline,
     CreateBranch,
 }
@@ -387,6 +388,7 @@ impl EditEntityKind {
                 | Self::CreateMilestone
                 | Self::EditMilestone
                 | Self::CreateRelease
+                | Self::EditRelease
                 | Self::CreatePipeline
                 | Self::CreateBranch
         )
@@ -397,7 +399,7 @@ impl EditEntityKind {
             Self::CreateIssue | Self::EditIssue | Self::BulkEditIssues => "issue",
             Self::CreateMr | Self::EditMr | Self::BulkEditMrs => "mr",
             Self::CreateMilestone | Self::EditMilestone => "milestone",
-            Self::CreateRelease => "release",
+            Self::CreateRelease | Self::EditRelease => "release",
             Self::CreatePipeline => "pipeline",
             Self::CreateBranch => "branch",
         }
@@ -415,6 +417,7 @@ impl EditEntityKind {
             Self::CreateMilestone => "new_milestone",
             Self::EditMilestone => "milestone",
             Self::CreateRelease => "new_release",
+            Self::EditRelease => "release",
             Self::CreatePipeline => "new_pipeline",
             Self::CreateBranch => "new_branch",
         }

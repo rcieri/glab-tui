@@ -2191,7 +2191,7 @@ pub async fn handle_active_tab_key(
                                             fields: doc.fields,
                                             selected_idx: 0,
                                             entity_iid: 0,
-                                            entity_kind: crate::app::EditEntityKind::CreateRelease,
+                                            entity_kind: crate::app::EditEntityKind::EditRelease,
                                             state: {
                                                 let mut s = ListState::default();
                                                 s.select(Some(0));

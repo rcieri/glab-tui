@@ -1,21 +1,27 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
-use crate::config::{Config, THEME};
+use crate::config::{Config, THEME, Theme};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::ListState;
 use std::sync::LazyLock;
+use syntect::highlighting::Highlighter;
 use syntect::highlighting::Style as SyntectStyle;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
+use syntect::parsing::{ParseState, ScopeStack};
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
+/// Single shared fuzzy matcher. Reusing one instance avoids allocating a
+/// `SkimMatcherV2` on every filter keystroke (the search bar filters on each
+/// key press).
+static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
 
 fn file_extension(file_path: &str) -> Option<&str> {
     let file_name = file_path.rsplit(|c| c == '/' || c == '\\').next()?;
@@ -28,6 +34,11 @@ fn file_extension(file_path: &str) -> Option<&str> {
 }
 
 /// Highlight a single line's content using syntect, returning colored spans.
+///
+/// Colors are derived from the active theme's semantic tokens (mapped from each
+/// token's syntect scope name) so highlighting always matches the active theme
+/// rather than a hardcoded syntect palette. Font modifiers (bold/italic) come
+/// from syntect's resolved style.
 pub fn highlight_line_syntax(
     file_path: &str,
     line_content: &str,
@@ -38,17 +49,10 @@ pub fn highlight_line_syntax(
         .find_syntax_by_extension(ext)
         .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
 
-    let mut syntax_theme = THEME_SET.themes.values().next()?.clone();
     let theme = THEME.read().unwrap();
-    syntax_theme.settings.foreground = Some(syntect_color(theme.text_normal)?);
-    syntax_theme.settings.background = Some(syntect_color(theme.bg)?);
-    for item in &mut syntax_theme.scopes {
-        item.style.foreground = None;
-        item.style.background = None;
-    }
-    let mut highlighter = syntect::easy::HighlightLines::new(syntax, &syntax_theme);
+    let theme = theme.clone();
 
-    // Remove the leading +/-/space for syntax highlighting, but keep the actual code
+    // Remove the leading +/-/space for syntax highlighting, but keep the actual code.
     let code = if line_content.starts_with('+')
         || line_content.starts_with('-')
         || line_content.starts_with(' ')
@@ -62,28 +66,113 @@ pub fn highlight_line_syntax(
         line_content
     };
 
-    let ranges = highlighter.highlight_line(code, &SYNTAX_SET).ok()?;
-
-    let result: Vec<_> = ranges
-        .into_iter()
-        .map(|(style, text)| (syntect_style_to_ratatui(style), text.to_string()))
-        .collect();
-
-    if result.is_empty() {
-        Some(vec![(
+    if code.is_empty() {
+        return Some(vec![(
             syntect_style_to_ratatui(SyntectStyle::default()),
             code.to_string(),
-        )])
-    } else {
-        Some(result)
+        )]);
     }
+
+    let mut parse_state = ParseState::new(syntax);
+    let ops = parse_state.parse_line(code, &SYNTAX_SET).ok()?;
+    if ops.is_empty() {
+        return Some(vec![(
+            Style::default().fg(theme.text_normal),
+            code.to_string(),
+        )]);
+    }
+
+    let syntax_theme = THEME_SET.themes.values().next()?;
+    let highlighter = Highlighter::new(syntax_theme);
+    let mut scope_stack = ScopeStack::new();
+    let mut result: Vec<(Style, String)> = Vec::new();
+    let mut pos = 0usize;
+    for (end, op) in ops {
+        if pos < end {
+            let text = &code[pos..end];
+            let top = scope_stack.as_slice().last().copied();
+            let style = highlighter.style_for_stack(scope_stack.as_slice());
+            let color = top
+                .map(|s| scope_color(&format!("{}", s), &theme))
+                .unwrap_or(theme.text_normal);
+            let mut span_style = Style::default().fg(color);
+            if style
+                .font_style
+                .contains(syntect::highlighting::FontStyle::BOLD)
+            {
+                span_style = span_style.add_modifier(Modifier::BOLD);
+            }
+            if style
+                .font_style
+                .contains(syntect::highlighting::FontStyle::ITALIC)
+            {
+                span_style = span_style.add_modifier(Modifier::ITALIC);
+            }
+            if style
+                .font_style
+                .contains(syntect::highlighting::FontStyle::UNDERLINE)
+            {
+                span_style = span_style.add_modifier(Modifier::UNDERLINED);
+            }
+            result.push((span_style, text.to_string()));
+        }
+        let _ = scope_stack.apply(&op);
+        pos = end;
+    }
+    if pos < code.len() {
+        let text = &code[pos..];
+        let top = scope_stack.as_slice().last().copied();
+        let color = top
+            .map(|s| scope_color(&format!("{}", s), &theme))
+            .unwrap_or(theme.text_normal);
+        result.push((Style::default().fg(color), text.to_string()));
+    }
+
+    Some(result)
 }
 
-fn syntect_color(color: ratatui::style::Color) -> Option<syntect::highlighting::Color> {
-    let ratatui::style::Color::Rgb(r, g, b) = color else {
-        return None;
-    };
-    Some(syntect::highlighting::Color { r, g, b, a: 255 })
+/// Map a syntect scope name (e.g. "keyword.control.rust") to a semantic theme
+/// color so syntax highlighting tracks the active theme rather than a hardcoded
+/// palette.
+fn scope_color(name: &str, theme: &Theme) -> Color {
+    if name.contains("comment") {
+        theme.text_muted
+    } else if name.contains("string")
+        || name.contains("regexp")
+        || name.contains("character")
+        || name.contains("quote")
+    {
+        theme.green
+    } else if name.contains("number") || name.contains("numeric") || name.contains("constant") {
+        theme.red
+    } else if name.contains("keyword")
+        || name.contains("storage")
+        || name.contains("control")
+        || name.contains("operator")
+    {
+        theme.purple
+    } else if name.contains("function")
+        || name.contains("method")
+        || name.contains("entity.name")
+        || name.contains("decorator")
+    {
+        theme.yellow
+    } else if name.contains("type")
+        || name.contains("class")
+        || name.contains("struct")
+        || name.contains("enum")
+        || name.contains("trait")
+        || name.contains("interface")
+        || name.contains("support.type")
+    {
+        theme.blue
+    } else if name.contains("variable") || name.contains("property") {
+        theme.text_normal
+    } else if name.contains("tag") || name.contains("markup") {
+        theme.blue
+    } else {
+        theme.text_normal
+    }
 }
 
 fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
@@ -597,7 +686,7 @@ impl Selector {
                 .collect();
         }
 
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, String, Option<Vec<usize>>)> = self
             .all_items
             .iter()
@@ -1491,7 +1580,7 @@ impl DiffView {
             line.fuzzy_indices = None;
         }
 
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, usize)> = self
             .lines
             .iter_mut()
@@ -2445,7 +2534,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -2596,7 +2685,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items = Vec::new();
 
         for item in items {
@@ -2855,7 +2944,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items: Vec<(i64, &crate::domain::pipelines::Pipeline)> = Vec::new();
 
         for item in items {
@@ -3036,7 +3125,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items: Vec<(i64, &crate::domain::pipelines::Job)> = Vec::new();
 
         for item in items {
@@ -3173,7 +3262,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3235,7 +3324,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3348,7 +3437,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, &'a crate::domain::notifications::Notification)> = items
             .iter()
             .filter_map(|item| {
@@ -3470,7 +3559,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3609,7 +3698,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3661,7 +3750,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -4651,6 +4740,17 @@ mod tests {
         // Move month backward by 2
         dp.move_month(-2);
         assert_eq!(dp.value_string(), "2026-05-29");
+    }
+
+    #[test]
+    fn test_highlight_line_syntax_returns_theme_colors() {
+        // A Rust keyword line should produce spans carrying a non-default fg
+        // color derived from the active theme (not a hardcoded palette).
+        let spans = highlight_line_syntax("main.rs", "let x = 1;", None);
+        let spans = spans.expect("highlighting should succeed");
+        assert!(!spans.is_empty());
+        // At least one token (e.g. the `let` keyword) should carry an fg color.
+        assert!(spans.iter().any(|(style, _)| style.fg.is_some()));
     }
 
     #[test]

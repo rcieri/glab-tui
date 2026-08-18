@@ -1057,6 +1057,29 @@ impl Backend for GlabBackend {
         Ok(all)
     }
 
+    async fn list_group_mrs(
+        &self,
+        group: &str,
+        show_closed: bool,
+        _page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<MergeRequest>> {
+        let state = if show_closed { "all" } else { "opened" };
+        let out = self
+            .run_glab(
+                &[
+                    "api",
+                    &format!(
+                        "groups/{}/merge_requests?state={}&per_page={}",
+                        group, state, per_request
+                    ),
+                ],
+                "FETCHING GROUP MERGE REQUESTS",
+            )
+            .await?;
+        Ok(serde_json::from_str(&out)?)
+    }
+
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
         let raw = self
             .run_glab(
@@ -1598,6 +1621,24 @@ impl Backend for GlabBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn list_group_pipelines(
+        &self,
+        group: &str,
+        _page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Pipeline>> {
+        let out = self
+            .run_glab(
+                &[
+                    "api",
+                    &format!("groups/{}/pipelines?per_page={}", group, per_request),
+                ],
+                "FETCHING GROUP PIPELINES",
+            )
+            .await?;
+        Ok(serde_json::from_str(&out)?)
     }
 
     async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
@@ -2343,6 +2384,29 @@ impl Backend for GlabBackend {
             }));
         }
         Ok(list)
+    }
+
+    async fn list_group_issues(
+        &self,
+        group: &str,
+        show_closed: bool,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Issue>> {
+        let state = if show_closed { "all" } else { "opened" };
+        let out = self
+            .run_glab(
+                &[
+                    "api",
+                    &format!(
+                        "groups/{}/issues?state={}&per_page={}",
+                        group, state, per_request
+                    ),
+                ],
+                "FETCHING GROUP ISSUES",
+            )
+            .await?;
+        Ok(serde_json::from_str(&out)?)
     }
 
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {

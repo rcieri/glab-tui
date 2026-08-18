@@ -68,6 +68,15 @@ pub trait Backend: Send + Sync {
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>>;
+    /// List issues across all projects in a GitLab group (GitLab-only).
+    /// Returns `Err` on backends that do not support group-level listing.
+    async fn list_group_issues(
+        &self,
+        group: &str,
+        show_closed: bool,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Issue>>;
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue>;
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()>;
@@ -120,6 +129,14 @@ pub trait Backend: Send + Sync {
     async fn list_mrs(
         &self,
         project: &str,
+        show_closed: bool,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<MergeRequest>>;
+    /// List merge requests across all projects in a GitLab group.
+    async fn list_group_mrs(
+        &self,
+        group: &str,
         show_closed: bool,
         page_size: usize,
         per_request: usize,
@@ -211,6 +228,13 @@ pub trait Backend: Send + Sync {
     async fn list_pipelines(
         &self,
         project: &str,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Pipeline>>;
+    /// List pipelines across all projects in a GitLab group.
+    async fn list_group_pipelines(
+        &self,
+        group: &str,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Pipeline>>;

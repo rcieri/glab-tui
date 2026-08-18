@@ -250,7 +250,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
             .style(Style::default().bg(THEME.read().unwrap().bg));
 
-        let area = centered_rect_min(60, 60, 28, 4, size);
+        let area = centered_rect_min(60, 60, 36, 6, size);
         clear_area(f, area);
         f.render_widget(block, area);
 
@@ -984,7 +984,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .border_type(BorderType::Double)
             .style(Style::default().bg(THEME.read().unwrap().bg));
 
-        let area = centered_rect_fixed(72, 30, size);
+        let area = centered_rect_fixed(90, 40, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::Help, area));
 

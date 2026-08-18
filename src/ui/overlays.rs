@@ -1230,6 +1230,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             lines.push((Some(logical), ListItem::new(text).style(style)));
         }
 
+        // spacer
+        lines.push((None, ListItem::new("")));
+
         // GROUP BY header
         let group_header_active = (cols_end..group_end).contains(&active_idx);
         lines.push((
@@ -1276,6 +1279,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             lines.push((Some(logical), ListItem::new(text).style(style)));
         }
 
+        // spacer
+        lines.push((None, ListItem::new("")));
+
         // ORDER header
         lines.push((
             None,
@@ -1311,6 +1317,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             };
             lines.push((Some(logical), ListItem::new(text).style(style)));
         }
+
+        // spacer
+        lines.push((None, ListItem::new("")));
 
         // PAGE SIZE header
         lines.push((
@@ -1350,6 +1359,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             ListItem::new(page_size_text).style(page_size_style),
         ));
 
+        // spacer
+        lines.push((None, ListItem::new("")));
+
         // THEME header
         lines.push((
             None,
@@ -1374,6 +1386,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             Some(theme_idx),
             ListItem::new(theme_text).style(theme_style),
         ));
+
+        // spacer
+        lines.push((None, ListItem::new("")));
 
         // SAVE header
         lines.push((

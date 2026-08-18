@@ -2186,6 +2186,22 @@ impl App {
         self.edit_menu = Some(menu);
     }
 
+    /// Single entry point for surfacing a runtime error. Sets the transient
+    /// error toast (`error_message`) and marks the most recent running
+    /// terminal command as failed so both UI surfaces stay in sync.
+    pub fn show_error(&mut self, msg: String) {
+        self.error_message = Some(msg.clone());
+        self.error_message_at = Some(std::time::Instant::now());
+        let failed_status = format!("Failed: {}", msg);
+        if let Some(pos) = self
+            .terminal_commands
+            .iter()
+            .rposition(|cmd| cmd.status == "Running")
+        {
+            self.terminal_commands[pos].status = failed_status;
+        }
+    }
+
     pub fn kind(&self) -> BackendKind {
         self.gitlab_client
             .as_ref()

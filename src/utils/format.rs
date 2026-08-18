@@ -133,8 +133,26 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
 pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
     let theme = &crate::config::THEME.read().unwrap();
     let mut lines = Vec::new();
-    for line in markdown.lines() {
-        let trimmed = line.trim();
+    let mut in_code_block = false;
+    for raw_line in markdown.lines() {
+        let trimmed = raw_line.trim_start();
+        // Fenced code blocks: ``` ... ```
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            lines.push(Line::from(Span::styled(
+                " \u{2502}".to_string(),
+                Style::default().fg(theme.border),
+            )));
+            continue;
+        }
+        if in_code_block {
+            lines.push(Line::from(vec![Span::styled(
+                format!(" \u{2502} {}", raw_line),
+                Style::default().fg(theme.green),
+            )]));
+            continue;
+        }
+
         if trimmed.starts_with("# ") {
             let content = trimmed.strip_prefix("# ").unwrap_or(trimmed);
             lines.push(Line::from(vec![Span::styled(
@@ -157,14 +175,51 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
                     .fg(theme.green)
                     .add_modifier(Modifier::BOLD),
             )]));
+        } else if trimmed.starts_with("- [ ] ")
+            || trimmed.starts_with("- [x] ")
+            || trimmed.starts_with("- [X] ")
+        {
+            let checked = trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ");
+            let content = trimmed
+                .strip_prefix("- [ ] ")
+                .or_else(|| trimmed.strip_prefix("- [x] "))
+                .or_else(|| trimmed.strip_prefix("- [X] "))
+                .unwrap_or(trimmed);
+            let marker = if checked { "[x]" } else { "[ ]" };
+            let marker_color = if checked {
+                theme.green
+            } else {
+                theme.text_muted
+            };
+            let content_style = if checked {
+                Style::default()
+                    .fg(theme.text_muted)
+                    .add_modifier(Modifier::CROSSED_OUT)
+            } else {
+                Style::default()
+            };
+            let spans = vec![
+                Span::styled(
+                    format!("  {} ", marker),
+                    Style::default()
+                        .fg(marker_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(content.to_string(), content_style),
+            ];
+            lines.push(Line::from(spans));
         } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            // Support nested bullets by indenting based on the leading spaces.
+            let indent = raw_line.chars().take_while(|c| *c == ' ').count();
+            let marker = "  \u{2022} ";
             let content = if trimmed.starts_with("- ") {
                 trimmed.strip_prefix("- ").unwrap()
             } else {
                 trimmed.strip_prefix("* ").unwrap()
             };
+            let prefix = " ".repeat(indent) + marker;
             let mut spans = vec![Span::styled(
-                "  \u{2022} ",
+                prefix,
                 Style::default()
                     .fg(theme.purple)
                     .add_modifier(Modifier::BOLD),
@@ -180,7 +235,7 @@ pub fn render_markdown(markdown: &str) -> Vec<Line<'static>> {
             spans.extend(parse_inline_styles(content, theme));
             lines.push(Line::from(spans));
         } else {
-            lines.push(Line::from(parse_inline_styles(line, theme)));
+            lines.push(Line::from(parse_inline_styles(raw_line, theme)));
         }
     }
     lines
@@ -687,6 +742,114 @@ fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style
 
     // Default
     Style::default().fg(theme.text_normal)
+}
+
+/// Render Markdown by shelling out to `glow -p -w <width>` and parsing the
+/// returned ANSI SGR sequences into ratatui spans. Returns `None` if glow is
+/// missing or fails, so callers can fall back to [`render_markdown`].
+pub async fn render_markdown_via_glow(markdown: &str, width: u16) -> Option<Vec<Line<'static>>> {
+    let mut cmd = tokio::process::Command::new("glow");
+    cmd.arg("-p")
+        .arg("-w")
+        .arg(width.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        let _ = stdin.write_all(markdown.as_bytes()).await;
+    }
+    let output = child.wait_with_output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(ansi_to_lines(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Minimal SGR → ratatui `Line` converter. Handles resets, bold, and
+/// 24-bit foreground colors (`\x1b[38;2;R;G;Bm`). Unrecognized escapes are
+/// stripped so the output is always renderable.
+fn ansi_to_lines(s: &str) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut buf = String::new();
+    let mut fg: Option<ratatui::style::Color> = None;
+    let mut bold = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Flush current buf to current line.
+            flush_ansi(&mut buf, &mut lines, fg, bold);
+            buf.clear();
+            // Parse "[...m".
+            let mut seq = String::new();
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&nc) = chars.peek() {
+                    if nc == 'm' || nc == 'K' || nc == 'H' || nc == 'J' {
+                        chars.next();
+                        break;
+                    }
+                    seq.push(nc);
+                    chars.next();
+                }
+            }
+            let parts: Vec<u16> = seq
+                .split(';')
+                .filter_map(|p| p.parse::<u16>().ok())
+                .collect();
+            if seq.is_empty() || parts.is_empty() {
+                fg = None;
+                bold = false;
+                continue;
+            }
+            // Reset
+            if parts[0] == 0 {
+                fg = None;
+                bold = false;
+            } else if parts[0] == 1 {
+                bold = true;
+            } else if parts[0] == 22 {
+                bold = false;
+            } else if parts[0] == 38 && parts.len() >= 5 && parts[1] == 2 {
+                let r = parts[2] as u8;
+                let g = parts[3] as u8;
+                let b = parts[4] as u8;
+                fg = Some(ratatui::style::Color::Rgb(r, g, b));
+            }
+            continue;
+        }
+        if c == '\n' {
+            flush_ansi(&mut buf, &mut lines, fg, bold);
+            buf.clear();
+        } else {
+            buf.push(c);
+        }
+    }
+    flush_ansi(&mut buf, &mut lines, fg, bold);
+    if lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+    lines
+}
+
+fn flush_ansi(
+    buf: &mut String,
+    lines: &mut Vec<Line<'static>>,
+    fg: Option<ratatui::style::Color>,
+    bold: bool,
+) {
+    if buf.is_empty() {
+        return;
+    }
+    let mut style = ratatui::style::Style::default();
+    if let Some(color) = fg {
+        style = style.fg(color);
+    }
+    if bold {
+        style = style.add_modifier(ratatui::style::Modifier::BOLD);
+    }
+    lines.push(Line::from(Span::styled(buf.clone(), style)));
 }
 
 #[cfg(test)]

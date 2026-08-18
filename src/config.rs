@@ -1149,6 +1149,21 @@ impl Default for UiConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct MarkdownConfig {
+    /// When true and the `glow` binary is available, shell out to `glow -p -w
+    /// <cols>` to render Markdown. Falls back to the in-process renderer when
+    /// `glow` is missing or fails.
+    pub use_glow: bool,
+}
+
+impl Default for MarkdownConfig {
+    fn default() -> Self {
+        Self { use_glow: false }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub backend: Option<crate::backend::BackendKind>,
     pub theme_preset: Option<String>,
@@ -1165,6 +1180,7 @@ pub struct Config {
     pub fetch_label_colors: bool,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
+    pub markdown: MarkdownConfig,
     pub issues: PaneConfig,
     pub mrs: PaneConfig,
     pub pipelines: PaneConfig,
@@ -1191,6 +1207,7 @@ impl Default for Config {
             fetch_label_colors: def_fetch_label_colors(),
             disabled_tabs: None,
             ui: UiConfig::default(),
+            markdown: MarkdownConfig::default(),
             issues: PaneConfig::default(),
             mrs: PaneConfig::default(),
             pipelines: PaneConfig::default(),
@@ -1262,6 +1279,19 @@ page_size = 100
 # yellow_bg = "{yellow_bg}"
 # purple = "{purple}"
 # purple_bg = "{purple_bg}"
+
+# UI settings
+# [ui]
+# sidebar_width = 22
+# sidebar_visible = true
+# terminal_pane_visible = true
+
+# Markdown rendering
+# [markdown]
+# When true and the `glow` binary is available, shell out to `glow -p -w <cols>`
+# for richer Markdown rendering. Falls back to the in-process renderer when
+# `glow` is missing or fails.
+# use_glow = false
 
 [keybindings.global]
 quit = "q"

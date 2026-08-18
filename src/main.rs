@@ -7188,7 +7188,15 @@ async fn main() -> Result<()> {
                         let group_end = cols_end + group_cols.len();
                         let order_end = group_end + 2;
                         let page_size_idx = order_end;
-                        let max_idx = page_size_idx + 1; // Save button is the last row
+                        let theme_idx = page_size_idx + 1;
+                        let themes = crate::config::all_theme_presets();
+                        let theme_list_len = if app.theme_picker_open {
+                            themes.len()
+                        } else {
+                            0
+                        };
+                        let save_idx = theme_idx + 1 + theme_list_len;
+                        let max_idx = save_idx; // Save button is the last row
 
                         match key_event.code {
                             KeyCode::Char(c)
@@ -7220,11 +7228,15 @@ async fn main() -> Result<()> {
                                     idx if idx < cols_end => cols_end,
                                     idx if idx < group_end => group_end,
                                     idx if idx < order_end => page_size_idx,
+                                    idx if idx == page_size_idx => theme_idx,
                                     _ => 0,
                                 };
                             }
                             KeyCode::Char('K') => {
                                 app.column_checklist_idx = match app.column_checklist_idx {
+                                    idx if idx == save_idx => save_idx - 1,
+                                    idx if idx == theme_idx => page_size_idx,
+                                    idx if idx > theme_idx => theme_idx,
                                     idx if idx == page_size_idx => order_end,
                                     idx if idx >= group_end => 0,
                                     _ => order_end,

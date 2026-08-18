@@ -7,7 +7,7 @@ use ratatui::{
     widgets::Cell,
 };
 
-use crate::config::THEME;
+use crate::config::{Icons, THEME, Theme};
 use crate::utils::format::truncate;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -643,6 +643,198 @@ pub(crate) fn status_span(status: &str) -> Span<'static> {
                 .fg(theme.text_muted)
                 .add_modifier(Modifier::BOLD),
         ),
+    }
+}
+
+/// Single source of truth for badge styling shared by the inspector preview and
+/// the table column renderers. Maps a field `label`/`val` pair to its
+/// `(fg, badge_background, bold, formatted_text)` so the two render paths can
+/// never drift apart.
+///
+/// `item_bg` is the fallback background used by neutral badges (e.g. "canceled"
+/// or a NO toggle); `is_selected` swaps the active badge background for the
+/// highlighted background. `formatted_text` is `None` when the caller should
+/// fall back to its own default display.
+pub(crate) fn badge_style_for(
+    label: &str,
+    val: &str,
+    is_selected: bool,
+    item_bg: Color,
+    theme: &Theme,
+    icons: &Icons,
+) -> (Color, Option<Color>, bool, Option<String>) {
+    let active_bg = |color: Color| -> Option<Color> {
+        if is_selected {
+            Some(theme.highlight_bg)
+        } else {
+            Some(color)
+        }
+    };
+    match label {
+        "State" => match val.to_lowercase().as_str() {
+            "opened" | "open" | "active" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} OPEN ", icons.state_open)),
+            ),
+            "closed" | "close" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CLOSED ", icons.state_closed)),
+            ),
+            "merged" => (
+                theme.purple,
+                active_bg(theme.purple_bg),
+                true,
+                Some(format!(" {} MERGED ", icons.state_merged)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
+            "success" | "online" | "ready" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} SUCCESS ", icons.status_success)),
+            ),
+            "failed" | "offline" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} FAILED ", icons.status_failed)),
+            ),
+            "running" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" {} RUNNING ", icons.status_running)),
+            ),
+            "pending" | "waiting" | "draft" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} PENDING ", icons.status_pending)),
+            ),
+            "canceled" | "cancelled" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} CANCELED ", icons.status_canceled)),
+            ),
+            "paused" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} PAUSED ", icons.runner_paused)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Approval" => match val.to_uppercase().as_str() {
+            "APPROVED" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} APPROVED ", icons.approval_approved)),
+            ),
+            "CHANGES" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CHANGES ", icons.approval_changes)),
+            ),
+            "YOURS" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" \u{f007} YOURS ")),
+            ),
+            "AWAITING" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} AWAITING ", icons.approval_pending)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Mergeable" => match val.to_uppercase().as_str() {
+            "CLEAN" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} CLEAN ", icons.merge_clean)),
+            ),
+            "CONFLICT" | "BLOCKED" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CONFLICT ", icons.merge_conflict)),
+            ),
+            "REBASE" | "BEHIND" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} REBASE ", icons.merge_rebase)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Workflow" => match val.to_uppercase().as_str() {
+            "APPROVED" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} APPROVED ", icons.approval_approved)),
+            ),
+            "REVIEW" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" {} REVIEW ", icons.workflow_review)),
+            ),
+            "CHANGES" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CHANGES ", icons.approval_changes)),
+            ),
+            "DRAFT" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} DRAFT ", icons.status_draft)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Default" | "Protected" | "Can Push" | "Active" | "Confidential" => {
+            if val == "YES" || val == "Yes" || val == "true" {
+                (
+                    theme.green,
+                    active_bg(theme.green_bg),
+                    true,
+                    Some(format!(" {} YES ", icons.check_on)),
+                )
+            } else {
+                (
+                    theme.text_muted,
+                    Some(item_bg),
+                    false,
+                    Some(format!(" {} NO ", icons.check_off)),
+                )
+            }
+        }
+        "Milestone" | "Branch" | "Ref" | "Deploy Ref" | "Stage" => {
+            (theme.purple, None, false, None)
+        }
+        "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target" | "Project" => {
+            (theme.blue, None, false, None)
+        }
+        "Updated" | "Created" | "Duration" | "Released" | "Deployed" | "Date" | "Due Date"
+        | "Start Date" | "Avg Wait" => (theme.yellow, None, false, None),
+        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" => {
+            (theme.blue, None, false, None)
+        }
+        _ => (theme.text_normal, None, false, None),
     }
 }
 

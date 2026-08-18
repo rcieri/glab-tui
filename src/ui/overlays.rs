@@ -1623,158 +1623,241 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         }
     }
 
-    if let Some(confirm) = &app.confirm_popup {
-        let kind = app.kind();
-        let (title, message) = match confirm {
-            crate::app::ConfirmAction::DeleteMilestone(iid) => (
-                format!(" {} Delete Milestone? ", icons.action_delete),
-                format!("Are you sure you want to delete milestone #{}?", iid),
-            ),
-            crate::app::ConfirmAction::DeleteRelease(tag_name) => (
-                format!(" {} Delete Release? ", icons.action_delete),
-                format!("Are you sure you want to delete release {}?", tag_name),
-            ),
-            crate::app::ConfirmAction::DeleteBranch(branch_name) => (
-                format!(" {} Delete Branch? ", icons.action_delete),
-                format!("Are you sure you want to delete branch '{}'?", branch_name),
-            ),
-            crate::app::ConfirmAction::CloseIssue(iid) => (
-                format!(" {} Close Issue? ", icons.action_close),
-                format!("Are you sure you want to close issue #{}?", iid),
-            ),
-            crate::app::ConfirmAction::DeleteIssue(iid) => (
-                format!(" {} Delete Issue? ", icons.action_delete),
-                format!(
-                    "Are you sure you want to delete issue #{}? This action is permanent.",
-                    iid
-                ),
-            ),
-            crate::app::ConfirmAction::CloseMr(iid) => {
-                let mr = kind.term("mr");
-                let mr_short = kind.term("mr_short");
-                (
-                    format!(" {} Close {mr}? ", icons.action_close),
-                    format!("Are you sure you want to close {mr_short} #{}?", iid),
-                )
-            }
-            crate::app::ConfirmAction::DeleteMr(iid) => {
-                let mr = kind.term("mr");
-                let mr_short = kind.term("mr_short");
-                (
-                    format!(" {} Delete {mr}? ", icons.action_delete),
-                    format!(
-                        "Are you sure you want to delete {mr_short} #{}? This action is permanent.",
-                        iid
-                    ),
-                )
-            }
-            crate::app::ConfirmAction::MergeMr(iid) => {
-                let mr = kind.term("mr");
-                let mr_short = kind.term("mr_short");
-                (
-                    format!(" {} Merge {mr}? ", icons.action_merge),
-                    format!("Are you sure you want to merge {mr_short} #{}?", iid),
-                )
-            }
-            crate::app::ConfirmAction::RevokeMr(iid) => (
-                format!(" {} Revoke Approval? ", icons.action_review),
-                format!(
-                    "Are you sure you want to revoke your approval on MR #{}?",
-                    iid
-                ),
-            ),
-            crate::app::ConfirmAction::RebaseMr(iid) => {
-                let mr_short = kind.term("mr_short");
-                // GitLab refers to merge requests as `!N`, GitHub to pull
-                // requests as `#N` -- match whichever host we're on.
-                let marker = if kind.is_github() { "#" } else { "!" };
-                let target = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == *iid)
-                    .map(|m| m.target_branch.as_str())
-                    .unwrap_or("target");
-                (
-                    format!(" {} Rebase {mr_short}? ", icons.merge_rebase),
-                    format!("Rebase {marker}{iid} onto {target}?"),
-                )
-            }
-            crate::app::ConfirmAction::SubmitReview(_) => (
-                format!(" {} Submit Review? ", icons.action_review),
-                "You have pending draft comments. Would you like to submit your review now?"
-                    .to_string(),
-            ),
-        };
+    if let Some(dialog) = &app.submit_dialog {
+        let theme = THEME.read().unwrap();
+        let icon =
+            match dialog.action {
+                crate::app::ConfirmAction::DeleteMilestone(_)
+                | crate::app::ConfirmAction::DeleteRelease(_)
+                | crate::app::ConfirmAction::DeleteBranch(_)
+                | crate::app::ConfirmAction::DeleteIssue(_)
+                | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
+                crate::app::ConfirmAction::CloseIssue(_)
+                | crate::app::ConfirmAction::CloseMr(_) => icons.action_close.clone(),
+                crate::app::ConfirmAction::MergeMr(_)
+                | crate::app::ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
+                crate::app::ConfirmAction::RevokeMr(_)
+                | crate::app::ConfirmAction::SubmitReview(_) => icons.action_review.clone(),
+                crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
+            };
+
+        let title = format!(" {} {} ", icon, dialog.title);
+
+        let body_lines = textwrap(&dialog.body, 56).len().max(1) + 1 // +1 leading blank line
+            + if dialog.options.is_empty() { 0 } else { 1 }; // +1 gap before options
+        let option_rows = dialog.options.len();
+        let button_height: u16 = 3; // top border + label + bottom border
+        // [border top] + [pad] + body + options + [separator] + [buttons]
+        let mut dialog_height =
+            (2u16 + 1 + body_lines as u16 + option_rows as u16 + 1 + button_height) as u16;
+        let max_h = size.height.saturating_sub(2).max(11);
+        dialog_height = dialog_height.clamp(11, max_h);
+
+        let area = centered_rect_fixed(64, dialog_height, size);
+        app.overlay_stack
+            .push((crate::app::OverlayKind::ConfirmPopup, area));
 
         let block = Block::default()
             .title(title)
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             )
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+            .border_style(Style::default().fg(theme.border_focused))
             .border_type(BorderType::Double)
-            .style(Style::default().bg(THEME.read().unwrap().bg));
+            .style(Style::default().bg(theme.bg));
 
-        let area = centered_rect_fixed(60, 9, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::ConfirmPopup, area));
+        // Draw the backdrop + border first so the content below renders
+        // on top of it (the block fills the whole area with its bg).
+        clear_area(f, area);
+        f.render_widget(block, area);
 
-        let chunks = Layout::default()
+        let v = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Min(0),    // Message
-                Constraint::Length(1), // YES/NO buttons
+                Constraint::Length(1),             // pad below title
+                Constraint::Min(0),                // body + options (flexes)
+                Constraint::Length(1),             // separator
+                Constraint::Length(button_height), // button row
             ])
             .split(area);
 
-        let message_p = Paragraph::new(vec![Line::from(""), Line::from(message)])
+        let content = v[1];
+        let sep = v[2];
+        let buttons = v[3];
+
+        let content_chunks = if option_rows > 0 {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(option_rows as u16)])
+                .split(content)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0)])
+                .split(content)
+        };
+
+        let mut body_lines = textwrap(&dialog.body, 56);
+        body_lines.insert(0, Line::from(""));
+        if option_rows > 0 {
+            body_lines.push(Line::from(""));
+        }
+        let body_p = Paragraph::new(body_lines)
             .alignment(Alignment::Center)
-            .style(Style::default().fg(THEME.read().unwrap().text_normal))
+            .style(Style::default().fg(theme.text_normal))
             .wrap(ratatui::widgets::Wrap { trim: true });
+        f.render_widget(body_p, content_chunks[0]);
 
-        let footer_p = Paragraph::new(Line::from(vec![
-            Span::styled(
-                "     [ YES ]     ",
-                Style::default()
-                    .fg(if app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().bg
+        if option_rows > 0 {
+            let mut state = ListState::default();
+            state.select(Some(dialog.cursor_idx.saturating_sub(1)));
+            let items: Vec<Line<'static>> = dialog
+                .options
+                .iter()
+                .map(|o| {
+                    let mark = if o.checked {
+                        format!("[{}] ", icons.check_on)
                     } else {
-                        THEME.read().unwrap().border_focused
-                    })
-                    .bg(if app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().border_focused
-                    } else {
-                        THEME.read().unwrap().bg
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("    "),
-            Span::styled(
-                "     [ NO ]     ",
-                Style::default()
-                    .fg(if !app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().bg
-                    } else {
-                        THEME.read().unwrap().border_focused
-                    })
-                    .bg(if !app.confirm_popup_selected_yes {
-                        THEME.read().unwrap().border_focused
-                    } else {
-                        THEME.read().unwrap().bg
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]))
-        .alignment(Alignment::Center);
+                        "[ ] ".to_string()
+                    };
+                    Line::from(format!("{mark}{}", o.label))
+                })
+                .collect();
+            let list = List::new(items)
+                .style(Style::default().fg(theme.text_normal))
+                .highlight_style(
+                    Style::default()
+                        .bg(theme.border_focused)
+                        .fg(theme.bg)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("> ");
+            f.render_stateful_widget(list, content_chunks[1], &mut state);
+        }
 
-        clear_area(f, area);
-        f.render_widget(block, area);
-        f.render_widget(message_p, chunks[0]);
-        f.render_widget(footer_p, chunks[1]);
+        f.render_widget(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(theme.border)),
+            sep,
+        );
+
+        let halves = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
+            .split(buttons);
+
+        let submit_selected = dialog.is_on_submit();
+        let cancel_selected = dialog.is_on_cancel();
+
+        // Cancel button (right half)
+        let cancel_border = if cancel_selected {
+            theme.border_focused
+        } else {
+            theme.border
+        };
+        let cancel_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(cancel_border))
+            .style(Style::default().bg(theme.bg));
+        let cancel_inner = cancel_block.inner(halves[1]);
+        f.render_widget(cancel_block, halves[1]);
+        let cancel_label = format!("{} Cancel", icons.check_off);
+        f.render_widget(
+            Paragraph::new(cancel_label)
+                .alignment(Alignment::Center)
+                .style(
+                    Style::default()
+                        .fg(if cancel_selected {
+                            theme.bg
+                        } else {
+                            theme.text_normal
+                        })
+                        .bg(if cancel_selected {
+                            theme.border_focused
+                        } else {
+                            theme.bg
+                        })
+                        .add_modifier(if cancel_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ),
+            cancel_inner,
+        );
+
+        // Submit button (left half)
+        let submit_border = if submit_selected {
+            theme.green
+        } else {
+            theme.border
+        };
+        let submit_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(submit_border))
+            .style(Style::default().bg(theme.bg));
+        let submit_inner = submit_block.inner(halves[0]);
+        f.render_widget(submit_block, halves[0]);
+        let submit_label = format!("{} {}", icons.check_on, dialog.submit_label);
+        f.render_widget(
+            Paragraph::new(submit_label)
+                .alignment(Alignment::Center)
+                .style(
+                    Style::default()
+                        .fg(if submit_selected {
+                            theme.bg
+                        } else {
+                            theme.green
+                        })
+                        .bg(if submit_selected {
+                            theme.green
+                        } else {
+                            theme.bg
+                        })
+                        .add_modifier(if submit_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                ),
+            submit_inner,
+        );
     }
+}
+
+/// Wrap a string into `width`-character lines at word boundaries,
+/// returning one `Line` per wrapped line. Hard-break overlong words
+/// instead of panicking on zero width.
+fn textwrap(text: &str, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return vec![Line::from(text.to_string())];
+    }
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            out.push(Line::from(String::new()));
+            continue;
+        }
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            if current.is_empty() {
+                current.push_str(word);
+            } else if current.len() + 1 + word.len() <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                out.push(Line::from(std::mem::take(&mut current)));
+                current.push_str(word);
+            }
+        }
+        if !current.is_empty() {
+            out.push(Line::from(current));
+        }
+    }
+    out
 }

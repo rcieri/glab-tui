@@ -1951,17 +1951,320 @@ pub enum OverlayKind {
 
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
-    DeleteMilestone(u64),  // milestone iid
-    DeleteRelease(String), // release tag_name
-    DeleteBranch(String),  // branch name
-    DeleteIssue(u64),      // issue iid
-    DeleteMr(u64),         // mr iid
-    CloseIssue(u64),       // issue iid
-    CloseMr(u64),          // mr iid
-    MergeMr(u64),          // mr iid
-    RevokeMr(u64),         // mr iid
-    RebaseMr(u64),         // mr iid
-    SubmitReview(u64),     // mr iid
+    DeleteMilestone(u64),   // milestone iid
+    DeleteRelease(String),  // release tag_name
+    DeleteBranch(String),   // branch name
+    DeleteIssue(u64),       // issue iid
+    DeleteMr(u64),          // mr iid
+    CloseIssue(u64),        // issue iid
+    CloseMr(u64),           // mr iid
+    MergeMr(u64),           // mr iid
+    BulkMergeMrs(Vec<u64>), // mr iids (multiple selected)
+    RevokeMr(u64),          // mr iid
+    RebaseMr(u64),          // mr iid
+    SubmitReview(u64),      // mr iid
+}
+
+/// Toggleable option shown inside a [`SubmitDialog`] body.
+///
+/// Used for actions that have additional knobs (merge options such as
+/// "Squash commits" or "Delete source branch"). The user flips these
+/// with `Space` / `Enter` before pressing the Submit button; nothing is
+/// sent to the API until Submit is activated.
+#[derive(Clone, Debug)]
+pub struct SubmitOption {
+    pub label: String,
+    pub checked: bool,
+}
+
+impl SubmitOption {
+    pub fn new(label: impl Into<String>, checked: bool) -> Self {
+        Self {
+            label: label.into(),
+            checked,
+        }
+    }
+}
+
+/// A modal dialog that gates a mutating API call behind an explicit
+/// Submit button click. Replaces the old two-button YES/NO popup
+/// (issue #315).
+///
+/// Layout:
+///
+/// ```text
+/// ┌─ <title> ─────────────────────┐
+/// │                                │
+/// │ <body, wrapped>                │
+/// │                                │
+/// │ [ ] <option label>             │   ← only if options is non-empty
+/// │ [x] <option label>             │
+/// │                                │
+/// ├────────────────────────────────┤
+/// │  [ Cancel ]      [ Submit ]    │
+/// └────────────────────────────────┘
+/// ```
+///
+/// Cursor layout: index `0` is Cancel, `1..=options.len()` are the
+/// options (one per toggle), `options.len() + 1` is Submit.
+///
+/// Keyboard:
+/// - `Tab` / `l` / `→` — next row
+/// - `Shift-Tab` / `h` / `←` — previous row
+/// - `Enter` — activate focused (Cancel closes, option toggles, Submit runs the action)
+/// - `Space` — toggle the focused option (no-op on buttons)
+/// - `Esc` — cancel (equivalent to Cancel)
+#[derive(Clone, Debug)]
+pub struct SubmitDialog {
+    pub action: ConfirmAction,
+    pub title: String,
+    pub body: String,
+    pub options: Vec<SubmitOption>,
+    pub submit_label: String,
+    /// `0` = Cancel, `1..=options.len()` = options, `options.len() + 1` = Submit.
+    pub cursor_idx: usize,
+}
+
+impl SubmitDialog {
+    /// Leftmost position: the Submit button (rendered on the left).
+    pub const SUBMIT_IDX: usize = 0;
+
+    /// Index of the Cancel button (rendered on the right, after the options).
+    pub fn cancel_idx(&self) -> usize {
+        self.options.len() + 1
+    }
+
+    pub fn is_on_submit(&self) -> bool {
+        self.cursor_idx == Self::SUBMIT_IDX
+    }
+
+    pub fn is_on_cancel(&self) -> bool {
+        self.cursor_idx == self.cancel_idx()
+    }
+
+    /// `None` when on a button, `Some(i)` when on the `i`-th option.
+    pub fn option_idx(&self) -> Option<usize> {
+        if self.cursor_idx >= 1 && self.cursor_idx <= self.options.len() {
+            Some(self.cursor_idx - 1)
+        } else {
+            None
+        }
+    }
+
+    /// Construct a SubmitDialog that defaults its cursor to Submit (left).
+    /// Used for reversible actions (merge, rebase, submit review).
+    pub fn new(
+        action: ConfirmAction,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        submit_label: impl Into<String>,
+        options: Vec<SubmitOption>,
+    ) -> Self {
+        Self {
+            action,
+            title: title.into(),
+            body: body.into(),
+            options,
+            submit_label: submit_label.into(),
+            cursor_idx: Self::SUBMIT_IDX,
+        }
+    }
+
+    /// Construct a SubmitDialog that defaults its cursor to Cancel (right).
+    /// Used for destructive actions where the safer default is opt-in.
+    pub fn new_safe(
+        action: ConfirmAction,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        submit_label: impl Into<String>,
+        options: Vec<SubmitOption>,
+    ) -> Self {
+        let options_len = options.len();
+        Self {
+            action,
+            title: title.into(),
+            body: body.into(),
+            options,
+            submit_label: submit_label.into(),
+            cursor_idx: options_len + 1,
+        }
+    }
+
+    pub fn move_next(&mut self) {
+        let max = self.cancel_idx();
+        if self.cursor_idx < max {
+            self.cursor_idx += 1;
+        }
+    }
+
+    pub fn move_prev(&mut self) {
+        if self.cursor_idx > Self::SUBMIT_IDX {
+            self.cursor_idx -= 1;
+        }
+    }
+
+    pub fn toggle_focused_option(&mut self) {
+        if let Some(idx) = self.option_idx() {
+            self.options[idx].checked = !self.options[idx].checked;
+        }
+    }
+
+    /// Build the default SubmitDialog for a [`ConfirmAction`], pulling
+    /// any context-aware body text from the live `App` (e.g. the merge
+    /// target branch, the release tag, the issue/MR iid).
+    ///
+    /// Destructive actions default the cursor to Cancel; reversible
+    /// actions (merge, rebase, submit review) default to Submit.
+    pub fn build(action: ConfirmAction, app: &App) -> Self {
+        let kind = app.kind();
+        let mr = kind.term("mr");
+        let mr_short = kind.term("mr_short");
+        let marker = if kind.is_github() { "#" } else { "!" };
+
+        let action_clone = action.clone();
+        let (title, body, submit_label, options, safe) = match &action {
+            ConfirmAction::DeleteMilestone(iid) => (
+                format!("Delete Milestone #{iid}"),
+                format!("Are you sure you want to delete milestone #{iid}?"),
+                "Delete".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::DeleteRelease(tag_name) => (
+                format!("Delete Release {tag_name}"),
+                format!("Are you sure you want to delete release {tag_name}?"),
+                "Delete".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::DeleteBranch(branch_name) => (
+                format!("Delete Branch '{branch_name}'"),
+                format!("Are you sure you want to delete branch \'{branch_name}\'?"),
+                "Delete".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::CloseIssue(iid) => (
+                format!("Close Issue #{iid}"),
+                format!("Are you sure you want to close issue #{iid}?"),
+                "Close".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::DeleteIssue(iid) => (
+                format!("Delete Issue #{iid}"),
+                format!("Are you sure you want to delete issue #{iid}? This action is permanent."),
+                "Delete".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::CloseMr(iid) => (
+                format!("Close {mr} #{iid}"),
+                format!("Are you sure you want to close {mr_short} #{iid}?"),
+                "Close".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::DeleteMr(iid) => (
+                format!("Delete {mr} #{iid}"),
+                format!(
+                    "Are you sure you want to delete {mr_short} #{iid}? This action is permanent."
+                ),
+                "Delete".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::MergeMr(iid) => {
+                let (source, target) = app
+                    .mrs
+                    .items
+                    .iter()
+                    .find(|m| m.iid == *iid)
+                    .map(|m| (m.source_branch.clone(), m.target_branch.clone()))
+                    .unwrap_or_default();
+                let branch_flow = if source.is_empty() && target.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\n{marker}{iid}: {source} \u{2192} {target}")
+                };
+                let options = vec![
+                    SubmitOption::new("Squash", true),
+                    SubmitOption::new("Delete source branch", true),
+                ];
+                (
+                    format!("Merge {mr} #{iid}"),
+                    format!(
+                        "Merge {mr_short} {marker}{iid} with the selected options.{branch_flow}"
+                    ),
+                    "Merge".to_string(),
+                    options,
+                    false,
+                )
+            }
+            ConfirmAction::BulkMergeMrs(iids) => (
+                format!("Merge {} {}s", iids.len(), mr),
+                format!(
+                    "Merge {} {}s with the selected options.",
+                    iids.len(),
+                    mr_short
+                ),
+                "Merge".to_string(),
+                vec![
+                    SubmitOption::new("Squash", true),
+                    SubmitOption::new("Delete source branch", true),
+                ],
+                false,
+            ),
+            ConfirmAction::RevokeMr(iid) => (
+                "Revoke Approval".to_string(),
+                format!("Are you sure you want to revoke your approval on {mr_short} #{iid}?"),
+                "Revoke".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::RebaseMr(iid) => {
+                let target = app
+                    .mrs
+                    .items
+                    .iter()
+                    .find(|m| m.iid == *iid)
+                    .map(|m| m.target_branch.clone())
+                    .unwrap_or_else(|| "target".to_string());
+                (
+                    format!("Rebase {mr_short} {marker}{iid}"),
+                    format!(
+                        "Rebase {marker}{iid} onto {target}?\n\nThis rewrites the commit history."
+                    ),
+                    "Rebase".to_string(),
+                    vec![],
+                    false,
+                )
+            }
+            ConfirmAction::SubmitReview(iid) => (
+                "Submit Review".to_string(),
+                format!(
+                    "You have pending draft comments on {mr_short} #{iid}.\nSubmit your review now?"
+                ),
+                "Submit".to_string(),
+                vec![],
+                false,
+            ),
+        };
+
+        let cursor_idx = if safe {
+            options.len() + 1
+        } else {
+            Self::SUBMIT_IDX
+        };
+        Self {
+            action: action_clone,
+            title,
+            body,
+            options,
+            submit_label,
+            cursor_idx,
+        }
+    }
 }
 
 pub struct App {
@@ -2021,8 +2324,7 @@ pub struct App {
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
-    pub confirm_popup: Option<ConfirmAction>,
-    pub confirm_popup_selected_yes: bool,
+    pub submit_dialog: Option<SubmitDialog>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
     pub status_message: Option<String>,
@@ -2122,8 +2424,7 @@ impl Default for App {
             diff_view: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
-            confirm_popup: None,
-            confirm_popup_selected_yes: false,
+            submit_dialog: None,
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
             status_message: None,
@@ -4651,6 +4952,85 @@ mod tests {
         // Move month backward by 2
         dp.move_month(-2);
         assert_eq!(dp.value_string(), "2026-05-29");
+    }
+
+    #[test]
+    fn test_submit_dialog_cursor_and_toggle() {
+        let mut dialog = SubmitDialog::new(
+            ConfirmAction::MergeMr(42),
+            "Merge MR #42",
+            "Merge with the selected options.",
+            "Merge",
+            vec![
+                SubmitOption::new("Squash", true),
+                SubmitOption::new("Delete source branch", true),
+            ],
+        );
+
+        // Default cursor sits on Submit (leftmost).
+        assert!(dialog.is_on_submit());
+        assert_eq!(dialog.cancel_idx(), 3);
+        assert_eq!(dialog.cursor_idx, 0);
+
+        // Move right/down: Submit -> Squash -> Delete source branch -> Cancel.
+        dialog.move_next();
+        assert_eq!(dialog.option_idx(), Some(0));
+        dialog.move_next();
+        assert_eq!(dialog.option_idx(), Some(1));
+        dialog.move_next();
+        assert!(dialog.is_on_cancel());
+        dialog.move_next();
+        assert!(dialog.is_on_cancel(), "Cancel must clamp at the right");
+
+        // Move left/up: Cancel -> Delete source branch -> Squash -> Submit.
+        dialog.move_prev();
+        assert_eq!(dialog.option_idx(), Some(1));
+        dialog.move_prev();
+        assert_eq!(dialog.option_idx(), Some(0));
+        dialog.move_prev();
+        assert!(dialog.is_on_submit());
+        dialog.move_prev();
+        assert!(dialog.is_on_submit(), "Submit must clamp at the left");
+
+        // Toggle flips state and stays in place.
+        dialog.cursor_idx = 1;
+        assert!(dialog.options[0].checked);
+        dialog.toggle_focused_option();
+        assert!(!dialog.options[0].checked);
+        dialog.toggle_focused_option();
+        assert!(dialog.options[0].checked);
+
+        // Toggling on a button row is a no-op.
+        dialog.cursor_idx = 0;
+        let before = dialog.options[0].checked;
+        dialog.toggle_focused_option();
+        assert_eq!(dialog.options[0].checked, before);
+    }
+
+    #[test]
+    fn test_submit_dialog_build_safe_vs_submit_focus() {
+        let app = App::default();
+        // Destructive action defaults to Cancel.
+        let close = SubmitDialog::build(ConfirmAction::CloseIssue(7), &app);
+        assert!(close.is_on_cancel());
+        assert_eq!(close.options.len(), 0);
+        assert_eq!(close.submit_label, "Close");
+
+        // Reversible action defaults to Submit.
+        let merge = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
+        assert!(merge.is_on_submit());
+        assert_eq!(merge.options.len(), 2);
+        assert!(merge.options.iter().any(|o| o.label == "Squash"));
+        assert!(
+            merge
+                .options
+                .iter()
+                .any(|o| o.label == "Delete source branch")
+        );
+
+        let rebase = SubmitDialog::build(ConfirmAction::RebaseMr(12), &app);
+        assert!(rebase.is_on_submit());
+        assert_eq!(rebase.submit_label, "Rebase");
     }
 
     #[test]

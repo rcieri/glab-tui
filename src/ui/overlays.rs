@@ -1167,8 +1167,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
         let width = 64;
-        let height =
-            (columns_list.len() + group_cols.len() + 4 + 2 + 2 + 6 + 1 + 1 + theme_list_len) as u16;
+        let height = (2 * columns_list.len() + 16) as u16;
         let area = centered_rect_fixed(width, height, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::Configure, area));
@@ -1196,13 +1195,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let order_end = group_end + 2;
         let page_size_idx = order_end;
         let theme_idx = page_size_idx + 1;
-        let themes = crate::config::all_theme_presets();
-        let theme_list_len = if app.theme_picker_open {
-            themes.len()
-        } else {
-            0
-        };
-        let save_end = theme_idx + 1 + theme_list_len;
+        let save_end = theme_idx + 1;
 
         let mut constraints: Vec<Constraint> = Vec::new();
         constraints.push(Constraint::Length(1)); // COLUMNS header
@@ -1218,11 +1211,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         constraints.push(Constraint::Length(1)); // PAGE SIZE value
         constraints.push(Constraint::Length(1)); // spacer
         constraints.push(Constraint::Length(1)); // THEME header
-        if app.theme_picker_open {
-            constraints.push(Constraint::Length(themes.len() as u16)); // theme list
-        } else {
-            constraints.push(Constraint::Length(1)); // theme value (collapsed)
-        }
+        constraints.push(Constraint::Length(1)); // theme value (collapsed)
         constraints.push(Constraint::Length(1)); // spacer
         constraints.push(Constraint::Length(1)); // SAVE header
         constraints.push(Constraint::Length(1)); // SAVE button
@@ -1414,52 +1403,18 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         chunk_idx += 1;
 
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
-
-        if app.theme_picker_open {
-            let theme_items: Vec<ListItem> = themes
-                .iter()
-                .enumerate()
-                .map(|(i, name)| {
-                    let flat_idx = theme_idx + i;
-                    let is_selected = name == current_theme_name;
-                    let text = format!(
-                        "  {} {}",
-                        if is_selected {
-                            &icons.radio_on
-                        } else {
-                            &icons.radio_off
-                        },
-                        name
-                    );
-                    let is_active = flat_idx == active_idx;
-                    let style = if is_active {
-                        Style::default()
-                            .fg(THEME.read().unwrap().bg)
-                            .bg(THEME.read().unwrap().border_focused)
-                            .add_modifier(Modifier::BOLD)
-                    } else if is_selected {
-                        Style::default().fg(THEME.read().unwrap().purple)
-                    } else {
-                        Style::default().fg(THEME.read().unwrap().text_normal)
-                    };
-                    ListItem::new(text).style(style)
-                })
-                .collect();
-            f.render_widget(List::new(theme_items), popup_layout[chunk_idx]);
+        let is_theme_active = active_idx == theme_idx;
+        let theme_text = format!("   {}", current_theme_name);
+        let theme_style = if is_theme_active {
+            Style::default()
+                .fg(THEME.read().unwrap().bg)
+                .bg(THEME.read().unwrap().border_focused)
+                .add_modifier(Modifier::BOLD)
         } else {
-            let is_theme_active = active_idx == theme_idx;
-            let theme_text = format!("   {}", current_theme_name);
-            let theme_style = if is_theme_active {
-                Style::default()
-                    .fg(THEME.read().unwrap().bg)
-                    .bg(THEME.read().unwrap().border_focused)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(THEME.read().unwrap().text_normal)
-            };
-            let theme_paragraph = Paragraph::new(theme_text).style(theme_style);
-            f.render_widget(theme_paragraph, popup_layout[chunk_idx]);
-        }
+            Style::default().fg(THEME.read().unwrap().text_normal)
+        };
+        let theme_paragraph = Paragraph::new(theme_text).style(theme_style);
+        f.render_widget(theme_paragraph, popup_layout[chunk_idx]);
         chunk_idx += 1;
 
         chunk_idx += 1; // spacer

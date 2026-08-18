@@ -3496,8 +3496,9 @@ async fn main() -> Result<()> {
                                         let mut selected_val =
                                             selector.selected_items.iter().next().cloned();
                                         if selected_val.is_none() && !filtered_items.is_empty() {
-                                            selected_val =
-                                                Some(filtered_items[selector.cursor_idx].clone());
+                                            selected_val = Some(
+                                                filtered_items[selector.cursor_idx].clone(),
+                                            );
                                         }
                                         app.selector = None;
                                         if let Some(name) = selected_val {
@@ -7189,13 +7190,7 @@ async fn main() -> Result<()> {
                         let order_end = group_end + 2;
                         let page_size_idx = order_end;
                         let theme_idx = page_size_idx + 1;
-                        let themes = crate::config::all_theme_presets();
-                        let theme_list_len = if app.theme_picker_open {
-                            themes.len()
-                        } else {
-                            0
-                        };
-                        let save_idx = theme_idx + 1 + theme_list_len;
+                        let save_idx = theme_idx + 1;
                         let max_idx = save_idx; // Save button is the last row
 
                         match key_event.code {
@@ -7281,6 +7276,28 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
+                                } else if idx == theme_idx {
+                                    let theme_list = crate::config::all_theme_presets();
+                                    if !theme_list.is_empty() {
+                                        app.selector = Some(crate::app::Selector {
+                                            title: " Select Theme ".to_string(),
+                                            all_items: theme_list,
+                                            selected_items: std::collections::HashSet::new(),
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: 0,
+                                            entity_type: "theme_selector".to_string(),
+                                            field_type: "theme_selector".to_string(),
+                                            multi_select: false,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
+                                    }
                                 }
                                 if let Some(client) = app.gitlab_client.clone() {
                                     app.start_loading_tab(app.active_tab);
@@ -7367,7 +7384,29 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
-                                } else if idx == page_size_idx + 1 {
+                                } else if idx == theme_idx {
+                                    let theme_list = crate::config::all_theme_presets();
+                                    if !theme_list.is_empty() {
+                                        app.selector = Some(crate::app::Selector {
+                                            title: " Select Theme ".to_string(),
+                                            all_items: theme_list,
+                                            selected_items: std::collections::HashSet::new(),
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: 0,
+                                            entity_type: "theme_selector".to_string(),
+                                            field_type: "theme_selector".to_string(),
+                                            multi_select: false,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
+                                    }
+                                } else if idx == save_idx {
                                     app.save_menu_open = true;
                                     app.save_menu_selection = Some(SaveMenu::Local);
                                 }
@@ -7484,37 +7523,6 @@ async fn main() -> Result<()> {
                     {
                         app.focus_column_checklist = true;
                         app.column_checklist_idx = 0;
-                        continue;
-                    }
-
-                    if keybinding_matches(&app.config.keybindings.global.change_theme, &key_event)
-                        && app.text_input.is_none()
-                        && app.edit_menu.is_none()
-                        && app.selector.is_none()
-                        && app.confirm_popup.is_none()
-                        && !app.show_help
-                    {
-                        let themes = crate::config::all_theme_presets();
-                        if !themes.is_empty() {
-                            app.selector = Some(crate::app::Selector {
-                                title: " Select Theme ".to_string(),
-                                all_items: themes,
-                                selected_items: std::collections::HashSet::new(),
-                                cursor_idx: 0,
-                                search_query: String::new(),
-                                is_filtering: false,
-                                is_loading: false,
-                                entity_iid: 0,
-                                entity_type: "theme_selector".to_string(),
-                                field_type: "theme_selector".to_string(),
-                                multi_select: false,
-                                state: {
-                                    let mut s = ListState::default();
-                                    s.select(Some(0));
-                                    s
-                                },
-                            });
-                        }
                         continue;
                     }
 

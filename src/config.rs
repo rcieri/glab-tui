@@ -653,8 +653,6 @@ pub struct KeybindingGlobal {
     pub scroll_up: String,
     #[serde(default)]
     pub save_view: String,
-    #[serde(default)]
-    pub change_theme: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -869,7 +867,6 @@ keybind_defaults! {
     def_scroll_down = "J",
     def_scroll_up = "K",
     def_save_view = "s",
-    def_change_theme = "T",
     def_create_issue = "n",
     def_select_issue = "Space",
     def_create_mr_issue = "m",
@@ -938,7 +935,6 @@ impl Default for KeybindingGlobal {
             scroll_down: def_scroll_down(),
             scroll_up: def_scroll_up(),
             save_view: def_save_view(),
-            change_theme: def_change_theme(),
         }
     }
 }
@@ -1279,7 +1275,6 @@ prev_tab = "h"
 scroll_down = "J"
 scroll_up = "K"
 save_view = "s"
-change_theme = "T"
 
 [keybindings.issues]
 create_issue = "n"

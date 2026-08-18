@@ -1153,7 +1153,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_widget(table, help_chunks[1]);
     }
 
-    if app.focus_column_checklist {
+    if app.focus_column_checklist && app.selector.is_none() {
         let tab = app.active_tab;
         let kind = app.kind();
         let is_github = kind.is_github();
@@ -1162,15 +1162,260 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let group_cols: Vec<&str> = cols.iter().copied().collect();
 
-        let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
-
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
+        let order_end = group_end + 2;
+        let page_size_idx = order_end;
+        let theme_idx = page_size_idx + 1;
+        let save_end = theme_idx + 1;
+
+        // Build the entire Configure view as one flat, scrollable list so the
+        // section headers scroll together with their items.
+        let mut lines: Vec<(Option<usize>, ListItem)> = Vec::new();
+        let mut active_line: Option<usize> = None;
+
+        let t = THEME.read().unwrap();
+
+        // COLUMNS header
+        let col_header_active = active_idx < cols_end;
+        lines.push((
+            None,
+            ListItem::new(format!(
+                "  {} COLUMNS{}",
+                icons.label_columns,
+                if col_header_active {
+                    format!("  {}/{}", active_idx + 1, cols_end)
+                } else {
+                    String::new()
+                },
+            ))
+            .style(
+                Style::default()
+                    .fg(t.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ));
+
+        for (i, col) in cols.iter().enumerate() {
+            let logical = i;
+            let checked = app.is_column_visible(tab, col);
+            let filter_count = app
+                .get_column_filter(tab, col)
+                .map(|s| s.len())
+                .filter(|&n| n > 0);
+            let text = if let Some(count) = filter_count {
+                format!(
+                    "  [{}] {} ({})",
+                    if checked { "x" } else { " " },
+                    col,
+                    count
+                )
+            } else {
+                format!("  [{}] {}", if checked { "x" } else { " " }, col)
+            };
+            let is_active = logical == active_idx;
+            if is_active {
+                active_line = Some(lines.len());
+            }
+            let style = if is_active {
+                Style::default()
+                    .fg(t.bg)
+                    .bg(t.border_focused)
+                    .add_modifier(Modifier::BOLD)
+            } else if checked {
+                Style::default().fg(t.text_normal)
+            } else {
+                Style::default().fg(t.text_muted)
+            };
+            lines.push((Some(logical), ListItem::new(text).style(style)));
+        }
+
+        // GROUP BY header
+        let group_header_active = (cols_end..group_end).contains(&active_idx);
+        lines.push((
+            None,
+            ListItem::new(format!(
+                "  {} GROUP BY{}",
+                icons.label_group,
+                if group_header_active {
+                    format!("  {}/{}", active_idx - cols_end + 1, group_cols.len())
+                } else {
+                    String::new()
+                },
+            ))
+            .style(Style::default().fg(t.green).add_modifier(Modifier::BOLD)),
+        ));
+
+        for (j, col) in group_cols.iter().enumerate() {
+            let logical = cols_end + j;
+            let is_selected =
+                app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
+            let text = format!(
+                "  {} {}",
+                if is_selected {
+                    &icons.radio_on
+                } else {
+                    &icons.radio_off
+                },
+                col
+            );
+            let is_active = logical == active_idx;
+            if is_active {
+                active_line = Some(lines.len());
+            }
+            let style = if is_active {
+                Style::default()
+                    .fg(t.bg)
+                    .bg(t.border_focused)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().fg(t.green)
+            } else {
+                Style::default().fg(t.text_normal)
+            };
+            lines.push((Some(logical), ListItem::new(text).style(style)));
+        }
+
+        // ORDER header
+        lines.push((
+            None,
+            ListItem::new(format!("  {} ORDER", icons.label_order))
+                .style(Style::default().fg(t.yellow).add_modifier(Modifier::BOLD)),
+        ));
+
+        for (i, label) in ["Ascending", "Descending"].iter().enumerate() {
+            let logical = group_end + i;
+            let is_selected = app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
+            let text = format!(
+                " {} {}",
+                if is_selected {
+                    &icons.radio_on
+                } else {
+                    &icons.radio_off
+                },
+                label
+            );
+            let is_active = logical == active_idx;
+            if is_active {
+                active_line = Some(lines.len());
+            }
+            let style = if is_active {
+                Style::default()
+                    .fg(t.bg)
+                    .bg(t.border_focused)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().fg(t.yellow)
+            } else {
+                Style::default().fg(t.text_normal)
+            };
+            lines.push((Some(logical), ListItem::new(text).style(style)));
+        }
+
+        // PAGE SIZE header
+        lines.push((
+            None,
+            ListItem::new(format!(" {} PAGE SIZE", icons.label_page_size)).style(
+                Style::default()
+                    .fg(t.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ));
+        let is_page_size_active = active_idx == page_size_idx;
+        let page_size_text = if app.editing_page_size {
+            format!("   [ {}| ]", app.page_size_input)
+        } else if is_page_size_active {
+            format!("   [ {} ]", app.page_size)
+        } else {
+            format!("   {}", app.page_size)
+        };
+        let page_size_style = if app.editing_page_size {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.green)
+                .add_modifier(Modifier::BOLD)
+        } else if is_page_size_active {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_normal)
+        };
+        if is_page_size_active {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(page_size_idx),
+            ListItem::new(page_size_text).style(page_size_style),
+        ));
+
+        // THEME header
+        lines.push((
+            None,
+            ListItem::new(format!("  {} THEME", icons.label_theme))
+                .style(Style::default().fg(t.purple).add_modifier(Modifier::BOLD)),
+        ));
+        let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
+        let is_theme_active = active_idx == theme_idx;
+        let theme_text = format!("   {}", current_theme_name);
+        let theme_style = if is_theme_active {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_normal)
+        };
+        if is_theme_active {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(theme_idx),
+            ListItem::new(theme_text).style(theme_style),
+        ));
+
+        // SAVE header
+        lines.push((
+            None,
+            ListItem::new(" SAVE").style(
+                Style::default()
+                    .fg(t.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ));
+        let is_save_selected = active_idx == save_end;
+        let save_button_text = if is_save_selected {
+            format!(" › {} Save View ‹", icons.label_save)
+        } else {
+            format!("   {} Save View", icons.label_save)
+        };
+        let save_button_style = if is_save_selected {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_normal)
+        };
+        if is_save_selected {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(save_end),
+            ListItem::new(save_button_text).style(save_button_style),
+        ));
+
+        drop(t);
+
+        // Grow the popup with content, but cap it so the whole list scrolls
+        // within the available terminal height (headers included).
         let width = 64;
-        let content_height = (columns_list.len() + group_cols.len() + 4 + 2 + 2 + 6 + 6) as u16;
-        // Cap the popup to the available terminal height so it never overflows;
-        // the column/group lists below scroll independently via ListState.
-        let height = content_height.min(size.height.saturating_sub(2)).max(18);
+        let content_len = lines.len() as u16;
+        let height = content_len
+            .max(18)
+            .min(size.height.saturating_sub(2))
+            .min(40);
         let area = centered_rect_fixed(width, height, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::Configure, area));
@@ -1195,296 +1440,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let inner_area = checklist_block.inner(area);
 
-        let order_end = group_end + 2;
-        let page_size_idx = order_end;
-        let theme_idx = page_size_idx + 1;
-        let save_end = theme_idx + 1;
-
-        let mut constraints: Vec<Constraint> = Vec::new();
-        constraints.push(Constraint::Length(1)); // COLUMNS header
-        constraints.push(Constraint::Min(3)); // COLUMNS list (scrolls)
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // GROUP BY header
-        constraints.push(Constraint::Min(3)); // GROUP BY list (scrolls)
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // ORDER header
-        constraints.push(Constraint::Length(2));
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // PAGE SIZE header
-        constraints.push(Constraint::Length(1)); // PAGE SIZE value
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // THEME header
-        constraints.push(Constraint::Length(1)); // theme value (collapsed)
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // SAVE header
-        constraints.push(Constraint::Length(1)); // SAVE button
-
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(constraints)
-            .split(inner_area);
-
-        let mut chunk_idx = 0;
-
-        let columns_header_text = if active_idx < cols_end {
-            format!(
-                "  {} COLUMNS  {}/{}",
-                icons.label_columns,
-                active_idx + 1,
-                cols_end
-            )
-        } else {
-            format!("  {} COLUMNS", icons.label_columns)
-        };
-        let columns_header = Paragraph::new(columns_header_text).style(
-            Style::default()
-                .fg(THEME.read().unwrap().header_fg)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(columns_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let col_items: Vec<ListItem> = columns_list
-            .iter()
-            .map(|&(orig_idx, col)| {
-                let checked = app.is_column_visible(tab, col);
-                let filter_count = app
-                    .get_column_filter(tab, col)
-                    .map(|s| s.len())
-                    .filter(|&n| n > 0);
-                let text = if let Some(count) = filter_count {
-                    format!(
-                        "  [{}] {} ({})",
-                        if checked { "x" } else { " " },
-                        col,
-                        count
-                    )
-                } else {
-                    format!("  [{}] {}", if checked { "x" } else { " " }, col)
-                };
-                let is_active = orig_idx == active_idx;
-                let style = if is_active {
-                    Style::default()
-                        .fg(THEME.read().unwrap().bg)
-                        .bg(THEME.read().unwrap().border_focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if checked {
-                    Style::default().fg(THEME.read().unwrap().text_normal)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_muted)
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        let mut col_state = ListState::default();
-        if active_idx < cols_end {
-            col_state.select(Some(active_idx));
-        }
-        f.render_stateful_widget(
-            List::new(col_items),
-            popup_layout[chunk_idx],
-            &mut col_state,
-        );
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        let group_header_text = if (cols_end..group_end).contains(&active_idx) {
-            format!(
-                "  {} GROUP BY  {}/{}",
-                icons.label_group,
-                active_idx - cols_end + 1,
-                group_cols.len()
-            )
-        } else {
-            format!("  {} GROUP BY", icons.label_group)
-        };
-        let group_header = Paragraph::new(group_header_text).style(
-            Style::default()
-                .fg(THEME.read().unwrap().green)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(group_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let group_items: Vec<ListItem> = group_cols
-            .iter()
-            .enumerate()
-            .map(|(i, col)| {
-                let flat_idx = cols_end + i;
-                let is_selected =
-                    app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
-                let text = format!(
-                    "  {} {}",
-                    if is_selected {
-                        &icons.radio_on
-                    } else {
-                        &icons.radio_off
-                    },
-                    col
-                );
-                let is_active = flat_idx == active_idx;
-                let style = if is_active {
-                    Style::default()
-                        .fg(THEME.read().unwrap().bg)
-                        .bg(THEME.read().unwrap().border_focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_selected {
-                    Style::default().fg(THEME.read().unwrap().green)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_normal)
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        let mut group_state = ListState::default();
-        if (cols_end..group_end).contains(&active_idx) {
-            group_state.select(Some(active_idx - cols_end));
-        }
-        f.render_stateful_widget(
-            List::new(group_items),
-            popup_layout[chunk_idx],
-            &mut group_state,
-        );
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        let order_header = Paragraph::new(format!("  {} ORDER", icons.label_order)).style(
-            Style::default()
-                .fg(THEME.read().unwrap().yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(order_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let order_items: Vec<ListItem> = ["Ascending", "Descending"]
-            .iter()
-            .enumerate()
-            .map(|(i, label)| {
-                let flat_idx = group_end + i;
-                let is_selected =
-                    app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
-                let text = format!(
-                    " {} {}",
-                    if is_selected {
-                        &icons.radio_on
-                    } else {
-                        &icons.radio_off
-                    },
-                    label
-                );
-                let is_active = flat_idx == active_idx;
-                let style = if is_active {
-                    Style::default()
-                        .fg(THEME.read().unwrap().bg)
-                        .bg(THEME.read().unwrap().border_focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_selected {
-                    Style::default().fg(THEME.read().unwrap().yellow)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_normal)
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        f.render_widget(List::new(order_items), popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        // Page Size
-        let page_size_header = Paragraph::new(format!(" {} PAGE SIZE", icons.label_page_size))
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
-                    .add_modifier(Modifier::BOLD),
-            );
-        f.render_widget(page_size_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let is_page_size_active = active_idx == page_size_idx;
-        let page_size_text = if app.editing_page_size {
-            format!("   [ {}| ]", app.page_size_input)
-        } else if is_page_size_active {
-            format!("   [ {} ]", app.page_size)
-        } else {
-            format!("   {}", app.page_size)
-        };
-        let page_size_style = if app.editing_page_size {
-            Style::default()
-                .fg(THEME.read().unwrap().bg)
-                .bg(THEME.read().unwrap().green)
-                .add_modifier(Modifier::BOLD)
-        } else if is_page_size_active {
-            Style::default()
-                .fg(THEME.read().unwrap().bg)
-                .bg(THEME.read().unwrap().border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(THEME.read().unwrap().text_normal)
-        };
-        let page_size_paragraph = Paragraph::new(page_size_text)
-            .style(page_size_style)
-            .alignment(Alignment::Center);
-        f.render_widget(page_size_paragraph, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        // Theme
-        let theme_header = Paragraph::new(format!("  {} THEME", icons.label_theme)).style(
-            Style::default()
-                .fg(THEME.read().unwrap().purple)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(theme_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
-        let is_theme_active = active_idx == theme_idx;
-        let theme_text = format!("   {}", current_theme_name);
-        let theme_style = if is_theme_active {
-            Style::default()
-                .fg(THEME.read().unwrap().bg)
-                .bg(THEME.read().unwrap().border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(THEME.read().unwrap().text_normal)
-        };
-        let theme_paragraph = Paragraph::new(theme_text).style(theme_style);
-        f.render_widget(theme_paragraph, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        // Save button
-        let save_header = Paragraph::new(" SAVE").style(
-            Style::default()
-                .fg(THEME.read().unwrap().header_fg)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(save_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let is_save_selected = active_idx == save_end;
-        let save_button_text = if is_save_selected {
-            format!(" › {} Save View ‹", icons.label_save)
-        } else {
-            format!("   {} Save View", icons.label_save)
-        };
-        let save_button_style = if is_save_selected {
-            Style::default()
-                .fg(THEME.read().unwrap().bg)
-                .bg(THEME.read().unwrap().border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(THEME.read().unwrap().text_normal)
-        };
-        let save_button = Paragraph::new(save_button_text)
-            .style(save_button_style)
-            .alignment(Alignment::Center);
-        f.render_widget(save_button, popup_layout[chunk_idx]);
+        let items: Vec<ListItem> = lines.into_iter().map(|(_, li)| li).collect();
+        let mut state = ListState::default();
+        state.select(active_line);
+        f.render_stateful_widget(List::new(items), inner_area, &mut state);
 
         // Save submenu
         if app.save_menu_open {

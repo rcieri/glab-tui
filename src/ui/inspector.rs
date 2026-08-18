@@ -382,6 +382,13 @@ fn render_content_pane(
 }
 
 /// Render the submit/save button footer for the editable form.
+///
+/// This footer is the gating point for all mutating API calls while the
+/// edit menu is open. The Enter handler in `main.rs` only dispatches the
+/// create/edit API call when `selected_idx` lands on this button
+/// (`fields.len() + 1`); field edits update local state via
+/// `apply_field_text_change` and are held until the user explicitly
+/// navigates here and presses Enter.
 fn render_submit_footer(
     f: &mut Frame,
     mode: &mut InspectorMode<'_>,

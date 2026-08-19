@@ -5,8 +5,8 @@ use pulldown_cmark::{
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::config::Theme;
 use crate::app::highlight_line_syntax;
+use crate::config::Theme;
 
 pub fn render_markdown(markdown: &str, theme: &Theme, width: u16) -> Vec<Line<'static>> {
     let options = Options::ENABLE_GFM
@@ -27,9 +27,14 @@ fn decode_html_entities(s: &str) -> String {
         let mut entity = String::new();
         let mut terminated = false;
         for nc in chars.by_ref() {
-            if nc == ';' { terminated = true; break; }
+            if nc == ';' {
+                terminated = true;
+                break;
+            }
             entity.push(nc);
-            if entity.len() > 10 { break; } // bail on malformed
+            if entity.len() > 10 {
+                break;
+            } // bail on malformed
         }
         if !terminated {
             result.push('&');
@@ -37,9 +42,9 @@ fn decode_html_entities(s: &str) -> String {
             continue;
         }
         match entity.as_str() {
-            "amp"  => result.push('&'),
-            "lt"   => result.push('<'),
-            "gt"   => result.push('>'),
+            "amp" => result.push('&'),
+            "lt" => result.push('<'),
+            "gt" => result.push('>'),
             "quot" => result.push('"'),
             "apos" => result.push('\''),
             "nbsp" => result.push('\u{00A0}'),
@@ -52,10 +57,18 @@ fn decode_html_entities(s: &str) -> String {
                 };
                 match code.and_then(char::from_u32) {
                     Some(ch) => result.push(ch),
-                    None => { result.push('&'); result.push_str(&entity); result.push(';'); }
+                    None => {
+                        result.push('&');
+                        result.push_str(&entity);
+                        result.push(';');
+                    }
                 }
             }
-            _ => { result.push('&'); result.push_str(&entity); result.push(';'); }
+            _ => {
+                result.push('&');
+                result.push_str(&entity);
+                result.push(';');
+            }
         }
     }
     result
@@ -80,26 +93,26 @@ fn resolve_syntax_lang(lang: &str) -> Option<&'static str> {
     // Compare case-insensitively by ASCII-lowering the input byte-by-byte.
     let lower = lang.to_ascii_lowercase();
     match lower.as_str() {
-        "rust"                    => Some("rs"),
-        "python" | "python3"      => Some("py"),
-        "javascript"              => Some("js"),
-        "typescript"              => Some("ts"),
-        "c++" | "cpp"             => Some("cpp"),
-        "c#" | "csharp"           => Some("cs"),
-        "kotlin"                  => Some("kt"),
-        "swift"                   => Some("swift"),
-        "scala"                   => Some("scala"),
-        "haskell"                 => Some("hs"),
-        "elixir"                  => Some("ex"),
-        "erlang"                  => Some("erl"),
-        "clojure"                 => Some("clj"),
-        "ocaml"                   => Some("ml"),
-        "f#" | "fsharp"           => Some("fs"),
-        "dockerfile"              => Some("dockerfile"),
-        "makefile"                => Some("makefile"),
-        "toml"                    => Some("toml"),
-        "shell" | "zsh" | "bash"  => Some("sh"),
-        _                         => None, // pass token through unchanged
+        "rust" => Some("rs"),
+        "python" | "python3" => Some("py"),
+        "javascript" => Some("js"),
+        "typescript" => Some("ts"),
+        "c++" | "cpp" => Some("cpp"),
+        "c#" | "csharp" => Some("cs"),
+        "kotlin" => Some("kt"),
+        "swift" => Some("swift"),
+        "scala" => Some("scala"),
+        "haskell" => Some("hs"),
+        "elixir" => Some("ex"),
+        "erlang" => Some("erl"),
+        "clojure" => Some("clj"),
+        "ocaml" => Some("ml"),
+        "f#" | "fsharp" => Some("fs"),
+        "dockerfile" => Some("dockerfile"),
+        "makefile" => Some("makefile"),
+        "toml" => Some("toml"),
+        "shell" | "zsh" | "bash" => Some("sh"),
+        _ => None, // pass token through unchanged
     }
 }
 
@@ -194,7 +207,7 @@ impl<'a> MarkdownRenderer<'a> {
                 }
                 Event::SoftBreak => self.push_text(" "),
                 Event::HardBreak => self.finish_line(),
-                                Event::Rule => {
+                Event::Rule => {
                     self.finish_line();
                     self.blank_between_blocks();
                     self.lines.push(Line::from(Span::styled(
@@ -203,7 +216,7 @@ impl<'a> MarkdownRenderer<'a> {
                     )));
                     self.last_was_block = true;
                 }
-                                Event::Html(html) | Event::InlineHtml(html) => {
+                Event::Html(html) | Event::InlineHtml(html) => {
                     let decoded = decode_html_entities(html.as_ref());
                     let style = Style::default()
                         .fg(self.theme.text_muted)
@@ -218,7 +231,7 @@ impl<'a> MarkdownRenderer<'a> {
                             .add_modifier(Modifier::ITALIC),
                     );
                 }
-                                Event::TaskListMarker(checked) => {
+                Event::TaskListMarker(checked) => {
                     self.task_checked = checked;
                     self.push_span(
                         if checked { "☑ " } else { "☐ " }.to_string(),
@@ -362,11 +375,11 @@ impl<'a> MarkdownRenderer<'a> {
                 self.finish_line();
                 self.last_was_block = true;
             }
-                        TagEnd::Item => {
+            TagEnd::Item => {
                 self.task_checked = false;
                 self.finish_line();
             }
-                        TagEnd::Heading(_) => {
+            TagEnd::Heading(_) => {
                 self.finish_line();
                 let was_h1 = self.heading_level == Some(1);
                 self.heading_level = None;
@@ -505,10 +518,8 @@ impl<'a> MarkdownRenderer<'a> {
             self.lines.push(Line::from(line_spans));
         }
 
-        self.lines.push(Line::from(Span::styled(
-            "└─".to_string(),
-            border_style,
-        )));
+        self.lines
+            .push(Line::from(Span::styled("└─".to_string(), border_style)));
         self.last_was_block = true;
     }
 
@@ -611,7 +622,7 @@ impl<'a> MarkdownRenderer<'a> {
             if pad_left > 0 {
                 spans.push(Span::raw(" ".repeat(pad_left)));
             }
-            
+
             let mut style = Style::default().fg(self.theme.text_normal);
             if is_header {
                 style = style.add_modifier(Modifier::BOLD);
@@ -813,7 +824,6 @@ mod tests {
                 && span.style.add_modifier.contains(Modifier::UNDERLINED))
         );
     }
-
 
     #[test]
     fn test_render_markdown_formats_fenced_code_blocks() {

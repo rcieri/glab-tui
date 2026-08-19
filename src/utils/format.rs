@@ -155,7 +155,8 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
     trace
         .lines()
         .map(|raw_line| {
-            let (prefix, content) = split_gh_prefix(raw_line);
+            let (gl_ts, line) = strip_gl_ts(raw_line);
+            let (prefix, content) = split_gh_prefix(line);
 
             let content_spans = if content.contains('\x1b') {
                 parse_ansi_line(content, theme)
@@ -163,16 +164,23 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
                 format_plain_line(content, theme)
             };
 
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            if let Some(ts) = gl_ts {
+                spans.push(Span::styled(
+                    format!("{} ", ts),
+                    Style::default()
+                        .fg(theme.text_muted)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+            }
             if let Some(p) = prefix {
-                let mut spans = vec![Span::styled(
+                spans.push(Span::styled(
                     p.to_string(),
                     Style::default().fg(theme.text_muted),
-                )];
-                spans.extend(content_spans);
-                Line::from(spans)
-            } else {
-                Line::from(content_spans)
+                ));
             }
+            spans.extend(content_spans);
+            Line::from(spans)
         })
         .collect()
 }
@@ -386,6 +394,32 @@ fn format_plain_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'stat
     }
     spans.push(Span::styled(body.to_string(), body_style));
     spans
+}
+
+/// Strips a GitLab Runner timestamped-log prefix (`FF_TIMESTAMPS`), which
+/// prepends every line with an ISO 8601 timestamp, a space, and a 4-character
+/// metadata field: two hex flag digits, a stream indicator (`O` stdout, `E`
+/// stderr) and an append flag (`+` when the line continues the previous one, a
+/// space otherwise) — e.g. `2024-05-14T11:19:20.000000Z 00O+`.
+///
+/// Returns `(Some(timestamp), content)`, dropping the metadata field the same
+/// way GitLab's own log viewer does, or `(None, original)` when the prefix is
+/// absent — which leaves GitHub Actions timestamps to `strip_gh_ts`.
+fn strip_gl_ts(line: &str) -> (Option<&str>, &str) {
+    let (Some(ts), rest) = strip_gh_ts(line) else {
+        return (None, line);
+    };
+    let meta = rest.as_bytes();
+    if meta.len() >= 5
+        && meta[0] == b' '
+        && meta[1].is_ascii_hexdigit()
+        && meta[2].is_ascii_hexdigit()
+        && (meta[3] == b'O' || meta[3] == b'E')
+        && (meta[4] == b' ' || meta[4] == b'+')
+    {
+        return (Some(ts), &rest[5..]);
+    }
+    (None, line)
 }
 
 /// Strips a GitHub Actions timestamp (`YYYY-MM-DDTHH:MM:SS.fffffffZ`) from
@@ -665,5 +699,44 @@ mod tests {
         let spans = parse_ansi_line("\u{1b}[32m✓\u{1b}[0m tests passed — é 日本", &theme);
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "✓ tests passed — é 日本");
+    }
+
+    #[test]
+    fn test_strip_gl_ts_drops_metadata_field() {
+        assert_eq!(
+            strip_gl_ts("2024-05-14T11:19:20.000000Z 00O Preparing docker"),
+            (Some("2024-05-14T11:19:20.000000Z"), "Preparing docker")
+        );
+        assert_eq!(
+            strip_gl_ts("2024-05-14T11:19:20.000000Z 01E error: boom"),
+            (Some("2024-05-14T11:19:20.000000Z"), "error: boom")
+        );
+        // `+` marks a line continuing the previous one
+        assert_eq!(
+            strip_gl_ts("2024-05-14T11:19:20.000000Z 00O+environment..."),
+            (Some("2024-05-14T11:19:20.000000Z"), "environment...")
+        );
+    }
+
+    #[test]
+    fn test_strip_gl_ts_leaves_other_lines_untouched() {
+        // GitHub Actions: same timestamp shape, no GitLab metadata field
+        let gh = "2024-05-14T11:19:20.0000000Z Run actions/checkout@v4";
+        assert_eq!(strip_gl_ts(gh), (None, gh));
+        let plain = "$ cargo test";
+        assert_eq!(strip_gl_ts(plain), (None, plain));
+    }
+
+    #[test]
+    fn test_parse_ansi_trace_strips_gitlab_prefix() {
+        let theme = crate::config::Theme::default();
+        let trace =
+            "2026-08-18T16:54:49.475670Z 01O \u{1b}[32m✓\u{1b}[0m src/foo.test.ts (19 tests)";
+        let lines = parse_ansi_trace(trace, &theme);
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(
+            text,
+            "2026-08-18T16:54:49.475670Z ✓ src/foo.test.ts (19 tests)"
+        );
     }
 }

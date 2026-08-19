@@ -72,6 +72,37 @@ fn truncate_url(url: &str) -> String {
     }
 }
 
+/// Map a fenced code block language token (e.g. `"rust"`, `"python"`) to the
+/// file extension syntect's `find_syntax_by_extension` expects (e.g. `"rs"`,
+/// `"py"`). Returns `None` when the token is already the right extension or
+/// simply unknown (caller falls back to the token itself).
+fn resolve_syntax_lang(lang: &str) -> Option<&'static str> {
+    // Compare case-insensitively by ASCII-lowering the input byte-by-byte.
+    let lower = lang.to_ascii_lowercase();
+    match lower.as_str() {
+        "rust"                    => Some("rs"),
+        "python" | "python3"      => Some("py"),
+        "javascript"              => Some("js"),
+        "typescript"              => Some("ts"),
+        "c++" | "cpp"             => Some("cpp"),
+        "c#" | "csharp"           => Some("cs"),
+        "kotlin"                  => Some("kt"),
+        "swift"                   => Some("swift"),
+        "scala"                   => Some("scala"),
+        "haskell"                 => Some("hs"),
+        "elixir"                  => Some("ex"),
+        "erlang"                  => Some("erl"),
+        "clojure"                 => Some("clj"),
+        "ocaml"                   => Some("ml"),
+        "f#" | "fsharp"           => Some("fs"),
+        "dockerfile"              => Some("dockerfile"),
+        "makefile"                => Some("makefile"),
+        "toml"                    => Some("toml"),
+        "shell" | "zsh" | "bash"  => Some("sh"),
+        _                         => None, // pass token through unchanged
+    }
+}
+
 struct ListFrame {
     next_number: Option<u64>,
 }
@@ -443,7 +474,16 @@ impl<'a> MarkdownRenderer<'a> {
         }
         self.lines.push(Line::from(opening));
 
-        let lang_ext = code_block.language.as_deref();
+        // Resolve the fenced language token to the file extension syntect expects
+        // (e.g. "rust" → "rs", "python" → "py"). If the token is already an
+        // extension or is unknown, resolve_syntax_lang returns None and we use
+        // the token itself as a fallback.
+        let resolved: Option<String> = code_block
+            .language
+            .as_deref()
+            .map(|lang| resolve_syntax_lang(lang).unwrap_or(lang).to_string());
+        let lang_ext: Option<&str> = resolved.as_deref();
+
         for code_line in code_block.content.lines() {
             let content_spans: Vec<Span<'static>> = highlight_line_syntax("", code_line, lang_ext)
                 .map(|highlighted| {
@@ -488,11 +528,16 @@ impl<'a> MarkdownRenderer<'a> {
             return;
         }
 
-        let mut widths = vec![0; column_count];
+        let mut widths = vec![0usize; column_count];
         for row in &table.rows {
             for (column, cell) in row.iter().enumerate() {
                 widths[column] = widths[column].max(Line::from(cell.spans.clone()).width());
             }
+        }
+        // Cap each column so wide tables don't overflow the pane.
+        const MAX_COL_WIDTH: usize = 30;
+        for w in &mut widths {
+            *w = (*w).min(MAX_COL_WIDTH);
         }
 
         self.lines

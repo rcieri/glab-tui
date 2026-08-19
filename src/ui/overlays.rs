@@ -1177,19 +1177,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let t = THEME.read().unwrap();
 
         // COLUMNS header
-        let col_header_active = active_idx < cols_end;
         lines.push((
             None,
-            ListItem::new(format!(
-                "  {} COLUMNS{}",
-                icons.label_columns,
-                if col_header_active {
-                    format!("  {}/{}", active_idx + 1, cols_end)
-                } else {
-                    String::new()
-                },
-            ))
-            .style(
+            ListItem::new(format!("  {} COLUMNS", icons.label_columns)).style(
                 Style::default()
                     .fg(t.header_fg)
                     .add_modifier(Modifier::BOLD),
@@ -1234,19 +1224,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         lines.push((None, ListItem::new("")));
 
         // GROUP BY header
-        let group_header_active = (cols_end..group_end).contains(&active_idx);
         lines.push((
             None,
-            ListItem::new(format!(
-                "  {} GROUP BY{}",
-                icons.label_group,
-                if group_header_active {
-                    format!("  {}/{}", active_idx - cols_end + 1, group_cols.len())
-                } else {
-                    String::new()
-                },
-            ))
-            .style(Style::default().fg(t.green).add_modifier(Modifier::BOLD)),
+            ListItem::new(format!("  {} GROUP BY", icons.label_group))
+                .style(Style::default().fg(t.green).add_modifier(Modifier::BOLD)),
         ));
 
         for (j, col) in group_cols.iter().enumerate() {
@@ -1321,22 +1302,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         // spacer
         lines.push((None, ListItem::new("")));
 
-        // PAGE SIZE header
-        lines.push((
-            None,
-            ListItem::new(format!(" {} PAGE SIZE", icons.label_page_size)).style(
-                Style::default()
-                    .fg(t.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ));
+        // Page Size — inline row (icon + label in header_fg, value in text_normal)
         let is_page_size_active = active_idx == page_size_idx;
-        let page_size_text = if app.editing_page_size {
-            format!("   [ {}| ]", app.page_size_input)
+        let page_size_value = if app.editing_page_size {
+            format!("[ {}| ]", app.page_size_input)
         } else if is_page_size_active {
-            format!("   [ {} ]", app.page_size)
+            format!("[ {} ]", app.page_size)
         } else {
-            format!("   {}", app.page_size)
+            format!("{}", app.page_size)
         };
         let page_size_style = if app.editing_page_size {
             Style::default()
@@ -1351,26 +1324,36 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         } else {
             Style::default().fg(t.text_normal)
         };
+        let page_size_line = if is_page_size_active || app.editing_page_size {
+            Line::from(Span::styled(
+                format!(
+                    " {} Page Size   {} ",
+                    icons.label_page_size, page_size_value
+                ),
+                page_size_style,
+            ))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} Page Size ", icons.label_page_size),
+                    Style::default()
+                        .fg(t.header_fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(page_size_value, Style::default().fg(t.text_normal)),
+            ])
+        };
         if is_page_size_active {
             active_line = Some(lines.len());
         }
         lines.push((
             Some(page_size_idx),
-            ListItem::new(page_size_text).style(page_size_style),
+            ListItem::new(page_size_line).style(page_size_style),
         ));
 
-        // spacer
-        lines.push((None, ListItem::new("")));
-
-        // THEME header
-        lines.push((
-            None,
-            ListItem::new(format!("  {} THEME", icons.label_theme))
-                .style(Style::default().fg(t.purple).add_modifier(Modifier::BOLD)),
-        ));
+        // Theme — inline row (icon + label in purple, value aligned with Page Size)
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
         let is_theme_active = active_idx == theme_idx;
-        let theme_text = format!("   {}", current_theme_name);
         let theme_style = if is_theme_active {
             Style::default()
                 .fg(t.bg)
@@ -1379,39 +1362,50 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         } else {
             Style::default().fg(t.text_normal)
         };
+        let theme_line = if is_theme_active {
+            Line::from(Span::styled(
+                format!(" {} Theme     {} ", icons.label_theme, current_theme_name),
+                theme_style,
+            ))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} Theme     ", icons.label_theme),
+                    Style::default().fg(t.purple).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(current_theme_name, Style::default().fg(t.text_normal)),
+            ])
+        };
         if is_theme_active {
             active_line = Some(lines.len());
         }
         lines.push((
             Some(theme_idx),
-            ListItem::new(theme_text).style(theme_style),
+            ListItem::new(theme_line).style(theme_style),
         ));
 
         // spacer
         lines.push((None, ListItem::new("")));
 
-        // SAVE header
-        lines.push((
-            None,
-            ListItem::new(" SAVE").style(
-                Style::default()
-                    .fg(t.header_fg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ));
+        // Save button — no header, centered in the inner area
         let is_save_selected = active_idx == save_end;
-        let save_button_text = if is_save_selected {
-            format!(" › {} Save View ‹", icons.label_save)
+        let inner_w: usize = 62; // width (64) minus 2 for borders
+        let save_label = format!("{} Save View", icons.label_save);
+        let save_decorated = if is_save_selected {
+            format!("›  {} ‹", save_label)
         } else {
-            format!("   {} Save View", icons.label_save)
+            save_label.clone()
         };
+        let save_visible_width = save_decorated.chars().count();
+        let save_left_pad = (inner_w.saturating_sub(save_visible_width)) / 2;
+        let save_button_text = format!("{:pad$}{}", "", save_decorated, pad = save_left_pad);
         let save_button_style = if is_save_selected {
             Style::default()
                 .fg(t.bg)
                 .bg(t.border_focused)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(t.text_normal)
+            Style::default().fg(t.text_muted)
         };
         if is_save_selected {
             active_line = Some(lines.len());
@@ -1427,10 +1421,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         // within the available terminal height (headers included).
         let width = 64;
         let content_len = lines.len() as u16;
+        // +2 accounts for the block's top/bottom border so inner_area has room
+        // for every item without clipping the save button.
         let height = content_len
+            .saturating_add(2)
             .max(18)
-            .min(size.height.saturating_sub(2))
-            .min(40);
+            .min(size.height.saturating_sub(2));
         let area = centered_rect_fixed(width, height, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::Configure, area));
@@ -1523,20 +1519,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     // Render value-based column filter selector as overlay on configure view
     if app.focus_column_checklist && app.column_filter_context.is_some() {
         if let Some(selector) = &mut app.selector {
-            let block = Block::default()
-                .title(format!(" {} ", selector.title))
-                .title_style(
-                    Style::default()
-                        .fg(THEME.read().unwrap().header_fg)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-                .style(Style::default().bg(THEME.read().unwrap().bg));
-
-            let area = centered_rect_fixed(44, 44, size);
+            let (body, selector_area) = modal_area(f, &selector.title, 50, 60, 34, 6, size);
             app.overlay_stack
-                .push((crate::app::OverlayKind::ColumnFilter, area));
+                .push((crate::app::OverlayKind::ColumnFilter, selector_area));
 
             let constraints = vec![
                 Constraint::Length(3), // Search/Filter
@@ -1545,9 +1530,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .margin(1)
                 .constraints(constraints)
-                .split(area);
+                .split(body);
 
             let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
 
@@ -1576,85 +1560,95 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .block(search_block)
                 .style(Style::default().fg(THEME.read().unwrap().text_normal));
 
-            clear_area(f, area);
-            f.render_widget(block, area);
             f.render_widget(search_p, search_chunk);
 
-            // Render items list
-            let items_list = selector.get_filtered_items_with_indices();
-            let items: Vec<ListItem> = items_list
-                .iter()
-                .enumerate()
-                .map(|(i, (item, indices))| {
-                    let is_selected = selector.selected_items.contains(item);
-
-                    let marker = if is_selected {
-                        format!(" {} ", icons.check_on)
-                    } else {
-                        format!(" {} ", icons.check_off)
-                    };
-                    let marker_color = if is_selected {
-                        THEME.read().unwrap().green
-                    } else {
-                        THEME.read().unwrap().text_muted
-                    };
-
-                    let item_bg = if i == selector.cursor_idx {
-                        THEME.read().unwrap().highlight_bg
-                    } else {
-                        THEME.read().unwrap().bg
-                    };
-
-                    let style = if i == selector.cursor_idx {
+            let filtered_items = selector.get_filtered_items_with_indices();
+            if filtered_items.is_empty() {
+                let p = Paragraph::new("\n  No matching options found.")
+                    .style(
                         Style::default()
-                            .bg(item_bg)
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .bg(item_bg)
-                    };
+                            .fg(THEME.read().unwrap().text_muted)
+                            .bg(THEME.read().unwrap().bg)
+                            .add_modifier(Modifier::ITALIC),
+                    )
+                    .wrap(ratatui::widgets::Wrap { trim: true });
+                f.render_widget(p, list_chunk);
+            } else {
+                let items: Vec<ListItem> = filtered_items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (item, indices))| {
+                        let is_selected = selector.selected_items.contains(item);
 
-                    let highlight_style = if i == selector.cursor_idx {
-                        Style::default()
-                            .bg(item_bg)
-                            .fg(THEME.read().unwrap().yellow)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                            .fg(THEME.read().unwrap().yellow)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::BOLD)
-                    };
+                        let marker = if is_selected {
+                            format!(" {} ", icons.check_on)
+                        } else {
+                            format!(" {} ", icons.check_off)
+                        };
+                        let marker_color = if is_selected {
+                            THEME.read().unwrap().green
+                        } else {
+                            THEME.read().unwrap().text_muted
+                        };
 
-                    let mut line_spans = vec![Span::styled(
-                        marker,
-                        Style::default()
-                            .fg(marker_color)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::BOLD),
-                    )];
+                        let item_bg = if i == selector.cursor_idx {
+                            THEME.read().unwrap().highlight_bg
+                        } else {
+                            THEME.read().unwrap().bg
+                        };
 
-                    if let Some(indices) = indices {
-                        line_spans.extend(highlight_fuzzy_match(
-                            item,
-                            indices,
-                            style,
-                            highlight_style,
-                        ));
-                    } else {
-                        line_spans.push(Span::styled(item.clone(), style));
-                    }
+                        let style = if i == selector.cursor_idx {
+                            Style::default()
+                                .bg(item_bg)
+                                .fg(THEME.read().unwrap().text_normal)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(THEME.read().unwrap().text_normal)
+                                .bg(item_bg)
+                        };
 
-                    ListItem::new(vec![Line::from(line_spans)]).style(Style::default().bg(item_bg))
-                })
-                .collect();
+                        let highlight_style = if i == selector.cursor_idx {
+                            Style::default()
+                                .bg(item_bg)
+                                .fg(THEME.read().unwrap().yellow)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(THEME.read().unwrap().yellow)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::BOLD)
+                        };
 
-            let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-            let mut state = selector.state.clone();
-            f.render_stateful_widget(list, list_chunk, &mut state);
-            selector.state = state;
+                        let mut line_spans = vec![Span::styled(
+                            marker,
+                            Style::default()
+                                .fg(marker_color)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::BOLD),
+                        )];
+
+                        if let Some(indices) = indices {
+                            line_spans.extend(highlight_fuzzy_match(
+                                item,
+                                indices,
+                                style,
+                                highlight_style,
+                            ));
+                        } else {
+                            line_spans.push(Span::styled(item.clone(), style));
+                        }
+
+                        ListItem::new(vec![Line::from(line_spans)])
+                            .style(Style::default().bg(item_bg))
+                    })
+                    .collect();
+
+                let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
+                let mut state = selector.state.clone();
+                f.render_stateful_widget(list, list_chunk, &mut state);
+                selector.state = state;
+            }
         }
     }
 

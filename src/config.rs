@@ -447,6 +447,8 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("default", include_str!("themes/default.toml")),
     ("clean", include_str!("themes/clean.toml")),
     ("tokyo-night", include_str!("themes/tokyo-night.toml")),
+    ("oled", include_str!("themes/oled.toml")),
+    ("github-dark-hc", include_str!("themes/github-dark-hc.toml")),
     ("gruvbox", include_str!("themes/gruvbox.toml")),
     ("nord", include_str!("themes/nord.toml")),
     (

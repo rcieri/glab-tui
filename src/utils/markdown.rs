@@ -6,13 +6,70 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::config::Theme;
+use crate::app::highlight_line_syntax;
 
-pub fn render_markdown(markdown: &str, theme: &Theme) -> Vec<Line<'static>> {
+pub fn render_markdown(markdown: &str, theme: &Theme, width: u16) -> Vec<Line<'static>> {
     let options = Options::ENABLE_GFM
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_TABLES;
-    MarkdownRenderer::new(theme).render(Parser::new_ext(markdown, options))
+    MarkdownRenderer::new(theme, width).render(Parser::new_ext(markdown, options))
+}
+
+fn decode_html_entities(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '&' {
+            result.push(c);
+            continue;
+        }
+        let mut entity = String::new();
+        let mut terminated = false;
+        for nc in chars.by_ref() {
+            if nc == ';' { terminated = true; break; }
+            entity.push(nc);
+            if entity.len() > 10 { break; } // bail on malformed
+        }
+        if !terminated {
+            result.push('&');
+            result.push_str(&entity);
+            continue;
+        }
+        match entity.as_str() {
+            "amp"  => result.push('&'),
+            "lt"   => result.push('<'),
+            "gt"   => result.push('>'),
+            "quot" => result.push('"'),
+            "apos" => result.push('\''),
+            "nbsp" => result.push('\u{00A0}'),
+            _ if entity.starts_with('#') => {
+                let num_str = &entity[1..];
+                let code = if num_str.starts_with('x') || num_str.starts_with('X') {
+                    u32::from_str_radix(&num_str[1..], 16).ok()
+                } else {
+                    num_str.parse::<u32>().ok()
+                };
+                match code.and_then(char::from_u32) {
+                    Some(ch) => result.push(ch),
+                    None => { result.push('&'); result.push_str(&entity); result.push(';'); }
+                }
+            }
+            _ => { result.push('&'); result.push_str(&entity); result.push(';'); }
+        }
+    }
+    result
+}
+
+fn truncate_url(url: &str) -> String {
+    const MAX_URL_LEN: usize = 40;
+    let char_count = url.chars().count();
+    if char_count <= MAX_URL_LEN {
+        url.to_string()
+    } else {
+        let truncated: String = url.chars().take(MAX_URL_LEN - 1).collect();
+        format!("{}…", truncated)
+    }
 }
 
 struct ListFrame {
@@ -42,7 +99,10 @@ struct TableState {
 
 struct MarkdownRenderer<'a> {
     theme: &'a Theme,
+    width: u16,
+    task_checked: bool,
     lines: Vec<Line<'static>>,
+
     current_line: Vec<Span<'static>>,
     list_stack: Vec<ListFrame>,
     links: Vec<LinkState>,
@@ -62,9 +122,11 @@ struct MarkdownRenderer<'a> {
 }
 
 impl<'a> MarkdownRenderer<'a> {
-    fn new(theme: &'a Theme) -> Self {
+    fn new(theme: &'a Theme, width: u16) -> Self {
         Self {
             theme,
+            width,
+            task_checked: false,
             lines: Vec::new(),
             current_line: Vec::new(),
             list_stack: Vec::new(),
@@ -101,20 +163,21 @@ impl<'a> MarkdownRenderer<'a> {
                 }
                 Event::SoftBreak => self.push_text(" "),
                 Event::HardBreak => self.finish_line(),
-                Event::Rule => {
+                                Event::Rule => {
                     self.finish_line();
                     self.blank_between_blocks();
                     self.lines.push(Line::from(Span::styled(
-                        "────────────────────────".to_string(),
+                        "─".repeat(self.width.saturating_sub(2) as usize),
                         Style::default().fg(self.theme.text_muted),
                     )));
                     self.last_was_block = true;
                 }
-                Event::Html(html) | Event::InlineHtml(html) => {
+                                Event::Html(html) | Event::InlineHtml(html) => {
+                    let decoded = decode_html_entities(html.as_ref());
                     let style = Style::default()
                         .fg(self.theme.text_muted)
                         .add_modifier(Modifier::DIM);
-                    self.push_span(html.into_string(), style);
+                    self.push_span(decoded, style);
                 }
                 Event::FootnoteReference(label) => {
                     self.push_span(
@@ -124,7 +187,8 @@ impl<'a> MarkdownRenderer<'a> {
                             .add_modifier(Modifier::ITALIC),
                     );
                 }
-                Event::TaskListMarker(checked) => {
+                                Event::TaskListMarker(checked) => {
+                    self.task_checked = checked;
                     self.push_span(
                         if checked { "☑ " } else { "☐ " }.to_string(),
                         Style::default().fg(if checked {
@@ -267,12 +331,20 @@ impl<'a> MarkdownRenderer<'a> {
                 self.finish_line();
                 self.last_was_block = true;
             }
-            TagEnd::Item => {
+                        TagEnd::Item => {
+                self.task_checked = false;
                 self.finish_line();
             }
-            TagEnd::Heading(_) => {
+                        TagEnd::Heading(_) => {
                 self.finish_line();
+                let was_h1 = self.heading_level == Some(1);
                 self.heading_level = None;
+                if was_h1 {
+                    self.lines.push(Line::from(Span::styled(
+                        "─".repeat(self.width.saturating_sub(2) as usize),
+                        Style::default().fg(self.theme.text_muted),
+                    )));
+                }
                 self.last_was_block = true;
             }
             TagEnd::CodeBlock => {
@@ -332,7 +404,7 @@ impl<'a> MarkdownRenderer<'a> {
                             .add_modifier(Modifier::ITALIC),
                     );
                     self.push_span(
-                        format!(" ({})", image.destination),
+                        format!(" ({})", truncate_url(&image.destination)),
                         Style::default()
                             .fg(self.theme.blue)
                             .add_modifier(Modifier::UNDERLINED),
@@ -343,7 +415,7 @@ impl<'a> MarkdownRenderer<'a> {
                 if let Some(link) = self.links.pop() {
                     if link.label != link.destination {
                         self.push_span(
-                            format!(" ({})", link.destination),
+                            format!(" ({})", truncate_url(&link.destination)),
                             Style::default()
                                 .fg(self.theme.blue)
                                 .add_modifier(Modifier::UNDERLINED),
@@ -360,7 +432,7 @@ impl<'a> MarkdownRenderer<'a> {
             .fg(self.theme.text_muted)
             .bg(self.theme.inactive_bg);
         let mut opening = vec![Span::styled("┌─".to_string(), border_style)];
-        if let Some(language) = code_block.language {
+        if let Some(language) = &code_block.language {
             opening.push(Span::styled(
                 format!(" {}", language),
                 Style::default()
@@ -371,20 +443,33 @@ impl<'a> MarkdownRenderer<'a> {
         }
         self.lines.push(Line::from(opening));
 
+        let lang_ext = code_block.language.as_deref();
         for code_line in code_block.content.lines() {
-            self.lines.push(Line::from(vec![
-                Span::styled("│ ".to_string(), border_style),
-                Span::styled(
-                    code_line.to_string(),
-                    Style::default()
-                        .fg(self.theme.text_normal)
-                        .bg(self.theme.inactive_bg),
-                ),
-            ]));
+            let content_spans: Vec<Span<'static>> = highlight_line_syntax("", code_line, lang_ext)
+                .map(|highlighted| {
+                    highlighted
+                        .into_iter()
+                        .map(|(style, text)| Span::styled(text, style.bg(self.theme.inactive_bg)))
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    vec![Span::styled(
+                        code_line.to_string(),
+                        Style::default()
+                            .fg(self.theme.text_normal)
+                            .bg(self.theme.inactive_bg),
+                    )]
+                });
+            let mut line_spans = vec![Span::styled("│ ".to_string(), border_style)];
+            line_spans.extend(content_spans);
+            self.lines.push(Line::from(line_spans));
         }
 
-        self.lines
-            .push(Line::from(Span::styled("└─".to_string(), border_style)));
+        self.lines.push(Line::from(Span::styled(
+            "└─".to_string(),
+            border_style,
+        )));
+        self.last_was_block = true;
     }
 
     fn render_table(&mut self, table: TableState) {
@@ -448,49 +533,56 @@ impl<'a> MarkdownRenderer<'a> {
 
     fn table_row_line(
         &self,
-        cells: &[TableCellState],
+        row: &[TableCellState],
         widths: &[usize],
         alignments: &[MarkdownAlignment],
         is_header: bool,
     ) -> Line<'static> {
-        let border_style = Style::default().fg(self.theme.text_muted);
-        let mut spans = vec![Span::styled("│".to_string(), border_style)];
+        let border_style = Style::default().fg(self.theme.border);
+        let mut spans = vec![Span::styled("│ ", border_style)];
 
-        for (column, width) in widths.iter().enumerate() {
-            let cell = cells.get(column);
-            let cell_width = cell
-                .map(|cell| Line::from(cell.spans.clone()).width())
-                .unwrap_or(0);
-            let padding = width.saturating_sub(cell_width);
-            let alignment = alignments
-                .get(column)
-                .copied()
-                .unwrap_or(MarkdownAlignment::None);
-            let (left_padding, right_padding) = match alignment {
-                MarkdownAlignment::Right => (padding, 0),
-                MarkdownAlignment::Center => (padding / 2, padding - padding / 2),
-                MarkdownAlignment::None | MarkdownAlignment::Left => (0, padding),
+        for (i, width) in widths.iter().enumerate() {
+            let cell = row.get(i);
+            let alignment = alignments.get(i).unwrap_or(&MarkdownAlignment::None);
+
+            let cell_text: String = cell
+                .map(|c| c.spans.iter().map(|s| s.content.as_ref()).collect())
+                .unwrap_or_default();
+            let display_text = if cell_text.chars().count() > *width {
+                let truncated: String = cell_text.chars().take(*width - 1).collect();
+                format!("{}…", truncated)
+            } else {
+                cell_text
             };
 
-            spans.push(Span::styled(
-                format!(" {}", " ".repeat(left_padding)),
-                Style::default().fg(self.theme.text_normal),
-            ));
-            if let Some(cell) = cell {
-                spans.extend(cell.spans.iter().cloned().map(|mut span| {
-                    if is_header {
-                        span.style = span.style.add_modifier(Modifier::BOLD);
-                    }
-                    span
-                }));
+            let text_len = display_text.chars().count();
+            let pad_total = width.saturating_sub(text_len);
+            let (pad_left, pad_right) = match alignment {
+                MarkdownAlignment::Center => (pad_total / 2, pad_total - pad_total / 2),
+                MarkdownAlignment::Right => (pad_total, 0),
+                _ => (0, pad_total),
+            };
+
+            if pad_left > 0 {
+                spans.push(Span::raw(" ".repeat(pad_left)));
             }
-            spans.push(Span::styled(
-                format!("{} ", " ".repeat(right_padding)),
-                Style::default().fg(self.theme.text_normal),
-            ));
-            spans.push(Span::styled("│".to_string(), border_style));
+            
+            let mut style = Style::default().fg(self.theme.text_normal);
+            if is_header {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            spans.push(Span::styled(display_text, style));
+
+            if pad_right > 0 {
+                spans.push(Span::raw(" ".repeat(pad_right)));
+            }
+
+            if i < widths.len() - 1 {
+                spans.push(Span::styled(" │ ", border_style));
+            }
         }
 
+        spans.push(Span::styled(" │", border_style));
         Line::from(spans)
     }
 
@@ -569,6 +661,11 @@ impl<'a> MarkdownRenderer<'a> {
         if !self.links.is_empty() {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
+        if self.task_checked {
+            style = style
+                .fg(self.theme.text_muted)
+                .add_modifier(Modifier::CROSSED_OUT);
+        }
         style
     }
 
@@ -587,7 +684,7 @@ mod tests {
     use super::*;
 
     fn render_markdown_for_test(markdown: &str) -> Vec<Line<'static>> {
-        render_markdown(markdown, &Theme::default())
+        render_markdown(markdown, &Theme::default(), 80u16)
     }
 
     #[test]
@@ -602,6 +699,7 @@ mod tests {
             text,
             vec![
                 "▌ Header1",
+                "──────────────────────────────────────────────────────────────────────────────",
                 "",
                 "▌ Header2",
                 "",
@@ -612,16 +710,16 @@ mod tests {
                 "  ▌ Quoted",
             ]
         );
-        // Header1 is at index 0, Header2 at 2, list item at 4, paragraph at 6, quote at 8.
+        // Header1 is at index 0, Header2 at 3, list item at 5, paragraph at 7, quote at 9.
         assert!(lines[0].spans.iter().any(|span| span.content == "Header1"
             && span.style.fg == Some(theme.purple)
             && span.style.add_modifier.contains(Modifier::BOLD)
             && span.style.add_modifier.contains(Modifier::UNDERLINED)));
-        assert!(lines[4].spans.iter().any(|span| span.content == "code"
+        assert!(lines[5].spans.iter().any(|span| span.content == "code"
             && span.style.fg == Some(theme.red)
             && span.style.bg == Some(theme.inactive_bg)));
         assert!(
-            lines[6]
+            lines[7]
                 .spans
                 .iter()
                 .any(|span| span.content == "bold"
@@ -684,7 +782,7 @@ mod tests {
 
         assert_eq!(
             text,
-            "┌─ rust\n│ fn main() {\n│     println!(\"hello\");\n│ }\n└─"
+            "┌─ rust\n│ fn main() {\n│    println!(\"hello\");\n│ }\n└─"
         );
     }
 

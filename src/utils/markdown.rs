@@ -460,10 +460,15 @@ impl<'a> MarkdownRenderer<'a> {
     }
 
     fn push_text(&mut self, text: &str) {
+        // Images: buffer alt-text only; do NOT render inline. The buffered label
+        // is emitted as "[image: <alt>] (url)" in end_tag(TagEnd::Image).
         if let Some(image) = self.image.as_mut() {
             image.label.push_str(text);
             return;
         }
+        // Links: buffer the label for destination-dedup in end_tag(TagEnd::Link)
+        // (so "click here (click here)" is collapsed to just "click here"), AND
+        // render the text inline as a visible span so the link label appears in place.
         if let Some(link) = self.links.last_mut() {
             link.label.push_str(text);
         }
@@ -485,6 +490,11 @@ impl<'a> MarkdownRenderer<'a> {
     }
 
     fn finish_line(&mut self) {
+        // Intentionally a no-op when current_line is empty. pulldown-cmark emits
+        // Tag::Paragraph / TagEnd::Paragraph pairs around every block, so blank
+        // lines between paragraphs would call finish_line twice. Suppressing the
+        // second call keeps the pane compact and avoids spurious blank rows in a
+        // fixed-height TUI widget where vertical space is at a premium.
         if !self.current_line.is_empty() {
             self.lines
                 .push(Line::from(std::mem::take(&mut self.current_line)));

@@ -540,7 +540,7 @@ impl GitlabClient {
             return Ok(());
         }
         let target = if trimmed.eq_ignore_ascii_case("none") || trimmed == "0" {
-            "None"
+            "--"
         } else {
             trimmed
         };
@@ -607,7 +607,7 @@ impl GitlabClient {
             return Ok(());
         }
         let target = if trimmed.eq_ignore_ascii_case("none") || trimmed == "0" {
-            "None"
+            "--"
         } else {
             trimmed
         };

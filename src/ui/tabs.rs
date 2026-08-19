@@ -2869,7 +2869,7 @@ pub(crate) fn render_tab_branches(
             }
             if app.is_column_visible(Tab::Branches, "SHA") {
                 let sha_text = if b.commit_sha.is_empty() {
-                    "None".to_string()
+                    "--".to_string()
                 } else {
                     crate::utils::format::truncate(&b.commit_sha, 8)
                 };

@@ -5,14 +5,115 @@ use pulldown_cmark::{
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::app::highlight_line_syntax;
 use crate::config::Theme;
 
-pub fn render_markdown(markdown: &str, theme: &Theme) -> Vec<Line<'static>> {
+pub fn render_markdown(markdown: &str, theme: &Theme, width: u16) -> Vec<Line<'static>> {
     let options = Options::ENABLE_GFM
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_TABLES;
-    MarkdownRenderer::new(theme).render(Parser::new_ext(markdown, options))
+    MarkdownRenderer::new(theme, width).render(Parser::new_ext(markdown, options))
+}
+
+fn decode_html_entities(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '&' {
+            result.push(c);
+            continue;
+        }
+        let mut entity = String::new();
+        let mut terminated = false;
+        for nc in chars.by_ref() {
+            if nc == ';' {
+                terminated = true;
+                break;
+            }
+            entity.push(nc);
+            if entity.len() > 10 {
+                break;
+            } // bail on malformed
+        }
+        if !terminated {
+            result.push('&');
+            result.push_str(&entity);
+            continue;
+        }
+        match entity.as_str() {
+            "amp" => result.push('&'),
+            "lt" => result.push('<'),
+            "gt" => result.push('>'),
+            "quot" => result.push('"'),
+            "apos" => result.push('\''),
+            "nbsp" => result.push('\u{00A0}'),
+            _ if entity.starts_with('#') => {
+                let num_str = &entity[1..];
+                let code = if num_str.starts_with('x') || num_str.starts_with('X') {
+                    u32::from_str_radix(&num_str[1..], 16).ok()
+                } else {
+                    num_str.parse::<u32>().ok()
+                };
+                match code.and_then(char::from_u32) {
+                    Some(ch) => result.push(ch),
+                    None => {
+                        result.push('&');
+                        result.push_str(&entity);
+                        result.push(';');
+                    }
+                }
+            }
+            _ => {
+                result.push('&');
+                result.push_str(&entity);
+                result.push(';');
+            }
+        }
+    }
+    result
+}
+
+fn truncate_url(url: &str) -> String {
+    const MAX_URL_LEN: usize = 40;
+    let char_count = url.chars().count();
+    if char_count <= MAX_URL_LEN {
+        url.to_string()
+    } else {
+        let truncated: String = url.chars().take(MAX_URL_LEN - 1).collect();
+        format!("{}…", truncated)
+    }
+}
+
+/// Map a fenced code block language token (e.g. `"rust"`, `"python"`) to the
+/// file extension syntect's `find_syntax_by_extension` expects (e.g. `"rs"`,
+/// `"py"`). Returns `None` when the token is already the right extension or
+/// simply unknown (caller falls back to the token itself).
+fn resolve_syntax_lang(lang: &str) -> Option<&'static str> {
+    // Compare case-insensitively by ASCII-lowering the input byte-by-byte.
+    let lower = lang.to_ascii_lowercase();
+    match lower.as_str() {
+        "rust" => Some("rs"),
+        "python" | "python3" => Some("py"),
+        "javascript" => Some("js"),
+        "typescript" => Some("ts"),
+        "c++" | "cpp" => Some("cpp"),
+        "c#" | "csharp" => Some("cs"),
+        "kotlin" => Some("kt"),
+        "swift" => Some("swift"),
+        "scala" => Some("scala"),
+        "haskell" => Some("hs"),
+        "elixir" => Some("ex"),
+        "erlang" => Some("erl"),
+        "clojure" => Some("clj"),
+        "ocaml" => Some("ml"),
+        "f#" | "fsharp" => Some("fs"),
+        "dockerfile" => Some("dockerfile"),
+        "makefile" => Some("makefile"),
+        "toml" => Some("toml"),
+        "shell" | "zsh" | "bash" => Some("sh"),
+        _ => None, // pass token through unchanged
+    }
 }
 
 struct ListFrame {
@@ -42,7 +143,10 @@ struct TableState {
 
 struct MarkdownRenderer<'a> {
     theme: &'a Theme,
+    width: u16,
+    task_checked: bool,
     lines: Vec<Line<'static>>,
+
     current_line: Vec<Span<'static>>,
     list_stack: Vec<ListFrame>,
     links: Vec<LinkState>,
@@ -54,12 +158,19 @@ struct MarkdownRenderer<'a> {
     bold_depth: usize,
     emphasis_depth: usize,
     strikethrough_depth: usize,
+    /// Set to `true` after any block-level element (paragraph, heading, code
+    /// block, list, blockquote, table, rule) finishes. The next block will
+    /// prepend a blank separator line so the output breathes rather than running
+    /// everything together. Cleared whenever we actually emit content.
+    last_was_block: bool,
 }
 
 impl<'a> MarkdownRenderer<'a> {
-    fn new(theme: &'a Theme) -> Self {
+    fn new(theme: &'a Theme, width: u16) -> Self {
         Self {
             theme,
+            width,
+            task_checked: false,
             lines: Vec::new(),
             current_line: Vec::new(),
             list_stack: Vec::new(),
@@ -72,6 +183,7 @@ impl<'a> MarkdownRenderer<'a> {
             bold_depth: 0,
             emphasis_depth: 0,
             strikethrough_depth: 0,
+            last_was_block: false,
         }
     }
 
@@ -97,16 +209,19 @@ impl<'a> MarkdownRenderer<'a> {
                 Event::HardBreak => self.finish_line(),
                 Event::Rule => {
                     self.finish_line();
+                    self.blank_between_blocks();
                     self.lines.push(Line::from(Span::styled(
-                        "────────────────────────".to_string(),
+                        "─".repeat(self.width.saturating_sub(2) as usize),
                         Style::default().fg(self.theme.text_muted),
                     )));
+                    self.last_was_block = true;
                 }
                 Event::Html(html) | Event::InlineHtml(html) => {
+                    let decoded = decode_html_entities(html.as_ref());
                     let style = Style::default()
                         .fg(self.theme.text_muted)
                         .add_modifier(Modifier::DIM);
-                    self.push_span(html.into_string(), style);
+                    self.push_span(decoded, style);
                 }
                 Event::FootnoteReference(label) => {
                     self.push_span(
@@ -117,6 +232,7 @@ impl<'a> MarkdownRenderer<'a> {
                     );
                 }
                 Event::TaskListMarker(checked) => {
+                    self.task_checked = checked;
                     self.push_span(
                         if checked { "☑ " } else { "☐ " }.to_string(),
                         Style::default().fg(if checked {
@@ -138,6 +254,7 @@ impl<'a> MarkdownRenderer<'a> {
         match tag {
             Tag::Heading { level, .. } => {
                 self.finish_line();
+                self.blank_between_blocks();
                 self.heading_level = Some(level as u8);
                 self.push_span(
                     "▌ ".to_string(),
@@ -146,6 +263,7 @@ impl<'a> MarkdownRenderer<'a> {
             }
             Tag::CodeBlock(kind) => {
                 self.finish_line();
+                self.blank_between_blocks();
                 let language = match kind {
                     CodeBlockKind::Indented => None,
                     CodeBlockKind::Fenced(info) => info
@@ -161,6 +279,7 @@ impl<'a> MarkdownRenderer<'a> {
             }
             Tag::BlockQuote(kind) => {
                 self.finish_line();
+                self.blank_between_blocks();
                 self.blockquote_depth += 1;
                 if let Some(kind) = kind {
                     let (label, color) = match kind {
@@ -178,6 +297,12 @@ impl<'a> MarkdownRenderer<'a> {
                 }
             }
             Tag::List(first_number) => {
+                // Only emit a blank separator before a top-level list, not for
+                // nested lists (which are already inside a list item).
+                if self.list_stack.is_empty() {
+                    self.finish_line();
+                    self.blank_between_blocks();
+                }
                 self.list_stack.push(ListFrame {
                     next_number: first_number,
                 });
@@ -206,6 +331,7 @@ impl<'a> MarkdownRenderer<'a> {
             }
             Tag::Table(alignments) => {
                 self.finish_line();
+                self.blank_between_blocks();
                 self.table = Some(TableState {
                     alignments,
                     rows: Vec::new(),
@@ -222,6 +348,9 @@ impl<'a> MarkdownRenderer<'a> {
                 if let Some(table) = self.table.as_mut() {
                     table.current_cell.clear();
                 }
+            }
+            Tag::Paragraph => {
+                self.blank_between_blocks();
             }
             Tag::Strong => self.bold_depth += 1,
             Tag::Emphasis => self.emphasis_depth += 1,
@@ -242,24 +371,45 @@ impl<'a> MarkdownRenderer<'a> {
 
     fn end_tag(&mut self, tag: TagEnd) {
         match tag {
-            TagEnd::Paragraph | TagEnd::Item | TagEnd::Heading(_) => {
+            TagEnd::Paragraph => {
                 self.finish_line();
-                if matches!(tag, TagEnd::Heading(_)) {
-                    self.heading_level = None;
+                self.last_was_block = true;
+            }
+            TagEnd::Item => {
+                self.task_checked = false;
+                self.finish_line();
+            }
+            TagEnd::Heading(_) => {
+                self.finish_line();
+                let was_h1 = self.heading_level == Some(1);
+                self.heading_level = None;
+                if was_h1 {
+                    self.lines.push(Line::from(Span::styled(
+                        "─".repeat(self.width.saturating_sub(2) as usize),
+                        Style::default().fg(self.theme.text_muted),
+                    )));
                 }
+                self.last_was_block = true;
             }
             TagEnd::CodeBlock => {
                 if let Some(code_block) = self.code_block.take() {
                     self.render_code_block(code_block);
                 }
+                self.last_was_block = true;
             }
             TagEnd::BlockQuote(_) => {
                 self.finish_line();
                 self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                if self.blockquote_depth == 0 {
+                    self.last_was_block = true;
+                }
             }
             TagEnd::List(_) => {
                 self.finish_line();
                 self.list_stack.pop();
+                if self.list_stack.is_empty() {
+                    self.last_was_block = true;
+                }
             }
             TagEnd::TableCell => {
                 if let Some(table) = self.table.as_mut() {
@@ -277,6 +427,7 @@ impl<'a> MarkdownRenderer<'a> {
                 if let Some(table) = self.table.take() {
                     self.render_table(table);
                 }
+                self.last_was_block = true;
             }
             TagEnd::Strong => self.bold_depth = self.bold_depth.saturating_sub(1),
             TagEnd::Emphasis => self.emphasis_depth = self.emphasis_depth.saturating_sub(1),
@@ -297,7 +448,7 @@ impl<'a> MarkdownRenderer<'a> {
                             .add_modifier(Modifier::ITALIC),
                     );
                     self.push_span(
-                        format!(" ({})", image.destination),
+                        format!(" ({})", truncate_url(&image.destination)),
                         Style::default()
                             .fg(self.theme.blue)
                             .add_modifier(Modifier::UNDERLINED),
@@ -308,7 +459,7 @@ impl<'a> MarkdownRenderer<'a> {
                 if let Some(link) = self.links.pop() {
                     if link.label != link.destination {
                         self.push_span(
-                            format!(" ({})", link.destination),
+                            format!(" ({})", truncate_url(&link.destination)),
                             Style::default()
                                 .fg(self.theme.blue)
                                 .add_modifier(Modifier::UNDERLINED),
@@ -325,7 +476,7 @@ impl<'a> MarkdownRenderer<'a> {
             .fg(self.theme.text_muted)
             .bg(self.theme.inactive_bg);
         let mut opening = vec![Span::styled("┌─".to_string(), border_style)];
-        if let Some(language) = code_block.language {
+        if let Some(language) = &code_block.language {
             opening.push(Span::styled(
                 format!(" {}", language),
                 Style::default()
@@ -336,20 +487,40 @@ impl<'a> MarkdownRenderer<'a> {
         }
         self.lines.push(Line::from(opening));
 
+        // Resolve the fenced language token to the file extension syntect expects
+        // (e.g. "rust" → "rs", "python" → "py"). If the token is already an
+        // extension or is unknown, resolve_syntax_lang returns None and we use
+        // the token itself as a fallback.
+        let resolved: Option<String> = code_block
+            .language
+            .as_deref()
+            .map(|lang| resolve_syntax_lang(lang).unwrap_or(lang).to_string());
+        let lang_ext: Option<&str> = resolved.as_deref();
+
         for code_line in code_block.content.lines() {
-            self.lines.push(Line::from(vec![
-                Span::styled("│ ".to_string(), border_style),
-                Span::styled(
-                    code_line.to_string(),
-                    Style::default()
-                        .fg(self.theme.text_normal)
-                        .bg(self.theme.inactive_bg),
-                ),
-            ]));
+            let content_spans: Vec<Span<'static>> = highlight_line_syntax("", code_line, lang_ext)
+                .map(|highlighted| {
+                    highlighted
+                        .into_iter()
+                        .map(|(style, text)| Span::styled(text, style.bg(self.theme.inactive_bg)))
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    vec![Span::styled(
+                        code_line.to_string(),
+                        Style::default()
+                            .fg(self.theme.text_normal)
+                            .bg(self.theme.inactive_bg),
+                    )]
+                });
+            let mut line_spans = vec![Span::styled("│ ".to_string(), border_style)];
+            line_spans.extend(content_spans);
+            self.lines.push(Line::from(line_spans));
         }
 
         self.lines
             .push(Line::from(Span::styled("└─".to_string(), border_style)));
+        self.last_was_block = true;
     }
 
     fn render_table(&mut self, table: TableState) {
@@ -368,11 +539,16 @@ impl<'a> MarkdownRenderer<'a> {
             return;
         }
 
-        let mut widths = vec![0; column_count];
+        let mut widths = vec![0usize; column_count];
         for row in &table.rows {
             for (column, cell) in row.iter().enumerate() {
                 widths[column] = widths[column].max(Line::from(cell.spans.clone()).width());
             }
+        }
+        // Cap each column so wide tables don't overflow the pane.
+        const MAX_COL_WIDTH: usize = 30;
+        for w in &mut widths {
+            *w = (*w).min(MAX_COL_WIDTH);
         }
 
         self.lines
@@ -413,57 +589,69 @@ impl<'a> MarkdownRenderer<'a> {
 
     fn table_row_line(
         &self,
-        cells: &[TableCellState],
+        row: &[TableCellState],
         widths: &[usize],
         alignments: &[MarkdownAlignment],
         is_header: bool,
     ) -> Line<'static> {
-        let border_style = Style::default().fg(self.theme.text_muted);
-        let mut spans = vec![Span::styled("│".to_string(), border_style)];
+        let border_style = Style::default().fg(self.theme.border);
+        let mut spans = vec![Span::styled("│ ", border_style)];
 
-        for (column, width) in widths.iter().enumerate() {
-            let cell = cells.get(column);
-            let cell_width = cell
-                .map(|cell| Line::from(cell.spans.clone()).width())
-                .unwrap_or(0);
-            let padding = width.saturating_sub(cell_width);
-            let alignment = alignments
-                .get(column)
-                .copied()
-                .unwrap_or(MarkdownAlignment::None);
-            let (left_padding, right_padding) = match alignment {
-                MarkdownAlignment::Right => (padding, 0),
-                MarkdownAlignment::Center => (padding / 2, padding - padding / 2),
-                MarkdownAlignment::None | MarkdownAlignment::Left => (0, padding),
+        for (i, width) in widths.iter().enumerate() {
+            let cell = row.get(i);
+            let alignment = alignments.get(i).unwrap_or(&MarkdownAlignment::None);
+
+            let cell_text: String = cell
+                .map(|c| c.spans.iter().map(|s| s.content.as_ref()).collect())
+                .unwrap_or_default();
+            let display_text = if cell_text.chars().count() > *width {
+                let truncated: String = cell_text.chars().take(*width - 1).collect();
+                format!("{}…", truncated)
+            } else {
+                cell_text
             };
 
-            spans.push(Span::styled(
-                format!(" {}", " ".repeat(left_padding)),
-                Style::default().fg(self.theme.text_normal),
-            ));
-            if let Some(cell) = cell {
-                spans.extend(cell.spans.iter().cloned().map(|mut span| {
-                    if is_header {
-                        span.style = span.style.add_modifier(Modifier::BOLD);
-                    }
-                    span
-                }));
+            let text_len = display_text.chars().count();
+            let pad_total = width.saturating_sub(text_len);
+            let (pad_left, pad_right) = match alignment {
+                MarkdownAlignment::Center => (pad_total / 2, pad_total - pad_total / 2),
+                MarkdownAlignment::Right => (pad_total, 0),
+                _ => (0, pad_total),
+            };
+
+            if pad_left > 0 {
+                spans.push(Span::raw(" ".repeat(pad_left)));
             }
-            spans.push(Span::styled(
-                format!("{} ", " ".repeat(right_padding)),
-                Style::default().fg(self.theme.text_normal),
-            ));
-            spans.push(Span::styled("│".to_string(), border_style));
+
+            let mut style = Style::default().fg(self.theme.text_normal);
+            if is_header {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            spans.push(Span::styled(display_text, style));
+
+            if pad_right > 0 {
+                spans.push(Span::raw(" ".repeat(pad_right)));
+            }
+
+            if i < widths.len() - 1 {
+                spans.push(Span::styled(" │ ", border_style));
+            }
         }
 
+        spans.push(Span::styled(" │", border_style));
         Line::from(spans)
     }
 
     fn push_text(&mut self, text: &str) {
+        // Images: buffer alt-text only; do NOT render inline. The buffered label
+        // is emitted as "[image: <alt>] (url)" in end_tag(TagEnd::Image).
         if let Some(image) = self.image.as_mut() {
             image.label.push_str(text);
             return;
         }
+        // Links: buffer the label for destination-dedup in end_tag(TagEnd::Link)
+        // (so "click here (click here)" is collapsed to just "click here"), AND
+        // render the text inline as a visible span so the link label appears in place.
         if let Some(link) = self.links.last_mut() {
             link.label.push_str(text);
         }
@@ -485,10 +673,25 @@ impl<'a> MarkdownRenderer<'a> {
     }
 
     fn finish_line(&mut self) {
+        // Intentionally a no-op when current_line is empty. pulldown-cmark emits
+        // Tag::Paragraph / TagEnd::Paragraph pairs around every block, so blank
+        // lines between paragraphs would call finish_line twice. The actual blank
+        // line between blocks is emitted by blank_between_blocks() instead, which
+        // is called at the *start* of each new top-level block.
         if !self.current_line.is_empty() {
             self.lines
                 .push(Line::from(std::mem::take(&mut self.current_line)));
         }
+    }
+
+    /// Emits a single blank separator line before a new top-level block when the
+    /// previous block has just finished. Skipped when we're inside a list (items
+    /// run flush) or at the very start of output.
+    fn blank_between_blocks(&mut self) {
+        if self.last_was_block && self.list_stack.is_empty() && !self.lines.is_empty() {
+            self.lines.push(Line::from(""));
+        }
+        self.last_was_block = false;
     }
 
     fn inline_style(&self) -> Style {
@@ -514,6 +717,11 @@ impl<'a> MarkdownRenderer<'a> {
         if !self.links.is_empty() {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
+        if self.task_checked {
+            style = style
+                .fg(self.theme.text_muted)
+                .add_modifier(Modifier::CROSSED_OUT);
+        }
         style
     }
 
@@ -532,7 +740,7 @@ mod tests {
     use super::*;
 
     fn render_markdown_for_test(markdown: &str) -> Vec<Line<'static>> {
-        render_markdown(markdown, &Theme::default())
+        render_markdown(markdown, &Theme::default(), 80u16)
     }
 
     #[test]
@@ -542,29 +750,57 @@ mod tests {
         let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
         let theme = Theme::default();
 
+        // Blank lines are now emitted between each top-level block.
         assert_eq!(
             text,
             vec![
                 "▌ Header1",
+                "──────────────────────────────────────────────────────────────────────────────",
+                "",
                 "▌ Header2",
+                "",
                 "• Bullet code item",
+                "",
                 "Normal line with bold text",
+                "",
                 "  ▌ Quoted",
             ]
         );
+        // Header1 is at index 0, Header2 at 3, list item at 5, paragraph at 7, quote at 9.
         assert!(lines[0].spans.iter().any(|span| span.content == "Header1"
             && span.style.fg == Some(theme.purple)
             && span.style.add_modifier.contains(Modifier::BOLD)
             && span.style.add_modifier.contains(Modifier::UNDERLINED)));
-        assert!(lines[2].spans.iter().any(|span| span.content == "code"
+        assert!(lines[5].spans.iter().any(|span| span.content == "code"
             && span.style.fg == Some(theme.red)
             && span.style.bg == Some(theme.inactive_bg)));
         assert!(
-            lines[3]
+            lines[7]
                 .spans
                 .iter()
                 .any(|span| span.content == "bold"
                     && span.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
+
+    #[test]
+    fn test_render_markdown_formats_nested_ordered_and_task_lists() {
+        // Two separate lists separated by a blank line in the source — a blank
+        // separator line is emitted between them.
+        let md = "1. First\n2. Second\n    - Nested\n\n- [x] Done\n- [ ] Pending";
+        let lines = render_markdown_for_test(md);
+        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
+
+        assert_eq!(
+            text,
+            vec![
+                "1. First",
+                "2. Second",
+                "  • Nested",
+                "",
+                "• ☑ Done",
+                "• ☐ Pending",
+            ]
         );
     }
 
@@ -590,24 +826,6 @@ mod tests {
     }
 
     #[test]
-    fn test_render_markdown_formats_nested_ordered_and_task_lists() {
-        let md = "1. First\n2. Second\n    - Nested\n\n- [x] Done\n- [ ] Pending";
-        let lines = render_markdown_for_test(md);
-        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
-
-        assert_eq!(
-            text,
-            vec![
-                "1. First",
-                "2. Second",
-                "  • Nested",
-                "• ☑ Done",
-                "• ☐ Pending",
-            ]
-        );
-    }
-
-    #[test]
     fn test_render_markdown_formats_fenced_code_blocks() {
         let md = "```rust\nfn main() {\n    println!(\"hello\");\n}\n```";
         let lines = render_markdown_for_test(md);
@@ -619,7 +837,7 @@ mod tests {
 
         assert_eq!(
             text,
-            "┌─ rust\n│ fn main() {\n│     println!(\"hello\");\n│ }\n└─"
+            "┌─ rust\n│ fn main() {\n│    println!(\"hello\");\n│ }\n└─"
         );
     }
 

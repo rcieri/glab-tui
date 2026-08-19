@@ -361,7 +361,7 @@ fn render_content_pane(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(&desc_value, &theme)
+                render_markdown(&desc_value, &theme, desc_inner.width)
             };
 
             f.render_widget(
@@ -1038,7 +1038,7 @@ pub(crate) fn render_inspector_content(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(md, &theme)
+                render_markdown(md, &theme, area.width)
             };
             f.render_widget(
                 Paragraph::new(lines)

@@ -2153,6 +2153,17 @@ pub struct App {
     pub last_attr_refresh: std::time::Instant,
     pub pending_delete_milestone_iid: Option<u64>,
     pub pending_delete_release_tag: Option<String>,
+    pub pending_mr_create: Option<PendingMrCreate>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingMrCreate {
+    pub title: String,
+    pub labels: String,
+    pub assignees: String,
+    pub milestone: String,
+    pub source_branch: String,
+    pub issue_iid: u64,
 }
 
 impl Default for App {
@@ -2261,6 +2272,7 @@ impl Default for App {
             last_attr_refresh: std::time::Instant::now(),
             pending_delete_milestone_iid: None,
             pending_delete_release_tag: None,
+            pending_mr_create: None,
         }
     }
 }

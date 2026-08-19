@@ -54,6 +54,11 @@ struct MarkdownRenderer<'a> {
     bold_depth: usize,
     emphasis_depth: usize,
     strikethrough_depth: usize,
+    /// Set to `true` after any block-level element (paragraph, heading, code
+    /// block, list, blockquote, table, rule) finishes. The next block will
+    /// prepend a blank separator line so the output breathes rather than running
+    /// everything together. Cleared whenever we actually emit content.
+    last_was_block: bool,
 }
 
 impl<'a> MarkdownRenderer<'a> {
@@ -72,6 +77,7 @@ impl<'a> MarkdownRenderer<'a> {
             bold_depth: 0,
             emphasis_depth: 0,
             strikethrough_depth: 0,
+            last_was_block: false,
         }
     }
 
@@ -97,10 +103,12 @@ impl<'a> MarkdownRenderer<'a> {
                 Event::HardBreak => self.finish_line(),
                 Event::Rule => {
                     self.finish_line();
+                    self.blank_between_blocks();
                     self.lines.push(Line::from(Span::styled(
                         "────────────────────────".to_string(),
                         Style::default().fg(self.theme.text_muted),
                     )));
+                    self.last_was_block = true;
                 }
                 Event::Html(html) | Event::InlineHtml(html) => {
                     let style = Style::default()
@@ -138,6 +146,7 @@ impl<'a> MarkdownRenderer<'a> {
         match tag {
             Tag::Heading { level, .. } => {
                 self.finish_line();
+                self.blank_between_blocks();
                 self.heading_level = Some(level as u8);
                 self.push_span(
                     "▌ ".to_string(),
@@ -146,6 +155,7 @@ impl<'a> MarkdownRenderer<'a> {
             }
             Tag::CodeBlock(kind) => {
                 self.finish_line();
+                self.blank_between_blocks();
                 let language = match kind {
                     CodeBlockKind::Indented => None,
                     CodeBlockKind::Fenced(info) => info
@@ -161,6 +171,7 @@ impl<'a> MarkdownRenderer<'a> {
             }
             Tag::BlockQuote(kind) => {
                 self.finish_line();
+                self.blank_between_blocks();
                 self.blockquote_depth += 1;
                 if let Some(kind) = kind {
                     let (label, color) = match kind {
@@ -178,6 +189,12 @@ impl<'a> MarkdownRenderer<'a> {
                 }
             }
             Tag::List(first_number) => {
+                // Only emit a blank separator before a top-level list, not for
+                // nested lists (which are already inside a list item).
+                if self.list_stack.is_empty() {
+                    self.finish_line();
+                    self.blank_between_blocks();
+                }
                 self.list_stack.push(ListFrame {
                     next_number: first_number,
                 });
@@ -206,6 +223,7 @@ impl<'a> MarkdownRenderer<'a> {
             }
             Tag::Table(alignments) => {
                 self.finish_line();
+                self.blank_between_blocks();
                 self.table = Some(TableState {
                     alignments,
                     rows: Vec::new(),
@@ -222,6 +240,9 @@ impl<'a> MarkdownRenderer<'a> {
                 if let Some(table) = self.table.as_mut() {
                     table.current_cell.clear();
                 }
+            }
+            Tag::Paragraph => {
+                self.blank_between_blocks();
             }
             Tag::Strong => self.bold_depth += 1,
             Tag::Emphasis => self.emphasis_depth += 1,
@@ -242,24 +263,37 @@ impl<'a> MarkdownRenderer<'a> {
 
     fn end_tag(&mut self, tag: TagEnd) {
         match tag {
-            TagEnd::Paragraph | TagEnd::Item | TagEnd::Heading(_) => {
+            TagEnd::Paragraph => {
                 self.finish_line();
-                if matches!(tag, TagEnd::Heading(_)) {
-                    self.heading_level = None;
-                }
+                self.last_was_block = true;
+            }
+            TagEnd::Item => {
+                self.finish_line();
+            }
+            TagEnd::Heading(_) => {
+                self.finish_line();
+                self.heading_level = None;
+                self.last_was_block = true;
             }
             TagEnd::CodeBlock => {
                 if let Some(code_block) = self.code_block.take() {
                     self.render_code_block(code_block);
                 }
+                self.last_was_block = true;
             }
             TagEnd::BlockQuote(_) => {
                 self.finish_line();
                 self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                if self.blockquote_depth == 0 {
+                    self.last_was_block = true;
+                }
             }
             TagEnd::List(_) => {
                 self.finish_line();
                 self.list_stack.pop();
+                if self.list_stack.is_empty() {
+                    self.last_was_block = true;
+                }
             }
             TagEnd::TableCell => {
                 if let Some(table) = self.table.as_mut() {
@@ -277,6 +311,7 @@ impl<'a> MarkdownRenderer<'a> {
                 if let Some(table) = self.table.take() {
                     self.render_table(table);
                 }
+                self.last_was_block = true;
             }
             TagEnd::Strong => self.bold_depth = self.bold_depth.saturating_sub(1),
             TagEnd::Emphasis => self.emphasis_depth = self.emphasis_depth.saturating_sub(1),
@@ -492,13 +527,23 @@ impl<'a> MarkdownRenderer<'a> {
     fn finish_line(&mut self) {
         // Intentionally a no-op when current_line is empty. pulldown-cmark emits
         // Tag::Paragraph / TagEnd::Paragraph pairs around every block, so blank
-        // lines between paragraphs would call finish_line twice. Suppressing the
-        // second call keeps the pane compact and avoids spurious blank rows in a
-        // fixed-height TUI widget where vertical space is at a premium.
+        // lines between paragraphs would call finish_line twice. The actual blank
+        // line between blocks is emitted by blank_between_blocks() instead, which
+        // is called at the *start* of each new top-level block.
         if !self.current_line.is_empty() {
             self.lines
                 .push(Line::from(std::mem::take(&mut self.current_line)));
         }
+    }
+
+    /// Emits a single blank separator line before a new top-level block when the
+    /// previous block has just finished. Skipped when we're inside a list (items
+    /// run flush) or at the very start of output.
+    fn blank_between_blocks(&mut self) {
+        if self.last_was_block && self.list_stack.is_empty() && !self.lines.is_empty() {
+            self.lines.push(Line::from(""));
+        }
+        self.last_was_block = false;
     }
 
     fn inline_style(&self) -> Style {
@@ -552,29 +597,56 @@ mod tests {
         let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
         let theme = Theme::default();
 
+        // Blank lines are now emitted between each top-level block.
         assert_eq!(
             text,
             vec![
                 "▌ Header1",
+                "",
                 "▌ Header2",
+                "",
                 "• Bullet code item",
+                "",
                 "Normal line with bold text",
+                "",
                 "  ▌ Quoted",
             ]
         );
+        // Header1 is at index 0, Header2 at 2, list item at 4, paragraph at 6, quote at 8.
         assert!(lines[0].spans.iter().any(|span| span.content == "Header1"
             && span.style.fg == Some(theme.purple)
             && span.style.add_modifier.contains(Modifier::BOLD)
             && span.style.add_modifier.contains(Modifier::UNDERLINED)));
-        assert!(lines[2].spans.iter().any(|span| span.content == "code"
+        assert!(lines[4].spans.iter().any(|span| span.content == "code"
             && span.style.fg == Some(theme.red)
             && span.style.bg == Some(theme.inactive_bg)));
         assert!(
-            lines[3]
+            lines[6]
                 .spans
                 .iter()
                 .any(|span| span.content == "bold"
                     && span.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
+
+    #[test]
+    fn test_render_markdown_formats_nested_ordered_and_task_lists() {
+        // Two separate lists separated by a blank line in the source — a blank
+        // separator line is emitted between them.
+        let md = "1. First\n2. Second\n    - Nested\n\n- [x] Done\n- [ ] Pending";
+        let lines = render_markdown_for_test(md);
+        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
+
+        assert_eq!(
+            text,
+            vec![
+                "1. First",
+                "2. Second",
+                "  • Nested",
+                "",
+                "• ☑ Done",
+                "• ☐ Pending",
+            ]
         );
     }
 
@@ -599,23 +671,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_render_markdown_formats_nested_ordered_and_task_lists() {
-        let md = "1. First\n2. Second\n    - Nested\n\n- [x] Done\n- [ ] Pending";
-        let lines = render_markdown_for_test(md);
-        let text: Vec<String> = lines.iter().map(ToString::to_string).collect();
-
-        assert_eq!(
-            text,
-            vec![
-                "1. First",
-                "2. Second",
-                "  • Nested",
-                "• ☑ Done",
-                "• ☐ Pending",
-            ]
-        );
-    }
 
     #[test]
     fn test_render_markdown_formats_fenced_code_blocks() {

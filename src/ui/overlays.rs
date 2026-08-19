@@ -1306,10 +1306,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let is_page_size_active = active_idx == page_size_idx;
         let page_size_value = if app.editing_page_size {
             format!("[ {}| ]", app.page_size_input)
-        } else if is_page_size_active {
-            format!("[ {} ]", app.page_size)
         } else {
-            format!("{}", app.page_size)
+            format!("[ {} ]", app.page_size)
         };
         let page_size_style = if app.editing_page_size {
             Style::default()
@@ -1354,6 +1352,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         // Theme — inline row (icon + label in purple, value aligned with Page Size)
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
         let is_theme_active = active_idx == theme_idx;
+        let theme_value = format!("[ {} ]", current_theme_name);
         let theme_style = if is_theme_active {
             Style::default()
                 .fg(t.bg)
@@ -1364,7 +1363,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         };
         let theme_line = if is_theme_active {
             Line::from(Span::styled(
-                format!(" {} Theme     {} ", icons.label_theme, current_theme_name),
+                format!(" {} Theme     {} ", icons.label_theme, theme_value),
                 theme_style,
             ))
         } else {
@@ -1373,7 +1372,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     format!(" {} Theme     ", icons.label_theme),
                     Style::default().fg(t.purple).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(current_theme_name, Style::default().fg(t.text_normal)),
+                Span::styled(theme_value, Style::default().fg(t.text_normal)),
             ])
         };
         if is_theme_active {
@@ -1389,7 +1388,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         // Save button — no header, centered in the inner area
         let is_save_selected = active_idx == save_end;
-        let inner_w: usize = 62; // width (64) minus 2 for borders
+        let width: u16 = 64;
+        let inner_w = width.saturating_sub(2) as usize; // -2 for borders
         let save_label = format!("{} Save View", icons.label_save);
         let save_decorated = if is_save_selected {
             format!("›  {} ‹", save_label)
@@ -1419,7 +1419,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         // Grow the popup with content, but cap it so the whole list scrolls
         // within the available terminal height (headers included).
-        let width = 64;
         let content_len = lines.len() as u16;
         // +2 accounts for the block's top/bottom border so inner_area has room
         // for every item without clipping the save button.

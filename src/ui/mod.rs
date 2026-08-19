@@ -67,6 +67,9 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
             // EDIT — reuse the GROUPED badge palette (blue).
             (" EDIT ", theme.blue, theme.bg)
         }
+    } else if app.select_mode {
+        // SELECT — distinct palette (purple) for yazi-style select mode.
+        (" SELECT ", theme.purple, theme.bg)
     } else if app.details_zoomed {
         // PREVIEW — reuse the SEARCHING badge palette (yellow).
         (" PREVIEW ", theme.yellow, theme.bg)
@@ -419,20 +422,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(sidebar, sidebar_rect);
 
     // Main Area Title
-    let mut title_spans = vec![Span::styled(
-        format!(" {} ", app.active_tab.title(kind)),
-        Style::default()
-            .fg(THEME.read().unwrap().header_fg)
-            .add_modifier(Modifier::BOLD),
-    )];
-    if app.select_mode {
-        title_spans.push(Span::styled(
-            " ● SELECT ",
-            Style::default()
-                .fg(THEME.read().unwrap().yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
+    let tab_title = format!(" {} ", app.active_tab.title(kind));
     let main_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app.focus_column_checklist {
@@ -440,7 +430,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         } else {
             THEME.read().unwrap().border_focused
         }))
-        .title(Line::from(title_spans))
+        .title(tab_title)
         .title_style(
             Style::default()
                 .fg(THEME.read().unwrap().header_fg)

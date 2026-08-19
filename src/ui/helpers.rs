@@ -103,7 +103,7 @@ pub(crate) fn render_labels_cell(
     label_colors: &HashMap<String, Color>,
     query: &str,
     is_selected: bool,
-    is_checked: bool,
+    _is_checked: bool,
     max_len: usize,
 ) -> Cell<'static> {
     if labels.is_empty() {
@@ -112,8 +112,6 @@ pub(crate) fn render_labels_cell(
             style = style
                 .bg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD);
-        } else if is_checked {
-            style = style.bg(THEME.read().unwrap().checked_bg);
         }
         return Cell::from(Line::from("—").alignment(Alignment::Left)).style(style);
     }
@@ -123,8 +121,6 @@ pub(crate) fn render_labels_cell(
 
     let base_bg = if is_selected {
         Some(THEME.read().unwrap().highlight_bg)
-    } else if is_checked {
-        Some(THEME.read().unwrap().checked_bg)
     } else {
         None
     };
@@ -555,7 +551,7 @@ pub(crate) fn render_fuzzy_cell(
     text: &str,
     query: &str,
     is_selected: bool,
-    is_checked: bool,
+    _is_checked: bool,
     base_style: Style,
     alignment: Alignment,
 ) -> Cell<'static> {
@@ -564,8 +560,6 @@ pub(crate) fn render_fuzzy_cell(
         styled_base = styled_base
             .bg(THEME.read().unwrap().highlight_bg)
             .add_modifier(Modifier::BOLD);
-    } else if is_checked {
-        styled_base = styled_base.bg(THEME.read().unwrap().checked_bg);
     }
     let line = if query.trim().is_empty() {
         Line::from(text.to_string()).alignment(alignment)

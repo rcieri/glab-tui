@@ -880,7 +880,7 @@ keybind_defaults! {
     def_delete_entity = "d",
     def_create_mr = "n",
     def_select_mr = "Space",
-    def_selection_toggle = "V",
+    def_selection_toggle = "v",
     def_approve_mr = "a",
     def_revoke_mr = "A",
     def_rebase_mr = "R",
@@ -1291,7 +1291,7 @@ edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
-selection_toggle = "V"
+selection_toggle = "v"
 
 [keybindings.mrs]
 create_mr = "n"
@@ -1307,7 +1307,7 @@ edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
-selection_toggle = "V"
+selection_toggle = "v"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"

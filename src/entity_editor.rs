@@ -11,6 +11,16 @@ use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crossterm::event::KeyCode;
 
+/// Return a muted dash for empty values so optional fields read cleanly
+/// instead of cluttering the preview with "None" or blank rows.
+pub(crate) fn display_branch(value: &str) -> &str {
+    if value.trim().is_empty() || value == "None" {
+        "\u{2014}"
+    } else {
+        value
+    }
+}
+
 // ── Shared field builders (single source of truth for edit/creation forms) ──
 
 pub fn issue_fields(
@@ -270,13 +280,13 @@ pub fn build_mr_document(
             mr.labels.join(", ")
         },
     ));
-    fields.push(crate::app::Field::read_only(
-        "Source Branch",
-        mr.source_branch.clone(),
-    ));
     fields.push(crate::app::Field::ref_field(
-        "Target Branch",
-        mr.target_branch.clone(),
+        "Branch",
+        format!(
+            "{} \u{2192} {}",
+            display_branch(&mr.source_branch),
+            display_branch(&mr.target_branch)
+        ),
     ));
     fields.push(crate::app::Field::read_only(
         "Updated",
@@ -469,13 +479,6 @@ pub fn build_release_document(
 pub fn build_runner_document(
     runner: &crate::domain::runners::Runner,
 ) -> crate::app::EntityDocument {
-    let runner_hash = runner.id;
-    let active_jobs = (runner_hash % 8) as usize + 1;
-    let max_capacity = ((runner_hash % 4) as usize + 2) * 4;
-    let queue_depth = (runner_hash % 5) as usize;
-    let utilization = (active_jobs * 100) / max_capacity;
-    let wait_time = (runner_hash % 50) as usize + 10;
-
     let fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", runner.id)),
         crate::app::Field::read_only(
@@ -494,15 +497,11 @@ pub fn build_runner_document(
                 "NO".to_string()
             },
         ),
-        crate::app::Field::read_only("Active Jobs", format!("{}/{}", active_jobs, max_capacity)),
-        crate::app::Field::read_only("Utilization", format!("{}%", utilization)),
-        crate::app::Field::read_only("Queue Depth", format!("{} waiting", queue_depth)),
-        crate::app::Field::read_only("Avg Wait", format!("{}s", wait_time)),
     ];
     crate::app::EntityDocument {
         title: format!("Runner #{}", runner.id),
         fields,
-        content: crate::app::InspectorContent::Empty("Runner metrics and status"),
+        content: crate::app::InspectorContent::Empty("Runner status and metadata"),
     }
 }
 

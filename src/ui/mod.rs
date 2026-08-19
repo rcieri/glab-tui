@@ -165,9 +165,9 @@ fn merge_syntax_with_fuzzy(
             let is_match = code_indices.contains(&char_pos);
             if is_match != in_match && !buf.is_empty() {
                 let s = if in_match {
-                    match_style
-                        .fg(syn_style.fg.unwrap_or(code_fg))
-                        .add_modifier(syn_style.add_modifier)
+                    // Keep the fuzzy match color (yellow) so matches stay visible
+                    // over syntax coloring.
+                    match_style.add_modifier(syn_style.add_modifier)
                 } else {
                     base_style
                         .fg(syn_style.fg.unwrap_or(code_fg))
@@ -181,9 +181,7 @@ fn merge_syntax_with_fuzzy(
         }
         if !buf.is_empty() {
             let s = if in_match {
-                match_style
-                    .fg(syn_style.fg.unwrap_or(code_fg))
-                    .add_modifier(syn_style.add_modifier)
+                match_style.add_modifier(syn_style.add_modifier)
             } else {
                 base_style
                     .fg(syn_style.fg.unwrap_or(code_fg))

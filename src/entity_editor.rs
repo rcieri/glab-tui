@@ -487,10 +487,6 @@ pub fn build_runner_document(
                 "NO".to_string()
             },
         ),
-        crate::app::Field::read_only("Active Jobs", "Unavailable".to_string()),
-        crate::app::Field::read_only("Utilization", "Unavailable".to_string()),
-        crate::app::Field::read_only("Queue Depth", "Unavailable".to_string()),
-        crate::app::Field::read_only("Avg Wait", "Unavailable".to_string()),
     ];
     crate::app::EntityDocument {
         title: format!("Runner #{}", runner.id),

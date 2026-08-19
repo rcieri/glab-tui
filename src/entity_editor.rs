@@ -588,9 +588,7 @@ pub fn build_environment_document(
         crate::app::Field::read_only("State", env.state.to_uppercase()),
         crate::app::Field::read_only(
             "URL",
-            env.external_url
-                .clone()
-                .unwrap_or_else(|| "--".to_string()),
+            env.external_url.clone().unwrap_or_else(|| "--".to_string()),
         ),
     ];
     if let Some(dep) = &env.last_deployment {

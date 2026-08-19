@@ -752,8 +752,25 @@ pub fn render(f: &mut Frame, app: &mut App) {
             };
 
             let files_list = if file_tree_visible {
+                let (reviewed_count, total_files) = diff_view.review_progress();
+                let files_title = if reviewed_count > 0 {
+                    format!(
+                        " {} {} {}/{}{} ",
+                        icons.label_files,
+                        &ICONS.read().unwrap().file_reviewed,
+                        reviewed_count,
+                        total_files,
+                        if diff_view.hide_reviewed {
+                            " (hidden)"
+                        } else {
+                            ""
+                        }
+                    )
+                } else {
+                    format!(" {} ", icons.label_files)
+                };
                 let files_block = Block::default()
-                    .title(format!(" {} ", icons.label_files))
+                    .title(files_title)
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(if diff_view.focus_on_files {
                         THEME.read().unwrap().border_focused
@@ -776,6 +793,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         } else {
                             format!("{} ", &ICONS.read().unwrap().folder_collapsed)
                         }
+                    } else if node.is_reviewed {
+                        format!("{} ", &ICONS.read().unwrap().file_reviewed)
                     } else {
                         "  ".to_string()
                     };
@@ -853,6 +872,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 .bg(THEME.read().unwrap().border)
                                 .fg(THEME.read().unwrap().text_normal)
                         }
+                    } else if node.is_reviewed {
+                        // Reviewed files (and fully reviewed directories) fade
+                        // into the background so only pending work stands out.
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .add_modifier(Modifier::DIM)
                     } else if node.is_dir {
                         Style::default()
                             .fg(THEME.read().unwrap().blue)
@@ -1853,7 +1878,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
             }
 
-            let footer_p = Paragraph::new(" Esc/q: Exit • d: Toggle Diff Layout • Enter/Space: Select File / Toggle Zoom • h/l: Collapse/Expand Dir • j/k/↑/↓: Navigate • J/K: Scroll 10 • [/]: Prev/Next Hunk • z/Z: Collapse/Expand All • v: Select Lines • c: Comment • e: Suggest Code • a: Comment Actions • r: Submit Review • / or f: Search • Ctrl+n/Ctrl+N: Next/Prev Match ")
+            let footer_p = Paragraph::new(" Esc/q: Exit • d: Toggle Diff Layout • Enter/Space: Select File / Toggle Zoom • h/l: Collapse/Expand Dir • j/k/↑/↓: Navigate • J/K: Scroll 10 • [/]: Prev/Next Hunk • z/Z: Collapse/Expand All • m: Mark Reviewed • M: Hide Reviewed • v: Select Lines • c: Comment • e: Suggest Code • a: Comment Actions • r: Submit Review • / or f: Search • Ctrl+n/Ctrl+N: Next/Prev Match ")
             .alignment(Alignment::Center)
             .style(Style::default().fg(THEME.read().unwrap().text_muted).add_modifier(Modifier::ITALIC))
             .wrap(ratatui::widgets::Wrap { trim: true });

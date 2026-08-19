@@ -1,14 +1,15 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
-use crate::config::{Config, THEME, Theme};
+use crate::config::{Config, Theme, THEME};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::ui::StatefulTable;
-use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::ListState;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 use syntect::highlighting::Highlighter;
 use syntect::highlighting::Style as SyntectStyle;
@@ -840,6 +841,21 @@ impl DiffTreeNode {
     }
 
     pub fn flatten(&self, depth: usize, prefix: &str, out: &mut Vec<FlatDiffTreeNode>) {
+        self.flatten_ex(depth, prefix, &HashSet::new(), false, out);
+    }
+
+    /// Like `flatten`, but review-aware: every node carries `is_reviewed` (for a
+    /// directory: every file below it is reviewed), and when `hide_reviewed` is
+    /// set, reviewed files — plus directories left with nothing to show — are
+    /// dropped from the flattened list.
+    pub fn flatten_ex(
+        &self,
+        depth: usize,
+        prefix: &str,
+        reviewed: &HashSet<String>,
+        hide_reviewed: bool,
+        out: &mut Vec<FlatDiffTreeNode>,
+    ) {
         match self {
             DiffTreeNode::Directory {
                 name,
@@ -851,6 +867,9 @@ impl DiffTreeNode {
                 } else {
                     format!("{}/{}", prefix, name)
                 };
+                if hide_reviewed && !self.has_unreviewed_file(reviewed) {
+                    return;
+                }
                 if name != "root" {
                     out.push(FlatDiffTreeNode {
                         name: name.clone(),
@@ -865,6 +884,7 @@ impl DiffTreeNode {
                         path_id: path_id.clone(),
                         additions: 0,
                         deletions: 0,
+                        is_reviewed: self.is_fully_reviewed(reviewed),
                     });
                 }
                 if name == "root" || *is_expanded {
@@ -881,7 +901,13 @@ impl DiffTreeNode {
                         b_is_dir.cmp(&a_is_dir).then_with(|| a.name().cmp(b.name()))
                     });
                     for child in sorted_children {
-                        child.flatten(if name == "root" { 0 } else { depth + 1 }, &path_id, out);
+                        child.flatten_ex(
+                            if name == "root" { 0 } else { depth + 1 },
+                            &path_id,
+                            reviewed,
+                            hide_reviewed,
+                            out,
+                        );
                     }
                 }
             }
@@ -895,6 +921,10 @@ impl DiffTreeNode {
                 additions,
                 deletions,
             } => {
+                let is_reviewed = reviewed.contains(file_path);
+                if hide_reviewed && is_reviewed {
+                    return;
+                }
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
@@ -913,7 +943,89 @@ impl DiffTreeNode {
                     path_id,
                     additions: *additions,
                     deletions: *deletions,
+                    is_reviewed,
                 });
+            }
+        }
+    }
+
+    /// Collects the paths of every file at or below this node.
+    pub fn collect_file_paths(&self, out: &mut Vec<String>) {
+        match self {
+            DiffTreeNode::Directory { children, .. } => {
+                for child in children {
+                    child.collect_file_paths(out);
+                }
+            }
+            DiffTreeNode::File { file_path, .. } => out.push(file_path.clone()),
+        }
+    }
+
+    /// True when at least one file at or below this node is not reviewed.
+    /// An empty directory counts as having nothing left to review.
+    fn has_unreviewed_file(&self, reviewed: &HashSet<String>) -> bool {
+        match self {
+            DiffTreeNode::Directory { children, .. } => {
+                children.iter().any(|c| c.has_unreviewed_file(reviewed))
+            }
+            DiffTreeNode::File { file_path, .. } => !reviewed.contains(file_path),
+        }
+    }
+
+    /// True when this node holds at least one file and all of them are reviewed.
+    fn is_fully_reviewed(&self, reviewed: &HashSet<String>) -> bool {
+        match self {
+            DiffTreeNode::Directory { children, .. } => {
+                let mut has_file = false;
+                for child in children {
+                    match child {
+                        DiffTreeNode::File { file_path, .. } => {
+                            has_file = true;
+                            if !reviewed.contains(file_path) {
+                                return false;
+                            }
+                        }
+                        DiffTreeNode::Directory { .. } => {
+                            let mut paths = Vec::new();
+                            child.collect_file_paths(&mut paths);
+                            if !paths.is_empty() {
+                                has_file = true;
+                                if paths.iter().any(|p| !reviewed.contains(p)) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+                has_file
+            }
+            DiffTreeNode::File { file_path, .. } => reviewed.contains(file_path),
+        }
+    }
+
+    /// Folds directories that just became fully reviewed, and unfolds those that
+    /// stopped being fully reviewed, cascading up through parents. Only
+    /// *transitions* between the two review sets are acted on, so a reviewed
+    /// directory the user reopened by hand stays open until its state changes.
+    fn sync_expansion_to_review(&mut self, before: &HashSet<String>, after: &HashSet<String>) {
+        if !matches!(self, DiffTreeNode::Directory { .. }) {
+            return;
+        }
+        let was_reviewed = self.is_fully_reviewed(before);
+        let is_reviewed = self.is_fully_reviewed(after);
+        if let DiffTreeNode::Directory {
+            children,
+            is_expanded,
+            ..
+        } = self
+        {
+            for child in children.iter_mut() {
+                child.sync_expansion_to_review(before, after);
+            }
+            if is_reviewed && !was_reviewed {
+                *is_expanded = false;
+            } else if was_reviewed && !is_reviewed {
+                *is_expanded = true;
             }
         }
     }
@@ -967,6 +1079,8 @@ pub struct FlatDiffTreeNode {
     pub path_id: String,
     pub additions: u32,
     pub deletions: u32,
+    /// File marked as reviewed; on a directory, every file below it is reviewed.
+    pub is_reviewed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1005,6 +1119,11 @@ pub struct DiffView {
     /// the same column on every row. Derived from the widest line number in the
     /// diff, never below [`MIN_LINE_NUMBER_WIDTH`].
     pub line_number_width: usize,
+    /// Paths of files the user marked as reviewed (`m`), persisted per MR/PR in
+    /// the project cache.
+    pub reviewed_files: HashSet<String>,
+    /// Filter reviewed files out of the tree (`M`).
+    pub hide_reviewed: bool,
 }
 
 /// Narrowest line-number column, and what any diff under 10 000 lines gets —
@@ -1361,10 +1480,150 @@ impl DiffView {
             search_active: false,
             file_tree_visible: true,
             line_number_width: number_width,
+            reviewed_files: HashSet::new(),
+            hide_reviewed: false,
         };
 
         view.update_active_lines();
         view
+    }
+
+    /// Seeds the reviewed-file marks (restored from the project cache) and the
+    /// hide-reviewed filter, then rebuilds the tree around them.
+    pub fn restore_review_state(&mut self, reviewed: HashSet<String>, hide_reviewed: bool) {
+        // Drop marks for files no longer in the diff so stale paths never leak
+        // back into the cache.
+        let mut known = Vec::new();
+        self.root_node.collect_file_paths(&mut known);
+        let known: HashSet<String> = known.into_iter().collect();
+        self.reviewed_files = reviewed.into_iter().filter(|p| known.contains(p)).collect();
+        self.hide_reviewed = hide_reviewed;
+        // Directories already fully reviewed on a previous pass open folded.
+        self.root_node
+            .sync_expansion_to_review(&HashSet::new(), &self.reviewed_files);
+        self.rebuild_visible_nodes_keep_position();
+    }
+
+    /// Files covered by the current tree selection: the selected file itself, or
+    /// every file below the selected directory.
+    pub fn selected_file_paths(&self) -> Vec<String> {
+        let Some(node) = self.visible_nodes.get(self.selected_visible_idx) else {
+            return Vec::new();
+        };
+        if !node.is_dir {
+            return node.file_path.clone().into_iter().collect();
+        }
+        let rel_path = node.path_id.strip_prefix("root/").unwrap_or(&node.path_id);
+        let prefix1 = format!("{}/", rel_path);
+        let prefix2 = format!("{}\\", rel_path);
+        let mut paths = Vec::new();
+        self.root_node.collect_file_paths(&mut paths);
+        paths.retain(|p| p.starts_with(&prefix1) || p.starts_with(&prefix2));
+        paths
+    }
+
+    /// Marks or unmarks the current selection. A directory flips as a whole:
+    /// fully reviewed → unmark everything, otherwise mark everything.
+    /// Returns the affected file count and the new state.
+    pub fn toggle_reviewed(&mut self) -> Option<(usize, bool)> {
+        let paths = self.selected_file_paths();
+        if paths.is_empty() {
+            return None;
+        }
+        let mark = !paths.iter().all(|p| self.reviewed_files.contains(p));
+        let before = self.reviewed_files.clone();
+        for path in &paths {
+            if mark {
+                self.reviewed_files.insert(path.clone());
+            } else {
+                self.reviewed_files.remove(path);
+            }
+        }
+        self.root_node
+            .sync_expansion_to_review(&before, &self.reviewed_files);
+        self.rebuild_visible_nodes_keep_position();
+        Some((paths.len(), mark))
+    }
+
+    /// Toggles the "hide reviewed files" tree filter.
+    pub fn toggle_hide_reviewed(&mut self) -> bool {
+        self.hide_reviewed = !self.hide_reviewed;
+        self.rebuild_visible_nodes_keep_position();
+        self.hide_reviewed
+    }
+
+    /// (reviewed, total) file counts for the whole diff, ignoring the filter.
+    pub fn review_progress(&self) -> (usize, usize) {
+        let mut paths = Vec::new();
+        self.root_node.collect_file_paths(&mut paths);
+        let reviewed = paths
+            .iter()
+            .filter(|p| self.reviewed_files.contains(*p))
+            .count();
+        (reviewed, paths.len())
+    }
+
+    /// Rebuilds the tree after a review-state change. Unlike
+    /// `rebuild_visible_nodes`, a selection that got filtered out falls back to
+    /// the node that took its place instead of jumping back to the top.
+    fn rebuild_visible_nodes_keep_position(&mut self) {
+        let old_path = self
+            .visible_nodes
+            .get(self.selected_visible_idx)
+            .map(|n| n.path_id.clone());
+        let old_idx = self.selected_visible_idx;
+
+        let mut visible = Vec::new();
+        self.root_node.flatten_ex(
+            0,
+            "",
+            &self.reviewed_files,
+            self.hide_reviewed,
+            &mut visible,
+        );
+        Self::copy_dir_counts_to_flat(&self.root_node, &mut visible);
+        self.visible_nodes = visible;
+
+        if self.visible_nodes.is_empty() {
+            self.selected_visible_idx = 0;
+            self.file_tree_scroll_offset = 0;
+            self.cursor_idx = 0;
+            self.scroll_offset = 0;
+            self.update_active_lines();
+            return;
+        }
+
+        if let Some(pos) = old_path
+            .as_deref()
+            .and_then(|p| self.visible_nodes.iter().position(|n| n.path_id == p))
+        {
+            self.selected_visible_idx = pos;
+            self.update_active_lines();
+            return;
+        }
+
+        // The selection is gone: it either folded into a parent that just became
+        // fully reviewed, or the filter hid it. Follow the fold onto that parent
+        // when there is one; otherwise hold the cursor slot so the next pending
+        // file slides under it.
+        let ancestor = old_path.as_deref().and_then(|old| {
+            let mut path = old;
+            while let Some((parent, _)) = path.rsplit_once('/') {
+                if let Some(pos) = self
+                    .visible_nodes
+                    .iter()
+                    .position(|n| n.path_id == parent && n.is_dir && !n.is_expanded)
+                {
+                    return Some(pos);
+                }
+                path = parent;
+            }
+            None
+        });
+        self.selected_visible_idx = ancestor.unwrap_or(old_idx.min(self.visible_nodes.len() - 1));
+        self.cursor_idx = 0;
+        self.scroll_offset = 0;
+        self.update_active_lines();
     }
 
     pub fn update_active_lines(&mut self) {
@@ -1541,7 +1800,14 @@ impl DiffView {
             .and_then(|n| n.file_path.clone().or_else(|| Some(n.path_id.clone())));
 
         let mut visible = Vec::new();
-        self.root_node.flatten(0, "", &mut visible);
+        self.root_node.flatten_ex(
+            0,
+            "",
+            &self.reviewed_files,
+            self.hide_reviewed,
+            &mut visible,
+        );
+        Self::copy_dir_counts_to_flat(&self.root_node, &mut visible);
         self.visible_nodes = visible;
 
         if let Some(ref old_path) = old_file_path {
@@ -2150,6 +2416,8 @@ pub struct App {
     pub focus_column_checklist: bool,
     pub column_checklist_idx: usize,
     pub in_review_mode: bool,
+    /// Session-wide "hide reviewed files" preference for the diff file tree.
+    pub hide_reviewed_files: bool,
     pub draft_comments: Vec<DraftComment>,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
@@ -2262,6 +2530,7 @@ impl Default for App {
             focus_column_checklist: false,
             column_checklist_idx: 0,
             in_review_mode: false,
+            hide_reviewed_files: false,
             draft_comments: Vec::new(),
             save_menu_open: false,
             save_menu_selection: None,
@@ -2476,6 +2745,27 @@ impl App {
             .count()
     }
 
+    /// Files marked as reviewed for an MR/PR, restored from the project cache.
+    pub fn reviewed_files_for_mr(&self, mr_iid: u64) -> HashSet<String> {
+        self.project_cache
+            .reviewed_files
+            .get(&mr_iid)
+            .map(|paths| paths.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Writes the reviewed-file marks of an MR/PR back into the project cache.
+    /// The caller persists the cache to disk.
+    pub fn store_reviewed_files_for_mr(&mut self, mr_iid: u64, reviewed: &HashSet<String>) {
+        if reviewed.is_empty() {
+            self.project_cache.reviewed_files.remove(&mr_iid);
+            return;
+        }
+        let mut paths: Vec<String> = reviewed.iter().cloned().collect();
+        paths.sort();
+        self.project_cache.reviewed_files.insert(mr_iid, paths);
+    }
+
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
@@ -2665,7 +2955,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -2936,7 +3230,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -3105,7 +3403,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -3236,7 +3538,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -3404,7 +3710,11 @@ impl App {
                     _ => String::new(),
                 };
                 let cmp = val_a.cmp(&val_b);
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -3531,7 +3841,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -3673,7 +3987,11 @@ impl App {
                     (Ok(a_num), Ok(b_num)) => a_num.cmp(&b_num),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -3922,7 +4240,11 @@ impl App {
             "unread" | "done" => {
                 // "unread"→"NEW", "done"→"READ" — handled via pipeline_status_display
                 // but normalize maps them too for saved-filter compat
-                if v == "unread" { "NEW" } else { "READ" }
+                if v == "unread" {
+                    "NEW"
+                } else {
+                    "READ"
+                }
             }
             other => other,
         }
@@ -5650,6 +5972,236 @@ index 123456..789012 100644
         assert_eq!(view.file_tree_scroll_offset, 0);
     }
 
+    fn review_fixture() -> DiffView {
+        let diff = "\
+diff --git a/src/app.rs b/src/app.rs
+index 123456..789012 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -1,1 +1,1 @@
+- old
++ new
+diff --git a/src/main.rs b/src/main.rs
+index 123456..789012 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,1 +1,1 @@
+- old
++ new
+diff --git a/README.md b/README.md
+index 123456..789012 100644
+--- a/README.md
++++ b/README.md
+@@ -1,1 +1,1 @@
+- old
++ new
+";
+        DiffView::new(42, diff.to_string())
+    }
+
+    #[test]
+    fn test_toggle_reviewed_marks_selected_file() {
+        let mut view = review_fixture();
+        // Tree (directories sort first): src/, src/app.rs, src/main.rs, README.md
+        assert_eq!(view.visible_nodes.len(), 4);
+        assert_eq!(view.review_progress(), (0, 3));
+
+        view.selected_visible_idx = 3; // README.md
+        assert_eq!(view.toggle_reviewed(), Some((1, true)));
+        assert!(view.reviewed_files.contains("README.md"));
+        assert_eq!(view.review_progress(), (1, 3));
+        assert!(view.visible_nodes[3].is_reviewed);
+        // Still listed — only the filter hides files.
+        assert_eq!(view.visible_nodes.len(), 4);
+
+        assert_eq!(view.toggle_reviewed(), Some((1, false)));
+        assert!(view.reviewed_files.is_empty());
+        assert!(!view.visible_nodes[3].is_reviewed);
+    }
+
+    #[test]
+    fn test_toggle_reviewed_on_directory_marks_every_file_below() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        assert!(view.visible_nodes[0].is_dir);
+
+        assert_eq!(view.toggle_reviewed(), Some((2, true)));
+        assert_eq!(view.review_progress(), (2, 3));
+        // The directory reads as reviewed once all of its files are.
+        assert!(view.visible_nodes[0].is_reviewed);
+
+        // Completing it also folds it, so reopen it to reach a single file.
+        view.root_node.toggle_expanded("root/src", "");
+        view.rebuild_visible_nodes();
+
+        // Unmarking one file leaves the directory pending again.
+        view.selected_visible_idx = 1; // src/app.rs
+        assert_eq!(view.toggle_reviewed(), Some((1, false)));
+        assert!(!view.visible_nodes[0].is_reviewed);
+        assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    #[test]
+    fn test_hide_reviewed_filters_files_and_empty_directories() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        view.toggle_reviewed();
+
+        assert!(view.toggle_hide_reviewed());
+        // Both src files are reviewed, so the directory drops out too.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["README.md"]);
+
+        // Unfiltering brings the completed directory back — folded, since all of
+        // its files are reviewed.
+        assert!(!view.toggle_hide_reviewed());
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+    }
+
+    #[test]
+    fn test_hide_reviewed_keeps_directory_with_pending_files_when_collapsed() {
+        let mut view = review_fixture();
+        view.reviewed_files.insert("src/app.rs".to_string());
+        view.collapse_all();
+        view.hide_reviewed = true;
+        view.rebuild_visible_nodes();
+
+        // src/ still holds an unreviewed file, so it must stay visible even
+        // though collapsing means none of its children are flattened.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+    }
+
+    #[test]
+    fn test_completing_a_directory_folds_it() {
+        let mut view = review_fixture();
+        // Tree: src/, src/app.rs, src/main.rs, README.md
+        view.selected_visible_idx = 1; // src/app.rs
+        view.toggle_reviewed();
+        // One file left pending — the directory stays open.
+        assert!(view.visible_nodes[0].is_expanded);
+        assert_eq!(view.visible_nodes.len(), 4);
+
+        view.selected_visible_idx = 2; // src/main.rs
+        view.toggle_reviewed();
+
+        // src/ is complete: folded, and its files no longer clutter the tree.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+        assert!(!view.visible_nodes[0].is_expanded);
+        assert!(view.visible_nodes[0].is_reviewed);
+        // The cursor follows the fold onto the directory that just completed.
+        assert_eq!(view.selected_visible_idx, 0);
+    }
+
+    #[test]
+    fn test_folding_cascades_through_nested_directories() {
+        let diff = "\
+diff --git a/a/b/c/deep.rs b/a/b/c/deep.rs
+index 123456..789012 100644
+--- a/a/b/c/deep.rs
++++ b/a/b/c/deep.rs
+@@ -1,1 +1,1 @@
+- old
++ new
+diff --git a/README.md b/README.md
+index 123456..789012 100644
+--- a/README.md
++++ b/README.md
+@@ -1,1 +1,1 @@
+- old
++ new
+";
+        let mut view = DiffView::new(42, diff.to_string());
+        assert_eq!(view.visible_nodes.len(), 5); // a, b, c, deep.rs, README.md
+
+        view.selected_visible_idx = 3; // a/b/c/deep.rs
+        view.toggle_reviewed();
+
+        // Every ancestor is complete, so the whole branch folds into `a`.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "README.md"]);
+        assert!(!view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_unmarking_a_folded_directory_reopens_it() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        view.toggle_reviewed();
+        assert!(!view.visible_nodes[0].is_expanded);
+
+        // Pressing `m` again on the folded directory unmarks it and reopens it,
+        // so the files that need another pass are visible again.
+        view.toggle_reviewed();
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "app.rs", "main.rs", "README.md"]);
+        assert!(view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_reopened_reviewed_directory_stays_open_on_unrelated_marks() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        view.toggle_reviewed();
+        assert!(!view.visible_nodes[0].is_expanded);
+
+        // The user reopens the completed directory by hand to look again.
+        view.root_node.toggle_expanded("root/src", "");
+        view.rebuild_visible_nodes();
+        assert!(view.visible_nodes[0].is_expanded);
+
+        // Marking an unrelated file must not re-fold it: only a change in the
+        // directory's own review state moves it.
+        view.selected_visible_idx = 3; // README.md
+        view.toggle_reviewed();
+        assert!(view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_restore_review_state_opens_completed_directories_folded() {
+        let mut view = review_fixture();
+        let cached: HashSet<String> = ["src/app.rs", "src/main.rs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        view.restore_review_state(cached, false);
+
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+        assert!(!view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_restore_review_state_drops_paths_no_longer_in_the_diff() {
+        let mut view = review_fixture();
+        let cached: HashSet<String> = ["src/app.rs", "deleted/elsewhere.rs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        view.restore_review_state(cached, false);
+
+        assert_eq!(
+            view.reviewed_files,
+            ["src/app.rs".to_string()].into_iter().collect()
+        );
+        assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    #[test]
+    fn test_marking_with_filter_on_advances_to_the_next_file() {
+        let mut view = review_fixture();
+        view.hide_reviewed = true;
+        view.selected_visible_idx = 1; // src/app.rs
+        view.toggle_reviewed();
+
+        // app.rs vanished; the cursor keeps its slot, so the next pending file
+        // slides underneath it instead of jumping back to the top.
+        assert_eq!(view.selected_visible_idx, 1);
+        assert_eq!(view.visible_nodes[1].name, "main.rs");
+    }
+
     fn mr_fixture(
         iid: u64,
         state: &str,
@@ -6055,11 +6607,9 @@ index 123456..789012 100644
             );
         }
         // Default-off: eight default columns collapse Title at 80 cols.
-        assert!(
-            !Tab::MergeRequests
-                .default_columns(BackendKind::GitLab)
-                .contains(&"Workflow")
-        );
+        assert!(!Tab::MergeRequests
+            .default_columns(BackendKind::GitLab)
+            .contains(&"Workflow"));
     }
 
     #[test]
@@ -6156,14 +6706,12 @@ index 123456..789012 100644
         let filtered = app.filtered_pipelines();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, 1);
-        assert!(
-            app.collect_unique_column_values(Tab::Pipelines, "Duration")
-                .contains(&"2m 5s".to_string())
-        );
-        assert!(
-            app.collect_unique_column_values(Tab::Pipelines, "Source")
-                .contains(&"schedule".to_string())
-        );
+        assert!(app
+            .collect_unique_column_values(Tab::Pipelines, "Duration")
+            .contains(&"2m 5s".to_string()));
+        assert!(app
+            .collect_unique_column_values(Tab::Pipelines, "Source")
+            .contains(&"schedule".to_string()));
     }
 
     #[test]

@@ -57,7 +57,8 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (confirm popup, date picker, help, refresh, repo switcher).
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json`.
-    * [format.rs](src/utils/format.rs): Time parsing, markdown rendering, string truncation.
+    * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation.
+    * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
     * [update.rs](src/utils/update.rs): GitHub releases self-updater.
 * [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`) and ANSI-styled diagnostic output.

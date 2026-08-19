@@ -11,7 +11,8 @@ use ratatui::{
 use crate::app::{EditMenu, EntityDocument, Field, FieldTone, FieldType, InspectorContent};
 use crate::config::{ICONS, THEME};
 use crate::ui::helpers::get_label_color;
-use crate::utils::format::{parse_ansi_trace, render_markdown};
+use crate::utils::format::parse_ansi_trace;
+use crate::utils::markdown::render_markdown;
 
 /// Map a `FieldTone` to the same `(fg, badge_bg, bold)` triple the table uses
 /// for the Approval/Mergeable columns, so a toned preview field renders with a
@@ -360,13 +361,13 @@ fn render_content_pane(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(&desc_value)
+                render_markdown(&desc_value, &theme)
             };
 
             f.render_widget(
                 Paragraph::new(desc_lines)
                     .scroll((menu.desc_scroll, 0))
-                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
                 desc_inner,
             );
         }
@@ -1037,12 +1038,12 @@ pub(crate) fn render_inspector_content(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(md)
+                render_markdown(md, &theme)
             };
             f.render_widget(
                 Paragraph::new(lines)
                     .scroll((scroll, 0))
-                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
                 area,
             );
         }
@@ -1186,6 +1187,30 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_render_inspector_content_preserves_markdown_indentation() {
+        let backend = TestBackend::new(40, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let content = InspectorContent::Markdown("- Parent\n    - Nested\n\n> Quoted".to_string());
+
+        terminal
+            .draw(|f| render_inspector_content(f, &content, f.area(), 0))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("• Parent"));
+        assert!(rendered.contains("  • Nested"));
+        assert!(rendered.contains("  ▌ Quoted"));
     }
 
     #[test]

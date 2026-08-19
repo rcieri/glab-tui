@@ -10,6 +10,28 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Insert the currently-highlighted Issue/MR into its selection set. Used by
+/// select mode: toggling the mode on and moving the cursor both mark items.
+fn mark_current_selected(app: &mut App) {
+    match app.active_tab {
+        crate::app::Tab::Issues => {
+            if let Some(idx) = app.issues.state.selected() {
+                if let Some(iid) = app.filtered_issues().get(idx).map(|i| i.iid) {
+                    app.selected_issues.insert(iid);
+                }
+            }
+        }
+        crate::app::Tab::MergeRequests => {
+            if let Some(idx) = app.mrs.state.selected() {
+                if let Some(iid) = app.filtered_mrs().get(idx).map(|m| m.iid) {
+                    app.selected_mrs.insert(iid);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn open_merge_selector(app: &mut App, mr_iid: u64, selected_count: usize) {
     let is_github = app.is_github();
     let all_items = if is_github {
@@ -240,15 +262,9 @@ pub async fn handle_active_tab_key(
                 }
             }
             _ if keybinding_matches(&app.config.keybindings.issues.selection_toggle, key_event) => {
-                if let Some(selected_idx) = app.issues.state.selected() {
-                    let iid = app.filtered_issues().get(selected_idx).map(|i| i.iid);
-                    if let Some(iid) = iid {
-                        if app.selected_issues.contains(&iid) {
-                            app.selected_issues.remove(&iid);
-                        } else {
-                            app.selected_issues.insert(iid);
-                        }
-                    }
+                app.select_mode = !app.select_mode;
+                if app.select_mode {
+                    mark_current_selected(app);
                 }
             }
             _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
@@ -392,15 +408,9 @@ pub async fn handle_active_tab_key(
                     }
                 }
             } else if keybinding_matches(&app.config.keybindings.mrs.selection_toggle, key_event) {
-                if let Some(selected_idx) = app.mrs.state.selected() {
-                    let iid = app.filtered_mrs().get(selected_idx).map(|m| m.iid);
-                    if let Some(iid) = iid {
-                        if app.selected_mrs.contains(&iid) {
-                            app.selected_mrs.remove(&iid);
-                        } else {
-                            app.selected_mrs.insert(iid);
-                        }
-                    }
+                app.select_mode = !app.select_mode;
+                if app.select_mode {
+                    mark_current_selected(app);
                 }
             } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
                 if app.selected_mrs.len() > 1 {
@@ -1952,6 +1962,7 @@ pub async fn handle_active_tab_key(
                     app.selected_mrs.clear();
                     app.selected_pipelines.clear();
                     app.selected_jobs.clear();
+                    app.select_mode = false;
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {
@@ -2320,6 +2331,9 @@ pub async fn handle_active_tab_key(
                             app.terminal_scroll = app.terminal_scroll.saturating_sub(1);
                         }
                     }
+                    if app.select_mode {
+                        mark_current_selected(app);
+                    }
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -2364,6 +2378,9 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_add(1);
                         }
+                    }
+                    if app.select_mode {
+                        mark_current_selected(app);
                     }
                 }
             }

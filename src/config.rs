@@ -886,7 +886,7 @@ keybind_defaults! {
     def_rebase_mr = "R",
     def_merge_mr = "m",
     def_toggle_draft = "s",
-    def_view_diff = "v",
+    def_view_diff = "D",
     def_view_related_pipelines = "P",
     def_trigger_pipeline = "p",
     def_retry = "r",
@@ -1301,7 +1301,7 @@ revoke_mr = "A"
 rebase_mr = "R"
 merge_mr = "m"
 toggle_draft = "s"
-view_diff = "v"
+view_diff = "D"
 view_related_pipelines = "P"
 edit_entity = "e"
 close_entity = "c"

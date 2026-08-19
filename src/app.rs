@@ -2001,6 +2001,10 @@ pub struct App {
     pub selected_jobs: std::collections::HashSet<u64>,
     pub selected_issues: std::collections::HashSet<u64>,
     pub selected_mrs: std::collections::HashSet<u64>,
+    /// When true, moving the cursor through Issues/MRs marks each visited
+    /// item into the selection set (yazi-style "select mode"). `Space` still
+    /// toggles the current item individually regardless of this flag.
+    pub select_mode: bool,
     pub details_zoomed: bool,
     /// Captured when the edit menu opens so Esc can restore the previous
     /// zoom state (e.g. back to the zoomed PREVIEW if the user entered
@@ -2106,6 +2110,7 @@ impl Default for App {
             selected_jobs: std::collections::HashSet::new(),
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
+            select_mode: false,
             details_zoomed: false,
             prev_details_zoomed: false,
             detail_visible: false,
@@ -2411,6 +2416,7 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.select_mode = false;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -2432,6 +2438,7 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.select_mode = false;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();

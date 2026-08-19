@@ -1153,7 +1153,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_widget(table, help_chunks[1]);
     }
 
-    if app.focus_column_checklist {
+    if app.focus_column_checklist && app.selector.is_none() {
         let tab = app.active_tab;
         let kind = app.kind();
         let is_github = kind.is_github();
@@ -1162,18 +1162,270 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let group_cols: Vec<&str> = cols.iter().copied().collect();
 
-        let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
-
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
-        let themes = crate::config::all_theme_presets();
-        let theme_list_len = themes.len();
-        let width = 64;
-        let content_height =
-            (columns_list.len() + group_cols.len() + theme_list_len + 4 + 2 + 2 + 6 + 6) as u16;
-        // Cap the popup to the available terminal height so it never overflows;
-        // the column/group/theme lists below scroll independently via ListState.
-        let height = content_height.min(size.height.saturating_sub(2)).max(18);
+        let order_end = group_end + 2;
+        let page_size_idx = order_end;
+        let theme_idx = page_size_idx + 1;
+        let save_end = theme_idx + 1;
+
+        // Build the entire Configure view as one flat, scrollable list so the
+        // section headers scroll together with their items.
+        let mut lines: Vec<(Option<usize>, ListItem)> = Vec::new();
+        let mut active_line: Option<usize> = None;
+
+        let t = THEME.read().unwrap();
+
+        // COLUMNS header
+        lines.push((
+            None,
+            ListItem::new(format!("  {} COLUMNS", icons.label_columns)).style(
+                Style::default()
+                    .fg(t.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ));
+
+        for (i, col) in cols.iter().enumerate() {
+            let logical = i;
+            let checked = app.is_column_visible(tab, col);
+            let filter_count = app
+                .get_column_filter(tab, col)
+                .map(|s| s.len())
+                .filter(|&n| n > 0);
+            let text = if let Some(count) = filter_count {
+                format!(
+                    "  [{}] {} ({})",
+                    if checked { "x" } else { " " },
+                    col,
+                    count
+                )
+            } else {
+                format!("  [{}] {}", if checked { "x" } else { " " }, col)
+            };
+            let is_active = logical == active_idx;
+            if is_active {
+                active_line = Some(lines.len());
+            }
+            let style = if is_active {
+                Style::default()
+                    .fg(t.bg)
+                    .bg(t.border_focused)
+                    .add_modifier(Modifier::BOLD)
+            } else if checked {
+                Style::default().fg(t.text_normal)
+            } else {
+                Style::default().fg(t.text_muted)
+            };
+            lines.push((Some(logical), ListItem::new(text).style(style)));
+        }
+
+        // spacer
+        lines.push((None, ListItem::new("")));
+
+        // GROUP BY header
+        lines.push((
+            None,
+            ListItem::new(format!("  {} GROUP BY", icons.label_group))
+                .style(Style::default().fg(t.green).add_modifier(Modifier::BOLD)),
+        ));
+
+        for (j, col) in group_cols.iter().enumerate() {
+            let logical = cols_end + j;
+            let is_selected =
+                app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
+            let text = format!(
+                "  {} {}",
+                if is_selected {
+                    &icons.radio_on
+                } else {
+                    &icons.radio_off
+                },
+                col
+            );
+            let is_active = logical == active_idx;
+            if is_active {
+                active_line = Some(lines.len());
+            }
+            let style = if is_active {
+                Style::default()
+                    .fg(t.bg)
+                    .bg(t.border_focused)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().fg(t.green)
+            } else {
+                Style::default().fg(t.text_normal)
+            };
+            lines.push((Some(logical), ListItem::new(text).style(style)));
+        }
+
+        // spacer
+        lines.push((None, ListItem::new("")));
+
+        // ORDER header
+        lines.push((
+            None,
+            ListItem::new(format!("  {} ORDER", icons.label_order))
+                .style(Style::default().fg(t.yellow).add_modifier(Modifier::BOLD)),
+        ));
+
+        for (i, label) in ["Ascending", "Descending"].iter().enumerate() {
+            let logical = group_end + i;
+            let is_selected = app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
+            let text = format!(
+                " {} {}",
+                if is_selected {
+                    &icons.radio_on
+                } else {
+                    &icons.radio_off
+                },
+                label
+            );
+            let is_active = logical == active_idx;
+            if is_active {
+                active_line = Some(lines.len());
+            }
+            let style = if is_active {
+                Style::default()
+                    .fg(t.bg)
+                    .bg(t.border_focused)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().fg(t.yellow)
+            } else {
+                Style::default().fg(t.text_normal)
+            };
+            lines.push((Some(logical), ListItem::new(text).style(style)));
+        }
+
+        // spacer
+        lines.push((None, ListItem::new("")));
+
+        // Page Size — inline row (icon + label in header_fg, value in text_normal)
+        let is_page_size_active = active_idx == page_size_idx;
+        let page_size_value = if app.editing_page_size {
+            format!("[ {}| ]", app.page_size_input)
+        } else {
+            format!("[ {} ]", app.page_size)
+        };
+        let page_size_style = if app.editing_page_size {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.green)
+                .add_modifier(Modifier::BOLD)
+        } else if is_page_size_active {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_normal)
+        };
+        let page_size_line = if is_page_size_active || app.editing_page_size {
+            Line::from(Span::styled(
+                format!(
+                    " {} Page Size   {} ",
+                    icons.label_page_size, page_size_value
+                ),
+                page_size_style,
+            ))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} Page Size ", icons.label_page_size),
+                    Style::default()
+                        .fg(t.header_fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(page_size_value, Style::default().fg(t.text_normal)),
+            ])
+        };
+        if is_page_size_active {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(page_size_idx),
+            ListItem::new(page_size_line).style(page_size_style),
+        ));
+
+        // Theme — inline row (icon + label in purple, value aligned with Page Size)
+        let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
+        let is_theme_active = active_idx == theme_idx;
+        let theme_value = format!("[ {} ]", current_theme_name);
+        let theme_style = if is_theme_active {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_normal)
+        };
+        let theme_line = if is_theme_active {
+            Line::from(Span::styled(
+                format!(" {} Theme     {} ", icons.label_theme, theme_value),
+                theme_style,
+            ))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} Theme     ", icons.label_theme),
+                    Style::default().fg(t.purple).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(theme_value, Style::default().fg(t.text_normal)),
+            ])
+        };
+        if is_theme_active {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(theme_idx),
+            ListItem::new(theme_line).style(theme_style),
+        ));
+
+        // spacer
+        lines.push((None, ListItem::new("")));
+
+        // Save button — no header, centered in the inner area
+        let is_save_selected = active_idx == save_end;
+        let width: u16 = 64;
+        let inner_w = width.saturating_sub(2) as usize; // -2 for borders
+        let save_label = format!("{} Save View", icons.label_save);
+        let save_decorated = if is_save_selected {
+            format!("›  {} ‹", save_label)
+        } else {
+            save_label.clone()
+        };
+        let save_visible_width = save_decorated.chars().count();
+        let save_left_pad = (inner_w.saturating_sub(save_visible_width)) / 2;
+        let save_button_text = format!("{:pad$}{}", "", save_decorated, pad = save_left_pad);
+        let save_button_style = if is_save_selected {
+            Style::default()
+                .fg(t.bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_muted)
+        };
+        if is_save_selected {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(save_end),
+            ListItem::new(save_button_text).style(save_button_style),
+        ));
+
+        drop(t);
+
+        // Grow the popup with content, but cap it so the whole list scrolls
+        // within the available terminal height (headers included).
+        let content_len = lines.len() as u16;
+        // +2 accounts for the block's top/bottom border so inner_area has room
+        // for every item without clipping the save button.
+        let height = content_len
+            .saturating_add(2)
+            .max(18)
+            .min(size.height.saturating_sub(2));
         let area = centered_rect_fixed(width, height, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::Configure, area));
@@ -1198,331 +1450,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let inner_area = checklist_block.inner(area);
 
-        let order_end = group_end + 2;
-        let page_size_idx = order_end;
-        let theme_start = page_size_idx + 1;
-        let theme_end = theme_start + themes.len();
-        let save_end = theme_end;
-
-        let mut constraints: Vec<Constraint> = Vec::new();
-        constraints.push(Constraint::Length(1)); // COLUMNS header
-        constraints.push(Constraint::Min(3)); // COLUMNS list (scrolls)
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // GROUP BY header
-        constraints.push(Constraint::Min(3)); // GROUP BY list (scrolls)
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // ORDER header
-        constraints.push(Constraint::Length(2));
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // PAGE SIZE header
-        constraints.push(Constraint::Length(1)); // PAGE SIZE value
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // THEME header
-        constraints.push(Constraint::Min(3)); // THEME list (scrolls)
-        constraints.push(Constraint::Length(1)); // spacer
-        constraints.push(Constraint::Length(1)); // SAVE header
-        constraints.push(Constraint::Length(1)); // SAVE button
-
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(constraints)
-            .split(inner_area);
-
-        let mut chunk_idx = 0;
-
-        let columns_header_text = if active_idx < cols_end {
-            format!(
-                "  {} COLUMNS  {}/{}",
-                icons.label_columns,
-                active_idx + 1,
-                cols_end
-            )
-        } else {
-            format!("  {} COLUMNS", icons.label_columns)
-        };
-        let columns_header = Paragraph::new(columns_header_text).style(
-            Style::default()
-                .fg(THEME.read().unwrap().header_fg)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(columns_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let col_items: Vec<ListItem> = columns_list
-            .iter()
-            .map(|&(orig_idx, col)| {
-                let checked = app.is_column_visible(tab, col);
-                let filter_count = app
-                    .get_column_filter(tab, col)
-                    .map(|s| s.len())
-                    .filter(|&n| n > 0);
-                let text = if let Some(count) = filter_count {
-                    format!(
-                        "  [{}] {} ({})",
-                        if checked { "x" } else { " " },
-                        col,
-                        count
-                    )
-                } else {
-                    format!("  [{}] {}", if checked { "x" } else { " " }, col)
-                };
-                let is_active = orig_idx == active_idx;
-                let style = if is_active {
-                    Style::default()
-                        .fg(THEME.read().unwrap().bg)
-                        .bg(THEME.read().unwrap().border_focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if checked {
-                    Style::default().fg(THEME.read().unwrap().text_normal)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_muted)
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        let mut col_state = ListState::default();
-        if active_idx < cols_end {
-            col_state.select(Some(active_idx));
-        }
-        f.render_stateful_widget(
-            List::new(col_items),
-            popup_layout[chunk_idx],
-            &mut col_state,
-        );
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        let group_header_text = if (cols_end..group_end).contains(&active_idx) {
-            format!(
-                "  {} GROUP BY  {}/{}",
-                icons.label_group,
-                active_idx - cols_end + 1,
-                group_cols.len()
-            )
-        } else {
-            format!("  {} GROUP BY", icons.label_group)
-        };
-        let group_header = Paragraph::new(group_header_text).style(
-            Style::default()
-                .fg(THEME.read().unwrap().green)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(group_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let group_items: Vec<ListItem> = group_cols
-            .iter()
-            .enumerate()
-            .map(|(i, col)| {
-                let flat_idx = cols_end + i;
-                let is_selected =
-                    app.group_by_column.get(&tab).cloned().flatten().as_deref() == Some(col);
-                let text = format!(
-                    "  {} {}",
-                    if is_selected {
-                        &icons.radio_on
-                    } else {
-                        &icons.radio_off
-                    },
-                    col
-                );
-                let is_active = flat_idx == active_idx;
-                let style = if is_active {
-                    Style::default()
-                        .fg(THEME.read().unwrap().bg)
-                        .bg(THEME.read().unwrap().border_focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_selected {
-                    Style::default().fg(THEME.read().unwrap().green)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_normal)
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        let mut group_state = ListState::default();
-        if (cols_end..group_end).contains(&active_idx) {
-            group_state.select(Some(active_idx - cols_end));
-        }
-        f.render_stateful_widget(
-            List::new(group_items),
-            popup_layout[chunk_idx],
-            &mut group_state,
-        );
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        let order_header = Paragraph::new(format!("  {} ORDER", icons.label_order)).style(
-            Style::default()
-                .fg(THEME.read().unwrap().yellow)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(order_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let order_items: Vec<ListItem> = ["Ascending", "Descending"]
-            .iter()
-            .enumerate()
-            .map(|(i, label)| {
-                let flat_idx = group_end + i;
-                let is_selected =
-                    app.group_ascending.get(&tab).copied().unwrap_or(true) == (i == 0);
-                let text = format!(
-                    " {} {}",
-                    if is_selected {
-                        &icons.radio_on
-                    } else {
-                        &icons.radio_off
-                    },
-                    label
-                );
-                let is_active = flat_idx == active_idx;
-                let style = if is_active {
-                    Style::default()
-                        .fg(THEME.read().unwrap().bg)
-                        .bg(THEME.read().unwrap().border_focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_selected {
-                    Style::default().fg(THEME.read().unwrap().yellow)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_normal)
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        f.render_widget(List::new(order_items), popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        // Page Size
-        let page_size_header = Paragraph::new(format!(" {} PAGE SIZE", icons.label_page_size))
-            .style(
-                Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
-                    .add_modifier(Modifier::BOLD),
-            );
-        f.render_widget(page_size_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let is_page_size_active = active_idx == page_size_idx;
-        let page_size_text = if app.editing_page_size {
-            format!("   [ {}| ]", app.page_size_input)
-        } else if is_page_size_active {
-            format!("   [ {} ]", app.page_size)
-        } else {
-            format!("   {}", app.page_size)
-        };
-        let page_size_style = if app.editing_page_size {
-            Style::default()
-                .fg(THEME.read().unwrap().bg)
-                .bg(THEME.read().unwrap().green)
-                .add_modifier(Modifier::BOLD)
-        } else if is_page_size_active {
-            Style::default()
-                .fg(THEME.read().unwrap().bg)
-                .bg(THEME.read().unwrap().border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(THEME.read().unwrap().text_normal)
-        };
-        let page_size_paragraph = Paragraph::new(page_size_text)
-            .style(page_size_style)
-            .alignment(Alignment::Center);
-        f.render_widget(page_size_paragraph, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        let theme_header_text = if (theme_start..theme_end).contains(&active_idx) {
-            format!(
-                "  {} THEME  {}/{}",
-                icons.label_theme,
-                active_idx - theme_start + 1,
-                themes.len()
-            )
-        } else {
-            format!("  {} THEME", icons.label_theme)
-        };
-        let theme_header = Paragraph::new(theme_header_text).style(
-            Style::default()
-                .fg(THEME.read().unwrap().purple)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(theme_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let theme_items: Vec<ListItem> = themes
-            .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let flat_idx = theme_start + i;
-                let is_selected = app.config.theme_preset.as_deref().unwrap_or("default") == *name;
-                let text = format!(
-                    " {} {}",
-                    if is_selected {
-                        &icons.radio_on
-                    } else {
-                        &icons.radio_off
-                    },
-                    name
-                );
-                let is_active = flat_idx == active_idx;
-                let style = if is_active {
-                    Style::default()
-                        .fg(THEME.read().unwrap().bg)
-                        .bg(THEME.read().unwrap().border_focused)
-                        .add_modifier(Modifier::BOLD)
-                } else if is_selected {
-                    Style::default().fg(THEME.read().unwrap().purple)
-                } else {
-                    Style::default().fg(THEME.read().unwrap().text_normal)
-                };
-                ListItem::new(text).style(style)
-            })
-            .collect();
-        let mut theme_state = ListState::default();
-        if (theme_start..theme_end).contains(&active_idx) {
-            theme_state.select(Some(active_idx - theme_start));
-        }
-        f.render_stateful_widget(
-            List::new(theme_items),
-            popup_layout[chunk_idx],
-            &mut theme_state,
-        );
-        chunk_idx += 1;
-
-        chunk_idx += 1; // spacer
-
-        // Save button
-        let save_header = Paragraph::new(" SAVE").style(
-            Style::default()
-                .fg(THEME.read().unwrap().header_fg)
-                .add_modifier(Modifier::BOLD),
-        );
-        f.render_widget(save_header, popup_layout[chunk_idx]);
-        chunk_idx += 1;
-
-        let is_save_selected = active_idx == save_end;
-        let save_button_text = if is_save_selected {
-            format!(" › {} Save View ‹", icons.label_save)
-        } else {
-            format!("   {} Save View", icons.label_save)
-        };
-        let save_button_style = if is_save_selected {
-            Style::default()
-                .fg(THEME.read().unwrap().bg)
-                .bg(THEME.read().unwrap().border_focused)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(THEME.read().unwrap().text_normal)
-        };
-        let save_button = Paragraph::new(save_button_text)
-            .style(save_button_style)
-            .alignment(Alignment::Center);
-        f.render_widget(save_button, popup_layout[chunk_idx]);
+        let items: Vec<ListItem> = lines.into_iter().map(|(_, li)| li).collect();
+        let mut state = ListState::default();
+        state.select(active_line);
+        f.render_stateful_widget(List::new(items), inner_area, &mut state);
 
         // Save submenu
         if app.save_menu_open {
@@ -1587,20 +1518,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     // Render value-based column filter selector as overlay on configure view
     if app.focus_column_checklist && app.column_filter_context.is_some() {
         if let Some(selector) = &mut app.selector {
-            let block = Block::default()
-                .title(format!(" {} ", selector.title))
-                .title_style(
-                    Style::default()
-                        .fg(THEME.read().unwrap().header_fg)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-                .style(Style::default().bg(THEME.read().unwrap().bg));
-
-            let area = centered_rect_fixed(44, 44, size);
+            let (body, selector_area) = modal_area(f, &selector.title, 50, 60, 34, 6, size);
             app.overlay_stack
-                .push((crate::app::OverlayKind::ColumnFilter, area));
+                .push((crate::app::OverlayKind::ColumnFilter, selector_area));
 
             let constraints = vec![
                 Constraint::Length(3), // Search/Filter
@@ -1609,9 +1529,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .margin(1)
                 .constraints(constraints)
-                .split(area);
+                .split(body);
 
             let (search_chunk, list_chunk) = (chunks[0], chunks[1]);
 
@@ -1640,85 +1559,95 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .block(search_block)
                 .style(Style::default().fg(THEME.read().unwrap().text_normal));
 
-            clear_area(f, area);
-            f.render_widget(block, area);
             f.render_widget(search_p, search_chunk);
 
-            // Render items list
-            let items_list = selector.get_filtered_items_with_indices();
-            let items: Vec<ListItem> = items_list
-                .iter()
-                .enumerate()
-                .map(|(i, (item, indices))| {
-                    let is_selected = selector.selected_items.contains(item);
-
-                    let marker = if is_selected {
-                        format!(" {} ", icons.check_on)
-                    } else {
-                        format!(" {} ", icons.check_off)
-                    };
-                    let marker_color = if is_selected {
-                        THEME.read().unwrap().green
-                    } else {
-                        THEME.read().unwrap().text_muted
-                    };
-
-                    let item_bg = if i == selector.cursor_idx {
-                        THEME.read().unwrap().highlight_bg
-                    } else {
-                        THEME.read().unwrap().bg
-                    };
-
-                    let style = if i == selector.cursor_idx {
+            let filtered_items = selector.get_filtered_items_with_indices();
+            if filtered_items.is_empty() {
+                let p = Paragraph::new("\n  No matching options found.")
+                    .style(
                         Style::default()
-                            .bg(item_bg)
-                            .fg(THEME.read().unwrap().text_normal)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_normal)
-                            .bg(item_bg)
-                    };
+                            .fg(THEME.read().unwrap().text_muted)
+                            .bg(THEME.read().unwrap().bg)
+                            .add_modifier(Modifier::ITALIC),
+                    )
+                    .wrap(ratatui::widgets::Wrap { trim: true });
+                f.render_widget(p, list_chunk);
+            } else {
+                let items: Vec<ListItem> = filtered_items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (item, indices))| {
+                        let is_selected = selector.selected_items.contains(item);
 
-                    let highlight_style = if i == selector.cursor_idx {
-                        Style::default()
-                            .bg(item_bg)
-                            .fg(THEME.read().unwrap().yellow)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                            .fg(THEME.read().unwrap().yellow)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::BOLD)
-                    };
+                        let marker = if is_selected {
+                            format!(" {} ", icons.check_on)
+                        } else {
+                            format!(" {} ", icons.check_off)
+                        };
+                        let marker_color = if is_selected {
+                            THEME.read().unwrap().green
+                        } else {
+                            THEME.read().unwrap().text_muted
+                        };
 
-                    let mut line_spans = vec![Span::styled(
-                        marker,
-                        Style::default()
-                            .fg(marker_color)
-                            .bg(item_bg)
-                            .add_modifier(Modifier::BOLD),
-                    )];
+                        let item_bg = if i == selector.cursor_idx {
+                            THEME.read().unwrap().highlight_bg
+                        } else {
+                            THEME.read().unwrap().bg
+                        };
 
-                    if let Some(indices) = indices {
-                        line_spans.extend(highlight_fuzzy_match(
-                            item,
-                            indices,
-                            style,
-                            highlight_style,
-                        ));
-                    } else {
-                        line_spans.push(Span::styled(item.clone(), style));
-                    }
+                        let style = if i == selector.cursor_idx {
+                            Style::default()
+                                .bg(item_bg)
+                                .fg(THEME.read().unwrap().text_normal)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(THEME.read().unwrap().text_normal)
+                                .bg(item_bg)
+                        };
 
-                    ListItem::new(vec![Line::from(line_spans)]).style(Style::default().bg(item_bg))
-                })
-                .collect();
+                        let highlight_style = if i == selector.cursor_idx {
+                            Style::default()
+                                .bg(item_bg)
+                                .fg(THEME.read().unwrap().yellow)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(THEME.read().unwrap().yellow)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::BOLD)
+                        };
 
-            let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-            let mut state = selector.state.clone();
-            f.render_stateful_widget(list, list_chunk, &mut state);
-            selector.state = state;
+                        let mut line_spans = vec![Span::styled(
+                            marker,
+                            Style::default()
+                                .fg(marker_color)
+                                .bg(item_bg)
+                                .add_modifier(Modifier::BOLD),
+                        )];
+
+                        if let Some(indices) = indices {
+                            line_spans.extend(highlight_fuzzy_match(
+                                item,
+                                indices,
+                                style,
+                                highlight_style,
+                            ));
+                        } else {
+                            line_spans.push(Span::styled(item.clone(), style));
+                        }
+
+                        ListItem::new(vec![Line::from(line_spans)])
+                            .style(Style::default().bg(item_bg))
+                    })
+                    .collect();
+
+                let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
+                let mut state = selector.state.clone();
+                f.render_stateful_widget(list, list_chunk, &mut state);
+                selector.state = state;
+            }
         }
     }
 

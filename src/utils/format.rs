@@ -132,20 +132,20 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
 
 pub fn strip_ansi_escapes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut bytes = s.bytes();
-    while let Some(b) = bytes.next() {
-        if b == 0x1b {
-            if let Some(next_b) = bytes.next() {
-                if next_b == b'[' {
-                    while let Some(next_c) = bytes.next() {
-                        if (0x40..=0x7e).contains(&next_c) {
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if let Some(next_c) = chars.next() {
+                if next_c == '[' {
+                    for seq_c in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&seq_c) {
                             break;
                         }
                     }
                 }
             }
         } else {
-            result.push(b as char);
+            result.push(c);
         }
     }
     result
@@ -193,12 +193,12 @@ fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut current_style = Style::default().fg(theme.text_normal);
     let mut current_text = String::new();
-    let bytes: Vec<u8> = line.bytes().collect();
+    let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
 
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '[' {
             if !current_text.is_empty() {
                 spans.push(Span::styled(
                     std::mem::take(&mut current_text),
@@ -209,13 +209,13 @@ fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static
             let mut params = Vec::new();
             let mut num_buf = String::new();
             loop {
-                if i >= bytes.len() {
+                if i >= chars.len() {
                     break;
                 }
-                let c = bytes[i];
+                let c = chars[i];
                 i += 1;
-                if (0x40..=0x7e).contains(&c) {
-                    if c == b'm' {
+                if ('\u{40}'..='\u{7e}').contains(&c) {
+                    if c == 'm' {
                         if !num_buf.is_empty() {
                             params.push(num_buf);
                         }
@@ -224,23 +224,23 @@ fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static
                     break;
                 }
                 match c {
-                    b';' => {
+                    ';' => {
                         if !num_buf.is_empty() {
                             params.push(std::mem::take(&mut num_buf));
                         } else {
                             params.push("0".to_string());
                         }
                     }
-                    b'0'..=b'9' => {
-                        num_buf.push(c as char);
+                    '0'..='9' => {
+                        num_buf.push(c);
                     }
                     _ => {
-                        num_buf.push(c as char);
+                        num_buf.push(c);
                     }
                 }
             }
         } else {
-            current_text.push(b as char);
+            current_text.push(ch);
             i += 1;
         }
     }
@@ -651,5 +651,19 @@ mod tests {
             strip_ansi_escapes(input),
             "[SUCCESS] Job finished successfully"
         );
+    }
+
+    #[test]
+    fn test_strip_ansi_escapes_preserves_non_ascii() {
+        let input = "\u{1b}[32m✓\u{1b}[0m src/lib.rs — 3 tests ✔";
+        assert_eq!(strip_ansi_escapes(input), "✓ src/lib.rs — 3 tests ✔");
+    }
+
+    #[test]
+    fn test_parse_ansi_line_preserves_non_ascii() {
+        let theme = crate::config::Theme::default();
+        let spans = parse_ansi_line("\u{1b}[32m✓\u{1b}[0m tests passed — é 日本", &theme);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "✓ tests passed — é 日本");
     }
 }

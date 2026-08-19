@@ -149,6 +149,11 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         return;
                     }
                     OverlayKind::Help => {
+                        if scroll_down {
+                            app.help_scroll = app.help_scroll.saturating_add(1);
+                        } else {
+                            app.help_scroll = app.help_scroll.saturating_sub(1);
+                        }
                         return;
                     }
                     OverlayKind::Configure => {

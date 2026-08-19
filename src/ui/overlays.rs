@@ -1135,7 +1135,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let header_style = Style::default()
             .fg(THEME.read().unwrap().header_fg)
             .add_modifier(Modifier::BOLD);
-        let table = Table::new(rows, widths)
+        let table = Table::new(rows.into_iter().skip(app.help_scroll).collect::<Vec<_>>(), widths)
             .header(
                 Row::new(vec![
                     Cell::from(Span::styled("Category", header_style)),

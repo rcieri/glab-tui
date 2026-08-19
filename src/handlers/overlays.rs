@@ -292,6 +292,7 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyEvent) -> bool {
     {
         app.show_help = true;
         app.help_search_query.clear();
+        app.help_scroll = 0;
         return true;
     }
     false
@@ -303,12 +304,27 @@ pub fn handle_help_overlay(app: &mut App, key_event: &KeyEvent) -> bool {
             KeyCode::Esc | KeyCode::Enter => {
                 app.show_help = false;
                 app.help_search_query.clear();
+        app.help_scroll = 0;
+            }
+            KeyCode::Up => {
+                app.help_scroll = app.help_scroll.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                app.help_scroll = app.help_scroll.saturating_add(1);
+            }
+            KeyCode::PageUp => {
+                app.help_scroll = app.help_scroll.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                app.help_scroll = app.help_scroll.saturating_add(10);
             }
             KeyCode::Backspace => {
                 app.help_search_query.pop();
+                app.help_scroll = 0;
             }
             KeyCode::Char(c) => {
                 app.help_search_query.push(c);
+                app.help_scroll = 0;
             }
             _ => {}
         }

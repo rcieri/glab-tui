@@ -2106,6 +2106,7 @@ pub struct App {
 
     pub show_help: bool,
     pub help_search_query: String,
+    pub help_scroll: usize,
     pub diff_view: Option<DiffView>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
@@ -2208,6 +2209,7 @@ impl Default for App {
 
             show_help: false,
             help_search_query: String::new(),
+            help_scroll: 0,
             diff_view: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,

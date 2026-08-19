@@ -880,6 +880,32 @@ pub(crate) fn label_spans(text: &str) -> Vec<Span<'static>> {
     spans
 }
 
+/// Lays out one row of the diff file tree: truncates `name` to what is left
+/// after the prefix and the trailing stats, and returns it with the padding
+/// that pushes those stats flush against the panel's right edge.
+///
+/// Every width here is counted in **characters, not bytes**. The folder icons
+/// and the reviewed-file check are multi-byte but occupy one column each, so
+/// byte lengths overstate the row and shorten the padding — which pulls the
+/// `+N -M` stats away from the border, and moves them the moment a file is
+/// marked as reviewed and its indicator changes.
+pub(crate) fn diff_tree_row_layout(
+    panel_inner_width: usize,
+    prefix: &str,
+    name: &str,
+    stats_width: usize,
+) -> (String, String) {
+    let prefix_width = prefix.chars().count();
+    let name_avail = panel_inner_width
+        .saturating_sub(prefix_width)
+        .saturating_sub(stats_width);
+    let name_display = truncate(name, name_avail.max(8));
+    let padding = " ".repeat(
+        panel_inner_width.saturating_sub(prefix_width + name_display.chars().count() + stats_width),
+    );
+    (name_display, padding)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1035,5 +1061,45 @@ mod tests {
         assert_eq!(floor_char_boundary(s, 4), 4);
         assert_eq!(floor_char_boundary(s, 5), 5);
         assert_eq!(floor_char_boundary(s, 999), s.len());
+    }
+
+    /// Width of a laid-out row as the terminal draws it.
+    fn row_width(prefix: &str, name: &str, padding: &str, stats_width: usize) -> usize {
+        prefix.chars().count() + name.chars().count() + padding.chars().count() + stats_width
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_fills_the_panel_width() {
+        let (name, padding) = diff_tree_row_layout(40, "     ", "app.rs", 7);
+        assert_eq!(name, "app.rs");
+        assert_eq!(row_width("     ", &name, &padding, 7), 40);
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_is_unmoved_by_the_reviewed_indicator() {
+        // The two indicators differ in bytes (2 vs 4) but not in columns, so a
+        // file must lay out identically before and after it is marked reviewed
+        // — otherwise its +N -M stats jump sideways on every `m`.
+        // Both prefixes are " " + a 2-column indent + a 2-column indicator:
+        // 5 columns each, but 5 bytes vs 7.
+        let pending = diff_tree_row_layout(40, "     ", "app.rs", 7);
+        let reviewed = diff_tree_row_layout(40, "   \u{f4a7} ", "app.rs", 7);
+        assert_eq!(pending.0.chars().count(), reviewed.0.chars().count());
+        assert_eq!(pending, reviewed);
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_multibyte_prefix_reaches_the_border() {
+        // A directory row: the folder icon is three bytes wide and one column.
+        let prefix = format!("  {} ", "\u{f07c}");
+        let (name, padding) = diff_tree_row_layout(40, &prefix, "src", 0);
+        assert_eq!(row_width(&prefix, &name, &padding, 0), 40);
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_truncates_a_long_name() {
+        let (name, padding) = diff_tree_row_layout(30, "   ", "a_very_long_file_name_indeed.rs", 8);
+        assert!(name.ends_with("..."));
+        assert!(row_width("   ", &name, &padding, 8) <= 30 + 3);
     }
 }

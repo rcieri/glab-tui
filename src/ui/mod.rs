@@ -21,7 +21,6 @@ use self::modal::clear_area;
 use self::overlays::render_overlays;
 use crate::app::{App, DiffLine, Tab};
 use crate::config::{ICONS, THEME};
-use crate::utils::format::truncate;
 use std::collections::HashSet;
 
 /// Render the active edit/create menu as an interactive inspector into the
@@ -847,18 +846,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         String::new()
                     };
 
-                    let stats_total_len =
-                        stats_str.as_ref().map_or(0, |s| s.len()) + count_suffix.len();
+                    let stats_total_len = stats_str.as_ref().map_or(0, |s| s.chars().count())
+                        + count_suffix.chars().count();
 
                     let prefix = format!(" {}{}", indent, indicator);
-                    let name_avail = panel_inner_width
-                        .saturating_sub(prefix.len())
-                        .saturating_sub(stats_total_len);
-                    name_display = truncate(&name_display, name_avail.max(8));
-                    let padding = " ".repeat(
-                        panel_inner_width
-                            .saturating_sub(prefix.len() + name_display.len() + stats_total_len),
+                    let (name_display_padded, padding) = crate::ui::helpers::diff_tree_row_layout(
+                        panel_inner_width,
+                        &prefix,
+                        &name_display,
+                        stats_total_len,
                     );
+                    name_display = name_display_padded;
 
                     // Determine per-item style
                     let item_style = if is_selected {

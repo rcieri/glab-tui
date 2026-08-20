@@ -1001,6 +1001,32 @@ pub struct DiffView {
     pub search_cursor: usize,
     pub search_active: bool,
     pub file_tree_visible: bool,
+    /// Cells the line-number column needs, so the separator after it lands in
+    /// the same column on every row. Derived from the widest line number in the
+    /// diff, never below [`MIN_LINE_NUMBER_WIDTH`].
+    pub line_number_width: usize,
+}
+
+/// Narrowest line-number column, and what any diff under 10 000 lines gets —
+/// the width the gutter always had before it was computed at all.
+pub const MIN_LINE_NUMBER_WIDTH: usize = 4;
+
+/// Cells needed to print the widest line number in `lines` without pushing the
+/// separator that follows it out of column.
+///
+/// `{:>4}` is a *minimum* width, so a five-digit number silently took a fifth
+/// cell and shifted the separator and the whole content of that row one column
+/// right of its neighbours. Any diff touching a large file — a generated
+/// OpenAPI spec, a lockfile — is full of such rows.
+fn line_number_width(lines: &[DiffLine]) -> usize {
+    lines
+        .iter()
+        .flat_map(|line| [line.old_line_num, line.new_line_num])
+        .flatten()
+        .max()
+        .map_or(MIN_LINE_NUMBER_WIDTH, |widest| {
+            MIN_LINE_NUMBER_WIDTH.max(widest.to_string().len())
+        })
 }
 
 fn strip_ansi_escapes(input: &str) -> String {
@@ -1309,6 +1335,8 @@ impl DiffView {
         // Copy directory counts to flat dir nodes
         Self::copy_dir_counts_to_flat(&root_node, &mut visible_nodes);
 
+        let number_width = line_number_width(&all_lines);
+
         let mut view = Self {
             mr_iid,
             raw_diff,
@@ -1332,6 +1360,7 @@ impl DiffView {
             search_cursor: 0,
             search_active: false,
             file_tree_visible: true,
+            line_number_width: number_width,
         };
 
         view.update_active_lines();
@@ -5551,6 +5580,59 @@ new mode 100755
             .iter()
             .find(|l| l.content.starts_with("new mode "));
         assert_eq!(new_mode.unwrap().line_type, DiffLineType::Meta);
+    }
+
+    /// A one-hunk diff starting at `start_line`, so the line numbers it
+    /// produces have a chosen number of digits.
+    fn diff_starting_at(start_line: u32) -> String {
+        format!(
+            "diff --git a/spec.yml b/spec.yml\n--- a/spec.yml\n+++ b/spec.yml\n@@ -{s},3 +{s},4 @@\n context\n+added\n-removed\n",
+            s = start_line
+        )
+    }
+
+    #[test]
+    fn test_line_number_width_floors_at_the_narrow_gutter() {
+        // Anything that fits the old fixed field keeps the old look.
+        let view = DiffView::new(42, diff_starting_at(1));
+        assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
+        let view = DiffView::new(42, diff_starting_at(9997));
+        assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
+    }
+
+    #[test]
+    fn test_line_number_width_grows_for_a_wider_number() {
+        // The bug: `{:>4}` is a minimum, so a five-digit number took a fifth
+        // cell and shifted that row's separator and content one column right.
+        let view = DiffView::new(42, diff_starting_at(10_848));
+        assert_eq!(view.line_number_width, 5);
+
+        let view = DiffView::new(42, diff_starting_at(100_000));
+        assert_eq!(view.line_number_width, 6);
+    }
+
+    #[test]
+    fn test_line_number_width_is_taken_from_the_widest_line_in_the_diff() {
+        // A diff whose first hunk is narrow and whose last is not must use the
+        // wider gutter throughout, or the two hunks disagree on the column.
+        let diff = format!("{}{}", diff_starting_at(12), {
+            let mut second = diff_starting_at(15_610);
+            second.push('\n');
+            second
+        });
+        let view = DiffView::new(42, diff);
+        assert_eq!(view.line_number_width, 5);
+    }
+
+    #[test]
+    fn test_line_number_width_handles_a_diff_with_no_numbers() {
+        // Meta-only output (a rename with no hunks) has no line numbers at all.
+        let view = DiffView::new(
+            42,
+            "diff --git a/a.txt b/b.txt\nsimilarity index 100%\nrename from a.txt\nrename to b.txt\n"
+                .to_string(),
+        );
+        assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
     }
 
     #[test]

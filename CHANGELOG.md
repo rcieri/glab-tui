@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 - **Wide line numbers no longer shift the diff gutter** — the line-number field was formatted with `{:>4}`, a minimum rather than a maximum, so a five-digit number took a fifth cell and pushed that row's separator and content one column right of its neighbours. Any diff touching a large file — a generated spec, a lockfile — was full of such rows, in both the unified and side-by-side layouts. The column is now as wide as the widest line number in the diff, and diffs under 10 000 lines look exactly as before (#368).
+- **Tab-indented files keep their indentation in the diff view** — a tab reached the rendered buffer as-is and occupied a single cell there, so Go, Makefiles and other tab-indented sources displayed flush-left with their structure gone. Tabs are now expanded to spaces at tab stops as the diff is parsed, which is the one point every consumer derives from — the stored line content, the syntect highlighting computed from it, the search's match indices and the side-by-side pairs all stay in agreement about where a character sits (#364).
 
 ---
 

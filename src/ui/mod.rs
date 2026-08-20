@@ -1165,22 +1165,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             _ => {}
                         }
                     } else {
-                        let actual_bg = sel_bg.unwrap_or(gutter_bg);
-                        left_spans.extend(vec![
-                            Span::styled(
-                                if is_cursor {
-                                    " ❯ "
-                                } else if in_selection {
-                                    " ▐ "
-                                } else {
-                                    "   "
-                                },
-                                marker_style,
-                            ),
-                            Span::styled(" ".repeat(num_width + 1), num_style),
-                            Span::styled("│ ", sep_style),
-                            Span::styled(" ", Style::default().bg(actual_bg)),
-                        ]);
+                        left_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
+                            if is_cursor {
+                                " ❯ "
+                            } else if in_selection {
+                                " ▐ "
+                            } else {
+                                "   "
+                            },
+                            marker_style,
+                            num_style,
+                            sep_style,
+                            num_width,
+                            sel_bg,
+                        ));
                     }
                     left_list_lines.push(Line::from(left_spans));
 
@@ -1336,22 +1334,20 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             _ => {}
                         }
                     } else {
-                        let actual_bg = sel_bg.unwrap_or(gutter_bg);
-                        right_spans.extend(vec![
-                            Span::styled(
-                                if is_cursor {
-                                    " ❯ "
-                                } else if in_selection {
-                                    " ▐ "
-                                } else {
-                                    "   "
-                                },
-                                marker_style,
-                            ),
-                            Span::styled(" ".repeat(num_width + 1), num_style),
-                            Span::styled("│ ", sep_style),
-                            Span::styled(" ", Style::default().bg(actual_bg)),
-                        ]);
+                        right_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
+                            if is_cursor {
+                                " ❯ "
+                            } else if in_selection {
+                                " ▐ "
+                            } else {
+                                "   "
+                            },
+                            marker_style,
+                            num_style,
+                            sep_style,
+                            num_width,
+                            sel_bg,
+                        ));
                     }
                     right_list_lines.push(Line::from(right_spans));
 

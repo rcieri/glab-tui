@@ -619,7 +619,7 @@ pub(crate) fn build_field_list_items(
                 match f.kind {
                     FieldType::Section => {}
                     FieldType::MultiSelect => {
-                        if val == "None" {
+                        if val == "--" {
                             val_spans.push(Span::styled(
                                 " None",
                                 Style::default()

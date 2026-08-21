@@ -1558,7 +1558,13 @@ async fn main() -> Result<()> {
                     comments,
                 } => {
                     app.diff_loading = false;
-                    app.diff_view = Some(crate::app::DiffView::new(mr_iid, raw_diff));
+                    let mut diff_view = crate::app::DiffView::new(mr_iid, raw_diff);
+                    // Restore the files marked as reviewed on an earlier pass.
+                    diff_view.restore_review_state(
+                        app.reviewed_files_for_mr(mr_iid),
+                        app.hide_reviewed_files,
+                    );
+                    app.diff_view = Some(diff_view);
                     app.current_comments = comments;
                     app.last_fetched_mr_iid = Some(mr_iid);
                     app.in_review_mode = true;
@@ -6516,6 +6522,51 @@ async fn main() -> Result<()> {
                                 if diff_view.focus_on_files {
                                     diff_view.expand_all();
                                 }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('m') => {
+                                // From the diff pane, mark whatever is under the
+                                // cursor rather than a stale tree selection.
+                                if !diff_view.focus_on_files {
+                                    diff_view.update_selected_file_from_cursor();
+                                }
+                                let target = {
+                                    let paths = diff_view.selected_file_paths();
+                                    if paths.len() == 1 {
+                                        paths[0].clone()
+                                    } else {
+                                        format!("{} files", paths.len())
+                                    }
+                                };
+                                if let Some((_, marked)) = diff_view.toggle_reviewed() {
+                                    app.store_reviewed_files_for_mr(
+                                        diff_view.mr_iid,
+                                        &diff_view.reviewed_files,
+                                    );
+                                    crate::utils::cache::save_cache(
+                                        &app.project_context,
+                                        &app.project_cache,
+                                    );
+                                    let (reviewed, total) = diff_view.review_progress();
+                                    app.status_message = Some(format!(
+                                        "{} {} ({}/{} reviewed)",
+                                        if marked { "Reviewed" } else { "Unmarked" },
+                                        target,
+                                        reviewed,
+                                        total
+                                    ));
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('M') => {
+                                let hidden = diff_view.toggle_hide_reviewed();
+                                app.hide_reviewed_files = hidden;
+                                let (reviewed, total) = diff_view.review_progress();
+                                app.status_message = Some(if hidden {
+                                    format!("Hiding {} reviewed file(s)", reviewed)
+                                } else {
+                                    format!("Showing all {} file(s)", total)
+                                });
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('[') => {

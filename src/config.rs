@@ -154,6 +154,7 @@ pub struct Icons {
     pub readonly: String,
     pub folder_expanded: String,
     pub folder_collapsed: String,
+    pub file_reviewed: String,
 }
 
 impl Icons {
@@ -256,6 +257,7 @@ impl Icons {
             readonly: "\u{f023}".to_string(),
             folder_expanded: "\u{f07c}".to_string(),
             folder_collapsed: "\u{f07b}".to_string(),
+            file_reviewed: "\u{f4a7}".to_string(),
         }
     }
 }

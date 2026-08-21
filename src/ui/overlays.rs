@@ -939,6 +939,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Diff View",
+                key: s("m"),
+                action: "Mark / unmark file (or directory) as reviewed",
+            },
+            Shortcut {
+                category: "Diff View",
+                key: s("M"),
+                action: "Hide / show reviewed files in the tree",
+            },
+            Shortcut {
+                category: "Diff View",
                 key: s("Enter / Space"),
                 action: "Expand file tree / Toggle zoom",
             },

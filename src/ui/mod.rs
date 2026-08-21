@@ -21,7 +21,6 @@ use self::modal::clear_area;
 use self::overlays::render_overlays;
 use crate::app::{App, DiffLine, Tab};
 use crate::config::{ICONS, THEME};
-use crate::utils::format::truncate;
 use std::collections::HashSet;
 
 /// Render the active edit/create menu as an interactive inspector into the
@@ -752,8 +751,25 @@ pub fn render(f: &mut Frame, app: &mut App) {
             };
 
             let files_list = if file_tree_visible {
+                let (reviewed_count, total_files) = diff_view.review_progress();
+                let files_title = if reviewed_count > 0 {
+                    format!(
+                        " {} {} {}/{}{} ",
+                        icons.label_files,
+                        &ICONS.read().unwrap().file_reviewed,
+                        reviewed_count,
+                        total_files,
+                        if diff_view.hide_reviewed {
+                            " (hidden)"
+                        } else {
+                            ""
+                        }
+                    )
+                } else {
+                    format!(" {} ", icons.label_files)
+                };
                 let files_block = Block::default()
-                    .title(format!(" {} ", icons.label_files))
+                    .title(files_title)
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(if diff_view.focus_on_files {
                         THEME.read().unwrap().border_focused
@@ -776,6 +792,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         } else {
                             format!("{} ", &ICONS.read().unwrap().folder_collapsed)
                         }
+                    } else if node.is_reviewed {
+                        format!("{} ", &ICONS.read().unwrap().file_reviewed)
                     } else {
                         "  ".to_string()
                     };
@@ -828,18 +846,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         String::new()
                     };
 
-                    let stats_total_len =
-                        stats_str.as_ref().map_or(0, |s| s.len()) + count_suffix.len();
+                    let stats_total_len = stats_str.as_ref().map_or(0, |s| s.chars().count())
+                        + count_suffix.chars().count();
 
                     let prefix = format!(" {}{}", indent, indicator);
-                    let name_avail = panel_inner_width
-                        .saturating_sub(prefix.len())
-                        .saturating_sub(stats_total_len);
-                    name_display = truncate(&name_display, name_avail.max(8));
-                    let padding = " ".repeat(
-                        panel_inner_width
-                            .saturating_sub(prefix.len() + name_display.len() + stats_total_len),
+                    let (name_display_padded, padding) = crate::ui::helpers::diff_tree_row_layout(
+                        panel_inner_width,
+                        &prefix,
+                        &name_display,
+                        stats_total_len,
                     );
+                    name_display = name_display_padded;
 
                     // Determine per-item style
                     let item_style = if is_selected {
@@ -853,6 +870,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 .bg(THEME.read().unwrap().border)
                                 .fg(THEME.read().unwrap().text_normal)
                         }
+                    } else if node.is_reviewed {
+                        // Reviewed files (and fully reviewed directories) fade
+                        // into the background so only pending work stands out.
+                        Style::default()
+                            .fg(THEME.read().unwrap().text_muted)
+                            .add_modifier(Modifier::DIM)
                     } else if node.is_dir {
                         Style::default()
                             .fg(THEME.read().unwrap().blue)
@@ -1853,7 +1876,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
             }
 
-            let footer_p = Paragraph::new(" Esc/q: Exit • d: Toggle Diff Layout • Enter/Space: Select File / Toggle Zoom • h/l: Collapse/Expand Dir • j/k/↑/↓: Navigate • J/K: Scroll 10 • [/]: Prev/Next Hunk • z/Z: Collapse/Expand All • v: Select Lines • c: Comment • e: Suggest Code • a: Comment Actions • r: Submit Review • / or f: Search • Ctrl+n/Ctrl+N: Next/Prev Match ")
+            let footer_p = Paragraph::new(" Esc/q: Exit • d: Toggle Diff Layout • Enter/Space: Select File / Toggle Zoom • h/l: Collapse/Expand Dir • j/k/↑/↓: Navigate • J/K: Scroll 10 • [/]: Prev/Next Hunk • z/Z: Collapse/Expand All • m: Mark Reviewed • M: Hide Reviewed • v: Select Lines • c: Comment • e: Suggest Code • a: Comment Actions • r: Submit Review • / or f: Search • Ctrl+n/Ctrl+N: Next/Prev Match ")
             .alignment(Alignment::Center)
             .style(Style::default().fg(THEME.read().unwrap().text_muted).add_modifier(Modifier::ITALIC))
             .wrap(ratatui::widgets::Wrap { trim: true });

@@ -67,6 +67,9 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
             // EDIT — reuse the GROUPED badge palette (blue).
             (" EDIT ", theme.blue, theme.bg)
         }
+    } else if app.select_mode {
+        // SELECT — distinct palette (purple) for yazi-style select mode.
+        (" SELECT ", theme.purple, theme.bg)
     } else if app.details_zoomed {
         // PREVIEW — reuse the SEARCHING badge palette (yellow).
         (" PREVIEW ", theme.yellow, theme.bg)

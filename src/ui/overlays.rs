@@ -506,6 +506,14 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             },
             Shortcut {
                 category: "Issues",
+                key: d(format!(
+                    "{}",
+                    app.config.keybindings.issues.selection_toggle
+                )),
+                action: "Toggle select mode (paint selection while navigating)",
+            },
+            Shortcut {
+                category: "Issues",
                 key: d(format!("{}", app.config.keybindings.issues.edit_entity)),
                 action: "Open parameter edit menu",
             },
@@ -544,6 +552,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 category: "Merge Requests",
                 key: d(format!("{}", app.config.keybindings.mrs.select_mr)),
                 action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
+            },
+            Shortcut {
+                category: "Merge Requests",
+                key: d(format!("{}", app.config.keybindings.mrs.selection_toggle)),
+                action: "Toggle select mode (paint selection while navigating)",
             },
             Shortcut {
                 category: "Merge Requests",

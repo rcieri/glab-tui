@@ -675,6 +675,8 @@ pub struct KeybindingIssues {
     pub create_mr: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default)]
+    pub selection_toggle: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,6 +709,8 @@ pub struct KeybindingMrs {
     pub select_mr: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default)]
+    pub selection_toggle: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -878,12 +882,13 @@ keybind_defaults! {
     def_delete_entity = "d",
     def_create_mr = "n",
     def_select_mr = "Space",
+    def_selection_toggle = "v",
     def_approve_mr = "a",
     def_revoke_mr = "A",
     def_rebase_mr = "R",
     def_merge_mr = "m",
     def_toggle_draft = "s",
-    def_view_diff = "v",
+    def_view_diff = "D",
     def_view_related_pipelines = "P",
     def_trigger_pipeline = "p",
     def_retry = "r",
@@ -952,6 +957,7 @@ impl Default for KeybindingIssues {
             select_issue: def_select_issue(),
             create_mr: def_create_mr_issue(),
             open_in_browser: def_open_in_browser(),
+            selection_toggle: def_selection_toggle(),
         }
     }
 }
@@ -973,6 +979,7 @@ impl Default for KeybindingMrs {
             delete_entity: def_delete_entity(),
             select_mr: def_select_mr(),
             open_in_browser: def_open_in_browser(),
+            selection_toggle: def_selection_toggle(),
         }
     }
 }
@@ -1286,6 +1293,7 @@ edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
+selection_toggle = "v"
 
 [keybindings.mrs]
 create_mr = "n"
@@ -1295,12 +1303,13 @@ revoke_mr = "A"
 rebase_mr = "R"
 merge_mr = "m"
 toggle_draft = "s"
-view_diff = "v"
+view_diff = "D"
 view_related_pipelines = "P"
 edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
+selection_toggle = "v"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"

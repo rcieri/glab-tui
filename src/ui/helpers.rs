@@ -88,6 +88,35 @@ fn is_light_color(color: Color) -> bool {
     }
 }
 
+/// The gutter for a side-by-side row whose side has no line: the marker column,
+/// a blank line-number field and the separator — the same cells a row with a
+/// line draws before its content begins.
+///
+/// `num_width` is the (dynamic) line-number column width, so the blank field
+/// stays the same width as the numbered rows on either side. `sel_bg` appends
+/// one further cell, so a selected or search-matched empty row still has
+/// somewhere to show its highlight. That cell is deliberately absent otherwise:
+/// painting it in the gutter colour ran the gutter one column past where a
+/// numbered row ends it, which read as a ragged edge on every padding row.
+pub(crate) fn empty_side_gutter_spans(
+    marker: &'static str,
+    marker_style: Style,
+    num_style: Style,
+    sep_style: Style,
+    num_width: usize,
+    sel_bg: Option<Color>,
+) -> Vec<Span<'static>> {
+    let mut spans = vec![
+        Span::styled(marker, marker_style),
+        Span::styled(" ".repeat(num_width + 1), num_style),
+        Span::styled("│ ", sep_style),
+    ];
+    if let Some(bg) = sel_bg {
+        spans.push(Span::styled(" ", Style::default().bg(bg)));
+    }
+    spans
+}
+
 pub(crate) fn floor_char_boundary(s: &str, mut index: usize) -> usize {
     if index >= s.len() {
         return s.len();
@@ -1101,5 +1130,72 @@ mod tests {
         let (name, padding) = diff_tree_row_layout(30, "   ", "a_very_long_file_name_indeed.rs", 8);
         assert!(name.ends_with("..."));
         assert!(row_width("   ", &name, &padding, 8) <= 30 + 3);
+    }
+
+    /// Rendered width of a span run, in cells.
+    fn spans_width(spans: &[Span<'static>]) -> usize {
+        spans.iter().map(|s| s.content.chars().count()).sum()
+    }
+
+    /// The gutter a side-by-side row with a line draws: marker, line number,
+    /// separator. Kept here as the reference width an empty row must match.
+    // 3 marker cells + a 4-wide number and its trailing space + separator and
+    // its trailing space.
+    const OCCUPIED_ROW_GUTTER_WIDTH: usize = 3 + 5 + 2;
+
+    #[test]
+    fn test_empty_side_gutter_matches_an_occupied_row() {
+        let spans = empty_side_gutter_spans(
+            "   ",
+            Style::default(),
+            Style::default(),
+            Style::default(),
+            4,
+            None,
+        );
+        assert_eq!(
+            spans_width(&spans),
+            OCCUPIED_ROW_GUTTER_WIDTH,
+            "a padding row must end its gutter where a numbered row does"
+        );
+        assert!(
+            spans.iter().all(|s| s.style.bg.is_none()),
+            "nothing here may paint a background of its own"
+        );
+    }
+
+    #[test]
+    fn test_empty_side_gutter_still_shows_a_selection() {
+        // The reason the extra cell exists: a selected empty row needs
+        // somewhere to show the highlight, or it reads as unselected.
+        let spans = empty_side_gutter_spans(
+            " ▐ ",
+            Style::default(),
+            Style::default(),
+            Style::default(),
+            4,
+            Some(Color::Rgb(1, 2, 3)),
+        );
+        assert_eq!(spans_width(&spans), OCCUPIED_ROW_GUTTER_WIDTH + 1);
+        assert_eq!(
+            spans.last().map(|s| s.style.bg),
+            Some(Some(Color::Rgb(1, 2, 3))),
+            "the highlight colour must reach the appended cell"
+        );
+    }
+
+    #[test]
+    fn test_empty_side_gutter_keeps_its_styles_on_the_right_cells() {
+        let marker = Style::default().fg(Color::Rgb(9, 9, 9));
+        let num = Style::default().fg(Color::Rgb(8, 8, 8));
+        let sep = Style::default().fg(Color::Rgb(7, 7, 7));
+        let spans = empty_side_gutter_spans(" ❯ ", marker, num, sep, 4, None);
+
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].content, " ❯ ");
+        assert_eq!(spans[0].style, marker);
+        assert_eq!(spans[1].style, num);
+        assert_eq!(spans[2].content, "│ ");
+        assert_eq!(spans[2].style, sep);
     }
 }

@@ -1198,5 +1198,4 @@ mod tests {
         assert_eq!(spans[2].content, "│ ");
         assert_eq!(spans[2].style, sep);
     }
-    }
 }

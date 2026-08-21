@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
-use crate::config::{Config, Theme, THEME};
+use crate::config::{Config, THEME, Theme};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::format::expand_tabs;
 use crate::utils::ui::StatefulTable;
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::ListState;
@@ -2988,11 +2988,7 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending {
-                    cmp.reverse()
-                } else {
-                    cmp
-                }
+                if !ascending { cmp.reverse() } else { cmp }
             });
         }
         list
@@ -3263,11 +3259,7 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending {
-                    cmp.reverse()
-                } else {
-                    cmp
-                }
+                if !ascending { cmp.reverse() } else { cmp }
             });
         }
         list
@@ -3436,11 +3428,7 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending {
-                    cmp.reverse()
-                } else {
-                    cmp
-                }
+                if !ascending { cmp.reverse() } else { cmp }
             });
         }
         list
@@ -3571,11 +3559,7 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending {
-                    cmp.reverse()
-                } else {
-                    cmp
-                }
+                if !ascending { cmp.reverse() } else { cmp }
             });
         }
         list
@@ -3743,11 +3727,7 @@ impl App {
                     _ => String::new(),
                 };
                 let cmp = val_a.cmp(&val_b);
-                if !ascending {
-                    cmp.reverse()
-                } else {
-                    cmp
-                }
+                if !ascending { cmp.reverse() } else { cmp }
             });
         }
         list
@@ -3874,11 +3854,7 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending {
-                    cmp.reverse()
-                } else {
-                    cmp
-                }
+                if !ascending { cmp.reverse() } else { cmp }
             });
         }
         list
@@ -4020,11 +3996,7 @@ impl App {
                     (Ok(a_num), Ok(b_num)) => a_num.cmp(&b_num),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending {
-                    cmp.reverse()
-                } else {
-                    cmp
-                }
+                if !ascending { cmp.reverse() } else { cmp }
             });
         }
         list
@@ -4273,11 +4245,7 @@ impl App {
             "unread" | "done" => {
                 // "unread"→"NEW", "done"→"READ" — handled via pipeline_status_display
                 // but normalize maps them too for saved-filter compat
-                if v == "unread" {
-                    "NEW"
-                } else {
-                    "READ"
-                }
+                if v == "unread" { "NEW" } else { "READ" }
             }
             other => other,
         }
@@ -6072,7 +6040,6 @@ new mode 100755
             "fixture produced no highlighted lines, so this proves nothing"
         );
     }
-    }
 
     #[test]
     fn test_diff_view_file_tree_scroll_offset_default() {
@@ -6724,9 +6691,11 @@ index 123456..789012 100644
             );
         }
         // Default-off: eight default columns collapse Title at 80 cols.
-        assert!(!Tab::MergeRequests
-            .default_columns(BackendKind::GitLab)
-            .contains(&"Workflow"));
+        assert!(
+            !Tab::MergeRequests
+                .default_columns(BackendKind::GitLab)
+                .contains(&"Workflow")
+        );
     }
 
     #[test]
@@ -6823,12 +6792,14 @@ index 123456..789012 100644
         let filtered = app.filtered_pipelines();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, 1);
-        assert!(app
-            .collect_unique_column_values(Tab::Pipelines, "Duration")
-            .contains(&"2m 5s".to_string()));
-        assert!(app
-            .collect_unique_column_values(Tab::Pipelines, "Source")
-            .contains(&"schedule".to_string()));
+        assert!(
+            app.collect_unique_column_values(Tab::Pipelines, "Duration")
+                .contains(&"2m 5s".to_string())
+        );
+        assert!(
+            app.collect_unique_column_values(Tab::Pipelines, "Source")
+                .contains(&"schedule".to_string())
+        );
     }
 
     #[test]

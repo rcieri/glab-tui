@@ -5,7 +5,6 @@ use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
-use crate::templates::get_default_template;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
@@ -272,49 +271,75 @@ pub async fn handle_active_tab_key(
                             .as_ref()
                             .map(|m| m.title.clone())
                             .unwrap_or_default();
-                        let description_val = if let Some(ref d) = issue.description {
-                            format!("Closes #{}\n\n{}", issue.iid, d)
+                        let templates = crate::templates::list_templates("mr");
+                        if !templates.is_empty() {
+                            let template_names: Vec<String> =
+                                std::iter::once("None (blank)".to_string())
+                                    .chain(templates.iter().map(|(n, _)| n.clone()))
+                                    .collect();
+                            app.pending_mr_create = Some(crate::app::PendingMrCreate {
+                                title: title_val,
+                                labels: labels_val,
+                                assignees: assignees_val,
+                                milestone: milestone_val,
+                                source_branch: source_branch_val,
+                                issue_iid: issue.iid,
+                            });
+                            app.selector = Some(crate::app::Selector {
+                                title: " Select Merge Request Template ".to_string(),
+                                all_items: template_names,
+                                selected_items: std::collections::HashSet::new(),
+                                cursor_idx: 0,
+                                search_query: String::new(),
+                                is_filtering: false,
+                                is_loading: false,
+                                entity_iid: 0,
+                                entity_type: "new_mr".to_string(),
+                                field_type: "mr_template_selector".to_string(),
+                                multi_select: false,
+                                state: {
+                                    let mut s = ListState::default();
+                                    s.select(Some(0));
+                                    s
+                                },
+                            });
                         } else {
-                            let mr_tmpl = get_default_template("mr").unwrap_or_default();
-                            if mr_tmpl.is_empty() {
-                                format!("Closes #{}", issue.iid)
-                            } else {
-                                format!("Closes #{}\n\n{}", issue.iid, mr_tmpl)
-                            }
-                        };
-
-                        app.open_edit_menu(crate::app::EditMenu {
-                            title: format!("Create {} from #{}", pr_suffix, issue.iid),
-                            fields: vec![
-                                crate::app::Field::text("Title", title_val),
-                                crate::app::Field::toggle(
-                                    "Status (Draft/Ready)",
-                                    "Draft".to_string(),
-                                ),
-                                crate::app::Field::ref_field("Source Branch", source_branch_val),
-                                crate::app::Field::ref_field(
-                                    "Target Branch",
-                                    get_default_branch().unwrap_or_else(|| "main".to_string()),
-                                ),
-                                crate::app::Field::multi_select("Assignees", assignees_val),
-                                crate::app::Field::multi_select("Reviewers", String::new()),
-                                crate::app::Field::multi_select("Milestone", milestone_val),
-                                crate::app::Field::multi_select("Labels", labels_val),
-                                crate::app::Field::text("Description", description_val),
-                            ],
-                            selected_idx: 0,
-                            entity_iid: issue.iid,
-                            entity_kind: crate::app::EditEntityKind::CreateMr,
-                            state: {
-                                let mut s = ListState::default();
-                                s.select(Some(0));
-                                s
-                            },
-                            workflow_inputs: vec![],
-                            cursor_pos: 0,
-                            editing: false,
-                            desc_scroll: 0,
-                        });
+                            app.open_edit_menu(crate::app::EditMenu {
+                                title: format!("Create {} from #{}", pr_suffix, issue.iid),
+                                fields: vec![
+                                    crate::app::Field::text("Title", title_val),
+                                    crate::app::Field::toggle(
+                                        "Status (Draft/Ready)",
+                                        "Draft".to_string(),
+                                    ),
+                                    crate::app::Field::ref_field(
+                                        "Source Branch",
+                                        source_branch_val,
+                                    ),
+                                    crate::app::Field::ref_field(
+                                        "Target Branch",
+                                        get_default_branch().unwrap_or_else(|| "main".to_string()),
+                                    ),
+                                    crate::app::Field::multi_select("Assignees", assignees_val),
+                                    crate::app::Field::multi_select("Reviewers", String::new()),
+                                    crate::app::Field::multi_select("Milestone", milestone_val),
+                                    crate::app::Field::multi_select("Labels", labels_val),
+                                    crate::app::Field::text("Description", String::new()),
+                                ],
+                                selected_idx: 0,
+                                entity_iid: issue.iid,
+                                entity_kind: crate::app::EditEntityKind::CreateMr,
+                                state: {
+                                    let mut s = ListState::default();
+                                    s.select(Some(0));
+                                    s
+                                },
+                                workflow_inputs: vec![],
+                                cursor_pos: 0,
+                                editing: false,
+                                desc_scroll: 0,
+                            });
+                        }
                     }
                 }
             }

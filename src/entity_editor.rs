@@ -1271,6 +1271,49 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 desc_scroll: 0,
             });
         }
+    } else if entity_type == "release" {
+        // Identify the release by the current menu's read-only "Tag" field.
+        let tag = app
+            .edit_menu
+            .as_ref()
+            .and_then(|m| {
+                m.fields
+                    .iter()
+                    .find(|f| f.label == "Tag")
+                    .map(|f| f.value.clone())
+            })
+            .unwrap_or_default();
+        if let Some(release) = app
+            .releases
+            .items
+            .iter()
+            .find(|r| r.tag_name == tag)
+            .cloned()
+        {
+            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let mut doc = build_release_document(&release);
+            doc.fields.push(crate::app::Field::text(
+                "Description",
+                release.description.clone().unwrap_or_default(),
+            ));
+
+            app.open_edit_menu(crate::app::EditMenu {
+                title: format!("Edit Release {}", release.tag_name),
+                fields: doc.fields,
+                selected_idx,
+                entity_iid: 0,
+                entity_kind: crate::app::EditEntityKind::EditRelease,
+                state: {
+                    let mut s = ratatui::widgets::ListState::default();
+                    s.select(Some(selected_idx));
+                    s
+                },
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+            });
+        }
     }
 }
 

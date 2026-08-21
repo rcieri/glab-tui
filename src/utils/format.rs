@@ -2,6 +2,33 @@ use chrono::{DateTime, Utc};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+/// Replaces tab characters with spaces, advancing to the next `tab_width`
+/// column each time.
+///
+/// Tab stops rather than a fixed number of spaces per tab, because a tab in the
+/// middle of a line is an alignment request, not an indent: `gofmt` lines up
+/// consecutive struct fields and their tags that way, and expanding each tab to
+/// the same width would leave those columns ragged.
+pub fn expand_tabs(text: &str, tab_width: usize) -> String {
+    if !text.contains('\t') {
+        return text.to_string();
+    }
+    let tab_width = tab_width.max(1);
+    let mut out = String::with_capacity(text.len() + tab_width);
+    let mut column = 0usize;
+    for ch in text.chars() {
+        if ch == '\t' {
+            let pad = tab_width - (column % tab_width);
+            out.push_str(&" ".repeat(pad));
+            column += pad;
+        } else {
+            out.push(ch);
+            column += 1;
+        }
+    }
+    out
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
         None => String::from(s),
@@ -597,6 +624,43 @@ fn classify_line(line: &str, lower: &str, theme: &crate::config::Theme) -> Style
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_expand_tabs_indentation() {
+        assert_eq!(expand_tabs("no tabs here", 4), "no tabs here");
+        assert_eq!(expand_tabs("\tone", 4), "    one");
+        assert_eq!(expand_tabs("\t\ttwo", 4), "        two");
+        assert_eq!(expand_tabs("\tone", 8), "        one");
+        assert_eq!(expand_tabs("", 4), "");
+    }
+
+    #[test]
+    fn test_expand_tabs_advances_to_the_next_stop() {
+        // Not a fixed width per tab: the pad is whatever reaches the next stop.
+        assert_eq!(expand_tabs("ab\tc", 4), "ab  c");
+        assert_eq!(expand_tabs("abc\td", 4), "abc d");
+        assert_eq!(expand_tabs("abcd\te", 4), "abcd    e");
+    }
+
+    #[test]
+    fn test_expand_tabs_keeps_a_column_grid() {
+        // Two lines whose text lands in the same stop keep the same column
+        // after a tab, which a fixed number of spaces per tab would not give.
+        let a = expand_tabs("ab\tX", 4);
+        let b = expand_tabs("abc\tX", 4);
+        assert_eq!(a.find('X'), b.find('X'));
+    }
+
+    #[test]
+    fn test_expand_tabs_treats_zero_width_as_one() {
+        // A misconfigured width must not divide by zero or eat the tab.
+        assert_eq!(expand_tabs("\tx", 0), " x");
+    }
+
+    #[test]
+    fn test_expand_tabs_leaves_multibyte_text_intact() {
+        assert_eq!(expand_tabs("\tπλ→", 4), "    πλ→");
+    }
 
     #[test]
     fn test_format_ref() {

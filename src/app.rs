@@ -3,6 +3,7 @@
 use crate::backend::BackendKind;
 use crate::config::{Config, THEME, Theme};
 use crate::domain::workflow_inputs::WorkflowInput;
+use crate::utils::format::expand_tabs;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -1029,6 +1030,29 @@ fn line_number_width(lines: &[DiffLine]) -> usize {
         })
 }
 
+/// Columns per tab in the diff view. A literal tab occupies a single cell in
+/// the rendered buffer, so a tab-indented file (Go, Makefiles) would otherwise
+/// display with no indentation at all.
+const DIFF_TAB_WIDTH: usize = 4;
+
+/// Expands the tabs in one diff line, keeping its `+`/`-`/space marker.
+///
+/// The marker is part of the diff, not of the source line, so tab stops are
+/// measured from the character after it. Counting the marker as column 0 would
+/// make a single leading tab three spaces wide instead of four, and shift every
+/// alignment tab on the line with it.
+fn expand_diff_line_tabs(line: &str) -> String {
+    match line.chars().next() {
+        Some(marker @ ('+' | '-' | ' ')) => {
+            let mut out = String::with_capacity(line.len());
+            out.push(marker);
+            out.push_str(&expand_tabs(&line[1..], DIFF_TAB_WIDTH));
+            out
+        }
+        _ => expand_tabs(line, DIFF_TAB_WIDTH),
+    }
+}
+
 fn strip_ansi_escapes(input: &str) -> String {
     let mut result = String::new();
     let mut in_escape = false;
@@ -1055,7 +1079,16 @@ fn strip_ansi_escapes(input: &str) -> String {
 impl DiffView {
     #[allow(clippy::too_many_lines)]
     pub fn new(mr_iid: u64, raw_diff: String) -> Self {
-        let cleaned_diff = strip_ansi_escapes(&raw_diff);
+        // Expand tabs once, here: everything downstream — the stored line
+        // content, the syntect highlighting computed from it, the search's
+        // fuzzy match indices, the side-by-side pairs — is derived from these
+        // strings, so expanding at the single point where they are produced
+        // keeps all of them agreeing on where a character sits.
+        let cleaned_diff = strip_ansi_escapes(&raw_diff)
+            .lines()
+            .map(expand_diff_line_tabs)
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut all_lines = Vec::new();
         let mut current_file = String::new();
         let mut old_line_num = None;
@@ -5633,6 +5666,90 @@ new mode 100755
                 .to_string(),
         );
         assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
+    }
+
+    /// A diff of a tab-indented file, as `gofmt` would produce it.
+    fn tab_indented_diff() -> String {
+        [
+            "diff --git a/handler.go b/handler.go",
+            "index 1111111..2222222 100644",
+            "--- a/handler.go",
+            "+++ b/handler.go",
+            "@@ -1,6 +1,7 @@",
+            " func handle() error {",
+            " \tif err := check(); err != nil {",
+            "+\t\treturn fmt.Errorf(\"check: %w\", err)",
+            "-\t\treturn err",
+            " \t}",
+            " }",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn test_diff_view_expands_tabs_so_indentation_survives() {
+        let view = DiffView::new(42, tab_indented_diff());
+
+        let content: Vec<&str> = view
+            .all_lines
+            .iter()
+            .map(|l| l.content.as_str())
+            .filter(|c| c.contains("return") || c.contains("if err"))
+            .collect();
+
+        assert_eq!(
+            content,
+            vec![
+                " \u{20}\u{20}\u{20}\u{20}if err := check(); err != nil {",
+                "+        return fmt.Errorf(\"check: %w\", err)",
+                "-        return err",
+            ],
+            "tabs must reach the rendered content as spaces, or the file displays flush-left"
+        );
+        assert!(
+            !view.all_lines.iter().any(|l| l.content.contains('\t')),
+            "no tab may survive into a rendered line"
+        );
+    }
+
+    #[test]
+    fn test_diff_view_keeps_the_marker_out_of_the_tab_stops() {
+        let view = DiffView::new(42, tab_indented_diff());
+        let added = view
+            .all_lines
+            .iter()
+            .find(|l| l.line_type == DiffLineType::Addition)
+            .expect("an addition");
+
+        // One marker, then a full tab stop per tab — not three spaces because
+        // the marker ate a column.
+        assert!(added.content.starts_with('+'));
+        assert_eq!(
+            added.content[1..].len() - added.content[1..].trim_start().len(),
+            8,
+            "two tabs of source indent must survive as two full stops"
+        );
+    }
+
+    #[test]
+    fn test_diff_view_expands_tabs_in_the_highlighted_spans_too() {
+        // A highlighted line renders from its spans, not from `content`, so a
+        // tab surviving there would leave syntax-highlighted code sitting at a
+        // different indent from everything else.
+        let view = DiffView::new(42, tab_indented_diff());
+        let mut highlighted_lines = 0;
+        for line in &view.all_lines {
+            if let Some(ref spans) = line.syntax_highlighted {
+                highlighted_lines += 1;
+                let text: String = spans.iter().map(|(_, t)| t.as_str()).collect();
+                assert!(!text.contains('\t'), "a span kept its tab: {text:?}");
+            }
+        }
+        assert!(
+            highlighted_lines > 0,
+            "fixture produced no highlighted lines, so this proves nothing"
+        );
+    }
     }
 
     #[test]

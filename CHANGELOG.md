@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Wide line numbers no longer shift the diff gutter** — the line-number field was formatted with `{:>4}`, a minimum rather than a maximum, so a five-digit number took a fifth cell and pushed that row's separator and content one column right of its neighbours. Any diff touching a large file — a generated spec, a lockfile — was full of such rows, in both the unified and side-by-side layouts. The column is now as wide as the widest line number in the diff, and diffs under 10 000 lines look exactly as before (#368).
+
+---
+
 ## [0.8.4] - 2026-08-13
 
 ### Bug Fixes

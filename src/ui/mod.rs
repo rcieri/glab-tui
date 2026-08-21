@@ -969,6 +969,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         .zip(updated_diff_view.selection_end)
                         .map_or(false, |(s, e)| idx >= s && idx <= e);
 
+                    let num_width = updated_diff_view.line_number_width;
                     let gutter_bg = THEME.read().unwrap().diff_gutter_bg;
                     let marker_style = Style::default()
                         .fg(THEME.read().unwrap().yellow)
@@ -1008,7 +1009,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 },
                                 marker_style,
                             ),
-                            Span::styled(format!("{:>4} ", old_str), num_style),
+                            Span::styled(
+                                format!("{:>width$} ", old_str, width = num_width),
+                                num_style,
+                            ),
                             Span::styled("│ ", sep_style),
                         ]);
 
@@ -1150,7 +1154,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 },
                                 marker_style,
                             ),
-                            Span::styled("     ", num_style),
+                            Span::styled(" ".repeat(num_width + 1), num_style),
                             Span::styled("│ ", sep_style),
                             Span::styled(" ", Style::default().bg(actual_bg)),
                         ]);
@@ -1176,7 +1180,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 },
                                 marker_style,
                             ),
-                            Span::styled(format!("{:>4} ", new_str), num_style),
+                            Span::styled(
+                                format!("{:>width$} ", new_str, width = num_width),
+                                num_style,
+                            ),
                             Span::styled("│ ", sep_style),
                         ]);
 
@@ -1318,7 +1325,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 },
                                 marker_style,
                             ),
-                            Span::styled("     ", num_style),
+                            Span::styled(" ".repeat(num_width + 1), num_style),
                             Span::styled("│ ", sep_style),
                             Span::styled(" ", Style::default().bg(actual_bg)),
                         ]);
@@ -1521,6 +1528,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         .map(|n| n.to_string())
                         .unwrap_or_else(|| " ".to_string());
 
+                    let num_width = updated_diff_view.line_number_width;
                     let gutter_bg = THEME.read().unwrap().diff_gutter_bg;
 
                     let marker_style = Style::default()
@@ -1547,8 +1555,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             },
                             marker_style,
                         ),
-                        Span::styled(format!("{:>4} ", old_str), num_style),
-                        Span::styled(format!("{:>4} ", new_str), num_style),
+                        Span::styled(
+                            format!("{:>width$} ", old_str, width = num_width),
+                            num_style,
+                        ),
+                        Span::styled(
+                            format!("{:>width$} ", new_str, width = num_width),
+                            num_style,
+                        ),
                         Span::styled("│ ", sep_style),
                     ];
 

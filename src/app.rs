@@ -2996,6 +2996,13 @@ impl App {
             }
             if enabled_cols.contains("Ref") {
                 check_match(item.ref_branch());
+                // The cell shows `format_ref` ("MR !2208"), not the raw
+                // `refs/merge-requests/2208/head`. Matching only the raw ref
+                // makes a visible row unfindable by what is on screen.
+                let display_ref = crate::utils::format::format_ref(item.ref_branch());
+                if display_ref != item.ref_branch() {
+                    check_match(&display_ref);
+                }
             }
             if enabled_cols.contains("Stages") {
                 if let Some(jobs) = pipeline_jobs.get(&item.id()) {
@@ -3120,28 +3127,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Pipelines,
-            |item, col| match col {
-                "ID" => vec![item.id().to_string()],
-                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
-                "Ref" => vec![item.ref_branch().to_string()],
-                "Name" => vec![item.name().to_string()],
-                "Event" => vec![item.event().to_string()],
-                "SHA" => vec![item.head_sha().to_string()],
-                "Actor" => vec![item.actor_login().to_string()],
-                "Source" => item
-                    .source()
-                    .map(|source| vec![source.to_string()])
-                    .unwrap_or_default(),
-                "Created" => item
-                    .created_at()
-                    .map(|c| vec![crate::utils::format::time_ago(c)])
-                    .unwrap_or_default(),
-                "Duration" => item
-                    .duration_seconds()
-                    .map(|d| vec![format!("{}m {}s", d / 60, d % 60)])
-                    .unwrap_or_default(),
-                _ => vec![],
-            },
+            Self::pipeline_filter_values,
         );
         list
     }
@@ -3852,6 +3838,53 @@ impl App {
         }
     }
 
+    /// Filter values for one Pipelines column.
+    ///
+    /// Single source of truth for the column-filter picker, `filtered_pipelines`,
+    /// and the table renderer. These three used to carry their own copies of this
+    /// mapping and had drifted apart (raw `status` vs the `SUCCESS` display text,
+    /// raw `created_at` vs `time_ago`, no `Source`/`Duration` in the renderer), so
+    /// the rows drawn on screen were not the rows the rest of the app indexed into.
+    ///
+    /// The first value is the one the picker offers — always the text the cell
+    /// shows. Later values are compatibility aliases (raw `Ref` for filters saved
+    /// before the cell switched to `format_ref`).
+    pub fn pipeline_filter_values(
+        item: &crate::domain::pipelines::Pipeline,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "ID" => vec![item.id().to_string()],
+            "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
+            "Ref" => {
+                let raw = item.ref_branch().to_string();
+                let display = crate::utils::format::format_ref(&raw);
+                if display == raw {
+                    vec![raw]
+                } else {
+                    vec![display, raw]
+                }
+            }
+            "Name" => vec![item.name().to_string()],
+            "Event" => vec![item.event().to_string()],
+            "SHA" => vec![item.head_sha().to_string()],
+            "Actor" => vec![item.actor_login().to_string()],
+            "Created" => item
+                .created_at()
+                .map(|c| vec![crate::utils::format::time_ago(c)])
+                .unwrap_or_default(),
+            "Source" => item
+                .source()
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default(),
+            "Duration" => item
+                .duration_seconds()
+                .map(|d| vec![format!("{}m {}s", d / 60, d % 60)])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
     fn normalize_filter_value(v: &str) -> &str {
         match v {
             // State
@@ -3990,44 +4023,11 @@ impl App {
             }
             Tab::Pipelines => {
                 for item in &self.pipelines.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id().to_string());
-                        }
-                        "Status" => {
-                            values.insert(Self::pipeline_status_display(item.status()).to_string());
-                        }
-                        "Ref" => {
-                            values.insert(item.ref_branch().to_string());
-                        }
-                        "Name" => {
-                            values.insert(item.name().to_string());
-                        }
-                        "Event" => {
-                            values.insert(item.event().to_string());
-                        }
-                        "SHA" => {
-                            values.insert(item.head_sha().to_string());
-                        }
-                        "Actor" => {
-                            values.insert(item.actor_login().to_string());
-                        }
-                        "Created" => {
-                            if let Some(c) = item.created_at() {
-                                values.insert(crate::utils::format::time_ago(c));
-                            }
-                        }
-                        "Source" => {
-                            if let Some(source) = item.source() {
-                                values.insert(source.to_string());
-                            }
-                        }
-                        "Duration" => {
-                            if let Some(d) = item.duration_seconds() {
-                                values.insert(format!("{}m {}s", d / 60, d % 60));
-                            }
-                        }
-                        _ => {}
+                    // Offer the displayed value only — the trailing entries of
+                    // `pipeline_filter_values` are back-compat aliases, not
+                    // separate choices.
+                    if let Some(v) = Self::pipeline_filter_values(item, col).into_iter().next() {
+                        values.insert(v);
                     }
                 }
             }
@@ -6164,5 +6164,64 @@ index 123456..789012 100644
             app.collect_unique_column_values(Tab::Pipelines, "Source")
                 .contains(&"schedule".to_string())
         );
+    }
+
+    #[test]
+    fn pipeline_ref_is_searchable_and_filterable_by_its_displayed_text() {
+        // GitLab MR pipelines carry `refs/merge-requests/<iid>/head`, but the
+        // Ref cell shows "MR !<iid>". Searching or filtering by what the row
+        // actually says used to match nothing, so a pipeline sitting visibly in
+        // the table looked missing.
+        let mut app = App::default();
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 22598077,
+            status: "running".to_string(),
+            r#ref: "refs/merge-requests/2208/head".to_string(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: "merge_request_event".to_string(),
+            head_sha: "abc123".to_string(),
+            actor_login: "alice".to_string(),
+            duration_seconds: None,
+            created_at: None,
+            source: Some("merge_request_event".to_string()),
+        }];
+        let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
+        let jobs = std::collections::HashMap::new();
+
+        for query in ["MR !2208", "2208", "merge-requests"] {
+            assert_eq!(
+                App::filter_pipelines_list(&app.pipelines.items, query, &jobs, &cols).len(),
+                1,
+                "search for {query:?} must find the MR pipeline"
+            );
+        }
+
+        // The picker offers the displayed text …
+        let offered = app.collect_unique_column_values(Tab::Pipelines, "Ref");
+        assert_eq!(offered, vec!["MR !2208".to_string()]);
+
+        // … and filtering by it keeps the row.
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Ref".to_string(),
+                ["MR !2208".to_string()].into_iter().collect(),
+            );
+        assert_eq!(app.filtered_pipelines().len(), 1);
+
+        // A filter saved before the cell switched to `format_ref` still works.
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Ref".to_string(),
+                ["refs/merge-requests/2208/head".to_string()]
+                    .into_iter()
+                    .collect(),
+            );
+        assert_eq!(app.filtered_pipelines().len(), 1);
     }
 }

@@ -231,7 +231,7 @@ The generated file is fully annotated. Key sections:
 
 ```toml
 # Pick a built-in theme preset
-theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
+theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
 
 # Items per API request (1-100) — lower this if your GitLab instance truncates
 # large JSON response bodies. GitLab-only; GitHub paginates with --limit.

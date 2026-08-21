@@ -1627,24 +1627,17 @@ async fn main() -> Result<()> {
                     terminal.draw(|f| ui::render(f, &mut app))?;
                 }
                 Event::CommandCompleted(tab, res) => {
-                    let status = match &res {
-                        Ok(_) => "Success".to_string(),
-                        Err(e) => format!("Failed: {}", e),
-                    };
-                    if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
-                        (cmd.command.contains("glab")
-                            || cmd.command.contains("gh")
-                            || cmd.command.contains("submit")
-                            || cmd.command.contains("bulk"))
-                            && cmd.status == "Running"
-                    }) {
-                        app.terminal_commands[pos].status = status.clone();
-                    } else if let Some(pos) = app
-                        .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.status == "Running")
-                    {
-                        app.terminal_commands[pos].status = status.clone();
+                    match &res {
+                        Ok(_) => {
+                            if let Some(pos) = app
+                                .terminal_commands
+                                .iter()
+                                .rposition(|cmd| cmd.status == "Running")
+                            {
+                                app.terminal_commands[pos].status = "Success".to_string();
+                            }
+                        }
+                        Err(_) => {}
                     }
                     match res {
                         Ok(_) => {
@@ -1720,7 +1713,7 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(err) => {
-                            app.error_message = Some(err);
+                            app.show_error(err);
                         }
                     }
                 }

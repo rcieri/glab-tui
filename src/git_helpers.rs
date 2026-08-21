@@ -49,6 +49,22 @@ pub fn parse_project_path(url: &str) -> Option<String> {
     path.contains('/').then(|| path.to_string())
 }
 
+/// If the remote URL points at a group clone (path has no slash, e.g.
+/// `git@host:group` or `https://host/group`), return the group name.
+/// Returns `None` for project clones (which have `group/project`).
+pub fn parse_group(url: &str) -> Option<String> {
+    let url = url.trim();
+    let path = if let Some((_scheme, rest)) = url.split_once("://") {
+        rest.split_once('/')?.1
+    } else if let Some((_host, rest)) = url.split_once(':') {
+        rest
+    } else {
+        return None;
+    };
+    let path = path.trim_matches('/').strip_suffix(".git").unwrap_or(path);
+    (!path.is_empty() && !path.contains('/')).then(|| path.to_string())
+}
+
 pub fn parse_remote_host(url: &str) -> Option<String> {
     let url = url.trim();
     let authority = if let Some((_, rest)) = url.split_once("://") {

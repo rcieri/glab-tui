@@ -346,6 +346,18 @@ impl Backend for GhBackend {
             .collect())
     }
 
+    async fn list_group_issues(
+        &self,
+        _group: &str,
+        _show_closed: bool,
+        _page_size: usize,
+        _per_request: usize,
+    ) -> Result<Vec<Issue>> {
+        Err(anyhow::anyhow!(
+            "Group/org-level browsing is not supported on GitHub"
+        ))
+    }
+
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue> {
         let raw = self
             .run_gh(
@@ -648,6 +660,18 @@ impl Backend for GhBackend {
         confidential: bool,
     ) -> Result<()> {
         Ok(())
+    }
+
+    async fn list_group_mrs(
+        &self,
+        _group: &str,
+        _show_closed: bool,
+        _page_size: usize,
+        _per_request: usize,
+    ) -> Result<Vec<MergeRequest>> {
+        Err(anyhow::anyhow!(
+            "Group/org-level browsing is not supported on GitHub"
+        ))
     }
 
     // ── Merge Requests ──
@@ -1324,6 +1348,17 @@ impl Backend for GhBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn list_group_pipelines(
+        &self,
+        _group: &str,
+        _page_size: usize,
+        _per_request: usize,
+    ) -> Result<Vec<Pipeline>> {
+        Err(anyhow::anyhow!(
+            "Group/org-level browsing is not supported on GitHub"
+        ))
     }
 
     async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {

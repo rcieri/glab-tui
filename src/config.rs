@@ -675,6 +675,8 @@ pub struct KeybindingIssues {
     pub create_mr: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default)]
+    pub edit_title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,6 +709,10 @@ pub struct KeybindingMrs {
     pub select_mr: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default)]
+    pub edit_target_branch: String,
+    #[serde(default)]
+    pub edit_title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -883,6 +889,8 @@ keybind_defaults! {
     def_rebase_mr = "R",
     def_merge_mr = "m",
     def_toggle_draft = "s",
+    def_edit_title = "t",
+    def_edit_target_branch = "g",
     def_view_diff = "v",
     def_view_related_pipelines = "P",
     def_trigger_pipeline = "p",
@@ -952,6 +960,7 @@ impl Default for KeybindingIssues {
             select_issue: def_select_issue(),
             create_mr: def_create_mr_issue(),
             open_in_browser: def_open_in_browser(),
+            edit_title: def_edit_title(),
         }
     }
 }
@@ -973,6 +982,8 @@ impl Default for KeybindingMrs {
             delete_entity: def_delete_entity(),
             select_mr: def_select_mr(),
             open_in_browser: def_open_in_browser(),
+            edit_target_branch: def_edit_target_branch(),
+            edit_title: def_edit_title(),
         }
     }
 }
@@ -1286,6 +1297,7 @@ edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
+edit_title = "t"
 
 [keybindings.mrs]
 create_mr = "n"
@@ -1301,6 +1313,8 @@ edit_entity = "e"
 close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
+edit_target_branch = "g"
+edit_title = "t"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"

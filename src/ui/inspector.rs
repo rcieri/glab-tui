@@ -395,7 +395,7 @@ fn render_submit_footer(
         _ => return,
     };
 
-    let is_new_entity = menu.is_new();
+    let is_new_entity = menu.needs_submit();
     let submit_idx = menu.fields.len() + 1;
     let btn_text = if is_new_entity {
         format!(" {} Submit ", icons.check_on)

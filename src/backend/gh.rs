@@ -599,7 +599,7 @@ impl Backend for GhBackend {
     }
 
     async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "None" || milestone.is_empty() {
+        let val = if milestone == "--" || milestone.is_empty() {
             ""
         } else {
             milestone
@@ -1316,7 +1316,7 @@ impl Backend for GhBackend {
     }
 
     async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "None" || milestone.is_empty() {
+        let val = if milestone == "--" || milestone.is_empty() {
             ""
         } else {
             milestone

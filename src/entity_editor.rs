@@ -14,7 +14,7 @@ use crossterm::event::KeyCode;
 /// Return a muted dash for empty values so optional fields read cleanly
 /// instead of cluttering the preview with "None" or blank rows.
 pub(crate) fn display_branch(value: &str) -> &str {
-    if value.trim().is_empty() || value == "None" {
+    if value.trim().is_empty() || value == "--" {
         "\u{2014}"
     } else {
         value
@@ -124,7 +124,7 @@ pub fn build_issue_document(
         crate::app::Field::multi_select(
             "Assignees",
             if issue.assignees.is_empty() {
-                "None".to_string()
+                "--".to_string()
             } else {
                 issue
                     .assignees
@@ -140,12 +140,12 @@ pub fn build_issue_document(
                 .milestone
                 .as_ref()
                 .map(|m| m.title.clone())
-                .unwrap_or_else(|| "None".to_string()),
+                .unwrap_or_else(|| "--".to_string()),
         ),
         crate::app::Field::multi_select(
             "Labels",
             if issue.labels.is_empty() {
-                "None".to_string()
+                "--".to_string()
             } else {
                 issue.labels.join(", ")
             },
@@ -257,7 +257,7 @@ pub fn build_mr_document(
     fields.push(crate::app::Field::multi_select(
         "Assignees",
         if mr.assignees.is_empty() {
-            "None".to_string()
+            "--".to_string()
         } else {
             mr.assignees
                 .iter()
@@ -269,7 +269,7 @@ pub fn build_mr_document(
     fields.push(crate::app::Field::multi_select(
         "Reviewers",
         if mr.reviewers.is_empty() {
-            "None".to_string()
+            "--".to_string()
         } else {
             mr.reviewers
                 .iter()
@@ -283,12 +283,12 @@ pub fn build_mr_document(
         mr.milestone
             .as_ref()
             .map(|m| m.title.clone())
-            .unwrap_or_else(|| "None".to_string()),
+            .unwrap_or_else(|| "--".to_string()),
     ));
     fields.push(crate::app::Field::multi_select(
         "Labels",
         if mr.labels.is_empty() {
-            "None".to_string()
+            "--".to_string()
         } else {
             mr.labels.join(", ")
         },
@@ -499,7 +499,7 @@ pub fn build_runner_document(
             runner
                 .description
                 .clone()
-                .unwrap_or_else(|| "None".to_string()),
+                .unwrap_or_else(|| "--".to_string()),
         ),
         crate::app::Field::read_only("Status", runner.status.to_uppercase()),
         crate::app::Field::read_only(
@@ -577,7 +577,7 @@ pub fn build_branch_document(
         crate::app::Field::read_only(
             "Commit",
             if branch.commit_sha.is_empty() {
-                "None".to_string()
+                "--".to_string()
             } else {
                 branch.commit_sha.clone()
             },
@@ -601,9 +601,7 @@ pub fn build_environment_document(
         crate::app::Field::read_only("State", env.state.to_uppercase()),
         crate::app::Field::read_only(
             "URL",
-            env.external_url
-                .clone()
-                .unwrap_or_else(|| "None".to_string()),
+            env.external_url.clone().unwrap_or_else(|| "--".to_string()),
         ),
     ];
     if let Some(dep) = &env.last_deployment {

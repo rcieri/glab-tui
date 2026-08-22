@@ -95,8 +95,6 @@ pub(crate) fn render_tab_issues(
                         .fg(theme.green)
                         .bg(if is_selected {
                             theme.highlight_bg
-                        } else if is_checked {
-                            theme.checked_bg
                         } else {
                             theme.green_bg
                         })
@@ -109,8 +107,6 @@ pub(crate) fn render_tab_issues(
                         .fg(theme.red)
                         .bg(if is_selected {
                             theme.highlight_bg
-                        } else if is_checked {
-                            theme.checked_bg
                         } else {
                             theme.red_bg
                         })
@@ -215,17 +211,26 @@ pub(crate) fn render_tab_issues(
                 ));
             }
             let row_style = if is_selected {
-                Style::default().bg(theme.highlight_bg)
-            } else if is_checked {
-                Style::default().bg(theme.checked_bg)
+                Style::default().bg(THEME.read().unwrap().highlight_bg)
             } else {
                 Style::default()
             };
+            // yazi-style leftmost selection bar: a 1-wide colored stripe on
+            // selected rows instead of highlighting the whole row.
+            let bar_cell = Cell::from(" ").style(if is_checked {
+                Style::default().bg(THEME.read().unwrap().checked_bg)
+            } else {
+                Style::default()
+            });
+            cells.insert(0, bar_cell);
             Row::new(cells).style(row_style).height(1)
         });
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
+
+        header_cells.push(Cell::from(""));
+        widths.push(Constraint::Length(1));
 
         if app.is_column_visible(Tab::Issues, "ID") {
             header_cells.push(Cell::from("ID"));
@@ -398,8 +403,6 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(theme.green)
                         .bg(if is_selected {
                             theme.highlight_bg
-                        } else if is_checked {
-                            theme.checked_bg
                         } else {
                             theme.green_bg
                         })
@@ -412,8 +415,6 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(theme.purple)
                         .bg(if is_selected {
                             theme.highlight_bg
-                        } else if is_checked {
-                            theme.checked_bg
                         } else {
                             theme.purple_bg
                         })
@@ -426,8 +427,6 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(theme.red)
                         .bg(if is_selected {
                             theme.highlight_bg
-                        } else if is_checked {
-                            theme.checked_bg
                         } else {
                             theme.red_bg
                         })
@@ -442,8 +441,6 @@ pub(crate) fn render_tab_merge_requests(
                         .fg(theme.yellow)
                         .bg(if is_selected {
                             theme.highlight_bg
-                        } else if is_checked {
-                            theme.checked_bg
                         } else {
                             theme.yellow_bg
                         })
@@ -458,8 +455,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(theme.yellow)
                             .bg(if is_selected {
                                 theme.highlight_bg
-                            } else if is_checked {
-                                theme.checked_bg
                             } else {
                                 theme.yellow_bg
                             })
@@ -472,8 +467,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(theme.green)
                             .bg(if is_selected {
                                 theme.highlight_bg
-                            } else if is_checked {
-                                theme.checked_bg
                             } else {
                                 theme.green_bg
                             })
@@ -528,8 +521,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.red)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.red_bg
                             })
@@ -538,8 +529,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.yellow)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.yellow_bg
                             })
@@ -548,8 +537,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.green)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.green_bg
                             })
@@ -558,8 +545,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.blue)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.blue_bg
                             })
@@ -586,8 +571,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.red)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.red_bg
                             })
@@ -596,8 +579,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.yellow)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.yellow_bg
                             })
@@ -606,8 +587,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.green)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.green_bg
                             })
@@ -616,8 +595,6 @@ pub(crate) fn render_tab_merge_requests(
                             .fg(t.yellow)
                             .bg(if is_selected {
                                 t.highlight_bg
-                            } else if is_checked {
-                                t.checked_bg
                             } else {
                                 t.yellow_bg
                             })
@@ -706,13 +683,7 @@ pub(crate) fn render_tab_merge_requests(
                 if let Some(bg) = bg_color {
                     let t = &theme;
                     wf_style = wf_style
-                        .bg(if is_selected {
-                            t.highlight_bg
-                        } else if is_checked {
-                            t.checked_bg
-                        } else {
-                            bg
-                        })
+                        .bg(if is_selected { t.highlight_bg } else { bg })
                         .add_modifier(Modifier::BOLD);
                 }
                 cells.push(super::helpers::render_fuzzy_cell(
@@ -796,8 +767,6 @@ pub(crate) fn render_tab_merge_requests(
                         };
                         let bg = if is_selected {
                             theme.highlight_bg
-                        } else if is_checked {
-                            theme.checked_bg
                         } else {
                             pipe_bg
                         };
@@ -861,16 +830,25 @@ pub(crate) fn render_tab_merge_requests(
             }
             let row_style = if is_selected {
                 Style::default().bg(theme.highlight_bg)
-            } else if is_checked {
-                Style::default().bg(theme.checked_bg)
             } else {
                 Style::default()
             };
+            // yazi-style leftmost selection bar: a 1-wide colored stripe on
+            // selected rows instead of highlighting the whole row.
+            let bar_cell = Cell::from(" ").style(if is_checked {
+                Style::default().bg(theme.checked_bg)
+            } else {
+                Style::default()
+            });
+            cells.insert(0, bar_cell);
             Row::new(cells).style(row_style).height(1)
         });
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
+
+        header_cells.push(Cell::from(""));
+        widths.push(Constraint::Length(1));
 
         if app.is_column_visible(Tab::MergeRequests, "ID") {
             header_cells.push(Cell::from("ID"));
@@ -2859,7 +2837,7 @@ pub(crate) fn render_tab_branches(
             }
             if app.is_column_visible(Tab::Branches, "SHA") {
                 let sha_text = if b.commit_sha.is_empty() {
-                    "None".to_string()
+                    "--".to_string()
                 } else {
                     crate::utils::format::truncate(&b.commit_sha, 8)
                 };

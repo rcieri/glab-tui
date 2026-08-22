@@ -349,9 +349,37 @@ Run `scripts/release.sh [patch|minor|major]` (default `patch`) and the script wa
 1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, JetBrainsMono Nerd Font, and push access to both manifest repos (`rcieri/homebrew-glab-tui`, `rcieri/scoop-glab-tui`); exits non-zero with a clear message if a prerequisite is missing. Long-running steps run under the script's `spinner`/`progress_bar` helpers (animated spinner with captured logs, auto-disabled when not a TTY), and phases are numbered `1/7` … for progress reporting.
 2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the opencode model (provider → model → variant; see below) unless `OPENCODE_MODEL` is set, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
 3. **Review gate** — pauses for the maintainer to review the PR (CI checks run in the background); the script continues on Enter.
-4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 5-target binary matrix and uploads them to the GitHub release.
-5. **Wait for build** — polls until all 5 release assets exist (timeout: `RELEASE_WAIT_MIN`, default 45 min).
+4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 11-target binary matrix (8 Linux + 3 non-Linux) and uploads them to the GitHub release.
+5. **Wait for build** — polls the release until every required asset exists (timeout: `RELEASE_WAIT_MIN`, default 45 min). The required-asset list in `REQUIRED_ASSETS_STATIC` covers the fixed name patterns; the dynamic Ubuntu-latest build is required to produce at least two `ubuntu-<VERSION_ID>` assets whose VERSION_ID differs from the 22.04 / 24.04 baselines.
 6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest. The manifest repos' scheduled auto-updaters have been removed; this local sync is the only update path.
 7. **Publish** — pushes the Docker image to GHCR and publishes the crate to crates.io.
+
+### Release Assets
+
+`.github/workflows/release.yml` builds an 11-entry matrix (8 Linux + 3 non-Linux) on every `v*` tag push. **Linux builds target a glibc 2.35 baseline (Ubuntu 22.04) for backwards compatibility with older distros, plus per-LTS and `ubuntu-latest` variants for current distros, and a fully static musl fallback for non-glibc systems.** The `ubuntu-latest` runner's `VERSION_ID` is detected at build time and baked into the asset name (e.g. `glab-tui-linux-amd64-ubuntu-26.04.tar.gz` when `ubuntu-latest` resolves to Ubuntu 26.04), so the asset set adapts to future LTS releases without code changes.
+
+Asset name pattern:
+
+| OS | Arch | Asset name | Built on |
+|---|---|---|---|
+| Linux | x86_64 | `glab-tui-linux-amd64-ubuntu-22.04.tar.gz` | `ubuntu-22.04` runner (glibc 2.35 baseline) |
+| Linux | x86_64 | `glab-tui-linux-amd64-ubuntu-24.04.tar.gz` | `ubuntu-24.04` runner (glibc 2.39) |
+| Linux | x86_64 | `glab-tui-linux-amd64-ubuntu-<VERSION_ID>.tar.gz` | `ubuntu-latest` runner (current LTS) |
+| Linux | aarch64 | `glab-tui-linux-arm64-ubuntu-{22.04,24.04,<VERSION_ID>}.tar.gz` | cross-compiled from `ubuntu-{22.04,24.04,latest}` x86_64 runners |
+| Linux | x86_64 / aarch64 | `glab-tui-linux-{amd64,arm64}-musl.tar.gz` | `ubuntu-22.04` (static, no glibc dependency) |
+| macOS | x86_64 / arm64 | `glab-tui-macos-{amd64,arm64}.tar.gz` | `macos-latest` |
+| Windows | x86_64 | `glab-tui-windows-amd64.zip` | `windows-latest` |
+
+The asset-suffix table in `release.yml` is the single source of truth — `linux_variant: ubuntu-latest` causes the build step to read `/etc/os-release` and bake `VERSION_ID` into the asset name.
+
+#### Asset selection logic
+
+Three places pick the right asset for the running host:
+
+- **`install.sh`** (`linux_asset_candidates`) — builds a candidate list from `/etc/os-release`. On Ubuntu it tries the local version first, then walks down through `ubuntu-24.04` → `ubuntu-22.04`, then falls back to `musl`. Non-Ubuntu Linux distros try `ubuntu-22.04` → `ubuntu-24.04` → `musl` directly. Override with `GLAB_TUI_ASSET=glab-tui-linux-amd64-musl.tar.gz` for testing.
+- **`src/utils/update.rs`** (`linux_asset_candidates`) — mirrors `install.sh` for the in-app self-updater; queries the GitHub release's asset list and picks the first match.
+- **Homebrew formula** (`update_homebrew` in `release.sh`) — at release time, lists every Linux asset via the GitHub API and embeds the full `{variant => sha256}` hash into the formula. At install time, the formula's `linux_variant(sha_map)` picks by `OS::Version.from_symbol(:ubuntu)`, falling back to `ubuntu-24.04` → `ubuntu-22.04` → `musl` and finally to whichever asset is newest. This means the formula survives future LTS releases without being regenerated.
+
+Scoop's manifest (`rcieri/scoop-glab-tui`) is unaffected — Windows keeps the fixed `glab-tui-windows-amd64.zip` name.
 
 During `Prepare`, `release.sh` interactively walks through the opencode models available to the local `opencode` install (`provider -> model -> variant`) to pick the model used for the regenerated docs and release notes; set `OPENCODE_MODEL` to skip the prompt.

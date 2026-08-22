@@ -28,13 +28,22 @@ INCREMENT="${1:-}"
 RELEASE_WAIT_MIN="${RELEASE_WAIT_MIN:-45}"
 OPENCODE_MODEL_FROM_ENV="${OPENCODE_MODEL:-}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
-REQUIRED_ASSETS=(
-  glab-tui-linux-amd64.tar.gz
-  glab-tui-linux-arm64.tar.gz
+REQUIRED_ASSETS_STATIC=(
+  glab-tui-linux-amd64-ubuntu-22.04.tar.gz
+  glab-tui-linux-amd64-ubuntu-24.04.tar.gz
+  glab-tui-linux-arm64-ubuntu-22.04.tar.gz
+  glab-tui-linux-arm64-ubuntu-24.04.tar.gz
+  glab-tui-linux-amd64-musl.tar.gz
+  glab-tui-linux-arm64-musl.tar.gz
   glab-tui-macos-amd64.tar.gz
   glab-tui-macos-arm64.tar.gz
   glab-tui-windows-amd64.zip
 )
+
+# The ubuntu-latest runner builds produce ubuntu-<VERSION_ID> assets whose
+# version is unknown at release-script-run time (could be 26.04, 28.04, …).
+# We require at least one such asset per arch in addition to REQUIRED_ASSETS_STATIC.
+REQUIRED_ASSETS_DYNAMIC_GLOB='glab-tui-linux-{amd64,arm64}-ubuntu-*'
 
 # ---------------------------------------------------------------------------
 # colors & output helpers (auto-disabled when not a TTY or NO_COLOR is set)
@@ -208,8 +217,8 @@ select_start_phase() {
     "$PHASE_GIFS"$'\t'"2 · Generate GIFs only   (re-run generate-demos.sh, push, rebuild PR if needed)"
     "$PHASE_REVIEW"$'\t'"3 · Review & merge       (squash-merge an existing PR and tag)"
     "$PHASE_WAIT_CI"$'\t'"4 · Wait for CI build    (poll release assets for an already-tagged version)"
-    "$PHASE_POST_RELEASE"$'\t'"5 · Post-release         (release notes, Homebrew formula, Scoop manifest)"
-    "$PHASE_PUBLISH"$'\t'"6 · Publish              (Docker image → GHCR + crate → crates.io)"
+    "$PHASE_POST_RELEASE"$'\t'"5 · Post-release         (release notes, Homebrew formula, Scoop manifest — Homebrew/Scoop skipped for nightly)"
+    "$PHASE_PUBLISH"$'\t'"6 · Publish              (Docker image → GHCR + crate → crates.io — crates.io skipped for nightly)"
   )
 
   note "Where would you like to start?"
@@ -222,22 +231,45 @@ select_start_phase() {
 # State bootstrap helpers — prompt for values that skipped phases would set
 # ---------------------------------------------------------------------------
 
+# True when the current build targets a nightly tag (ends in `-nightly` or
+# the `INCREMENT=nightly` CLI arg / menu pick was used). Nightlies skip the
+# Cargo.toml bump, the prepare PR, Homebrew/Scoop syncs, and crates.io
+# publish; they still get release notes and a `:nightly` Docker image.
+is_nightly() {
+  [[ "${INCREMENT:-}" == "nightly" ]] || [[ "${NEW_TAG:-}" == *-nightly* ]]
+}
+
 # Ensure NEW_TAG / VERSION are set; fetch from git tags or prompt.
 ensure_version() {
   if [[ -n "${NEW_TAG:-}" ]]; then return; fi
 
   git fetch --tags --prune 2>/dev/null || true
+
+  # For nightly invocations, auto-detect the most recent nightly tag so the
+  # user doesn't have to paste it.
+  if [[ "${INCREMENT:-}" == "nightly" ]]; then
+    local latest_nightly
+    latest_nightly="$(git tag --list 'v*-nightly*' --sort=-v:refname 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$latest_nightly" ]]; then
+      NEW_TAG="$latest_nightly"
+      VERSION="${NEW_TAG#v}"
+      ok "Auto-detected nightly tag: $NEW_TAG"
+      return 0
+    fi
+  fi
+
   local latest_tag
   latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
 
-  printf '\n%sEnter the release tag%s (e.g. v1.2.3)' "$C_BOLD" "$C_RESET"
+  printf '\n%sEnter the release tag%s (e.g. v1.2.3 or v1.2.3-nightly[.YYYYMMDD])' "$C_BOLD" "$C_RESET"
   if [[ -n "$latest_tag" ]]; then
     printf ' [latest tag: %s]' "$latest_tag"
   fi
   printf ': '
   read -r NEW_TAG
   [[ -n "$NEW_TAG" ]] || die "version tag is required"
-  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || die "tag must match vX.Y.Z (got '$NEW_TAG')"
+  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-nightly([-.]?[A-Za-z0-9]+)*)?$ ]] || \
+    die "tag must match vX.Y.Z or vX.Y.Z[-nightly][-.suffix] (got '$NEW_TAG')"
   VERSION="${NEW_TAG#v}"
   ok "Version: $NEW_TAG"
 }
@@ -300,7 +332,7 @@ preflight() {
 next_version() {
   git fetch --tags --prune
   local latest_tag version base_major base_minor base_patch
-  local major_v minor_v patch_v
+  local major_v minor_v patch_v date_suffix nightly_v
   latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
   version="${latest_tag#v}"
   IFS='.' read -r base_major base_minor base_patch <<< "$version"
@@ -308,25 +340,34 @@ next_version() {
   major_v="$((base_major + 1)).0.0"
   minor_v="$base_major.$((base_minor + 1)).0"
   patch_v="$base_major.$base_minor.$((base_patch + 1))"
+  date_suffix="$(date -u +%Y%m%d)"
+  nightly_v="${patch_v}-nightly.${date_suffix}"
 
   if [[ -z "$INCREMENT" ]]; then
     printf '\n%sCurrent version:%s %s\n' "$C_BOLD" "$C_RESET" "$latest_tag"
-    printf '  %s1)%s patch  -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
-    printf '  %s2)%s minor  -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
-    printf '  %s3)%s major  -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
-    read -r -p "Select release increment [1/2/3] (default patch): " choice
+    printf '  %s1)%s patch              -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
+    printf '  %s2)%s minor              -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
+    printf '  %s3)%s major              -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
+    printf '  %s4)%s nightly (bare)     -> v%s-nightly\n' "$C_BOLD" "$C_RESET" "$patch_v"
+    printf '  %s5)%s nightly (dated)    -> v%s  (pre-release, skip publish)\n' "$C_BOLD" "$C_RESET" "$nightly_v"
+    read -r -p "Select release increment [1/2/3/4/5] (default patch): " choice
     case "${choice:-1}" in
-      1|patch) VERSION="$patch_v" ;;
-      2|minor) VERSION="$minor_v" ;;
-      3|major) VERSION="$major_v" ;;
+      1|patch)   VERSION="$patch_v" ;;
+      2|minor)   VERSION="$minor_v" ;;
+      3|major)   VERSION="$major_v" ;;
+      4|nightly) INCREMENT="nightly"; VERSION="${patch_v}-nightly" ;;
+      5|nightly-dated)
+                   INCREMENT="nightly"; VERSION="$nightly_v" ;;
       *) die "invalid selection '$choice'" ;;
     esac
   else
     case "$INCREMENT" in
-      major) VERSION="$major_v" ;;
-      minor) VERSION="$minor_v" ;;
-      patch) VERSION="$patch_v" ;;
-      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major)" ;;
+      major)         VERSION="$major_v" ;;
+      minor)         VERSION="$minor_v" ;;
+      patch)         VERSION="$patch_v" ;;
+      nightly)       VERSION="${patch_v}-nightly" ;;
+      nightly-dated) VERSION="$nightly_v" ;;
+      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major|nightly|nightly-dated)" ;;
     esac
   fi
 
@@ -348,6 +389,19 @@ bump_cargo_version() {
 
 prepare() {
   ensure_version   # no-op if next_version() already ran
+
+  if is_nightly; then
+    note "Nightly release — skipping docs regeneration and PR creation"
+    if [[ "${BUMP_CARGO_FOR_NIGHTLY:-}" == "1" ]]; then
+      bump_cargo_version
+      note "Bumped Cargo.toml to ${VERSION} (BUMP_CARGO_FOR_NIGHTLY=1) — commit this before tagging so the binary's --version stamp matches the tag"
+    else
+      note "Cargo.toml NOT bumped — the binary will report the previous stable version."
+      note "Set BUMP_CARGO_FOR_NIGHTLY=1 to bump Cargo.toml to ${VERSION} for the binary's --version stamp."
+    fi
+    note "(nightly tag $NEW_TAG should already be pushed to origin; CI will build the assets)"
+    return 0
+  fi
 
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout "$BRANCH"
@@ -380,6 +434,11 @@ The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSI
 # ---------------------------------------------------------------------------
 generate_gifs() {
   ensure_branch
+
+  if is_nightly; then
+    note "Nightly release — skipping GIF generation and PR creation"
+    return 0
+  fi
 
   # Make sure there is a built binary on PATH.
   if [[ ! -x "$ROOT/target/release/glab-tui" ]]; then
@@ -419,6 +478,10 @@ Review, then this script will merge and cut the release.")"
 # Phase 3: wait for review, then merge and tag
 # ---------------------------------------------------------------------------
 review_gate() {
+  if is_nightly; then
+    note "Nightly release — no PR to review (nightly tag is pushed manually)"
+    return 0
+  fi
   ensure_pr_number
   PR_URL="https://github.com/$REPO/pull/$PR_NUMBER"
   note "Pause for review — PR: $PR_URL"
@@ -427,6 +490,16 @@ review_gate() {
 
 merge_and_tag() {
   ensure_version
+
+  if is_nightly; then
+    note "Nightly release — tag $NEW_TAG should already be pushed to origin"
+    # Verify the tag exists locally; bail out if not so the user knows.
+    if ! git rev-parse --verify --quiet "refs/tags/$NEW_TAG" >/dev/null; then
+      die "nightly tag $NEW_TAG not found locally — push it first (e.g. 'git push origin $NEW_TAG')"
+    fi
+    return 0
+  fi
+
   ensure_pr_number
 
   note "Merging PR #$PR_NUMBER (squash, auto-merge when checks pass)..."
@@ -462,20 +535,36 @@ merge_and_tag() {
 wait_for_release() {
   ensure_version
 
-  local total i current elapsed
+  local total i current elapsed required_min missing
   total=$((RELEASE_WAIT_MIN * 3)) # one check every 20s
   note "Waiting for release $NEW_TAG assets (timeout ${RELEASE_WAIT_MIN}m)..."
   for i in $(seq 1 "$total"); do
-    current="$(gh release view "$NEW_TAG" --repo "$REPO" --json assets --jq '[.assets[].name] | length' 2>/dev/null || echo 0)"
-    if [[ "$current" -ge "${#REQUIRED_ASSETS[@]}" ]]; then
-      [[ -t 1 ]] && printf '\r\e[2K'
-      ok "All ${#REQUIRED_ASSETS[@]} release assets present"
-      return 0
+    current=$(gh release view "$NEW_TAG" --repo "$REPO" --json assets \
+      --jq '[.assets[].name] | join("\n")' 2>/dev/null || echo "")
+    if [[ -n "$current" ]]; then
+      missing=()
+      for asset in "${REQUIRED_ASSETS_STATIC[@]}"; do
+        if ! grep -qxF "$asset" <<< "$current"; then
+          missing+=("$asset")
+        fi
+      done
+      # At least one ubuntu-* asset whose version differs from the static
+      # 22.04 / 24.04 entries — that's the ubuntu-latest build.
+      local dynamic_count
+      dynamic_count=$(grep -E '^glab-tui-linux-(amd64|arm64)-ubuntu-([0-9]+\.[0-9]+)\.tar\.gz$' <<< "$current" \
+        | grep -Ev 'ubuntu-22\.04|ubuntu-24\.04' | sort -u | wc -l)
+      if [[ "${#missing[@]}" -eq 0 ]] && [[ "$dynamic_count" -ge 2 ]]; then
+        [[ -t 1 ]] && printf '\r\e[2K'
+        ok "All release assets present ($(echo "$current" | wc -l) total)"
+        return 0
+      fi
     fi
-    [[ $i -eq $total ]] && die "timed out waiting for release assets for $NEW_TAG"
+    [[ $i -eq $total ]] && die "timed out waiting for release assets for $NEW_TAG (missing: ${missing[*]:-none}, dynamic: $dynamic_count)"
     if [[ -t 1 ]]; then
       elapsed=$((i * 20 / 60))
-      progress_bar "$current" "${#REQUIRED_ASSETS[@]}" "assets ($elapsed min elapsed)"
+      local seen="${#current[@]}"
+      [[ -z "$current" ]] && seen=0 || seen=$(echo "$current" | wc -l)
+      progress_bar "$seen" "20" "assets ($elapsed min elapsed)"
     fi
     sleep 20
   done
@@ -485,28 +574,139 @@ wait_for_release() {
 # Phase 5: post-release (notes, Homebrew, Scoop)
 # ---------------------------------------------------------------------------
 update_homebrew() {
-  local arch file sha macos_amd64 macos_arm64 linux_amd64 linux_arm64
+  local macos_amd64 macos_arm64
+
   spinner "Cloning rcieri/homebrew-glab-tui" gh repo clone rcieri/homebrew-glab-tui "$TMP_DIR/homebrew-glab-tui"
   cd "$TMP_DIR/homebrew-glab-tui"
 
-  for arch in macos-amd64 macos-arm64 linux-amd64 linux-arm64; do
-    file="$TMP_DIR/glab-tui-${arch}.tar.gz"
-    spinner "Fetching glab-tui-${arch}.tar.gz" \
-      curl -sL "https://github.com/$REPO/releases/download/$NEW_TAG/glab-tui-${arch}.tar.gz" -o "$file"
-    sha="$(sha256sum "$file" | cut -d' ' -f1)"
-    case "$arch" in
-      macos-amd64) macos_amd64=$sha ;;
-      macos-arm64) macos_arm64=$sha ;;
-      linux-amd64) linux_amd64=$sha ;;
-      linux-arm64) linux_arm64=$sha ;;
-    esac
-  done
+  fetch_sha() {
+    local name="$1"
+    spinner "Fetching ${name}" \
+      curl -sL "https://github.com/$REPO/releases/download/${NEW_TAG}/${name}" -o "$TMP_DIR/${name}"
+    sha256sum "$TMP_DIR/${name}" | cut -d' ' -f1
+  }
 
-  sed -i "s|/download/v[0-9.]*/glab-tui-|/download/${NEW_TAG}/glab-tui-|g" Formula/glab-tui.rb
-  sed -i "/glab-tui-macos-amd64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${macos_amd64}\"/}" Formula/glab-tui.rb
-  sed -i "/glab-tui-macos-arm64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${macos_arm64}\"/}" Formula/glab-tui.rb
-  sed -i "/glab-tui-linux-amd64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${linux_amd64}\"/}" Formula/glab-tui.rb
-  sed -i "/glab-tui-linux-arm64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${linux_arm64}\"/}" Formula/glab-tui.rb
+  macos_amd64=$(fetch_sha glab-tui-macos-amd64.tar.gz)
+  macos_arm64=$(fetch_sha glab-tui-macos-arm64.tar.gz)
+
+  # Discover all Linux assets actually present in the release (the ubuntu-latest
+  # runner's asset name carries a VERSION_ID we don't know up front).
+  local assets_json
+  assets_json=$(gh release view "$NEW_TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
+
+  declare -A linux_amd64_shas=()
+  declare -A linux_arm64_shas=()
+  local variant
+  while IFS= read -r name; do
+    [[ "$name" =~ ^glab-tui-linux-(amd64|arm64)-(.+)\.tar\.gz$ ]] || continue
+    local arch="${BASH_REMATCH[1]}" variant="${BASH_REMATCH[2]}"
+    local sha
+    sha=$(fetch_sha "$name")
+    if [[ "$arch" == "amd64" ]]; then
+      linux_amd64_shas["$variant"]="$sha"
+    else
+      linux_arm64_shas["$variant"]="$sha"
+    fi
+  done <<< "$assets_json"
+
+  if [[ "${#linux_amd64_shas[@]}" -eq 0 ]] || [[ "${#linux_arm64_shas[@]}" -eq 0 ]]; then
+    die "no Linux assets found in release $NEW_TAG — did the build matrix finish?"
+  fi
+
+  # Render a Ruby hash literal from the bash assoc array (sorted by key).
+  render_ruby_hash() {
+    local -n arr=$1
+    local indent="${2:-    }" k v first=1
+    printf '%s{\n' "$indent"
+    while IFS=$'\t' read -r k v; do
+      [[ -z "$k" ]] && continue
+      if (( first )); then first=0; else printf ',\n'; fi
+      printf '%s  "%s" => "%s"' "$indent" "$k" "$v"
+    done < <(for k in "${!arr[@]}"; do printf '%s\t%s\n' "$k" "${arr[$k]}"; done | sort)
+    printf '\n%s}.freeze\n' "$indent"
+  }
+
+  local linux_amd64_hash
+  linux_amd64_hash=$(render_ruby_hash linux_amd64_shas "    ")
+  local linux_arm64_hash
+  linux_arm64_hash=$(render_ruby_hash linux_arm64_shas "    ")
+
+  cat > "$TMP_DIR/glab-tui.rb" <<EOF
+class GlabTui < Formula
+  desc "Terminal user interface for GitLab and GitHub"
+  homepage "https://github.com/rcieri/glab-tui"
+  license "MIT"
+
+  depends_on "gh"
+  depends_on "glab" => :recommended
+
+  # Discovered at release time: variant (ubuntu-XX.YY or "musl") -> sha256.
+$(printf '%s' "$linux_amd64_hash" | sed 's/^/  /')
+$(printf '%s' "$linux_arm64_hash" | sed 's/^/  /')
+
+  # Pick the best-matching variant for the local Ubuntu version. Non-Ubuntu
+  # Linux distros fall back to the oldest Ubuntu LTS asset (broadest glibc
+  # compatibility). If no Ubuntu version asset is available for the current
+  # release, fall through to whichever LTS asset is newest.
+  def self.linux_variant(sha_map)
+    return nil if sha_map.nil? || sha_map.empty?
+    v = OS::Version.from_symbol(:ubuntu)
+    candidates = []
+    if v
+      candidates << "ubuntu-\#{v}"
+      # Walk down through known LTS baselines (newest first) inserted at
+      # the front of the candidate list.
+      %w[24.04 22.04].each { |baseline| candidates << "ubuntu-\#{baseline}" unless "ubuntu-\#{v}" == "ubuntu-\#{baseline}" }
+    else
+      candidates = %w[ubuntu-24.04 ubuntu-22.04]
+    end
+    candidates << "musl"
+    candidates.uniq.each do |c|
+      return c if sha_map.key?(c)
+    end
+    sha_map.keys.first
+  end
+
+  on_macos do
+    on_intel do
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-macos-amd64.tar.gz"
+      sha256 "${macos_amd64}"
+    end
+    on_arm do
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-macos-arm64.tar.gz"
+      sha256 "${macos_arm64}"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      amd64_variant = linux_variant(LINUX_AMD64_SHAS)
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-amd64-\#{amd64_variant}.tar.gz"
+      sha256 LINUX_AMD64_SHAS.fetch(amd64_variant)
+    end
+    on_arm do
+      arm64_variant = linux_variant(LINUX_ARM64_SHAS)
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-arm64-\#{arm64_variant}.tar.gz"
+      sha256 LINUX_ARM64_SHAS.fetch(arm64_variant)
+    end
+  end
+
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
+  def install
+    bin.install "glab-tui"
+  end
+
+  test do
+    system "\#{bin}/glab-tui", "--help"
+  end
+end
+EOF
+
+  mv "$TMP_DIR/glab-tui.rb" Formula/glab-tui.rb
 
   git add Formula/glab-tui.rb
   if git diff --cached --quiet; then
@@ -578,6 +778,11 @@ Use the content from CHANGELOG.md for the current version as the source material
   note "Updating release $NEW_TAG body..."
   spinner "Updating release $NEW_TAG body" gh release edit "$NEW_TAG" --repo "$REPO" --notes-file RELEASE_NOTES.md
 
+  if is_nightly; then
+    note "Skipping Homebrew/Scoop manifest updates for nightly $NEW_TAG"
+    return 0
+  fi
+
   update_homebrew
   update_scoop
 }
@@ -587,6 +792,12 @@ Use the content from CHANGELOG.md for the current version as the source material
 # ---------------------------------------------------------------------------
 publish() {
   ensure_version
+
+  if is_nightly; then
+    note "Skipping Docker push and crates.io publish for nightly $NEW_TAG"
+    note "(pre-release versions are rejected by crates.io, and nightly Docker images are intentionally not pushed)"
+    return 0
+  fi
 
   local package_version tag_version user
   package_version="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[0].version')"

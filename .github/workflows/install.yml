@@ -44,8 +44,73 @@ jobs:
           docker pull "ghcr.io/rcieri/glab-tui:$TAG"
           docker run --rm "ghcr.io/rcieri/glab-tui:$TAG" --help
 
-  test-install-sh:
-    name: install.sh
+  test-install-sh-ubuntu-22.04:
+    name: install.sh (ubuntu-22.04 gnu)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Verify glibc baseline
+        run: |
+          ldd --version | head -n 1
+          # Ubuntu 22.04 ships glibc 2.35; the ubuntu-22.04 gnu binary must run.
+          ldd --version | head -n 1 | grep -q "2\." || \
+            { echo "expected glibc 2.x on ubuntu-22.04 runner"; exit 1; }
+
+      - name: Run install.sh (defaults to ubuntu-22.04 gnu)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p temp-bin
+          PREFIX=$PWD/temp-bin ./install.sh
+          ./temp-bin/glab-tui --help
+
+  test-install-sh-ubuntu-22.04-musl:
+    name: install.sh (musl static binary on ubuntu-22.04)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      # Force install.sh to pick the musl asset (it would default to gnu on ubuntu-22.04).
+      - name: Run install.sh with GLAB_TUI_ASSET override
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GLAB_TUI_ASSET: glab-tui-linux-amd64-musl.tar.gz
+        run: |
+          mkdir -p temp-bin
+          PREFIX=$PWD/temp-bin ./install.sh
+          file ./temp-bin/glab-tui | grep -qi 'statically linked' || \
+            { echo "musl binary is not statically linked"; exit 1; }
+          ./temp-bin/glab-tui --help
+
+  test-install-sh-ubuntu-24.04:
+    name: install.sh (ubuntu-24.04 gnu)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Run install.sh (defaults to ubuntu-24.04 gnu)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p temp-bin
+          PREFIX=$PWD/temp-bin ./install.sh
+          ./temp-bin/glab-tui --help
+
+  test-install-sh-ubuntu-latest:
+    name: install.sh (ubuntu-latest gnu dynamic version)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,7 +119,12 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - name: Run install.sh
+      - name: Print detected Ubuntu version
+        run: |
+          . /etc/os-release
+          echo "Host Ubuntu: ${VERSION_ID}"
+
+      - name: Run install.sh (should pick matching variant or fall back)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Wide line numbers no longer shift the diff gutter** — the line-number field was formatted with `{:>4}`, a minimum rather than a maximum, so a five-digit number took a fifth cell and pushed that row's separator and content one column right of its neighbours. Any diff touching a large file — a generated spec, a lockfile — was full of such rows, in both the unified and side-by-side layouts. The column is now as wide as the widest line number in the diff, and diffs under 10 000 lines look exactly as before (#368).
+- **Tab-indented files keep their indentation in the diff view** — a tab reached the rendered buffer as-is and occupied a single cell there, so Go, Makefiles and other tab-indented sources displayed flush-left with their structure gone. Tabs are now expanded to spaces at tab stops as the diff is parsed, which is the one point every consumer derives from — the stored line content, the syntect highlighting computed from it, the search's match indices and the side-by-side pairs all stay in agreement about where a character sits (#364).
+- **Side-by-side padding rows no longer overdraw the gutter** — a row whose side has no counterpart line painted one extra cell in the gutter colour after the separator, so the gutter ran a column wider than on rows with a line and read as a ragged edge. That cell exists so a selected or search-matched empty row has somewhere to show its highlight, and it is now painted only when there is one. Both panels shared the bug and now share one helper (#366).
+
+### Features
+- **Mark files as reviewed in the diff view** — `m` marks (or unmarks) the selected file as reviewed; on a directory it flips every file below it at once. Reviewed files carry a check indicator and fade to muted in the file tree; a directory fades and folds itself once all of its files are reviewed, cascading up through parents so a finished branch collapses to one line (unmarking reopens it, and a directory reopened by hand stays open). The tree header tracks progress (`12/200`). `M` filters reviewed files out of the tree entirely — directories with nothing left to review go with them — so a 200-file MR shrinks to just the pending work. Marks persist per MR/PR in the project cache and are restored when the diff is reopened; paths no longer present in the diff are dropped on restore (#362).
+
+---
+
 ## [0.8.4] - 2026-08-13
 
 ### Bug Fixes

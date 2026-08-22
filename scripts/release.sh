@@ -261,15 +261,15 @@ ensure_version() {
   local latest_tag
   latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
 
-  printf '\n%sEnter the release tag%s (e.g. v1.2.3 or v1.2.3-nightly.20260822)' "$C_BOLD" "$C_RESET"
+  printf '\n%sEnter the release tag%s (e.g. v1.2.3 or v1.2.3-nightly[.YYYYMMDD])' "$C_BOLD" "$C_RESET"
   if [[ -n "$latest_tag" ]]; then
     printf ' [latest tag: %s]' "$latest_tag"
   fi
   printf ': '
   read -r NEW_TAG
   [[ -n "$NEW_TAG" ]] || die "version tag is required"
-  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-nightly(\.[0-9]+)?)?$ ]] || \
-    die "tag must match vX.Y.Z or vX.Y.Z-nightly[.YYYYMMDD] (got '$NEW_TAG')"
+  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-nightly([-.]?[A-Za-z0-9]+)*)?$ ]] || \
+    die "tag must match vX.Y.Z or vX.Y.Z[-nightly][-.suffix] (got '$NEW_TAG')"
   VERSION="${NEW_TAG#v}"
   ok "Version: $NEW_TAG"
 }
@@ -345,25 +345,29 @@ next_version() {
 
   if [[ -z "$INCREMENT" ]]; then
     printf '\n%sCurrent version:%s %s\n' "$C_BOLD" "$C_RESET" "$latest_tag"
-    printf '  %s1)%s patch   -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
-    printf '  %s2)%s minor   -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
-    printf '  %s3)%s major   -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
-    printf '  %s4)%s nightly -> v%s  (pre-release, skip publish)\n' "$C_BOLD" "$C_RESET" "$nightly_v"
-    read -r -p "Select release increment [1/2/3/4] (default patch): " choice
+    printf '  %s1)%s patch              -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
+    printf '  %s2)%s minor              -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
+    printf '  %s3)%s major              -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
+    printf '  %s4)%s nightly (bare)     -> v%s-nightly\n' "$C_BOLD" "$C_RESET" "$patch_v"
+    printf '  %s5)%s nightly (dated)    -> v%s  (pre-release, skip publish)\n' "$C_BOLD" "$C_RESET" "$nightly_v"
+    read -r -p "Select release increment [1/2/3/4/5] (default patch): " choice
     case "${choice:-1}" in
       1|patch)   VERSION="$patch_v" ;;
       2|minor)   VERSION="$minor_v" ;;
       3|major)   VERSION="$major_v" ;;
-      4|nightly) INCREMENT="nightly"; VERSION="$nightly_v" ;;
+      4|nightly) INCREMENT="nightly"; VERSION="${patch_v}-nightly" ;;
+      5|nightly-dated)
+                   INCREMENT="nightly"; VERSION="$nightly_v" ;;
       *) die "invalid selection '$choice'" ;;
     esac
   else
     case "$INCREMENT" in
-      major)   VERSION="$major_v" ;;
-      minor)   VERSION="$minor_v" ;;
-      patch)   VERSION="$patch_v" ;;
-      nightly) VERSION="$nightly_v" ;;
-      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major|nightly)" ;;
+      major)         VERSION="$major_v" ;;
+      minor)         VERSION="$minor_v" ;;
+      patch)         VERSION="$patch_v" ;;
+      nightly)       VERSION="${patch_v}-nightly" ;;
+      nightly-dated) VERSION="$nightly_v" ;;
+      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major|nightly|nightly-dated)" ;;
     esac
   fi
 

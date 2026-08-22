@@ -2668,13 +2668,15 @@ impl SubmitDialog {
                 } else {
                     format!("Merging: {source} \u{2192} {target}")
                 };
-                let options = vec![
+                let mut options = vec![
                     SubmitOption::new("Strategy: Merge commit", false),
                     SubmitOption::new("Strategy: Squash", true),
                     SubmitOption::new("Strategy: Rebase", false),
                     SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
                 ];
+                if !kind.is_github() {
+                    options.push(SubmitOption::new("Auto-merge", false));
+                }
                 (
                     format!("Merge {mr} #{iid}"),
                     body,

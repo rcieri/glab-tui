@@ -4078,8 +4078,14 @@ async fn main() -> Result<()> {
                                                 Some(filtered_items[selector.cursor_idx].clone());
                                         }
                                         if let Some(val) = selected_val {
-                                            let current_val = app.edit_menu.as_ref()
-                                                .and_then(|m| m.fields.iter().find(|f| f.label == "Create from Issue"))
+                                            let current_val = app
+                                                .edit_menu
+                                                .as_ref()
+                                                .and_then(|m| {
+                                                    m.fields
+                                                        .iter()
+                                                        .find(|f| f.label == "Create from Issue")
+                                                })
                                                 .map(|f| f.value.clone())
                                                 .unwrap_or_default();
 
@@ -4112,8 +4118,11 @@ async fn main() -> Result<()> {
                                                     })
                                                     .and_then(|s| s.parse::<u64>().ok());
                                                 if let Some(iid) = parsed_iid {
-                                                    if let Some(issue) =
-                                                        app.issues.items.iter().find(|i| i.iid == iid)
+                                                    if let Some(issue) = app
+                                                        .issues
+                                                        .items
+                                                        .iter()
+                                                        .find(|i| i.iid == iid)
                                                     {
                                                         let title = issue.title.clone();
                                                         let source_branch = format!(
@@ -4126,7 +4135,10 @@ async fn main() -> Result<()> {
                                                         } else {
                                                             issue.labels.join(", ")
                                                         };
-                                                        let assignees = if issue.assignees.is_empty() {
+                                                        let assignees = if issue
+                                                            .assignees
+                                                            .is_empty()
+                                                        {
                                                             String::new()
                                                         } else {
                                                             issue

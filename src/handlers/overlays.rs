@@ -130,6 +130,64 @@ fn run_submit_action(
                 }
             });
         }
+        crate::app::ConfirmAction::CloseMilestone(iid) => {
+            if let Some(m) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
+                m.state = "closed".to_string();
+            }
+            app.project_cache.milestones = app.milestones.items.clone();
+            let client = app.gitlab_client.clone().unwrap();
+            let project_path = app.project_context.clone();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let res = crate::domain::milestones::update_milestone_state(
+                    &client,
+                    &project_path,
+                    iid,
+                    true,
+                )
+                .await;
+                match res {
+                    Ok(_) => {
+                        let _ = tx2.send(Event::MilestoneClosed);
+                    }
+                    Err(e) => {
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Milestones,
+                            Err(e.to_string()),
+                        ));
+                    }
+                }
+            });
+        }
+        crate::app::ConfirmAction::ReopenMilestone(iid) => {
+            if let Some(m) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
+                m.state = "active".to_string();
+            }
+            app.project_cache.milestones = app.milestones.items.clone();
+            let client = app.gitlab_client.clone().unwrap();
+            let project_path = app.project_context.clone();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let res = crate::domain::milestones::update_milestone_state(
+                    &client,
+                    &project_path,
+                    iid,
+                    false,
+                )
+                .await;
+                match res {
+                    Ok(_) => {
+                        let _ = tx2.send(Event::MilestoneReopened);
+                    }
+                    Err(e) => {
+                        let _ = tx2.send(Event::CommandCompleted(
+                            crate::app::Tab::Milestones,
+                            Err(e.to_string()),
+                        ));
+                    }
+                }
+            });
+        }
         crate::app::ConfirmAction::DeleteRelease(tag_name) => {
             app.pending_delete_release_tag = Some(tag_name.clone());
             let client = app.gitlab_client.clone().unwrap();
@@ -209,6 +267,23 @@ fn run_submit_action(
                 }
             });
         }
+        crate::app::ConfirmAction::ReopenIssue(iid) => {
+            if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
+                item.state = "opened".to_string();
+            }
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let project_path = app.project_context.clone();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let result = client.reopen_issue(&project_path, iid).await;
+                let _ = tx2.send(Event::CommandCompleted(
+                    crate::app::Tab::Issues,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
+        }
         crate::app::ConfirmAction::CloseMr(iid) => {
             if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                 app.mrs.items.remove(pos);
@@ -247,6 +322,23 @@ fn run_submit_action(
                         ));
                     }
                 }
+            });
+        }
+        crate::app::ConfirmAction::ReopenMr(iid) => {
+            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
+                item.state = "opened".to_string();
+            }
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            let project_path = app.project_context.clone();
+            let tx2 = tx.clone();
+            tokio::spawn(async move {
+                let result = client.reopen_mr(&project_path, iid).await;
+                let _ = tx2.send(Event::CommandCompleted(
+                    crate::app::Tab::MergeRequests,
+                    result.map_err(|e| e.to_string()),
+                ));
             });
         }
         crate::app::ConfirmAction::MergeMr(iid) => {

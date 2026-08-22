@@ -149,21 +149,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid)
-                        {
-                            item.state = "opened".to_string();
-                        }
-                        if let Some(client) = app.gitlab_client.clone() {
-                            let project_path = app.project_context.clone();
-                            let tx2 = tx.clone();
-                            tokio::spawn(async move {
-                                let result = client.reopen_issue(&project_path, issue_iid).await;
-                                let _ = tx2.send(Event::CommandCompleted(
-                                    crate::app::Tab::Issues,
-                                    result.map_err(|e| e.to_string()),
-                                ));
-                            });
-                        }
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::ReopenIssue(issue_iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -626,20 +615,10 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
-                                item.state = "opened".to_string();
-                            }
-                            if let Some(client) = app.gitlab_client.clone() {
-                                let project_path = app.project_context.clone();
-                                let tx2 = tx.clone();
-                                tokio::spawn(async move {
-                                    let result = client.reopen_mr(&project_path, mr_iid).await;
-                                    let _ = tx2.send(Event::CommandCompleted(
-                                        crate::app::Tab::MergeRequests,
-                                        result.map_err(|e| e.to_string()),
-                                    ));
-                                });
-                            }
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                crate::app::ConfirmAction::ReopenMr(mr_iid),
+                                app,
+                            ));
                         }
                         _ => handled = false,
                     }
@@ -1572,42 +1551,10 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let Some(client) = app.gitlab_client.clone() else {
-                            return;
-                        };
-                        let project_path = app.project_context.clone();
-                        let milestone_iid = milestone.iid;
-                        // Optimistic local update
-                        app.project_cache.milestones = app.milestones.items.clone();
-                        if let Some(m) = app
-                            .milestones
-                            .items
-                            .iter_mut()
-                            .find(|m| m.iid == milestone_iid)
-                        {
-                            m.state = "closed".to_string();
-                        }
-                        let tx = tx.clone();
-                        tokio::spawn(async move {
-                            let res = crate::domain::milestones::update_milestone_state(
-                                &client,
-                                &project_path,
-                                milestone_iid,
-                                true,
-                            )
-                            .await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::MilestoneClosed);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        crate::app::Tab::Milestones,
-                                        Err(e.to_string()),
-                                    ));
-                                }
-                            }
-                        });
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::CloseMilestone(milestone.iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -1619,42 +1566,10 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let Some(client) = app.gitlab_client.clone() else {
-                            return;
-                        };
-                        let project_path = app.project_context.clone();
-                        let milestone_iid = milestone.iid;
-                        // Optimistic local update
-                        app.project_cache.milestones = app.milestones.items.clone();
-                        if let Some(m) = app
-                            .milestones
-                            .items
-                            .iter_mut()
-                            .find(|m| m.iid == milestone_iid)
-                        {
-                            m.state = "active".to_string();
-                        }
-                        let tx = tx.clone();
-                        tokio::spawn(async move {
-                            let res = crate::domain::milestones::update_milestone_state(
-                                &client,
-                                &project_path,
-                                milestone_iid,
-                                false,
-                            )
-                            .await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::MilestoneReopened);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        crate::app::Tab::Milestones,
-                                        Err(e.to_string()),
-                                    ));
-                                }
-                            }
-                        });
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::ReopenMilestone(milestone.iid),
+                            app,
+                        ));
                     }
                 }
             }

@@ -146,6 +146,7 @@ pub struct Icons {
     pub label_select: String,
     pub action_delete: String,
     pub action_close: String,
+    pub action_reopen: String,
     pub action_merge: String,
     pub action_edit: String,
     pub action_create: String,
@@ -249,6 +250,7 @@ impl Icons {
             label_select: "\u{f44b}".to_string(),
             action_delete: "\u{f48e}".to_string(),
             action_close: "\u{f468}".to_string(),
+            action_reopen: "\u{f449}".to_string(), // some open/refresh icon
             action_merge: "\u{f419}".to_string(),
             action_edit: "\u{f448}".to_string(),
             action_create: "\u{f501}".to_string(),

@@ -1679,7 +1679,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 | crate::app::ConfirmAction::DeleteIssue(_)
                 | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
                 crate::app::ConfirmAction::CloseIssue(_)
-                | crate::app::ConfirmAction::CloseMr(_) => icons.action_close.clone(),
+                | crate::app::ConfirmAction::CloseMr(_)
+                | crate::app::ConfirmAction::CloseMilestone(_) => icons.action_close.clone(),
+                crate::app::ConfirmAction::ReopenIssue(_)
+                | crate::app::ConfirmAction::ReopenMr(_)
+                | crate::app::ConfirmAction::ReopenMilestone(_) => icons.action_reopen.clone(),
                 crate::app::ConfirmAction::MergeMr(_)
                 | crate::app::ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
                 crate::app::ConfirmAction::RevokeMr(_)

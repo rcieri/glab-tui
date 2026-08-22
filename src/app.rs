@@ -2375,6 +2375,10 @@ pub enum ConfirmAction {
     DeleteMr(u64),          // mr iid
     CloseIssue(u64),        // issue iid
     CloseMr(u64),           // mr iid
+    CloseMilestone(u64),    // milestone iid
+    ReopenIssue(u64),       // issue iid
+    ReopenMr(u64),          // mr iid
+    ReopenMilestone(u64),   // milestone iid
     MergeMr(u64),           // mr iid
     BulkMergeMrs(Vec<u64>), // mr iids (multiple selected)
     RevokeMr(u64),          // mr iid
@@ -2393,6 +2397,10 @@ impl ConfirmAction {
                 | Self::DeleteMr(_)
                 | Self::CloseIssue(_)
                 | Self::CloseMr(_)
+                | Self::CloseMilestone(_)
+                | Self::ReopenIssue(_)
+                | Self::ReopenMr(_)
+                | Self::ReopenMilestone(_)
                 | Self::RevokeMr(_)
         )
     }
@@ -2607,6 +2615,34 @@ impl SubmitDialog {
                 format!("Close {mr} #{iid}"),
                 format!("Are you sure you want to close {mr_short} #{iid}?"),
                 "Close".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::CloseMilestone(iid) => (
+                format!("Close Milestone #{iid}"),
+                format!("Are you sure you want to close milestone #{iid}?"),
+                "Close".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::ReopenIssue(iid) => (
+                format!("Reopen Issue #{iid}"),
+                format!("Are you sure you want to reopen issue #{iid}?"),
+                "Reopen".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::ReopenMr(iid) => (
+                format!("Reopen {mr} #{iid}"),
+                format!("Are you sure you want to reopen {mr_short} #{iid}?"),
+                "Reopen".to_string(),
+                vec![],
+                true,
+            ),
+            ConfirmAction::ReopenMilestone(iid) => (
+                format!("Reopen Milestone #{iid}"),
+                format!("Are you sure you want to reopen milestone #{iid}?"),
+                "Reopen".to_string(),
                 vec![],
                 true,
             ),

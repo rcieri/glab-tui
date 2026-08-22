@@ -1066,6 +1066,7 @@ impl Backend for GhBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "pr".into(),
@@ -1084,6 +1085,9 @@ impl Backend for GhBackend {
         }
         if delete_branch {
             args.push("--delete-branch".into());
+        }
+        if auto_merge {
+            args.push("--auto".into());
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "MERGING PR").await?;

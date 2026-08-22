@@ -451,6 +451,7 @@ impl GlabBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Vec<String> {
         let mut args = vec![
             "mr".into(),
@@ -466,7 +467,14 @@ impl GlabBackend {
             args.push("--remove-source-branch".into());
         }
         if let Some(s) = strategy {
-            args.push(format!("--{}", s));
+            if s == "rebase" {
+                args.push("--rebase".into());
+            }
+        }
+        if auto_merge {
+            args.push("--auto-merge=true".into());
+        } else {
+            args.push("--auto-merge=false".into());
         }
         args.push("--yes".into());
         args
@@ -1347,8 +1355,9 @@ impl Backend for GlabBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()> {
-        let args = Self::merge_args(project, iid, squash, delete_branch, strategy);
+        let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "MERGING MR").await?;
         Ok(())
@@ -2715,7 +2724,7 @@ mod tests {
 
     #[test]
     fn merge_args_skip_confirmation_prompt() {
-        let args = GlabBackend::merge_args("group/project", 42, true, true, None);
+        let args = GlabBackend::merge_args("group/project", 42, true, true, None, false);
 
         assert_eq!(
             args,
@@ -2727,6 +2736,7 @@ mod tests {
                 "group/project",
                 "--squash",
                 "--remove-source-branch",
+                "--auto-merge=false",
                 "--yes",
             ]
         );

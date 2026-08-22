@@ -25,10 +25,14 @@ pub fn handle_submit_dialog(
         .modifiers
         .contains(crossterm::event::KeyModifiers::SHIFT);
     match key_event.code {
-        KeyCode::Left | KeyCode::BackTab | KeyCode::Char('h') => {
+        KeyCode::Left
+        | KeyCode::Up
+        | KeyCode::BackTab
+        | KeyCode::Char('h')
+        | KeyCode::Char('k') => {
             dialog.move_prev();
         }
-        KeyCode::Right | KeyCode::Tab | KeyCode::Char('l') => {
+        KeyCode::Right | KeyCode::Down | KeyCode::Tab | KeyCode::Char('l') | KeyCode::Char('j') => {
             dialog.move_next();
         }
         KeyCode::Char(' ') => {
@@ -77,20 +81,24 @@ pub fn handle_submit_dialog(
     true
 }
 
-fn merge_options_from(options: &[crate::app::SubmitOption]) -> (bool, bool, Option<&'static str>) {
+fn merge_options_from(
+    options: &[crate::app::SubmitOption],
+) -> (bool, bool, Option<&'static str>, bool) {
     let mut squash = false;
     let mut delete_branch = false;
     let mut strategy: Option<&'static str> = None;
+    let mut auto_merge = false;
     for opt in options.iter().filter(|o| o.checked) {
         match opt.label.as_str() {
-            "Squash" => squash = true,
+            "Strategy: Squash" => squash = true,
             "Delete source branch" => delete_branch = true,
-            "Create merge commit" => strategy = Some("merge"),
-            "Rebase and merge" => strategy = Some("rebase"),
+            "Strategy: Merge commit" => strategy = Some("merge"),
+            "Strategy: Rebase" => strategy = Some("rebase"),
+            "Auto-merge" => auto_merge = true,
             _ => {}
         }
     }
-    (squash, delete_branch, strategy)
+    (squash, delete_branch, strategy, auto_merge)
 }
 
 fn run_submit_action(
@@ -242,7 +250,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::MergeMr(iid) => {
-            let (squash, delete_branch, merge_strategy) = merge_options_from(&options);
+            let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
             if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                 app.mrs.items.remove(pos);
             }
@@ -254,7 +262,14 @@ fn run_submit_action(
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client
-                    .merge_mr(&project_path, iid, squash, delete_branch, merge_strategy)
+                    .merge_mr(
+                        &project_path,
+                        iid,
+                        squash,
+                        delete_branch,
+                        merge_strategy,
+                        auto_merge,
+                    )
                     .await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
@@ -263,7 +278,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::BulkMergeMrs(iids) => {
-            let (squash, delete_branch, merge_strategy) = merge_options_from(&options);
+            let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
             let iids: Vec<u64> = iids.clone();
             for mr_iid in &iids {
                 if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == *mr_iid) {
@@ -280,7 +295,14 @@ fn run_submit_action(
                 let mut failures = Vec::new();
                 for mr_iid in iids {
                     match client
-                        .merge_mr(&project_path, mr_iid, squash, delete_branch, merge_strategy)
+                        .merge_mr(
+                            &project_path,
+                            mr_iid,
+                            squash,
+                            delete_branch,
+                            merge_strategy,
+                            auto_merge,
+                        )
                         .await
                     {
                         Ok(_) => {}

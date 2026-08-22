@@ -2538,7 +2538,19 @@ impl SubmitDialog {
 
     pub fn toggle_focused_option(&mut self) {
         if let Some(idx) = self.option_idx() {
-            self.options[idx].checked = !self.options[idx].checked;
+            let label = self.options[idx].label.clone();
+            let is_radio = label.starts_with("Strategy: ");
+            if is_radio {
+                // For radio buttons, only check it and uncheck others in the group
+                for opt in &mut self.options {
+                    if opt.label.starts_with("Strategy: ") {
+                        opt.checked = false;
+                    }
+                }
+                self.options[idx].checked = true;
+            } else {
+                self.options[idx].checked = !self.options[idx].checked;
+            }
         }
     }
 
@@ -2621,8 +2633,11 @@ impl SubmitDialog {
                     format!("\n\n{source} \u{2192} {target}")
                 };
                 let options = vec![
-                    SubmitOption::new("Squash", true),
+                    SubmitOption::new("Strategy: Merge commit", false),
+                    SubmitOption::new("Strategy: Squash", true),
+                    SubmitOption::new("Strategy: Rebase", false),
                     SubmitOption::new("Delete source branch", true),
+                    SubmitOption::new("Auto-merge", false),
                 ];
                 (
                     format!("Merge {mr} #{iid}"),
@@ -2643,8 +2658,11 @@ impl SubmitDialog {
                 ),
                 "Merge".to_string(),
                 vec![
-                    SubmitOption::new("Squash", true),
+                    SubmitOption::new("Strategy: Merge commit", false),
+                    SubmitOption::new("Strategy: Squash", true),
+                    SubmitOption::new("Strategy: Rebase", false),
                     SubmitOption::new("Delete source branch", true),
+                    SubmitOption::new("Auto-merge", false),
                 ],
                 false,
             ),

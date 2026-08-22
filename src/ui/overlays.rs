@@ -1765,10 +1765,19 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .options
                 .iter()
                 .map(|o| {
-                    let mark = if o.checked {
-                        format!("[{}] ", icons.check_on)
+                    let is_radio = o.label.starts_with("Strategy: ");
+                    let mark = if is_radio {
+                        if o.checked {
+                            format!("({}) ", icons.check_on)
+                        } else {
+                            "( ) ".to_string()
+                        }
                     } else {
-                        "[ ] ".to_string()
+                        if o.checked {
+                            format!("[{}] ", icons.check_on)
+                        } else {
+                            "[ ] ".to_string()
+                        }
                     };
                     Line::from(format!("{mark}{}", o.label))
                 })

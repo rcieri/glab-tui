@@ -147,6 +147,7 @@ pub trait Backend: Send + Sync {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
     async fn create_mr(

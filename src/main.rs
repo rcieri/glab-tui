@@ -3363,6 +3363,7 @@ async fn main() -> Result<()> {
                                                         squash,
                                                         delete_branch,
                                                         merge_strategy,
+                                                        false,
                                                     )
                                                     .await
                                                 {

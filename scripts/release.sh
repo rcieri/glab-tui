@@ -387,7 +387,14 @@ prepare() {
   ensure_version   # no-op if next_version() already ran
 
   if is_nightly; then
-    note "Nightly release — skipping Cargo.toml bump, docs regeneration, and PR creation"
+    note "Nightly release — skipping docs regeneration and PR creation"
+    if [[ "${BUMP_CARGO_FOR_NIGHTLY:-}" == "1" ]]; then
+      bump_cargo_version
+      note "Bumped Cargo.toml to ${VERSION} (BUMP_CARGO_FOR_NIGHTLY=1) — commit this before tagging so the binary's --version stamp matches the tag"
+    else
+      note "Cargo.toml NOT bumped — the binary will report the previous stable version."
+      note "Set BUMP_CARGO_FOR_NIGHTLY=1 to bump Cargo.toml to ${VERSION} for the binary's --version stamp."
+    fi
     note "(nightly tag $NEW_TAG should already be pushed to origin; CI will build the assets)"
     return 0
   fi
@@ -782,6 +789,12 @@ Use the content from CHANGELOG.md for the current version as the source material
 publish() {
   ensure_version
 
+  if is_nightly; then
+    note "Skipping Docker push and crates.io publish for nightly $NEW_TAG"
+    note "(pre-release versions are rejected by crates.io, and nightly Docker images are intentionally not pushed)"
+    return 0
+  fi
+
   local package_version tag_version user
   package_version="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[0].version')"
   tag_version="${NEW_TAG#v}"
@@ -793,18 +806,11 @@ publish() {
   user="$(gh api user --jq .login)"
   spinner "Authenticating to GHCR" bash -c 'gh auth token | docker login ghcr.io -u "$0" --password-stdin' "$user"
   local tags_args=(-t "ghcr.io/$REPO:$NEW_TAG")
-  if is_nightly; then
-    tags_args+=(-t "ghcr.io/$REPO:nightly")
-  elif [[ "$NEW_TAG" != *-* ]]; then
+  if [[ "$NEW_TAG" != *-* ]]; then
     tags_args+=(-t "ghcr.io/$REPO:latest")
   fi
   spinner "Building & pushing Docker image to GHCR" docker buildx build --push "${tags_args[@]}" .
   ok "Docker image pushed to GHCR"
-
-  if is_nightly; then
-    note "Skipping crates.io publish for nightly $NEW_TAG (pre-release versions are rejected)"
-    return 0
-  fi
 
   spinner "Publishing crate v$package_version to crates.io" cargo publish --locked
   ok "crate v$package_version published to crates.io"

@@ -11,6 +11,18 @@ use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crate::keybinding::keybinding_matches;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Terminal;
+use ratatui::backend::Backend;
+
+/// Return a muted dash for empty values so optional fields read cleanly
+/// instead of cluttering the preview with "--" or blank rows.
+pub(crate) fn display_branch(value: &str) -> &str {
+    if value.trim().is_empty() || value == "--" {
+        "\u{2014}"
+    } else {
+        value
+    }
+}
 
 // ── Shared field builders (single source of truth for edit/creation forms) ──
 
@@ -36,6 +48,10 @@ pub fn issue_fields(
         fields.push(crate::app::Field::date("Due Date", due_date));
         fields.push(crate::app::Field::text("Weight", weight));
     }
+    fields.push(crate::app::Field::ref_field(
+        "Description Template",
+        String::new(),
+    ));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }
@@ -59,10 +75,19 @@ pub fn mr_fields(
         ));
         fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
     }
+    fields.push(crate::app::Field::ref_field(
+        "Create from Issue",
+        String::new(),
+    ));
+    fields.push(crate::app::Field::ref_field("Source Branch", String::new()));
     fields.push(crate::app::Field::multi_select("Assignees", assignees));
     fields.push(crate::app::Field::multi_select("Reviewers", reviewers));
     fields.push(crate::app::Field::multi_select("Milestone", milestone));
     fields.push(crate::app::Field::multi_select("Labels", labels));
+    fields.push(crate::app::Field::ref_field(
+        "Description Template",
+        String::new(),
+    ));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }
@@ -102,7 +127,7 @@ pub fn build_issue_document(
         crate::app::Field::multi_select(
             "Assignees",
             if issue.assignees.is_empty() {
-                "None".to_string()
+                "--".to_string()
             } else {
                 issue
                     .assignees
@@ -118,12 +143,12 @@ pub fn build_issue_document(
                 .milestone
                 .as_ref()
                 .map(|m| m.title.clone())
-                .unwrap_or_else(|| "None".to_string()),
+                .unwrap_or_else(|| "--".to_string()),
         ),
         crate::app::Field::multi_select(
             "Labels",
             if issue.labels.is_empty() {
-                "None".to_string()
+                "--".to_string()
             } else {
                 issue.labels.join(", ")
             },
@@ -235,7 +260,7 @@ pub fn build_mr_document(
     fields.push(crate::app::Field::multi_select(
         "Assignees",
         if mr.assignees.is_empty() {
-            "None".to_string()
+            "--".to_string()
         } else {
             mr.assignees
                 .iter()
@@ -247,7 +272,7 @@ pub fn build_mr_document(
     fields.push(crate::app::Field::multi_select(
         "Reviewers",
         if mr.reviewers.is_empty() {
-            "None".to_string()
+            "--".to_string()
         } else {
             mr.reviewers
                 .iter()
@@ -261,23 +286,23 @@ pub fn build_mr_document(
         mr.milestone
             .as_ref()
             .map(|m| m.title.clone())
-            .unwrap_or_else(|| "None".to_string()),
+            .unwrap_or_else(|| "--".to_string()),
     ));
     fields.push(crate::app::Field::multi_select(
         "Labels",
         if mr.labels.is_empty() {
-            "None".to_string()
+            "--".to_string()
         } else {
             mr.labels.join(", ")
         },
     ));
-    fields.push(crate::app::Field::read_only(
-        "Source Branch",
-        mr.source_branch.clone(),
-    ));
     fields.push(crate::app::Field::ref_field(
-        "Target Branch",
-        mr.target_branch.clone(),
+        "Branch",
+        format!(
+            "{} \u{2192} {}",
+            display_branch(&mr.source_branch),
+            display_branch(&mr.target_branch)
+        ),
     ));
     fields.push(crate::app::Field::read_only(
         "Updated",
@@ -470,13 +495,6 @@ pub fn build_release_document(
 pub fn build_runner_document(
     runner: &crate::domain::runners::Runner,
 ) -> crate::app::EntityDocument {
-    let runner_hash = runner.id;
-    let active_jobs = (runner_hash % 8) as usize + 1;
-    let max_capacity = ((runner_hash % 4) as usize + 2) * 4;
-    let queue_depth = (runner_hash % 5) as usize;
-    let utilization = (active_jobs * 100) / max_capacity;
-    let wait_time = (runner_hash % 50) as usize + 10;
-
     let fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", runner.id)),
         crate::app::Field::read_only(
@@ -484,7 +502,7 @@ pub fn build_runner_document(
             runner
                 .description
                 .clone()
-                .unwrap_or_else(|| "None".to_string()),
+                .unwrap_or_else(|| "--".to_string()),
         ),
         crate::app::Field::read_only("Status", runner.status.to_uppercase()),
         crate::app::Field::read_only(
@@ -495,15 +513,11 @@ pub fn build_runner_document(
                 "NO".to_string()
             },
         ),
-        crate::app::Field::read_only("Active Jobs", format!("{}/{}", active_jobs, max_capacity)),
-        crate::app::Field::read_only("Utilization", format!("{}%", utilization)),
-        crate::app::Field::read_only("Queue Depth", format!("{} waiting", queue_depth)),
-        crate::app::Field::read_only("Avg Wait", format!("{}s", wait_time)),
     ];
     crate::app::EntityDocument {
         title: format!("Runner #{}", runner.id),
         fields,
-        content: crate::app::InspectorContent::Empty("Runner metrics and status"),
+        content: crate::app::InspectorContent::Empty("Runner status and metadata"),
     }
 }
 
@@ -566,7 +580,7 @@ pub fn build_branch_document(
         crate::app::Field::read_only(
             "Commit",
             if branch.commit_sha.is_empty() {
-                "None".to_string()
+                "--".to_string()
             } else {
                 branch.commit_sha.clone()
             },
@@ -590,9 +604,7 @@ pub fn build_environment_document(
         crate::app::Field::read_only("State", env.state.to_uppercase()),
         crate::app::Field::read_only(
             "URL",
-            env.external_url
-                .clone()
-                .unwrap_or_else(|| "None".to_string()),
+            env.external_url.clone().unwrap_or_else(|| "--".to_string()),
         ),
     ];
     if let Some(dep) = &env.last_deployment {
@@ -893,13 +905,13 @@ pub fn apply_field_text_change(
     }
 }
 
-pub fn apply_selector_changes(
+pub fn apply_selector_changes<B: Backend>(
     app: &mut App,
     entity_type: &str,
     iid: u64,
     field_type: &str,
     values: Vec<String>,
-    terminal: &mut AppTerminal,
+    terminal: &mut Terminal<B>,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
@@ -1099,19 +1111,26 @@ pub fn apply_selector_changes(
         }
         "milestone" => {
             let first_val = values.first().cloned().unwrap_or_default();
+            let clear_milestone = first_val.is_empty() || first_val == "--";
             if entity_type == "issue" || entity_type == "edit_issue" {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
-                    let m = crate::domain::issues::Milestone {
-                        title: first_val.clone(),
+                    item.milestone = if clear_milestone {
+                        None
+                    } else {
+                        Some(crate::domain::issues::Milestone {
+                            title: first_val.clone(),
+                        })
                     };
-                    item.milestone = Some(m);
                 }
             } else if entity_type == "mr" || entity_type == "edit_mr" {
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
-                    let m = crate::domain::mr::Milestone {
-                        title: first_val.clone(),
+                    item.milestone = if clear_milestone {
+                        None
+                    } else {
+                        Some(crate::domain::mr::Milestone {
+                            title: first_val.clone(),
+                        })
                     };
-                    item.milestone = Some(m);
                 }
             }
             let Some(client) = app.gitlab_client.clone() else {
@@ -1318,7 +1337,7 @@ pub async fn handle_entity_update(
                     client.update_mr_title(&project_path, iid, &new_title).await
                 };
                 if let Err(e) = result {
-                    app.error_message = Some(format!("Failed to update title: {}", e));
+                    app.show_error(format!("Failed to update title: {}", e));
                     return;
                 }
                 if entity_type == "issue"
@@ -1352,7 +1371,7 @@ pub async fn handle_entity_update(
                 };
                 let project_path = app.project_context.clone();
                 if let Err(e) = client.toggle_mr_draft(&project_path, iid, is_draft).await {
-                    app.error_message = Some(format!("Failed to toggle draft: {}", e));
+                    app.show_error(format!("Failed to toggle draft: {}", e));
                     return;
                 }
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -1380,7 +1399,7 @@ pub async fn handle_entity_update(
                         .update_mr_target_branch(&project_path, iid, &target)
                         .await
                     {
-                        app.error_message = Some(format!("Failed to update target branch: {}", e));
+                        app.show_error(format!("Failed to update target branch: {}", e));
                         return;
                     }
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -1428,7 +1447,7 @@ pub async fn handle_entity_update(
                         .update_issue_due_date(&project_path, iid, flag_value)
                         .await
                     {
-                        app.error_message = Some(format!("Failed to update due date: {}", e));
+                        app.show_error(format!("Failed to update due date: {}", e));
                     }
                 }
             }
@@ -1444,7 +1463,7 @@ pub async fn handle_entity_update(
                         .update_issue_weight(&project_path, iid, &weight)
                         .await
                     {
-                        app.error_message = Some(format!("Failed to update weight: {}", e));
+                        app.show_error(format!("Failed to update weight: {}", e));
                     }
                 }
             }
@@ -1531,10 +1550,97 @@ pub async fn handle_entity_update(
                         .await
                 };
                 if let Err(e) = result {
-                    app.error_message = Some(format!("Failed to update description: {}", e));
+                    app.show_error(format!("Failed to update description: {}", e));
                 }
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_milestone_removal_clears_milestone_field() {
+        let mut app = App::default();
+        let issue = crate::domain::issues::Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "u1".to_string(),
+            },
+            milestone: Some(crate::domain::issues::Milestone {
+                title: "v1.0".to_string(),
+            }),
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        app.issues.items = vec![issue];
+
+        let mr = crate::domain::mr::MergeRequest {
+            iid: 1,
+            title: "MR 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            author: crate::domain::mr::Author {
+                username: "u1".to_string(),
+            },
+            milestone: Some(crate::domain::mr::Milestone {
+                title: "v1.0".to_string(),
+            }),
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".to_string(),
+            source_branch: "feature".to_string(),
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+        };
+        app.mrs.items = vec![mr];
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        // Clear milestone by passing no value (deselected in the selector) on Issue
+        apply_selector_changes(
+            &mut app,
+            "issue",
+            1,
+            "milestone",
+            vec![],
+            &mut terminal,
+            tx.clone(),
+            crate::app::Tab::Issues,
+        );
+
+        assert!(app.issues.items[0].milestone.is_none());
+
+        // Clear milestone by passing no value on MR
+        apply_selector_changes(
+            &mut app,
+            "mr",
+            1,
+            "milestone",
+            vec![],
+            &mut terminal,
+            tx,
+            crate::app::Tab::MergeRequests,
+        );
+
+        assert!(app.mrs.items[0].milestone.is_none());
     }
 }

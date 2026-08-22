@@ -11,7 +11,8 @@ use ratatui::{
 use crate::app::{EditMenu, EntityDocument, Field, FieldTone, FieldType, InspectorContent};
 use crate::config::{ICONS, THEME};
 use crate::ui::helpers::get_label_color;
-use crate::utils::format::{parse_ansi_trace, render_markdown};
+use crate::utils::format::parse_ansi_trace;
+use crate::utils::markdown::render_markdown;
 
 /// Map a `FieldTone` to the same `(fg, badge_bg, bold)` triple the table uses
 /// for the Approval/Mergeable columns, so a toned preview field renders with a
@@ -360,13 +361,13 @@ fn render_content_pane(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(&desc_value)
+                render_markdown(&desc_value, &theme, desc_inner.width)
             };
 
             f.render_widget(
                 Paragraph::new(desc_lines)
                     .scroll((menu.desc_scroll, 0))
-                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
                 desc_inner,
             );
         }
@@ -607,7 +608,7 @@ pub(crate) fn build_field_list_items(
             let mut val_spans = Vec::new();
             if val.is_empty() && f.kind != FieldType::Text && f.kind != FieldType::ReadOnly {
                 val_spans.push(Span::styled(
-                    " None",
+                    " --",
                     Style::default()
                         .fg(theme.text_muted)
                         .bg(item_bg)
@@ -618,9 +619,9 @@ pub(crate) fn build_field_list_items(
                 match f.kind {
                     FieldType::Section => {}
                     FieldType::MultiSelect => {
-                        if val == "None" {
+                        if val == "--" {
                             val_spans.push(Span::styled(
-                                " None",
+                                " --",
                                 Style::default()
                                     .fg(theme.text_muted)
                                     .bg(item_bg)
@@ -784,300 +785,23 @@ pub(crate) fn build_field_list_items(
                                 val_spans = spans;
                             }
                         } else {
-                            let mut badge_bg: Option<Color> = None;
-                            let mut formatted_val: Option<String> = None;
-
-                            let (val_fg, is_bold) = match label.as_str() {
-                                "State" => match val.to_lowercase().as_str() {
-                                    "opened" | "open" | "active" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} OPEN ", icons.state_open));
-                                        (theme.green, true)
-                                    }
-                                    "closed" | "close" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.red_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} CLOSED ", icons.state_closed));
-                                        (theme.red, true)
-                                    }
-                                    "merged" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.purple_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} MERGED ", icons.state_merged));
-                                        (theme.purple, true)
-                                    }
-                                    _ => (theme.text_normal, false),
-                                },
-                                "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
-                                    "success" | "online" | "ready" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} SUCCESS ", icons.status_success));
-                                        (theme.green, true)
-                                    }
-                                    "failed" | "offline" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.red_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} FAILED ", icons.status_failed));
-                                        (theme.red, true)
-                                    }
-                                    "running" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.blue_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} RUNNING ", icons.status_running));
-                                        (theme.blue, true)
-                                    }
-                                    "pending" | "waiting" | "draft" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.yellow_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} PENDING ", icons.status_pending));
-                                        (theme.yellow, true)
-                                    }
-                                    "canceled" | "cancelled" => {
-                                        badge_bg = Some(item_bg);
-                                        formatted_val =
-                                            Some(format!(" {} CANCELED ", icons.status_canceled));
-                                        (theme.text_muted, false)
-                                    }
-                                    "paused" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.yellow_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} PAUSED ", icons.runner_paused));
-                                        (theme.yellow, true)
-                                    }
-                                    _ => (theme.text_normal, false),
-                                },
-                                "Approval" => {
-                                    if let Some(tone) = &f.tone {
-                                        let (fg, bg, bold) =
-                                            tone_badge_style(tone, is_selected, &theme);
-                                        badge_bg = bg;
-                                        (fg, bold)
-                                    } else {
-                                        match val.to_uppercase().as_str() {
-                                            "APPROVED" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.green_bg
-                                                });
-                                                formatted_val = Some(format!(
-                                                    " {} APPROVED ",
-                                                    icons.approval_approved
-                                                ));
-                                                (theme.green, true)
-                                            }
-                                            "CHANGES" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.red_bg
-                                                });
-                                                formatted_val = Some(format!(
-                                                    " {} CHANGES ",
-                                                    icons.approval_changes
-                                                ));
-                                                (theme.red, true)
-                                            }
-                                            "YOURS" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.blue_bg
-                                                });
-                                                formatted_val = Some(format!(" \u{f007} YOURS "));
-                                                (theme.blue, true)
-                                            }
-                                            "AWAITING" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.yellow_bg
-                                                });
-                                                formatted_val = Some(format!(
-                                                    " {} AWAITING ",
-                                                    icons.approval_pending
-                                                ));
-                                                (theme.yellow, true)
-                                            }
-                                            _ => (theme.text_normal, false),
-                                        }
-                                    }
-                                }
-                                "Mergeable" => {
-                                    if let Some(tone) = &f.tone {
-                                        let (fg, bg, bold) =
-                                            tone_badge_style(tone, is_selected, &theme);
-                                        badge_bg = bg;
-                                        (fg, bold)
-                                    } else {
-                                        match val.to_uppercase().as_str() {
-                                            "CLEAN" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.green_bg
-                                                });
-                                                formatted_val =
-                                                    Some(format!(" {} CLEAN ", icons.merge_clean));
-                                                (theme.green, true)
-                                            }
-                                            "CONFLICT" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.red_bg
-                                                });
-                                                formatted_val = Some(format!(
-                                                    " {} CONFLICT ",
-                                                    icons.merge_conflict
-                                                ));
-                                                (theme.red, true)
-                                            }
-                                            "REBASE" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.yellow_bg
-                                                });
-                                                formatted_val = Some(format!(
-                                                    " {} REBASE ",
-                                                    icons.merge_rebase
-                                                ));
-                                                (theme.yellow, true)
-                                            }
-                                            "BLOCKED" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.red_bg
-                                                });
-                                                formatted_val = Some(format!(
-                                                    " {} BLOCKED ",
-                                                    icons.merge_conflict
-                                                ));
-                                                (theme.red, true)
-                                            }
-                                            "BEHIND" => {
-                                                badge_bg = Some(if is_selected {
-                                                    theme.highlight_bg
-                                                } else {
-                                                    theme.yellow_bg
-                                                });
-                                                formatted_val = Some(format!(
-                                                    " {} BEHIND ",
-                                                    icons.merge_rebase
-                                                ));
-                                                (theme.yellow, true)
-                                            }
-                                            _ => (theme.text_normal, false),
-                                        }
-                                    }
-                                }
-                                "Workflow" => match val.to_uppercase().as_str() {
-                                    "APPROVED" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} APPROVED ", icons.approval_approved));
-                                        (theme.green, true)
-                                    }
-                                    "REVIEW" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.blue_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} REVIEW ", icons.workflow_review));
-                                        (theme.blue, true)
-                                    }
-                                    "CHANGES" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.red_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} CHANGES ", icons.approval_changes));
-                                        (theme.red, true)
-                                    }
-                                    "DRAFT" => {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.yellow_bg
-                                        });
-                                        formatted_val =
-                                            Some(format!(" {} DRAFT ", icons.status_draft));
-                                        (theme.yellow, true)
-                                    }
-                                    _ => (theme.text_normal, false),
-                                },
-                                "Default" | "Protected" | "Can Push" | "Active"
-                                | "Confidential" => {
-                                    if val == "YES" || val == "Yes" || val == "true" {
-                                        badge_bg = Some(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        });
-                                        formatted_val = Some(format!(" {} YES ", icons.check_on));
-                                        (theme.green, true)
-                                    } else {
-                                        badge_bg = Some(item_bg);
-                                        formatted_val = Some(format!(" {} NO ", icons.check_off));
-                                        (theme.text_muted, false)
-                                    }
-                                }
-                                "Milestone" | "Branch" | "Ref" | "Deploy Ref" | "Stage" => {
-                                    (theme.purple, false)
-                                }
-                                "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target"
-                                | "Project" => (theme.blue, false),
-                                "Updated" | "Created" | "Duration" | "Released" | "Deployed"
-                                | "Date" | "Due Date" | "Start Date" | "Avg Wait" => {
-                                    (theme.yellow, false)
-                                }
-                                "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA"
-                                | "Deploy ID" => (theme.blue, false),
-                                _ => (theme.text_normal, false),
+                            let (val_fg, badge_bg, is_bold, formatted_val) = if (label
+                                == "Approval"
+                                || label == "Mergeable")
+                                && f.tone.is_some()
+                            {
+                                let (fg, bg, bold) =
+                                    tone_badge_style(f.tone.as_ref().unwrap(), is_selected, &theme);
+                                (fg, bg, bold, None)
+                            } else {
+                                crate::ui::helpers::badge_style_for(
+                                    label,
+                                    val,
+                                    is_selected,
+                                    item_bg,
+                                    &theme,
+                                    &icons,
+                                )
                             };
 
                             let current_bg = badge_bg.unwrap_or(item_bg);
@@ -1314,12 +1038,12 @@ pub(crate) fn render_inspector_content(
                         .add_modifier(Modifier::ITALIC),
                 ))]
             } else {
-                render_markdown(md)
+                render_markdown(md, &theme, area.width)
             };
             f.render_widget(
                 Paragraph::new(lines)
                     .scroll((scroll, 0))
-                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
                 area,
             );
         }
@@ -1463,6 +1187,30 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_render_inspector_content_preserves_markdown_indentation() {
+        let backend = TestBackend::new(40, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let content = InspectorContent::Markdown("- Parent\n    - Nested\n\n> Quoted".to_string());
+
+        terminal
+            .draw(|f| render_inspector_content(f, &content, f.area(), 0))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("• Parent"));
+        assert!(rendered.contains("  • Nested"));
+        assert!(rendered.contains("  ▌ Quoted"));
     }
 
     #[test]

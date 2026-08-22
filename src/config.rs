@@ -154,6 +154,7 @@ pub struct Icons {
     pub readonly: String,
     pub folder_expanded: String,
     pub folder_collapsed: String,
+    pub file_reviewed: String,
 }
 
 impl Icons {
@@ -256,6 +257,7 @@ impl Icons {
             readonly: "\u{f023}".to_string(),
             folder_expanded: "\u{f07c}".to_string(),
             folder_collapsed: "\u{f07b}".to_string(),
+            file_reviewed: "\u{f4a7}".to_string(),
         }
     }
 }
@@ -447,6 +449,8 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("default", include_str!("themes/default.toml")),
     ("clean", include_str!("themes/clean.toml")),
     ("tokyo-night", include_str!("themes/tokyo-night.toml")),
+    ("oled", include_str!("themes/oled.toml")),
+    ("github-dark-hc", include_str!("themes/github-dark-hc.toml")),
     ("gruvbox", include_str!("themes/gruvbox.toml")),
     ("nord", include_str!("themes/nord.toml")),
     (
@@ -675,6 +679,8 @@ pub struct KeybindingIssues {
     pub open_in_browser: String,
     #[serde(default)]
     pub edit_title: String,
+    #[serde(default)]
+    pub selection_toggle: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -711,6 +717,8 @@ pub struct KeybindingMrs {
     pub edit_target_branch: String,
     #[serde(default)]
     pub edit_title: String,
+    #[serde(default)]
+    pub selection_toggle: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -882,6 +890,7 @@ keybind_defaults! {
     def_delete_entity = "d",
     def_create_mr = "n",
     def_select_mr = "Space",
+    def_selection_toggle = "v",
     def_approve_mr = "a",
     def_revoke_mr = "A",
     def_rebase_mr = "R",
@@ -889,7 +898,7 @@ keybind_defaults! {
     def_toggle_draft = "s",
     def_edit_title = "t",
     def_edit_target_branch = "g",
-    def_view_diff = "v",
+    def_view_diff = "D",
     def_view_related_pipelines = "P",
     def_trigger_pipeline = "p",
     def_retry = "r",
@@ -959,6 +968,7 @@ impl Default for KeybindingIssues {
             create_mr: def_create_mr_issue(),
             open_in_browser: def_open_in_browser(),
             edit_title: def_edit_title(),
+            selection_toggle: def_selection_toggle(),
         }
     }
 }
@@ -982,6 +992,7 @@ impl Default for KeybindingMrs {
             open_in_browser: def_open_in_browser(),
             edit_target_branch: def_edit_target_branch(),
             edit_title: def_edit_title(),
+            selection_toggle: def_selection_toggle(),
         }
     }
 }
@@ -1237,6 +1248,7 @@ impl Config {
 # See https://github.com/rcieri/glab-tui for documentation
 
 # Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
+# "oled", "github-dark-hc",
 # "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark",
 # "rose-pine", "rose-pine-moon", "rose-pine-dawn"
 theme_preset = "default"
@@ -1296,6 +1308,7 @@ close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
 edit_title = "t"
+selection_toggle = "v"
 
 [keybindings.mrs]
 create_mr = "n"
@@ -1305,7 +1318,7 @@ revoke_mr = "A"
 rebase_mr = "R"
 merge_mr = "m"
 toggle_draft = "s"
-view_diff = "v"
+view_diff = "D"
 view_related_pipelines = "P"
 edit_entity = "e"
 close_entity = "c"
@@ -1313,6 +1326,7 @@ reopen_entity = "r"
 delete_entity = "d"
 edit_target_branch = "g"
 edit_title = "t"
+selection_toggle = "v"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"

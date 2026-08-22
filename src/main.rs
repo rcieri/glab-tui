@@ -668,7 +668,6 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
     let cols = tab.columns(kind);
     let group_cols: Vec<&str> = cols.iter().copied().collect();
     let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
-    let themes = crate::config::all_theme_presets();
 
     // Build layout same as rendering
     let inner = border_inner(rect);
@@ -697,12 +696,6 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
     y_off += 1; // header
     let page_size_start = y_off;
     y_off += 1; // value
-    y_off += 1; // spacer
-    // THEME header
-    y_off += 1;
-    let theme_start = y_off;
-    let theme_end = theme_start + themes.len() as u16;
-    y_off = theme_end;
     y_off += 1; // spacer
     // SAVE
     y_off += 1;
@@ -740,12 +733,6 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
         app.column_checklist_idx = group_end as usize + idx;
     } else if row == page_size_start {
         app.editing_page_size = true;
-    } else if row >= theme_start && row < theme_end {
-        let idx = (row - theme_start) as usize;
-        if idx < themes.len() {
-            app.config.theme_preset = Some(themes[idx].to_string());
-            app.apply_config();
-        }
     } else if row == save_y {
         app.save_menu_open = true;
     }
@@ -918,7 +905,7 @@ async fn main() -> Result<()> {
             command: "Initialization: gitlab client".to_string(),
             status: "Failed: Failed to initialize GitLab client".to_string(),
         });
-        app.error_message = Some("Failed to initialize GitLab client".to_string());
+        app.show_error("Failed to initialize GitLab client".to_string());
     }
 
     // If we couldn't detect a valid project, prompt to select a cached repo
@@ -1230,7 +1217,7 @@ async fn main() -> Result<()> {
                                 app.detail_visible = true;
                             }
                             Err(e) => {
-                                app.error_message = Some(e);
+                                app.show_error(e);
                             }
                         }
                     }
@@ -1500,13 +1487,7 @@ async fn main() -> Result<()> {
                         }
                         crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
-                            if selector.field_type == "milestone" {
-                                let mut ms_items = vec!["None".to_string()];
-                                ms_items.extend(items.into_iter().filter(|i| i != "None"));
-                                selector.all_items = ms_items;
-                            } else {
-                                selector.all_items = items;
-                            }
+                            selector.all_items = items;
                             selector.is_loading = false;
                             app.selector = Some(selector);
                         }
@@ -1562,7 +1543,7 @@ async fn main() -> Result<()> {
                     if has_cached_items {
                         app.status_message = Some("Offline / Connection failed".to_string());
                     } else {
-                        app.error_message = Some(err_msg);
+                        app.show_error(err_msg);
                     }
                 }
                 Event::DiffFetched {
@@ -1571,7 +1552,13 @@ async fn main() -> Result<()> {
                     comments,
                 } => {
                     app.diff_loading = false;
-                    app.diff_view = Some(crate::app::DiffView::new(mr_iid, raw_diff));
+                    let mut diff_view = crate::app::DiffView::new(mr_iid, raw_diff);
+                    // Restore the files marked as reviewed on an earlier pass.
+                    diff_view.restore_review_state(
+                        app.reviewed_files_for_mr(mr_iid),
+                        app.hide_reviewed_files,
+                    );
+                    app.diff_view = Some(diff_view);
                     app.current_comments = comments;
                     app.last_fetched_mr_iid = Some(mr_iid);
                     app.in_review_mode = true;
@@ -1585,14 +1572,7 @@ async fn main() -> Result<()> {
                 }
                 Event::DiffFetchFailed(err_msg) => {
                     app.diff_loading = false;
-                    app.error_message = Some(err_msg.clone());
-                    if let Some(pos) = app
-                        .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
-                    {
-                        app.terminal_commands[pos].status = format!("Failed: {}", err_msg);
-                    }
+                    app.show_error(err_msg);
                 }
                 Event::TerminalCommandLogged {
                     timestamp,
@@ -1640,24 +1620,17 @@ async fn main() -> Result<()> {
                     terminal.draw(|f| ui::render(f, &mut app))?;
                 }
                 Event::CommandCompleted(tab, res) => {
-                    let status = match &res {
-                        Ok(_) => "Success".to_string(),
-                        Err(e) => format!("Failed: {}", e),
-                    };
-                    if let Some(pos) = app.terminal_commands.iter().rposition(|cmd| {
-                        (cmd.command.contains("glab")
-                            || cmd.command.contains("gh")
-                            || cmd.command.contains("submit")
-                            || cmd.command.contains("bulk"))
-                            && cmd.status == "Running"
-                    }) {
-                        app.terminal_commands[pos].status = status.clone();
-                    } else if let Some(pos) = app
-                        .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.status == "Running")
-                    {
-                        app.terminal_commands[pos].status = status.clone();
+                    match &res {
+                        Ok(_) => {
+                            if let Some(pos) = app
+                                .terminal_commands
+                                .iter()
+                                .rposition(|cmd| cmd.status == "Running")
+                            {
+                                app.terminal_commands[pos].status = "Success".to_string();
+                            }
+                        }
+                        Err(_) => {}
                     }
                     match res {
                         Ok(_) => {
@@ -1733,7 +1706,7 @@ async fn main() -> Result<()> {
                             }
                         }
                         Err(err) => {
-                            app.error_message = Some(err);
+                            app.show_error(err);
                         }
                     }
                 }
@@ -3169,13 +3142,13 @@ async fn main() -> Result<()> {
                                                         );
                                                     }
                                                 } else {
-                                                    app.error_message = Some(format!(
+                                                    app.show_error(format!(
                                                         "Could not change directory to: {}",
                                                         path
                                                     ));
                                                 }
                                             } else {
-                                                app.error_message = Some(format!(
+                                                app.show_error(format!(
                                                     "Not a valid git repository: {}",
                                                     path
                                                 ));
@@ -3194,7 +3167,7 @@ async fn main() -> Result<()> {
                                         }
                                         let choice = selected_val.unwrap_or_default();
                                         let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
+                                        if choice != "-- (blank)" {
                                             let templates = list_templates("issue");
                                             if let Some(content) = templates
                                                 .iter()
@@ -3231,68 +3204,6 @@ async fn main() -> Result<()> {
                                                 entity_iid: 0,
                                                 entity_kind:
                                                     crate::app::EditEntityKind::CreateIssue,
-                                                state: {
-                                                    let mut s = ListState::default();
-                                                    s.select(Some(0));
-                                                    s
-                                                },
-                                                workflow_inputs: vec![],
-                                                cursor_pos: 0,
-                                                editing: false,
-                                                desc_scroll: 0,
-                                            });
-                                        }
-                                        continue;
-                                    }
-
-                                    if field_type == "mr_template_selector" {
-                                        let filtered_items = selector.get_filtered_items();
-                                        let mut selected_val =
-                                            selector.selected_items.iter().next().cloned();
-                                        if selected_val.is_none() && !filtered_items.is_empty() {
-                                            selected_val =
-                                                Some(filtered_items[selector.cursor_idx].clone());
-                                        }
-                                        let choice = selected_val.unwrap_or_default();
-                                        let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
-                                            let templates = list_templates("mr");
-                                            if let Some(content) = templates
-                                                .iter()
-                                                .find(|(n, _)| n == &choice)
-                                                .map(|(_, c)| c)
-                                            {
-                                                desc_val = content.clone();
-                                            }
-                                        }
-                                        if let Some(ref mut menu) = app.edit_menu {
-                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
-                                                f.label == "Description"
-                                                    && f.kind == crate::app::FieldType::Text
-                                            }) {
-                                                f.value = desc_val.clone();
-                                            }
-                                        } else {
-                                            let is_github = app.is_github();
-                                            let target_branch = get_default_branch()
-                                                .unwrap_or_else(|| "main".to_string());
-                                            let fields = crate::entity_editor::mr_fields(
-                                                String::new(),
-                                                String::new(),
-                                                String::new(),
-                                                String::new(),
-                                                String::new(),
-                                                target_branch,
-                                                "Ready".to_string(),
-                                                desc_val,
-                                                is_github,
-                                            );
-                                            app.open_edit_menu(crate::app::EditMenu {
-                                                title: "Create Merge Request".to_string(),
-                                                fields,
-                                                selected_idx: 0,
-                                                entity_iid: 0,
-                                                entity_kind: crate::app::EditEntityKind::CreateMr,
                                                 state: {
                                                     let mut s = ListState::default();
                                                     s.select(Some(0));
@@ -3427,7 +3338,7 @@ async fn main() -> Result<()> {
                                                         .await
                                                 };
                                                 if let Err(e) = result {
-                                                    app.error_message = Some(format!(
+                                                    app.show_error(format!(
                                                         "Failed to update description: {}",
                                                         e
                                                     ));
@@ -3504,7 +3415,7 @@ async fn main() -> Result<()> {
                                         continue;
                                     }
 
-                                    if field_type == "create_mr" {
+                                    if field_type == "theme_selector" {
                                         let filtered_items = selector.get_filtered_items();
                                         let mut selected_val =
                                             selector.selected_items.iter().next().cloned();
@@ -3512,148 +3423,12 @@ async fn main() -> Result<()> {
                                             selected_val =
                                                 Some(filtered_items[selector.cursor_idx].clone());
                                         }
-
                                         app.selector = None;
-
-                                        let is_github = app.is_github();
-                                        let pr_suffix = if is_github {
-                                            "Pull Request"
-                                        } else {
-                                            "Merge Request"
-                                        };
-
-                                        let mut title_val = String::new();
-                                        let mut labels_val = String::new();
-                                        let mut assignees_val = String::new();
-                                        let mut milestone_val = String::new();
-                                        let mut source_branch_val =
-                                            get_current_branch().unwrap_or_default();
-                                        let mut description_val = String::new();
-                                        let mut issue_iid = 0;
-
-                                        if let Some(item) = selected_val {
-                                            if item == "Create blank (No issue)" {
-                                                let mr_tmpl =
-                                                    get_default_template("mr").unwrap_or_default();
-                                                description_val = mr_tmpl;
-                                            } else {
-                                                let id_val = item.clone();
-                                                let parsed_iid = if id_val.starts_with('#') {
-                                                    id_val
-                                                        .strip_prefix('#')
-                                                        .and_then(|s| {
-                                                            s.split(|c: char| !c.is_numeric())
-                                                                .next()
-                                                        })
-                                                        .and_then(|s| s.parse::<u64>().ok())
-                                                } else {
-                                                    id_val.trim().parse::<u64>().ok()
-                                                };
-
-                                                if let Some(iid) = parsed_iid {
-                                                    if let Some(issue) = app
-                                                        .issues
-                                                        .items
-                                                        .iter()
-                                                        .find(|i| i.iid == iid)
-                                                    {
-                                                        issue_iid = issue.iid;
-                                                        title_val = issue.title.clone();
-                                                        source_branch_val = format!(
-                                                            "{}-{}",
-                                                            issue.iid,
-                                                            slugify(&issue.title)
-                                                        );
-                                                        if !issue.labels.is_empty() {
-                                                            labels_val = issue.labels.join(", ");
-                                                        }
-                                                        if !issue.assignees.is_empty() {
-                                                            assignees_val = issue
-                                                                .assignees
-                                                                .iter()
-                                                                .map(|a| format!("@{}", a.username))
-                                                                .collect::<Vec<_>>()
-                                                                .join(", ");
-                                                        }
-                                                        if let Some(ref m) = issue.milestone {
-                                                            milestone_val = m.title.clone();
-                                                        }
-                                                        if let Some(ref d) = issue.description {
-                                                            description_val = format!(
-                                                                "Closes #{}\n\n{}",
-                                                                issue.iid, d
-                                                            );
-                                                        } else {
-                                                            let mr_tmpl =
-                                                                get_default_template("mr")
-                                                                    .unwrap_or_default();
-                                                            if mr_tmpl.is_empty() {
-                                                                description_val = format!(
-                                                                    "Closes #{}",
-                                                                    issue.iid
-                                                                );
-                                                            } else {
-                                                                description_val = format!(
-                                                                    "Closes #{}\n\n{}",
-                                                                    issue.iid, mr_tmpl
-                                                                );
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                        if let Some(name) = selected_val {
+                                            crate::config::set_theme_preset(&name);
+                                            app.config.theme_preset = Some(name);
+                                            app.apply_config();
                                         }
-
-                                        app.open_edit_menu(crate::app::EditMenu {
-                                            title: format!("Create {}", pr_suffix),
-                                            fields: vec![
-                                                crate::app::Field::text("Title", title_val),
-                                                crate::app::Field::toggle(
-                                                    "Status (Draft/Ready)",
-                                                    "Draft".to_string(),
-                                                ),
-                                                crate::app::Field::ref_field(
-                                                    "Source Branch",
-                                                    source_branch_val,
-                                                ),
-                                                crate::app::Field::ref_field(
-                                                    "Target Branch",
-                                                    get_default_branch()
-                                                        .unwrap_or_else(|| "main".to_string()),
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Assignees",
-                                                    assignees_val,
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Reviewers",
-                                                    String::new(),
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Milestone",
-                                                    milestone_val,
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Labels", labels_val,
-                                                ),
-                                                crate::app::Field::text(
-                                                    "Description",
-                                                    description_val,
-                                                ),
-                                            ],
-                                            selected_idx: 0,
-                                            entity_iid: issue_iid,
-                                            entity_kind: crate::app::EditEntityKind::CreateMr,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                            workflow_inputs: vec![],
-                                            cursor_pos: 0,
-                                            editing: false,
-                                            desc_scroll: 0,
-                                        });
                                         continue;
                                     }
 
@@ -3716,7 +3491,7 @@ async fn main() -> Result<()> {
                                         }
                                         app.selector = None;
                                         let Some(client) = app.gitlab_client.clone() else {
-                                            app.error_message = Some(
+                                            app.show_error(
                                                 "No backend is available for merging".to_string(),
                                             );
                                             continue;
@@ -4223,6 +3998,171 @@ async fn main() -> Result<()> {
                                                 }
                                             }
                                         }
+                                        continue;
+                                    }
+
+                                    if field_type == "description_template" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        let choice = selected_val.unwrap_or_default();
+                                        let template_type = if selector.entity_type == "new_mr" {
+                                            "mr"
+                                        } else {
+                                            "issue"
+                                        };
+                                        let mut desc_val = String::new();
+                                        if choice != "-- (blank)" {
+                                            if let Some(content) = list_templates(template_type)
+                                                .iter()
+                                                .find(|(n, _)| n == &choice)
+                                                .map(|(_, c)| c)
+                                            {
+                                                desc_val = content.clone();
+                                            }
+                                        }
+                                        if let Some(ref mut menu) = app.edit_menu {
+                                            if let Some(f) = menu
+                                                .fields
+                                                .iter_mut()
+                                                .find(|f| f.label == "Description")
+                                            {
+                                                f.value = desc_val;
+                                            }
+                                            if let Some(f) = menu
+                                                .fields
+                                                .iter_mut()
+                                                .find(|f| f.label == "Description Template")
+                                            {
+                                                f.value = if choice == "-- (blank)" {
+                                                    String::new()
+                                                } else {
+                                                    choice
+                                                };
+                                            }
+                                        }
+                                        app.selector = None;
+                                        continue;
+                                    }
+
+                                    if field_type == "create_mr_from_issue" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        if let Some(val) = selected_val {
+                                            let current_val = app
+                                                .edit_menu
+                                                .as_ref()
+                                                .and_then(|m| {
+                                                    m.fields
+                                                        .iter()
+                                                        .find(|f| f.label == "Create from Issue")
+                                                })
+                                                .map(|f| f.value.clone())
+                                                .unwrap_or_default();
+
+                                            if val == current_val {
+                                                // Deselect if it's already selected
+                                                if let Some(ref mut menu) = app.edit_menu {
+                                                    for label in [
+                                                        "Title",
+                                                        "Source Branch",
+                                                        "Assignees",
+                                                        "Milestone",
+                                                        "Labels",
+                                                        "Create from Issue",
+                                                    ] {
+                                                        if let Some(f) = menu
+                                                            .fields
+                                                            .iter_mut()
+                                                            .find(|f| f.label == label)
+                                                        {
+                                                            f.value = String::new();
+                                                        }
+                                                    }
+                                                    menu.entity_iid = 0;
+                                                }
+                                            } else {
+                                                let parsed_iid = val
+                                                    .strip_prefix('#')
+                                                    .and_then(|s| {
+                                                        s.split(|c: char| !c.is_numeric()).next()
+                                                    })
+                                                    .and_then(|s| s.parse::<u64>().ok());
+                                                if let Some(iid) = parsed_iid {
+                                                    if let Some(issue) = app
+                                                        .issues
+                                                        .items
+                                                        .iter()
+                                                        .find(|i| i.iid == iid)
+                                                    {
+                                                        let title = issue.title.clone();
+                                                        let source_branch = format!(
+                                                            "{}-{}",
+                                                            issue.iid,
+                                                            slugify(&issue.title)
+                                                        );
+                                                        let labels = if issue.labels.is_empty() {
+                                                            String::new()
+                                                        } else {
+                                                            issue.labels.join(", ")
+                                                        };
+                                                        let assignees = if issue
+                                                            .assignees
+                                                            .is_empty()
+                                                        {
+                                                            String::new()
+                                                        } else {
+                                                            issue
+                                                                .assignees
+                                                                .iter()
+                                                                .map(|a| format!("@{}", a.username))
+                                                                .collect::<Vec<_>>()
+                                                                .join(", ")
+                                                        };
+                                                        let milestone = issue
+                                                            .milestone
+                                                            .as_ref()
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default();
+                                                        if let Some(ref mut menu) = app.edit_menu {
+                                                            for (label, value) in [
+                                                                ("Title", title.clone()),
+                                                                ("Source Branch", source_branch),
+                                                                ("Assignees", assignees.clone()),
+                                                                ("Milestone", milestone),
+                                                                ("Labels", labels.clone()),
+                                                            ] {
+                                                                if let Some(f) = menu
+                                                                    .fields
+                                                                    .iter_mut()
+                                                                    .find(|f| f.label == label)
+                                                                {
+                                                                    f.value = value;
+                                                                }
+                                                            }
+                                                            if let Some(f) =
+                                                                menu.fields.iter_mut().find(|f| {
+                                                                    f.label == "Create from Issue"
+                                                                })
+                                                            {
+                                                                f.value = val.clone();
+                                                            }
+                                                            menu.entity_iid = issue.iid;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        app.selector = None;
                                         continue;
                                     }
 
@@ -5306,6 +5246,20 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
+                                        let original_milestone = app
+                                            .issues
+                                            .items
+                                            .iter()
+                                            .find(|i| i.iid == entity_iid)
+                                            .and_then(|i| {
+                                                i.milestone.as_ref().map(|m| m.title.clone())
+                                            });
+                                        let new_milestone =
+                                            if milestone.is_empty() || milestone == "--" {
+                                                None
+                                            } else {
+                                                Some(milestone.clone())
+                                            };
                                         if let Some(item) = app
                                             .issues
                                             .items
@@ -5316,6 +5270,9 @@ async fn main() -> Result<()> {
                                                 item.title = title.clone();
                                             }
                                             item.description = Some(description.clone());
+                                            item.milestone = new_milestone.clone().map(|t| {
+                                                crate::domain::issues::Milestone { title: t }
+                                            });
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
@@ -5344,7 +5301,7 @@ async fn main() -> Result<()> {
                                             {
                                                 last_err = Some(e.to_string());
                                             }
-                                            if !labels.is_empty() && labels != "None" {
+                                            if !labels.is_empty() && labels != "--" {
                                                 let add: Vec<String> = labels
                                                     .split(',')
                                                     .map(|s| s.trim().to_string())
@@ -5359,7 +5316,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !assignees.is_empty() && assignees != "None" {
+                                            if !assignees.is_empty() && assignees != "--" {
                                                 let add: Vec<String> = assignees
                                                     .split(',')
                                                     .map(|s| {
@@ -5376,10 +5333,14 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "None" {
+                                            if new_milestone != original_milestone {
+                                                let milestone_val =
+                                                    new_milestone.clone().unwrap_or_default();
                                                 let _ = client
                                                     .update_issue_milestone(
-                                                        &project, entity_iid, &milestone,
+                                                        &project,
+                                                        entity_iid,
+                                                        &milestone_val,
                                                     )
                                                     .await;
                                             }
@@ -5474,6 +5435,20 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
+                                        let original_milestone = app
+                                            .mrs
+                                            .items
+                                            .iter()
+                                            .find(|m| m.iid == entity_iid)
+                                            .and_then(|m| {
+                                                m.milestone.as_ref().map(|ms| ms.title.clone())
+                                            });
+                                        let new_milestone =
+                                            if milestone.is_empty() || milestone == "--" {
+                                                None
+                                            } else {
+                                                Some(milestone.clone())
+                                            };
                                         if let Some(item) =
                                             app.mrs.items.iter_mut().find(|m| m.iid == entity_iid)
                                         {
@@ -5481,6 +5456,9 @@ async fn main() -> Result<()> {
                                                 item.title = title.clone();
                                             }
                                             item.description = Some(description.clone());
+                                            item.milestone = new_milestone
+                                                .clone()
+                                                .map(|t| crate::domain::mr::Milestone { title: t });
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
@@ -5507,7 +5485,7 @@ async fn main() -> Result<()> {
                                             {
                                                 last_err = Some(e.to_string());
                                             }
-                                            if !labels.is_empty() && labels != "None" {
+                                            if !labels.is_empty() && labels != "--" {
                                                 let add: Vec<String> = labels
                                                     .split(',')
                                                     .map(|s| s.trim().to_string())
@@ -5522,7 +5500,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !assignees.is_empty() && assignees != "None" {
+                                            if !assignees.is_empty() && assignees != "--" {
                                                 let add: Vec<String> = assignees
                                                     .split(',')
                                                     .map(|s| {
@@ -5539,7 +5517,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !reviewers.is_empty() && reviewers != "None" {
+                                            if !reviewers.is_empty() && reviewers != "--" {
                                                 let add: Vec<String> = reviewers
                                                     .split(',')
                                                     .map(|s| {
@@ -5556,10 +5534,14 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "None" {
+                                            if new_milestone != original_milestone {
+                                                let milestone_val =
+                                                    new_milestone.clone().unwrap_or_default();
                                                 let _ = client
                                                     .update_mr_milestone(
-                                                        &project, entity_iid, &milestone,
+                                                        &project,
+                                                        entity_iid,
+                                                        &milestone_val,
                                                     )
                                                     .await;
                                             }
@@ -5723,6 +5705,8 @@ async fn main() -> Result<()> {
                                     || field_name == "Branch / Ref"
                                     || field_name == "Workflow File"
                                     || field_name == "Tag"
+                                    || field_name == "Create from Issue"
+                                    || field_name == "Description Template"
                                     || field_name.starts_with("Input: ")
                                 {
                                     let mut current_set = std::collections::HashSet::new();
@@ -5738,6 +5722,8 @@ async fn main() -> Result<()> {
                                         "Target Branch" => "target_branch",
                                         "Branch / Ref" => "pipeline_branch",
                                         "Create From" => "create_from",
+                                        "Create from Issue" => "create_mr_from_issue",
+                                        "Description Template" => "description_template",
                                         "Workflow File" => "workflow_file",
                                         "Tag" => "tag",
                                         _ => "",
@@ -5802,15 +5788,13 @@ async fn main() -> Result<()> {
                                             is_loading = false;
                                         }
                                     } else if field_type == "milestone" {
-                                        let mut ms_items = vec!["None".to_string()];
-                                        ms_items.extend(
-                                            app.milestones
-                                                .items
-                                                .iter()
-                                                .map(|m| m.title.clone())
-                                                .filter(|t| t != "None"),
-                                        );
-                                        all_items = ms_items;
+                                        all_items = app
+                                            .milestones
+                                            .items
+                                            .iter()
+                                            .map(|m| m.title.clone())
+                                            .filter(|t| t != "--")
+                                            .collect();
                                         is_loading = false;
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"
@@ -5901,6 +5885,29 @@ async fn main() -> Result<()> {
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
+                                    } else if field_type == "create_mr_from_issue" {
+                                        let issues: Vec<String> = app
+                                            .issues
+                                            .items
+                                            .iter()
+                                            .filter(|i| i.state == "opened" || i.state == "open")
+                                            .map(|i| format!("#{} {}", i.iid, i.title))
+                                            .collect();
+                                        all_items = issues;
+                                        is_loading = false;
+                                    } else if field_type == "description_template" {
+                                        let template_type = if entity_type == "new_mr" {
+                                            "mr"
+                                        } else {
+                                            "issue"
+                                        };
+                                        let templates = list_templates(template_type);
+                                        let template_names: Vec<String> =
+                                            std::iter::once("-- (blank)".to_string())
+                                                .chain(templates.iter().map(|(n, _)| n.clone()))
+                                                .collect();
+                                        all_items = template_names;
+                                        is_loading = false;
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
@@ -6075,7 +6082,7 @@ async fn main() -> Result<()> {
                                             let templates = list_templates(template_type);
                                             if !templates.is_empty() {
                                                 let template_names: Vec<String> =
-                                                    std::iter::once("None (blank)".to_string())
+                                                    std::iter::once("-- (blank)".to_string())
                                                         .chain(
                                                             templates
                                                                 .iter()
@@ -6512,6 +6519,51 @@ async fn main() -> Result<()> {
                                 if diff_view.focus_on_files {
                                     diff_view.expand_all();
                                 }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('m') => {
+                                // From the diff pane, mark whatever is under the
+                                // cursor rather than a stale tree selection.
+                                if !diff_view.focus_on_files {
+                                    diff_view.update_selected_file_from_cursor();
+                                }
+                                let target = {
+                                    let paths = diff_view.selected_file_paths();
+                                    if paths.len() == 1 {
+                                        paths[0].clone()
+                                    } else {
+                                        format!("{} files", paths.len())
+                                    }
+                                };
+                                if let Some((_, marked)) = diff_view.toggle_reviewed() {
+                                    app.store_reviewed_files_for_mr(
+                                        diff_view.mr_iid,
+                                        &diff_view.reviewed_files,
+                                    );
+                                    crate::utils::cache::save_cache(
+                                        &app.project_context,
+                                        &app.project_cache,
+                                    );
+                                    let (reviewed, total) = diff_view.review_progress();
+                                    app.status_message = Some(format!(
+                                        "{} {} ({}/{} reviewed)",
+                                        if marked { "Reviewed" } else { "Unmarked" },
+                                        target,
+                                        reviewed,
+                                        total
+                                    ));
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('M') => {
+                                let hidden = diff_view.toggle_hide_reviewed();
+                                app.hide_reviewed_files = hidden;
+                                let (reviewed, total) = diff_view.review_progress();
+                                app.status_message = Some(if hidden {
+                                    format!("Hiding {} reviewed file(s)", reviewed)
+                                } else {
+                                    format!("Showing all {} file(s)", total)
+                                });
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('[') => {
@@ -7184,10 +7236,9 @@ async fn main() -> Result<()> {
                         let group_end = cols_end + group_cols.len();
                         let order_end = group_end + 2;
                         let page_size_idx = order_end;
-                        let theme_start = page_size_idx + 1;
-                        let themes = crate::config::all_theme_presets();
-                        let theme_end = theme_start + themes.len();
-                        let max_idx = theme_end; // Save button is at index theme_end
+                        let theme_idx = page_size_idx + 1;
+                        let save_idx = theme_idx + 1;
+                        let max_idx = save_idx; // Save button is the last row
 
                         match key_event.code {
                             KeyCode::Char(c)
@@ -7219,13 +7270,15 @@ async fn main() -> Result<()> {
                                     idx if idx < cols_end => cols_end,
                                     idx if idx < group_end => group_end,
                                     idx if idx < order_end => page_size_idx,
-                                    idx if idx == page_size_idx => theme_start,
+                                    idx if idx == page_size_idx => theme_idx,
                                     _ => 0,
                                 };
                             }
                             KeyCode::Char('K') => {
                                 app.column_checklist_idx = match app.column_checklist_idx {
-                                    idx if idx >= theme_start => page_size_idx,
+                                    idx if idx == save_idx => save_idx - 1,
+                                    idx if idx == theme_idx => page_size_idx,
+                                    idx if idx > theme_idx => theme_idx,
                                     idx if idx == page_size_idx => order_end,
                                     idx if idx >= group_end => 0,
                                     _ => order_end,
@@ -7270,11 +7323,27 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
-                                } else if idx < theme_end {
-                                    let theme_idx = idx - theme_start;
-                                    if let Some(name) = themes.get(theme_idx) {
-                                        crate::config::set_theme_preset(name);
-                                        app.config.theme_preset = Some(name.to_string());
+                                } else if idx == theme_idx {
+                                    let theme_list = crate::config::all_theme_presets();
+                                    if !theme_list.is_empty() {
+                                        app.selector = Some(crate::app::Selector {
+                                            title: " Select Theme ".to_string(),
+                                            all_items: theme_list,
+                                            selected_items: std::collections::HashSet::new(),
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: 0,
+                                            entity_type: "theme_selector".to_string(),
+                                            field_type: "theme_selector".to_string(),
+                                            multi_select: false,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
                                     }
                                 }
                                 if let Some(client) = app.gitlab_client.clone() {
@@ -7362,13 +7431,29 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
-                                } else if idx < theme_end {
-                                    let theme_idx = idx - theme_start;
-                                    if let Some(name) = themes.get(theme_idx) {
-                                        crate::config::set_theme_preset(name);
-                                        app.config.theme_preset = Some(name.to_string());
+                                } else if idx == theme_idx {
+                                    let theme_list = crate::config::all_theme_presets();
+                                    if !theme_list.is_empty() {
+                                        app.selector = Some(crate::app::Selector {
+                                            title: " Select Theme ".to_string(),
+                                            all_items: theme_list,
+                                            selected_items: std::collections::HashSet::new(),
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: 0,
+                                            entity_type: "theme_selector".to_string(),
+                                            field_type: "theme_selector".to_string(),
+                                            multi_select: false,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
                                     }
-                                } else if idx == theme_end {
+                                } else if idx == save_idx {
                                     app.save_menu_open = true;
                                     app.save_menu_selection = Some(SaveMenu::Local);
                                 }

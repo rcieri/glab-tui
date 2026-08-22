@@ -608,7 +608,7 @@ pub(crate) fn build_field_list_items(
             let mut val_spans = Vec::new();
             if val.is_empty() && f.kind != FieldType::Text && f.kind != FieldType::ReadOnly {
                 val_spans.push(Span::styled(
-                    " None",
+                    " --",
                     Style::default()
                         .fg(theme.text_muted)
                         .bg(item_bg)
@@ -621,7 +621,7 @@ pub(crate) fn build_field_list_items(
                     FieldType::MultiSelect => {
                         if val == "--" {
                             val_spans.push(Span::styled(
-                                " None",
+                                " --",
                                 Style::default()
                                     .fg(theme.text_muted)
                                     .bg(item_bg)

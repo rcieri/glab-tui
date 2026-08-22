@@ -3181,7 +3181,7 @@ async fn main() -> Result<()> {
                                         }
                                         let choice = selected_val.unwrap_or_default();
                                         let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
+                                        if choice != "-- (blank)" {
                                             let templates = list_templates("issue");
                                             if let Some(content) = templates
                                                 .iter()
@@ -3242,7 +3242,7 @@ async fn main() -> Result<()> {
                                         }
                                         let choice = selected_val.unwrap_or_default();
                                         let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
+                                        if choice != "-- (blank)" {
                                             let templates = list_templates("mr");
                                             if let Some(content) = templates
                                                 .iter()
@@ -6079,7 +6079,7 @@ async fn main() -> Result<()> {
                                             let templates = list_templates(template_type);
                                             if !templates.is_empty() {
                                                 let template_names: Vec<String> =
-                                                    std::iter::once("None (blank)".to_string())
+                                                    std::iter::once("-- (blank)".to_string())
                                                         .chain(
                                                             templates
                                                                 .iter()

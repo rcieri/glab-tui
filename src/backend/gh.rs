@@ -1114,7 +1114,7 @@ impl Backend for GhBackend {
         assignees: &str,
         reviewers: &str,
         milestone: &str,
-        _issue_iid: Option<u64>,
+        issue_iid: Option<u64>,
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "pr".into(),
@@ -1132,9 +1132,20 @@ impl Backend for GhBackend {
             args.push("--base".into());
             args.push(target_branch.into());
         }
-        if !description.is_empty() {
+        let body = if let Some(iid) = issue_iid {
+            if description.is_empty() {
+                format!("Closes #{}", iid)
+            } else if !description.contains("Closes #") {
+                format!("{}\n\nCloses #{}", description, iid)
+            } else {
+                description.to_string()
+            }
+        } else {
+            description.to_string()
+        };
+        if !body.is_empty() {
             args.push("--body".into());
-            args.push(description.into());
+            args.push(body.into());
         }
         if !labels.is_empty() {
             args.push("--label".into());

@@ -1414,14 +1414,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let width: u16 = 64;
         let inner_w = width.saturating_sub(2) as usize; // -2 for borders
         let save_label = format!("{} Save View", icons.label_save);
-        let save_decorated = if is_save_selected {
-            format!("›  {} ‹", save_label)
-        } else {
-            save_label.clone()
-        };
-        let save_visible_width = save_decorated.chars().count();
+        let save_visible_width = save_label.chars().count();
         let save_left_pad = (inner_w.saturating_sub(save_visible_width)) / 2;
-        let save_button_text = format!("{:pad$}{}", "", save_decorated, pad = save_left_pad);
+        let save_button_text = format!("{:pad$}{}", "", save_label, pad = save_left_pad);
         let save_button_style = if is_save_selected {
             Style::default()
                 .fg(t.bg)
@@ -1697,7 +1692,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let body_lines = textwrap(&dialog.body, 56).len().max(1) + 1 // +1 leading blank line
             + if dialog.options.is_empty() { 0 } else { 1 }; // +1 gap before options
         let option_rows = dialog.options.len();
-        let button_height: u16 = 3; // top border + label + bottom border
+        let button_height: u16 = 1; // label only (no top/bottom borders)
         // [border top] + [pad] + body + options + [separator] + [buttons]
         let mut dialog_height =
             (2u16 + 1 + body_lines as u16 + option_rows as u16 + 1 + button_height) as u16;
@@ -1787,7 +1782,25 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .add_modifier(Modifier::BOLD),
                 )
                 .highlight_symbol("> ");
-            f.render_stateful_widget(list, content_chunks[1], &mut state);
+
+            // Center the options list to match the centered body text
+            let max_option_width = dialog
+                .options
+                .iter()
+                .map(|o| o.label.chars().count() + 6) // "[x] " + "> "
+                .max()
+                .unwrap_or(20) as u16;
+            let pad = content_chunks[1].width.saturating_sub(max_option_width) / 2;
+            let list_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(pad),
+                    Constraint::Length(max_option_width),
+                    Constraint::Min(0),
+                ])
+                .split(content_chunks[1]);
+
+            f.render_stateful_widget(list, list_layout[1], &mut state);
         }
 
         f.render_widget(
@@ -1806,20 +1819,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let cancel_selected = dialog.is_on_cancel();
 
         // Cancel button (right half)
-        let cancel_border = if cancel_selected {
-            theme.border_focused
-        } else {
-            theme.border
-        };
-        let cancel_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(cancel_border))
-            .style(Style::default().bg(theme.bg));
-        let cancel_inner = cancel_block.inner(halves[1]);
-        f.render_widget(cancel_block, halves[1]);
-        let cancel_label = format!("{} Cancel", icons.check_off);
         f.render_widget(
-            Paragraph::new(cancel_label)
+            Paragraph::new(format!("{} Cancel", icons.check_off))
                 .alignment(Alignment::Center)
                 .style(
                     Style::default()
@@ -1839,34 +1840,30 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             Modifier::empty()
                         }),
                 ),
-            cancel_inner,
+            halves[1],
         );
 
         // Submit button (left half)
-        let submit_border = if submit_selected {
-            theme.green
-        } else {
-            theme.border
-        };
-        let submit_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(submit_border))
-            .style(Style::default().bg(theme.bg));
-        let submit_inner = submit_block.inner(halves[0]);
-        f.render_widget(submit_block, halves[0]);
-        let submit_label = format!("{} {}", icons.check_on, dialog.submit_label);
         f.render_widget(
-            Paragraph::new(submit_label)
+            Paragraph::new(format!("{} {}", icons.check_on, dialog.submit_label))
                 .alignment(Alignment::Center)
                 .style(
                     Style::default()
                         .fg(if submit_selected {
                             theme.bg
                         } else {
-                            theme.green
+                            if dialog.action.is_destructive() {
+                                theme.red
+                            } else {
+                                theme.green
+                            }
                         })
                         .bg(if submit_selected {
-                            theme.green
+                            if dialog.action.is_destructive() {
+                                theme.red
+                            } else {
+                                theme.green
+                            }
                         } else {
                             theme.bg
                         })
@@ -1876,7 +1873,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             Modifier::empty()
                         }),
                 ),
-            submit_inner,
+            halves[0],
         );
     }
 }

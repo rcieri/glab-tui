@@ -2382,6 +2382,22 @@ pub enum ConfirmAction {
     SubmitReview(u64),      // mr iid
 }
 
+impl ConfirmAction {
+    pub fn is_destructive(&self) -> bool {
+        matches!(
+            self,
+            Self::DeleteMilestone(_)
+                | Self::DeleteRelease(_)
+                | Self::DeleteBranch(_)
+                | Self::DeleteIssue(_)
+                | Self::DeleteMr(_)
+                | Self::CloseIssue(_)
+                | Self::CloseMr(_)
+                | Self::RevokeMr(_)
+        )
+    }
+}
+
 /// Toggleable option shown inside a [`SubmitDialog`] body.
 ///
 /// Used for actions that have additional knobs (merge options such as
@@ -2602,7 +2618,7 @@ impl SubmitDialog {
                 let branch_flow = if source.is_empty() && target.is_empty() {
                     String::new()
                 } else {
-                    format!("\n\n{marker}{iid}: {source} \u{2192} {target}")
+                    format!("\n\n{source} \u{2192} {target}")
                 };
                 let options = vec![
                     SubmitOption::new("Squash", true),

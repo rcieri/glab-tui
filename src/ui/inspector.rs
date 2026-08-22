@@ -424,15 +424,16 @@ fn render_submit_footer(
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.border));
     f.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(
-            btn_text,
-            Style::default()
-                .fg(submit_fg)
-                .bg(submit_bg)
-                .add_modifier(Modifier::BOLD),
-        )]))
-        .block(submit_block)
-        .alignment(Alignment::Center),
+        Paragraph::new(btn_text)
+            .style(Style::default().fg(submit_fg).bg(submit_bg).add_modifier(
+                if is_submit_selected {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                },
+            ))
+            .alignment(Alignment::Center)
+            .block(submit_block),
         area,
     );
 }

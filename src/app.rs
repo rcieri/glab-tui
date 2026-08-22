@@ -2663,10 +2663,10 @@ impl SubmitDialog {
                     .find(|m| m.iid == *iid)
                     .map(|m| (m.source_branch.clone(), m.target_branch.clone()))
                     .unwrap_or_default();
-                let branch_flow = if source.is_empty() && target.is_empty() {
+                let body = if source.is_empty() && target.is_empty() {
                     String::new()
                 } else {
-                    format!("\n\n{source} \u{2192} {target}")
+                    format!("Merging: {source} \u{2192} {target}")
                 };
                 let options = vec![
                     SubmitOption::new("Strategy: Merge commit", false),
@@ -2677,9 +2677,7 @@ impl SubmitDialog {
                 ];
                 (
                     format!("Merge {mr} #{iid}"),
-                    format!(
-                        "Merge {mr_short} {marker}{iid} with the selected options.{branch_flow}"
-                    ),
+                    body,
                     "Merge".to_string(),
                     options,
                     false,
@@ -2687,11 +2685,7 @@ impl SubmitDialog {
             }
             ConfirmAction::BulkMergeMrs(iids) => (
                 format!("Merge {} {}s", iids.len(), mr),
-                format!(
-                    "Merge {} {}s with the selected options.",
-                    iids.len(),
-                    mr_short
-                ),
+                format!("Merging {} {}s", iids.len(), mr_short),
                 "Merge".to_string(),
                 vec![
                     SubmitOption::new("Strategy: Merge commit", false),

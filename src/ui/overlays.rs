@@ -1690,11 +1690,17 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 | crate::app::ConfirmAction::SubmitReview(_) => icons.action_review.clone(),
                 crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
             };
+        let option_rows = dialog.options.len();
 
         let title = format!(" {} {} ", icon, dialog.title);
-
-        let body_lines = textwrap(&dialog.body, 56).len().max(1) + 1 // +1 leading blank line
-            + if dialog.options.is_empty() { 0 } else { 1 }; // +1 gap before options
+        let mut body_lines = if dialog.body.is_empty() {
+            0
+        } else {
+            textwrap(&dialog.body, 56).len() + 1 // text + leading blank line
+        };
+        if option_rows > 0 {
+            body_lines += 1; // +1 gap before options
+        }
         let option_rows = dialog.options.len();
         let button_height: u16 = 1; // label only (no top/bottom borders)
         // [border top] + [pad] + body + options + [separator] + [buttons]
@@ -1750,9 +1756,18 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .split(content)
         };
 
-        let mut body_lines = textwrap(&dialog.body, 56);
-        body_lines.insert(0, Line::from(""));
-        if option_rows > 0 {
+        let mut body_lines = if dialog.body.is_empty() {
+            vec![]
+        } else {
+            textwrap(&dialog.body, 56)
+        };
+
+        if !dialog.body.is_empty() {
+            body_lines.insert(0, Line::from(""));
+            if option_rows > 0 {
+                body_lines.push(Line::from(""));
+            }
+        } else if option_rows > 0 {
             body_lines.push(Line::from(""));
         }
         let body_p = Paragraph::new(body_lines)

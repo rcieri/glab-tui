@@ -497,16 +497,13 @@ pub async fn handle_active_tab_key(
                                         Some(crate::app::ConfirmAction::RebaseMr(mr_iid));
                                 }
                                 RebaseGate::ResolveLocally => {
-                                    app.error_message = Some(
+                                    app.show_error(
                                         "Resolve conflicts locally; rebase can't fix them"
                                             .to_string(),
                                     );
-                                    app.error_message_at = Some(std::time::Instant::now());
                                 }
                                 RebaseGate::NotNeeded => {
-                                    app.error_message =
-                                        Some("This MR doesn't need a rebase".to_string());
-                                    app.error_message_at = Some(std::time::Instant::now());
+                                    app.show_error("This MR doesn't need a rebase".to_string());
                                 }
                             }
                         }
@@ -682,7 +679,7 @@ pub async fn handle_active_tab_key(
                                 app.confirm_popup =
                                     Some(crate::app::ConfirmAction::DeleteMr(mr_iid));
                             } else {
-                                app.error_message = Some(
+                                app.show_error(
                                     "GitHub does not support deleting pull requests".to_string(),
                                 );
                             }
@@ -886,7 +883,7 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             if !app.is_github() {
-                                app.error_message = Some(
+                                app.show_error(
                                     "Workflow browser is only available for GitHub Actions"
                                         .to_string(),
                                 );
@@ -2020,7 +2017,7 @@ pub async fn handle_active_tab_key(
                                     app.active_tab = crate::app::Tab::Jobs;
                                     app.loading_tabs.remove(&crate::app::Tab::Jobs);
                                 } else {
-                                    app.error_message = Some("Failed to fetch jobs".to_string());
+                                    app.show_error("Failed to fetch jobs".to_string());
                                     app.loading_tabs.remove(&crate::app::Tab::Jobs);
                                 }
                             }

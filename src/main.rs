@@ -918,7 +918,7 @@ async fn main() -> Result<()> {
             command: "Initialization: gitlab client".to_string(),
             status: "Failed: Failed to initialize GitLab client".to_string(),
         });
-        app.error_message = Some("Failed to initialize GitLab client".to_string());
+        app.show_error("Failed to initialize GitLab client".to_string());
     }
 
     // If we couldn't detect a valid project, prompt to select a cached repo
@@ -1230,7 +1230,7 @@ async fn main() -> Result<()> {
                                 app.detail_visible = true;
                             }
                             Err(e) => {
-                                app.error_message = Some(e);
+                                app.show_error(e);
                             }
                         }
                     }
@@ -1562,7 +1562,7 @@ async fn main() -> Result<()> {
                     if has_cached_items {
                         app.status_message = Some("Offline / Connection failed".to_string());
                     } else {
-                        app.error_message = Some(err_msg);
+                        app.show_error(err_msg);
                     }
                 }
                 Event::DiffFetched {
@@ -1585,14 +1585,7 @@ async fn main() -> Result<()> {
                 }
                 Event::DiffFetchFailed(err_msg) => {
                     app.diff_loading = false;
-                    app.error_message = Some(err_msg.clone());
-                    if let Some(pos) = app
-                        .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.command.contains("diff") && cmd.status == "Running")
-                    {
-                        app.terminal_commands[pos].status = format!("Failed: {}", err_msg);
-                    }
+                    app.show_error(err_msg);
                 }
                 Event::TerminalCommandLogged {
                     timestamp,
@@ -3162,13 +3155,13 @@ async fn main() -> Result<()> {
                                                         );
                                                     }
                                                 } else {
-                                                    app.error_message = Some(format!(
+                                                    app.show_error(format!(
                                                         "Could not change directory to: {}",
                                                         path
                                                     ));
                                                 }
                                             } else {
-                                                app.error_message = Some(format!(
+                                                app.show_error(format!(
                                                     "Not a valid git repository: {}",
                                                     path
                                                 ));
@@ -3420,7 +3413,7 @@ async fn main() -> Result<()> {
                                                         .await
                                                 };
                                                 if let Err(e) = result {
-                                                    app.error_message = Some(format!(
+                                                    app.show_error(format!(
                                                         "Failed to update description: {}",
                                                         e
                                                     ));
@@ -3709,7 +3702,7 @@ async fn main() -> Result<()> {
                                         }
                                         app.selector = None;
                                         let Some(client) = app.gitlab_client.clone() else {
-                                            app.error_message = Some(
+                                            app.show_error(
                                                 "No backend is available for merging".to_string(),
                                             );
                                             continue;

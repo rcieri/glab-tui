@@ -1321,7 +1321,7 @@ pub async fn handle_entity_update(
                     client.update_mr_title(&project_path, iid, &new_title).await
                 };
                 if let Err(e) = result {
-                    app.error_message = Some(format!("Failed to update title: {}", e));
+                    app.show_error(format!("Failed to update title: {}", e));
                     return;
                 }
                 if entity_type == "issue"
@@ -1355,7 +1355,7 @@ pub async fn handle_entity_update(
                 };
                 let project_path = app.project_context.clone();
                 if let Err(e) = client.toggle_mr_draft(&project_path, iid, is_draft).await {
-                    app.error_message = Some(format!("Failed to toggle draft: {}", e));
+                    app.show_error(format!("Failed to toggle draft: {}", e));
                     return;
                 }
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -1381,7 +1381,7 @@ pub async fn handle_entity_update(
                         .update_mr_target_branch(&project_path, iid, &target)
                         .await
                     {
-                        app.error_message = Some(format!("Failed to update target branch: {}", e));
+                        app.show_error(format!("Failed to update target branch: {}", e));
                         return;
                     }
                     if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -1431,7 +1431,7 @@ pub async fn handle_entity_update(
                         .update_issue_due_date(&project_path, iid, flag_value)
                         .await
                     {
-                        app.error_message = Some(format!("Failed to update due date: {}", e));
+                        app.show_error(format!("Failed to update due date: {}", e));
                     }
                 }
             }
@@ -1448,7 +1448,7 @@ pub async fn handle_entity_update(
                         .update_issue_weight(&project_path, iid, &weight)
                         .await
                     {
-                        app.error_message = Some(format!("Failed to update weight: {}", e));
+                        app.show_error(format!("Failed to update weight: {}", e));
                     }
                 }
             }
@@ -1535,7 +1535,7 @@ pub async fn handle_entity_update(
                         .await
                 };
                 if let Err(e) = result {
-                    app.error_message = Some(format!("Failed to update description: {}", e));
+                    app.show_error(format!("Failed to update description: {}", e));
                 }
             }
         }

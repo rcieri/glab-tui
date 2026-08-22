@@ -45,12 +45,12 @@ pub fn handle_submit_dialog(
         }
         KeyCode::Left | KeyCode::Char('h') => {
             if dialog.is_on_submit() || dialog.is_on_cancel() {
-                dialog.cursor_idx = dialog.cancel_idx(); // Cancel is visually on the left
+                dialog.cursor_idx = crate::app::SubmitDialog::SUBMIT_IDX; // Submit is left
             }
         }
         KeyCode::Right | KeyCode::Char('l') => {
             if dialog.is_on_submit() || dialog.is_on_cancel() {
-                dialog.cursor_idx = crate::app::SubmitDialog::SUBMIT_IDX; // Submit is visually on the right
+                dialog.cursor_idx = dialog.cancel_idx(); // Cancel is right
             }
         }
         KeyCode::Tab => {

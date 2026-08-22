@@ -1230,6 +1230,7 @@ impl Config {
 # See https://github.com/rcieri/glab-tui for documentation
 
 # Theme preset: "default", "tokyo-night", "gruvbox", "nord", "catppuccin-mocha", "dracula",
+# "oled", "github-dark-hc",
 # "deep-space", "solarized-dark", "monokai", "one-dark", "synthwave-84", "everforest-dark",
 # "rose-pine", "rose-pine-moon", "rose-pine-dawn"
 theme_preset = "default"

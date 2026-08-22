@@ -668,7 +668,6 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
     let cols = tab.columns(kind);
     let group_cols: Vec<&str> = cols.iter().copied().collect();
     let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
-    let themes = crate::config::all_theme_presets();
 
     // Build layout same as rendering
     let inner = border_inner(rect);
@@ -697,12 +696,6 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
     y_off += 1; // header
     let page_size_start = y_off;
     y_off += 1; // value
-    y_off += 1; // spacer
-    // THEME header
-    y_off += 1;
-    let theme_start = y_off;
-    let theme_end = theme_start + themes.len() as u16;
-    y_off = theme_end;
     y_off += 1; // spacer
     // SAVE
     y_off += 1;
@@ -740,12 +733,6 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
         app.column_checklist_idx = group_end as usize + idx;
     } else if row == page_size_start {
         app.editing_page_size = true;
-    } else if row >= theme_start && row < theme_end {
-        let idx = (row - theme_start) as usize;
-        if idx < themes.len() {
-            app.config.theme_preset = Some(themes[idx].to_string());
-            app.apply_config();
-        }
     } else if row == save_y {
         app.save_menu_open = true;
     }
@@ -1501,8 +1488,8 @@ async fn main() -> Result<()> {
                         crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
                             if selector.field_type == "milestone" {
-                                let mut ms_items = vec!["None".to_string()];
-                                ms_items.extend(items.into_iter().filter(|i| i != "None"));
+                                let mut ms_items = vec!["--".to_string()];
+                                ms_items.extend(items.into_iter().filter(|i| i != "--"));
                                 selector.all_items = ms_items;
                             } else {
                                 selector.all_items = items;
@@ -1571,7 +1558,13 @@ async fn main() -> Result<()> {
                     comments,
                 } => {
                     app.diff_loading = false;
-                    app.diff_view = Some(crate::app::DiffView::new(mr_iid, raw_diff));
+                    let mut diff_view = crate::app::DiffView::new(mr_iid, raw_diff);
+                    // Restore the files marked as reviewed on an earlier pass.
+                    diff_view.restore_review_state(
+                        app.reviewed_files_for_mr(mr_iid),
+                        app.hide_reviewed_files,
+                    );
+                    app.diff_view = Some(diff_view);
                     app.current_comments = comments;
                     app.last_fetched_mr_iid = Some(mr_iid);
                     app.in_review_mode = true;
@@ -3180,7 +3173,7 @@ async fn main() -> Result<()> {
                                         }
                                         let choice = selected_val.unwrap_or_default();
                                         let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
+                                        if choice != "-- (blank)" {
                                             let templates = list_templates("issue");
                                             if let Some(content) = templates
                                                 .iter()
@@ -3241,7 +3234,7 @@ async fn main() -> Result<()> {
                                         }
                                         let choice = selected_val.unwrap_or_default();
                                         let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
+                                        if choice != "-- (blank)" {
                                             let templates = list_templates("mr");
                                             if let Some(content) = templates
                                                 .iter()
@@ -3486,6 +3479,23 @@ async fn main() -> Result<()> {
                                                 cursor_idx: current_val.len(),
                                                 action,
                                             });
+                                        }
+                                        continue;
+                                    }
+
+                                    if field_type == "theme_selector" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        app.selector = None;
+                                        if let Some(name) = selected_val {
+                                            crate::config::set_theme_preset(&name);
+                                            app.config.theme_preset = Some(name);
+                                            app.apply_config();
                                         }
                                         continue;
                                     }
@@ -5330,7 +5340,7 @@ async fn main() -> Result<()> {
                                             {
                                                 last_err = Some(e.to_string());
                                             }
-                                            if !labels.is_empty() && labels != "None" {
+                                            if !labels.is_empty() && labels != "--" {
                                                 let add: Vec<String> = labels
                                                     .split(',')
                                                     .map(|s| s.trim().to_string())
@@ -5345,7 +5355,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !assignees.is_empty() && assignees != "None" {
+                                            if !assignees.is_empty() && assignees != "--" {
                                                 let add: Vec<String> = assignees
                                                     .split(',')
                                                     .map(|s| {
@@ -5362,7 +5372,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "None" {
+                                            if !milestone.is_empty() && milestone != "--" {
                                                 let _ = client
                                                     .update_issue_milestone(
                                                         &project, entity_iid, &milestone,
@@ -5493,7 +5503,7 @@ async fn main() -> Result<()> {
                                             {
                                                 last_err = Some(e.to_string());
                                             }
-                                            if !labels.is_empty() && labels != "None" {
+                                            if !labels.is_empty() && labels != "--" {
                                                 let add: Vec<String> = labels
                                                     .split(',')
                                                     .map(|s| s.trim().to_string())
@@ -5508,7 +5518,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !assignees.is_empty() && assignees != "None" {
+                                            if !assignees.is_empty() && assignees != "--" {
                                                 let add: Vec<String> = assignees
                                                     .split(',')
                                                     .map(|s| {
@@ -5525,7 +5535,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !reviewers.is_empty() && reviewers != "None" {
+                                            if !reviewers.is_empty() && reviewers != "--" {
                                                 let add: Vec<String> = reviewers
                                                     .split(',')
                                                     .map(|s| {
@@ -5542,7 +5552,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "None" {
+                                            if !milestone.is_empty() && milestone != "--" {
                                                 let _ = client
                                                     .update_mr_milestone(
                                                         &project, entity_iid, &milestone,
@@ -5788,13 +5798,13 @@ async fn main() -> Result<()> {
                                             is_loading = false;
                                         }
                                     } else if field_type == "milestone" {
-                                        let mut ms_items = vec!["None".to_string()];
+                                        let mut ms_items = vec!["--".to_string()];
                                         ms_items.extend(
                                             app.milestones
                                                 .items
                                                 .iter()
                                                 .map(|m| m.title.clone())
-                                                .filter(|t| t != "None"),
+                                                .filter(|t| t != "--"),
                                         );
                                         all_items = ms_items;
                                         is_loading = false;
@@ -6061,7 +6071,7 @@ async fn main() -> Result<()> {
                                             let templates = list_templates(template_type);
                                             if !templates.is_empty() {
                                                 let template_names: Vec<String> =
-                                                    std::iter::once("None (blank)".to_string())
+                                                    std::iter::once("-- (blank)".to_string())
                                                         .chain(
                                                             templates
                                                                 .iter()
@@ -6498,6 +6508,51 @@ async fn main() -> Result<()> {
                                 if diff_view.focus_on_files {
                                     diff_view.expand_all();
                                 }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('m') => {
+                                // From the diff pane, mark whatever is under the
+                                // cursor rather than a stale tree selection.
+                                if !diff_view.focus_on_files {
+                                    diff_view.update_selected_file_from_cursor();
+                                }
+                                let target = {
+                                    let paths = diff_view.selected_file_paths();
+                                    if paths.len() == 1 {
+                                        paths[0].clone()
+                                    } else {
+                                        format!("{} files", paths.len())
+                                    }
+                                };
+                                if let Some((_, marked)) = diff_view.toggle_reviewed() {
+                                    app.store_reviewed_files_for_mr(
+                                        diff_view.mr_iid,
+                                        &diff_view.reviewed_files,
+                                    );
+                                    crate::utils::cache::save_cache(
+                                        &app.project_context,
+                                        &app.project_cache,
+                                    );
+                                    let (reviewed, total) = diff_view.review_progress();
+                                    app.status_message = Some(format!(
+                                        "{} {} ({}/{} reviewed)",
+                                        if marked { "Reviewed" } else { "Unmarked" },
+                                        target,
+                                        reviewed,
+                                        total
+                                    ));
+                                }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('M') => {
+                                let hidden = diff_view.toggle_hide_reviewed();
+                                app.hide_reviewed_files = hidden;
+                                let (reviewed, total) = diff_view.review_progress();
+                                app.status_message = Some(if hidden {
+                                    format!("Hiding {} reviewed file(s)", reviewed)
+                                } else {
+                                    format!("Showing all {} file(s)", total)
+                                });
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('[') => {
@@ -7170,10 +7225,9 @@ async fn main() -> Result<()> {
                         let group_end = cols_end + group_cols.len();
                         let order_end = group_end + 2;
                         let page_size_idx = order_end;
-                        let theme_start = page_size_idx + 1;
-                        let themes = crate::config::all_theme_presets();
-                        let theme_end = theme_start + themes.len();
-                        let max_idx = theme_end; // Save button is at index theme_end
+                        let theme_idx = page_size_idx + 1;
+                        let save_idx = theme_idx + 1;
+                        let max_idx = save_idx; // Save button is the last row
 
                         match key_event.code {
                             KeyCode::Char(c)
@@ -7205,13 +7259,15 @@ async fn main() -> Result<()> {
                                     idx if idx < cols_end => cols_end,
                                     idx if idx < group_end => group_end,
                                     idx if idx < order_end => page_size_idx,
-                                    idx if idx == page_size_idx => theme_start,
+                                    idx if idx == page_size_idx => theme_idx,
                                     _ => 0,
                                 };
                             }
                             KeyCode::Char('K') => {
                                 app.column_checklist_idx = match app.column_checklist_idx {
-                                    idx if idx >= theme_start => page_size_idx,
+                                    idx if idx == save_idx => save_idx - 1,
+                                    idx if idx == theme_idx => page_size_idx,
+                                    idx if idx > theme_idx => theme_idx,
                                     idx if idx == page_size_idx => order_end,
                                     idx if idx >= group_end => 0,
                                     _ => order_end,
@@ -7256,11 +7312,27 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
-                                } else if idx < theme_end {
-                                    let theme_idx = idx - theme_start;
-                                    if let Some(name) = themes.get(theme_idx) {
-                                        crate::config::set_theme_preset(name);
-                                        app.config.theme_preset = Some(name.to_string());
+                                } else if idx == theme_idx {
+                                    let theme_list = crate::config::all_theme_presets();
+                                    if !theme_list.is_empty() {
+                                        app.selector = Some(crate::app::Selector {
+                                            title: " Select Theme ".to_string(),
+                                            all_items: theme_list,
+                                            selected_items: std::collections::HashSet::new(),
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: 0,
+                                            entity_type: "theme_selector".to_string(),
+                                            field_type: "theme_selector".to_string(),
+                                            multi_select: false,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
                                     }
                                 }
                                 if let Some(client) = app.gitlab_client.clone() {
@@ -7348,13 +7420,29 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
-                                } else if idx < theme_end {
-                                    let theme_idx = idx - theme_start;
-                                    if let Some(name) = themes.get(theme_idx) {
-                                        crate::config::set_theme_preset(name);
-                                        app.config.theme_preset = Some(name.to_string());
+                                } else if idx == theme_idx {
+                                    let theme_list = crate::config::all_theme_presets();
+                                    if !theme_list.is_empty() {
+                                        app.selector = Some(crate::app::Selector {
+                                            title: " Select Theme ".to_string(),
+                                            all_items: theme_list,
+                                            selected_items: std::collections::HashSet::new(),
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: 0,
+                                            entity_type: "theme_selector".to_string(),
+                                            field_type: "theme_selector".to_string(),
+                                            multi_select: false,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
                                     }
-                                } else if idx == theme_end {
+                                } else if idx == save_idx {
                                     app.save_menu_open = true;
                                     app.save_menu_selection = Some(SaveMenu::Local);
                                 }

@@ -23,6 +23,9 @@ pub struct ProjectCache {
     pub label_colors: HashMap<String, String>,
     #[serde(default)]
     pub members: Vec<String>,
+    /// Files marked as reviewed in the diff view, keyed by MR/PR iid.
+    #[serde(default)]
+    pub reviewed_files: HashMap<u64, Vec<String>>,
 }
 
 fn get_cache_file_path(project_context: &str) -> PathBuf {

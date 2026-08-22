@@ -1,21 +1,29 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
-use crate::config::{Config, THEME};
+use crate::config::{Config, THEME, Theme};
 use crate::domain::workflow_inputs::WorkflowInput;
+use crate::utils::format::expand_tabs;
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::ListState;
+use std::collections::HashSet;
 use std::sync::LazyLock;
+use syntect::highlighting::Highlighter;
 use syntect::highlighting::Style as SyntectStyle;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
+use syntect::parsing::{ParseState, ScopeStack};
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
+/// Single shared fuzzy matcher. Reusing one instance avoids allocating a
+/// `SkimMatcherV2` on every filter keystroke (the search bar filters on each
+/// key press).
+static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
 
 fn file_extension(file_path: &str) -> Option<&str> {
     let file_name = file_path.rsplit(|c| c == '/' || c == '\\').next()?;
@@ -28,6 +36,11 @@ fn file_extension(file_path: &str) -> Option<&str> {
 }
 
 /// Highlight a single line's content using syntect, returning colored spans.
+///
+/// Colors are derived from the active theme's semantic tokens (mapped from each
+/// token's syntect scope name) so highlighting always matches the active theme
+/// rather than a hardcoded syntect palette. Font modifiers (bold/italic) come
+/// from syntect's resolved style.
 pub fn highlight_line_syntax(
     file_path: &str,
     line_content: &str,
@@ -38,17 +51,10 @@ pub fn highlight_line_syntax(
         .find_syntax_by_extension(ext)
         .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
 
-    let mut syntax_theme = THEME_SET.themes.values().next()?.clone();
     let theme = THEME.read().unwrap();
-    syntax_theme.settings.foreground = Some(syntect_color(theme.text_normal)?);
-    syntax_theme.settings.background = Some(syntect_color(theme.bg)?);
-    for item in &mut syntax_theme.scopes {
-        item.style.foreground = None;
-        item.style.background = None;
-    }
-    let mut highlighter = syntect::easy::HighlightLines::new(syntax, &syntax_theme);
+    let theme = theme.clone();
 
-    // Remove the leading +/-/space for syntax highlighting, but keep the actual code
+    // Remove the leading +/-/space for syntax highlighting, but keep the actual code.
     let code = if line_content.starts_with('+')
         || line_content.starts_with('-')
         || line_content.starts_with(' ')
@@ -62,28 +68,113 @@ pub fn highlight_line_syntax(
         line_content
     };
 
-    let ranges = highlighter.highlight_line(code, &SYNTAX_SET).ok()?;
-
-    let result: Vec<_> = ranges
-        .into_iter()
-        .map(|(style, text)| (syntect_style_to_ratatui(style), text.to_string()))
-        .collect();
-
-    if result.is_empty() {
-        Some(vec![(
+    if code.is_empty() {
+        return Some(vec![(
             syntect_style_to_ratatui(SyntectStyle::default()),
             code.to_string(),
-        )])
-    } else {
-        Some(result)
+        )]);
     }
+
+    let mut parse_state = ParseState::new(syntax);
+    let ops = parse_state.parse_line(code, &SYNTAX_SET).ok()?;
+    if ops.is_empty() {
+        return Some(vec![(
+            Style::default().fg(theme.text_normal),
+            code.to_string(),
+        )]);
+    }
+
+    let syntax_theme = THEME_SET.themes.values().next()?;
+    let highlighter = Highlighter::new(syntax_theme);
+    let mut scope_stack = ScopeStack::new();
+    let mut result: Vec<(Style, String)> = Vec::new();
+    let mut pos = 0usize;
+    for (end, op) in ops {
+        if pos < end {
+            let text = &code[pos..end];
+            let top = scope_stack.as_slice().last().copied();
+            let style = highlighter.style_for_stack(scope_stack.as_slice());
+            let color = top
+                .map(|s| scope_color(&format!("{}", s), &theme))
+                .unwrap_or(theme.text_normal);
+            let mut span_style = Style::default().fg(color);
+            if style
+                .font_style
+                .contains(syntect::highlighting::FontStyle::BOLD)
+            {
+                span_style = span_style.add_modifier(Modifier::BOLD);
+            }
+            if style
+                .font_style
+                .contains(syntect::highlighting::FontStyle::ITALIC)
+            {
+                span_style = span_style.add_modifier(Modifier::ITALIC);
+            }
+            if style
+                .font_style
+                .contains(syntect::highlighting::FontStyle::UNDERLINE)
+            {
+                span_style = span_style.add_modifier(Modifier::UNDERLINED);
+            }
+            result.push((span_style, text.to_string()));
+        }
+        let _ = scope_stack.apply(&op);
+        pos = end;
+    }
+    if pos < code.len() {
+        let text = &code[pos..];
+        let top = scope_stack.as_slice().last().copied();
+        let color = top
+            .map(|s| scope_color(&format!("{}", s), &theme))
+            .unwrap_or(theme.text_normal);
+        result.push((Style::default().fg(color), text.to_string()));
+    }
+
+    Some(result)
 }
 
-fn syntect_color(color: ratatui::style::Color) -> Option<syntect::highlighting::Color> {
-    let ratatui::style::Color::Rgb(r, g, b) = color else {
-        return None;
-    };
-    Some(syntect::highlighting::Color { r, g, b, a: 255 })
+/// Map a syntect scope name (e.g. "keyword.control.rust") to a semantic theme
+/// color so syntax highlighting tracks the active theme rather than a hardcoded
+/// palette.
+fn scope_color(name: &str, theme: &Theme) -> Color {
+    if name.contains("comment") {
+        theme.text_muted
+    } else if name.contains("string")
+        || name.contains("regexp")
+        || name.contains("character")
+        || name.contains("quote")
+    {
+        theme.green
+    } else if name.contains("number") || name.contains("numeric") || name.contains("constant") {
+        theme.red
+    } else if name.contains("keyword")
+        || name.contains("storage")
+        || name.contains("control")
+        || name.contains("operator")
+    {
+        theme.purple
+    } else if name.contains("function")
+        || name.contains("method")
+        || name.contains("entity.name")
+        || name.contains("decorator")
+    {
+        theme.yellow
+    } else if name.contains("type")
+        || name.contains("class")
+        || name.contains("struct")
+        || name.contains("enum")
+        || name.contains("trait")
+        || name.contains("interface")
+        || name.contains("support.type")
+    {
+        theme.blue
+    } else if name.contains("variable") || name.contains("property") {
+        theme.text_normal
+    } else if name.contains("tag") || name.contains("markup") {
+        theme.blue
+    } else {
+        theme.text_normal
+    }
 }
 
 fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
@@ -597,7 +688,7 @@ impl Selector {
                 .collect();
         }
 
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, String, Option<Vec<usize>>)> = self
             .all_items
             .iter()
@@ -751,6 +842,21 @@ impl DiffTreeNode {
     }
 
     pub fn flatten(&self, depth: usize, prefix: &str, out: &mut Vec<FlatDiffTreeNode>) {
+        self.flatten_ex(depth, prefix, &HashSet::new(), false, out);
+    }
+
+    /// Like `flatten`, but review-aware: every node carries `is_reviewed` (for a
+    /// directory: every file below it is reviewed), and when `hide_reviewed` is
+    /// set, reviewed files — plus directories left with nothing to show — are
+    /// dropped from the flattened list.
+    pub fn flatten_ex(
+        &self,
+        depth: usize,
+        prefix: &str,
+        reviewed: &HashSet<String>,
+        hide_reviewed: bool,
+        out: &mut Vec<FlatDiffTreeNode>,
+    ) {
         match self {
             DiffTreeNode::Directory {
                 name,
@@ -762,6 +868,9 @@ impl DiffTreeNode {
                 } else {
                     format!("{}/{}", prefix, name)
                 };
+                if hide_reviewed && !self.has_unreviewed_file(reviewed) {
+                    return;
+                }
                 if name != "root" {
                     out.push(FlatDiffTreeNode {
                         name: name.clone(),
@@ -776,6 +885,7 @@ impl DiffTreeNode {
                         path_id: path_id.clone(),
                         additions: 0,
                         deletions: 0,
+                        is_reviewed: self.is_fully_reviewed(reviewed),
                     });
                 }
                 if name == "root" || *is_expanded {
@@ -792,7 +902,13 @@ impl DiffTreeNode {
                         b_is_dir.cmp(&a_is_dir).then_with(|| a.name().cmp(b.name()))
                     });
                     for child in sorted_children {
-                        child.flatten(if name == "root" { 0 } else { depth + 1 }, &path_id, out);
+                        child.flatten_ex(
+                            if name == "root" { 0 } else { depth + 1 },
+                            &path_id,
+                            reviewed,
+                            hide_reviewed,
+                            out,
+                        );
                     }
                 }
             }
@@ -806,6 +922,10 @@ impl DiffTreeNode {
                 additions,
                 deletions,
             } => {
+                let is_reviewed = reviewed.contains(file_path);
+                if hide_reviewed && is_reviewed {
+                    return;
+                }
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
@@ -824,7 +944,89 @@ impl DiffTreeNode {
                     path_id,
                     additions: *additions,
                     deletions: *deletions,
+                    is_reviewed,
                 });
+            }
+        }
+    }
+
+    /// Collects the paths of every file at or below this node.
+    pub fn collect_file_paths(&self, out: &mut Vec<String>) {
+        match self {
+            DiffTreeNode::Directory { children, .. } => {
+                for child in children {
+                    child.collect_file_paths(out);
+                }
+            }
+            DiffTreeNode::File { file_path, .. } => out.push(file_path.clone()),
+        }
+    }
+
+    /// True when at least one file at or below this node is not reviewed.
+    /// An empty directory counts as having nothing left to review.
+    fn has_unreviewed_file(&self, reviewed: &HashSet<String>) -> bool {
+        match self {
+            DiffTreeNode::Directory { children, .. } => {
+                children.iter().any(|c| c.has_unreviewed_file(reviewed))
+            }
+            DiffTreeNode::File { file_path, .. } => !reviewed.contains(file_path),
+        }
+    }
+
+    /// True when this node holds at least one file and all of them are reviewed.
+    fn is_fully_reviewed(&self, reviewed: &HashSet<String>) -> bool {
+        match self {
+            DiffTreeNode::Directory { children, .. } => {
+                let mut has_file = false;
+                for child in children {
+                    match child {
+                        DiffTreeNode::File { file_path, .. } => {
+                            has_file = true;
+                            if !reviewed.contains(file_path) {
+                                return false;
+                            }
+                        }
+                        DiffTreeNode::Directory { .. } => {
+                            let mut paths = Vec::new();
+                            child.collect_file_paths(&mut paths);
+                            if !paths.is_empty() {
+                                has_file = true;
+                                if paths.iter().any(|p| !reviewed.contains(p)) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+                has_file
+            }
+            DiffTreeNode::File { file_path, .. } => reviewed.contains(file_path),
+        }
+    }
+
+    /// Folds directories that just became fully reviewed, and unfolds those that
+    /// stopped being fully reviewed, cascading up through parents. Only
+    /// *transitions* between the two review sets are acted on, so a reviewed
+    /// directory the user reopened by hand stays open until its state changes.
+    fn sync_expansion_to_review(&mut self, before: &HashSet<String>, after: &HashSet<String>) {
+        if !matches!(self, DiffTreeNode::Directory { .. }) {
+            return;
+        }
+        let was_reviewed = self.is_fully_reviewed(before);
+        let is_reviewed = self.is_fully_reviewed(after);
+        if let DiffTreeNode::Directory {
+            children,
+            is_expanded,
+            ..
+        } = self
+        {
+            for child in children.iter_mut() {
+                child.sync_expansion_to_review(before, after);
+            }
+            if is_reviewed && !was_reviewed {
+                *is_expanded = false;
+            } else if was_reviewed && !is_reviewed {
+                *is_expanded = true;
             }
         }
     }
@@ -878,6 +1080,8 @@ pub struct FlatDiffTreeNode {
     pub path_id: String,
     pub additions: u32,
     pub deletions: u32,
+    /// File marked as reviewed; on a directory, every file below it is reviewed.
+    pub is_reviewed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -912,6 +1116,60 @@ pub struct DiffView {
     pub search_cursor: usize,
     pub search_active: bool,
     pub file_tree_visible: bool,
+    /// Cells the line-number column needs, so the separator after it lands in
+    /// the same column on every row. Derived from the widest line number in the
+    /// diff, never below [`MIN_LINE_NUMBER_WIDTH`].
+    pub line_number_width: usize,
+    /// Paths of files the user marked as reviewed (`m`), persisted per MR/PR in
+    /// the project cache.
+    pub reviewed_files: HashSet<String>,
+    /// Filter reviewed files out of the tree (`M`).
+    pub hide_reviewed: bool,
+}
+
+/// Narrowest line-number column, and what any diff under 10 000 lines gets —
+/// the width the gutter always had before it was computed at all.
+pub const MIN_LINE_NUMBER_WIDTH: usize = 4;
+
+/// Cells needed to print the widest line number in `lines` without pushing the
+/// separator that follows it out of column.
+///
+/// `{:>4}` is a *minimum* width, so a five-digit number silently took a fifth
+/// cell and shifted the separator and the whole content of that row one column
+/// right of its neighbours. Any diff touching a large file — a generated
+/// OpenAPI spec, a lockfile — is full of such rows.
+fn line_number_width(lines: &[DiffLine]) -> usize {
+    lines
+        .iter()
+        .flat_map(|line| [line.old_line_num, line.new_line_num])
+        .flatten()
+        .max()
+        .map_or(MIN_LINE_NUMBER_WIDTH, |widest| {
+            MIN_LINE_NUMBER_WIDTH.max(widest.to_string().len())
+        })
+}
+
+/// Columns per tab in the diff view. A literal tab occupies a single cell in
+/// the rendered buffer, so a tab-indented file (Go, Makefiles) would otherwise
+/// display with no indentation at all.
+const DIFF_TAB_WIDTH: usize = 4;
+
+/// Expands the tabs in one diff line, keeping its `+`/`-`/space marker.
+///
+/// The marker is part of the diff, not of the source line, so tab stops are
+/// measured from the character after it. Counting the marker as column 0 would
+/// make a single leading tab three spaces wide instead of four, and shift every
+/// alignment tab on the line with it.
+fn expand_diff_line_tabs(line: &str) -> String {
+    match line.chars().next() {
+        Some(marker @ ('+' | '-' | ' ')) => {
+            let mut out = String::with_capacity(line.len());
+            out.push(marker);
+            out.push_str(&expand_tabs(&line[1..], DIFF_TAB_WIDTH));
+            out
+        }
+        _ => expand_tabs(line, DIFF_TAB_WIDTH),
+    }
 }
 
 fn strip_ansi_escapes(input: &str) -> String {
@@ -940,7 +1198,16 @@ fn strip_ansi_escapes(input: &str) -> String {
 impl DiffView {
     #[allow(clippy::too_many_lines)]
     pub fn new(mr_iid: u64, raw_diff: String) -> Self {
-        let cleaned_diff = strip_ansi_escapes(&raw_diff);
+        // Expand tabs once, here: everything downstream — the stored line
+        // content, the syntect highlighting computed from it, the search's
+        // fuzzy match indices, the side-by-side pairs — is derived from these
+        // strings, so expanding at the single point where they are produced
+        // keeps all of them agreeing on where a character sits.
+        let cleaned_diff = strip_ansi_escapes(&raw_diff)
+            .lines()
+            .map(expand_diff_line_tabs)
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut all_lines = Vec::new();
         let mut current_file = String::new();
         let mut old_line_num = None;
@@ -1220,6 +1487,8 @@ impl DiffView {
         // Copy directory counts to flat dir nodes
         Self::copy_dir_counts_to_flat(&root_node, &mut visible_nodes);
 
+        let number_width = line_number_width(&all_lines);
+
         let mut view = Self {
             mr_iid,
             raw_diff,
@@ -1243,10 +1512,151 @@ impl DiffView {
             search_cursor: 0,
             search_active: false,
             file_tree_visible: true,
+            line_number_width: number_width,
+            reviewed_files: HashSet::new(),
+            hide_reviewed: false,
         };
 
         view.update_active_lines();
         view
+    }
+
+    /// Seeds the reviewed-file marks (restored from the project cache) and the
+    /// hide-reviewed filter, then rebuilds the tree around them.
+    pub fn restore_review_state(&mut self, reviewed: HashSet<String>, hide_reviewed: bool) {
+        // Drop marks for files no longer in the diff so stale paths never leak
+        // back into the cache.
+        let mut known = Vec::new();
+        self.root_node.collect_file_paths(&mut known);
+        let known: HashSet<String> = known.into_iter().collect();
+        self.reviewed_files = reviewed.into_iter().filter(|p| known.contains(p)).collect();
+        self.hide_reviewed = hide_reviewed;
+        // Directories already fully reviewed on a previous pass open folded.
+        self.root_node
+            .sync_expansion_to_review(&HashSet::new(), &self.reviewed_files);
+        self.rebuild_visible_nodes_keep_position();
+    }
+
+    /// Files covered by the current tree selection: the selected file itself, or
+    /// every file below the selected directory.
+    pub fn selected_file_paths(&self) -> Vec<String> {
+        let Some(node) = self.visible_nodes.get(self.selected_visible_idx) else {
+            return Vec::new();
+        };
+        if !node.is_dir {
+            return node.file_path.clone().into_iter().collect();
+        }
+        let rel_path = node.path_id.strip_prefix("root/").unwrap_or(&node.path_id);
+        let prefix1 = format!("{}/", rel_path);
+        let prefix2 = format!("{}\\", rel_path);
+        let mut paths = Vec::new();
+        self.root_node.collect_file_paths(&mut paths);
+        paths.retain(|p| p.starts_with(&prefix1) || p.starts_with(&prefix2));
+        paths
+    }
+
+    /// Marks or unmarks the current selection. A directory flips as a whole:
+    /// fully reviewed → unmark everything, otherwise mark everything.
+    /// Returns the affected file count and the new state.
+    pub fn toggle_reviewed(&mut self) -> Option<(usize, bool)> {
+        let paths = self.selected_file_paths();
+        if paths.is_empty() {
+            return None;
+        }
+        let mark = !paths.iter().all(|p| self.reviewed_files.contains(p));
+        let before = self.reviewed_files.clone();
+        for path in &paths {
+            if mark {
+                self.reviewed_files.insert(path.clone());
+            } else {
+                self.reviewed_files.remove(path);
+            }
+        }
+        self.root_node
+            .sync_expansion_to_review(&before, &self.reviewed_files);
+        self.rebuild_visible_nodes_keep_position();
+        Some((paths.len(), mark))
+    }
+
+    /// Toggles the "hide reviewed files" tree filter.
+    pub fn toggle_hide_reviewed(&mut self) -> bool {
+        self.hide_reviewed = !self.hide_reviewed;
+        self.rebuild_visible_nodes_keep_position();
+        self.hide_reviewed
+    }
+
+    /// (reviewed, total) file counts for the whole diff, ignoring the filter.
+    pub fn review_progress(&self) -> (usize, usize) {
+        let mut paths = Vec::new();
+        self.root_node.collect_file_paths(&mut paths);
+        let reviewed = paths
+            .iter()
+            .filter(|p| self.reviewed_files.contains(*p))
+            .count();
+        (reviewed, paths.len())
+    }
+
+    /// Rebuilds the tree after a review-state change. Unlike
+    /// `rebuild_visible_nodes`, a selection that got filtered out falls back to
+    /// the node that took its place instead of jumping back to the top.
+    fn rebuild_visible_nodes_keep_position(&mut self) {
+        let old_path = self
+            .visible_nodes
+            .get(self.selected_visible_idx)
+            .map(|n| n.path_id.clone());
+        let old_idx = self.selected_visible_idx;
+
+        let mut visible = Vec::new();
+        self.root_node.flatten_ex(
+            0,
+            "",
+            &self.reviewed_files,
+            self.hide_reviewed,
+            &mut visible,
+        );
+        Self::copy_dir_counts_to_flat(&self.root_node, &mut visible);
+        self.visible_nodes = visible;
+
+        if self.visible_nodes.is_empty() {
+            self.selected_visible_idx = 0;
+            self.file_tree_scroll_offset = 0;
+            self.cursor_idx = 0;
+            self.scroll_offset = 0;
+            self.update_active_lines();
+            return;
+        }
+
+        if let Some(pos) = old_path
+            .as_deref()
+            .and_then(|p| self.visible_nodes.iter().position(|n| n.path_id == p))
+        {
+            self.selected_visible_idx = pos;
+            self.update_active_lines();
+            return;
+        }
+
+        // The selection is gone: it either folded into a parent that just became
+        // fully reviewed, or the filter hid it. Follow the fold onto that parent
+        // when there is one; otherwise hold the cursor slot so the next pending
+        // file slides under it.
+        let ancestor = old_path.as_deref().and_then(|old| {
+            let mut path = old;
+            while let Some((parent, _)) = path.rsplit_once('/') {
+                if let Some(pos) = self
+                    .visible_nodes
+                    .iter()
+                    .position(|n| n.path_id == parent && n.is_dir && !n.is_expanded)
+                {
+                    return Some(pos);
+                }
+                path = parent;
+            }
+            None
+        });
+        self.selected_visible_idx = ancestor.unwrap_or(old_idx.min(self.visible_nodes.len() - 1));
+        self.cursor_idx = 0;
+        self.scroll_offset = 0;
+        self.update_active_lines();
     }
 
     pub fn update_active_lines(&mut self) {
@@ -1423,7 +1833,14 @@ impl DiffView {
             .and_then(|n| n.file_path.clone().or_else(|| Some(n.path_id.clone())));
 
         let mut visible = Vec::new();
-        self.root_node.flatten(0, "", &mut visible);
+        self.root_node.flatten_ex(
+            0,
+            "",
+            &self.reviewed_files,
+            self.hide_reviewed,
+            &mut visible,
+        );
+        Self::copy_dir_counts_to_flat(&self.root_node, &mut visible);
         self.visible_nodes = visible;
 
         if let Some(ref old_path) = old_file_path {
@@ -1491,7 +1908,7 @@ impl DiffView {
             line.fuzzy_indices = None;
         }
 
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, usize)> = self
             .lines
             .iter_mut()
@@ -2001,6 +2418,10 @@ pub struct App {
     pub selected_jobs: std::collections::HashSet<u64>,
     pub selected_issues: std::collections::HashSet<u64>,
     pub selected_mrs: std::collections::HashSet<u64>,
+    /// When true, moving the cursor through Issues/MRs marks each visited
+    /// item into the selection set (yazi-style "select mode"). `Space` still
+    /// toggles the current item individually regardless of this flag.
+    pub select_mode: bool,
     pub details_zoomed: bool,
     /// Captured when the edit menu opens so Esc can restore the previous
     /// zoom state (e.g. back to the zoomed PREVIEW if the user entered
@@ -2032,6 +2453,8 @@ pub struct App {
     pub focus_column_checklist: bool,
     pub column_checklist_idx: usize,
     pub in_review_mode: bool,
+    /// Session-wide "hide reviewed files" preference for the diff file tree.
+    pub hide_reviewed_files: bool,
     pub draft_comments: Vec<DraftComment>,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
@@ -2106,6 +2529,7 @@ impl Default for App {
             selected_jobs: std::collections::HashSet::new(),
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
+            select_mode: false,
             details_zoomed: false,
             prev_details_zoomed: false,
             detail_visible: false,
@@ -2144,6 +2568,7 @@ impl Default for App {
             focus_column_checklist: false,
             column_checklist_idx: 0,
             in_review_mode: false,
+            hide_reviewed_files: false,
             draft_comments: Vec::new(),
             save_menu_open: false,
             save_menu_selection: None,
@@ -2391,6 +2816,27 @@ impl App {
             .count()
     }
 
+    /// Files marked as reviewed for an MR/PR, restored from the project cache.
+    pub fn reviewed_files_for_mr(&self, mr_iid: u64) -> HashSet<String> {
+        self.project_cache
+            .reviewed_files
+            .get(&mr_iid)
+            .map(|paths| paths.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Writes the reviewed-file marks of an MR/PR back into the project cache.
+    /// The caller persists the cache to disk.
+    pub fn store_reviewed_files_for_mr(&mut self, mr_iid: u64, reviewed: &HashSet<String>) {
+        if reviewed.is_empty() {
+            self.project_cache.reviewed_files.remove(&mr_iid);
+            return;
+        }
+        let mut paths: Vec<String> = reviewed.iter().cloned().collect();
+        paths.sort();
+        self.project_cache.reviewed_files.insert(mr_iid, paths);
+    }
+
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
         use std::collections::HashMap;
         let mut thread_resolved: HashMap<String, bool> = HashMap::new();
@@ -2444,6 +2890,7 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.select_mode = false;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -2465,6 +2912,7 @@ impl App {
         self.selected_jobs.clear();
         self.selected_issues.clear();
         self.selected_mrs.clear();
+        self.select_mode = false;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -2478,7 +2926,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -2629,7 +3077,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items = Vec::new();
 
         for item in items {
@@ -2888,7 +3336,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items: Vec<(i64, &crate::domain::pipelines::Pipeline)> = Vec::new();
 
         for item in items {
@@ -2911,6 +3359,13 @@ impl App {
             }
             if enabled_cols.contains("Ref") {
                 check_match(item.ref_branch());
+                // The cell shows `format_ref` ("MR !2208"), not the raw
+                // `refs/merge-requests/2208/head`. Matching only the raw ref
+                // makes a visible row unfindable by what is on screen.
+                let display_ref = crate::utils::format::format_ref(item.ref_branch());
+                if display_ref != item.ref_branch() {
+                    check_match(&display_ref);
+                }
             }
             if enabled_cols.contains("Stages") {
                 if let Some(jobs) = pipeline_jobs.get(&item.id()) {
@@ -3035,28 +3490,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Pipelines,
-            |item, col| match col {
-                "ID" => vec![item.id().to_string()],
-                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
-                "Ref" => vec![item.ref_branch().to_string()],
-                "Name" => vec![item.name().to_string()],
-                "Event" => vec![item.event().to_string()],
-                "SHA" => vec![item.head_sha().to_string()],
-                "Actor" => vec![item.actor_login().to_string()],
-                "Source" => item
-                    .source()
-                    .map(|source| vec![source.to_string()])
-                    .unwrap_or_default(),
-                "Created" => item
-                    .created_at()
-                    .map(|c| vec![crate::utils::format::time_ago(c)])
-                    .unwrap_or_default(),
-                "Duration" => item
-                    .duration_seconds()
-                    .map(|d| vec![format!("{}m {}s", d / 60, d % 60)])
-                    .unwrap_or_default(),
-                _ => vec![],
-            },
+            Self::pipeline_filter_values,
         );
         list
     }
@@ -3069,7 +3503,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored_items: Vec<(i64, &crate::domain::pipelines::Job)> = Vec::new();
 
         for item in items {
@@ -3206,7 +3640,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3268,7 +3702,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3381,7 +3815,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let mut scored: Vec<(i64, &'a crate::domain::notifications::Notification)> = items
             .iter()
             .filter_map(|item| {
@@ -3503,7 +3937,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3642,7 +4076,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3694,7 +4128,7 @@ impl App {
         if query.trim().is_empty() {
             return items.iter().collect();
         }
-        let matcher = SkimMatcherV2::default();
+        let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
         items
             .iter()
@@ -3764,6 +4198,53 @@ impl App {
             "manual" => "MANUAL",
             "created" | "waiting_for_resource" | "preparing" => "PENDING",
             other => other,
+        }
+    }
+
+    /// Filter values for one Pipelines column.
+    ///
+    /// Single source of truth for the column-filter picker, `filtered_pipelines`,
+    /// and the table renderer. These three used to carry their own copies of this
+    /// mapping and had drifted apart (raw `status` vs the `SUCCESS` display text,
+    /// raw `created_at` vs `time_ago`, no `Source`/`Duration` in the renderer), so
+    /// the rows drawn on screen were not the rows the rest of the app indexed into.
+    ///
+    /// The first value is the one the picker offers — always the text the cell
+    /// shows. Later values are compatibility aliases (raw `Ref` for filters saved
+    /// before the cell switched to `format_ref`).
+    pub fn pipeline_filter_values(
+        item: &crate::domain::pipelines::Pipeline,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "ID" => vec![item.id().to_string()],
+            "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
+            "Ref" => {
+                let raw = item.ref_branch().to_string();
+                let display = crate::utils::format::format_ref(&raw);
+                if display == raw {
+                    vec![raw]
+                } else {
+                    vec![display, raw]
+                }
+            }
+            "Name" => vec![item.name().to_string()],
+            "Event" => vec![item.event().to_string()],
+            "SHA" => vec![item.head_sha().to_string()],
+            "Actor" => vec![item.actor_login().to_string()],
+            "Created" => item
+                .created_at()
+                .map(|c| vec![crate::utils::format::time_ago(c)])
+                .unwrap_or_default(),
+            "Source" => item
+                .source()
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default(),
+            "Duration" => item
+                .duration_seconds()
+                .map(|d| vec![format!("{}m {}s", d / 60, d % 60)])
+                .unwrap_or_default(),
+            _ => vec![],
         }
     }
 
@@ -3905,44 +4386,11 @@ impl App {
             }
             Tab::Pipelines => {
                 for item in &self.pipelines.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id().to_string());
-                        }
-                        "Status" => {
-                            values.insert(Self::pipeline_status_display(item.status()).to_string());
-                        }
-                        "Ref" => {
-                            values.insert(item.ref_branch().to_string());
-                        }
-                        "Name" => {
-                            values.insert(item.name().to_string());
-                        }
-                        "Event" => {
-                            values.insert(item.event().to_string());
-                        }
-                        "SHA" => {
-                            values.insert(item.head_sha().to_string());
-                        }
-                        "Actor" => {
-                            values.insert(item.actor_login().to_string());
-                        }
-                        "Created" => {
-                            if let Some(c) = item.created_at() {
-                                values.insert(crate::utils::format::time_ago(c));
-                            }
-                        }
-                        "Source" => {
-                            if let Some(source) = item.source() {
-                                values.insert(source.to_string());
-                            }
-                        }
-                        "Duration" => {
-                            if let Some(d) = item.duration_seconds() {
-                                values.insert(format!("{}m {}s", d / 60, d % 60));
-                            }
-                        }
-                        _ => {}
+                    // Offer the displayed value only — the trailing entries of
+                    // `pipeline_filter_values` are back-compat aliases, not
+                    // separate choices.
+                    if let Some(v) = Self::pipeline_filter_values(item, col).into_iter().next() {
+                        values.insert(v);
                     }
                 }
             }
@@ -4124,7 +4572,7 @@ impl App {
                         "Author" => i.author.username.clone(),
                         "Labels" => {
                             if i.labels.is_empty() {
-                                "None".to_string()
+                                "--".to_string()
                             } else {
                                 i.labels[0].clone()
                             }
@@ -4133,7 +4581,7 @@ impl App {
                             .milestone
                             .as_ref()
                             .map(|m| m.title.clone())
-                            .unwrap_or_else(|| "None".to_string()),
+                            .unwrap_or_else(|| "--".to_string()),
                         "Assignees" => {
                             if i.assignees.is_empty() {
                                 "Unassigned".to_string()
@@ -4166,7 +4614,7 @@ impl App {
                         "Author" => m.author.username.clone(),
                         "Labels" => {
                             if m.labels.is_empty() {
-                                "None".to_string()
+                                "--".to_string()
                             } else {
                                 m.labels[0].clone()
                             }
@@ -4175,7 +4623,7 @@ impl App {
                             .milestone
                             .as_ref()
                             .map(|m| m.title.clone())
-                            .unwrap_or_else(|| "None".to_string()),
+                            .unwrap_or_else(|| "--".to_string()),
                         "Assignees" => {
                             if m.assignees.is_empty() {
                                 "Unassigned".to_string()
@@ -4189,7 +4637,7 @@ impl App {
                         }
                         "Reviewers" => {
                             if m.reviewers.is_empty() {
-                                "None".to_string()
+                                "--".to_string()
                             } else {
                                 m.reviewers
                                     .iter()
@@ -4313,8 +4761,8 @@ impl App {
                 for (idx, m) in items.iter().enumerate() {
                     let key = match col.as_str() {
                         "State" => m.state.clone(),
-                        "Start Date" => m.start_date.clone().unwrap_or_else(|| "None".to_string()),
-                        "Due Date" => m.due_date.clone().unwrap_or_else(|| "None".to_string()),
+                        "Start Date" => m.start_date.clone().unwrap_or_else(|| "--".to_string()),
+                        "Due Date" => m.due_date.clone().unwrap_or_else(|| "--".to_string()),
                         "Title" => m.title.clone(),
                         "ID" => format!("#{}", m.iid),
                         _ => "Unknown".to_string(),
@@ -4684,6 +5132,17 @@ mod tests {
         // Move month backward by 2
         dp.move_month(-2);
         assert_eq!(dp.value_string(), "2026-05-29");
+    }
+
+    #[test]
+    fn test_highlight_line_syntax_returns_theme_colors() {
+        // A Rust keyword line should produce spans carrying a non-default fg
+        // color derived from the active theme (not a hardcoded palette).
+        let spans = highlight_line_syntax("main.rs", "let x = 1;", None);
+        let spans = spans.expect("highlighting should succeed");
+        assert!(!spans.is_empty());
+        // At least one token (e.g. the `let` keyword) should carry an fg color.
+        assert!(spans.iter().any(|(style, _)| style.fg.is_some()));
     }
 
     #[test]
@@ -5486,6 +5945,142 @@ new mode 100755
         assert_eq!(new_mode.unwrap().line_type, DiffLineType::Meta);
     }
 
+    /// A one-hunk diff starting at `start_line`, so the line numbers it
+    /// produces have a chosen number of digits.
+    fn diff_starting_at(start_line: u32) -> String {
+        format!(
+            "diff --git a/spec.yml b/spec.yml\n--- a/spec.yml\n+++ b/spec.yml\n@@ -{s},3 +{s},4 @@\n context\n+added\n-removed\n",
+            s = start_line
+        )
+    }
+
+    #[test]
+    fn test_line_number_width_floors_at_the_narrow_gutter() {
+        // Anything that fits the old fixed field keeps the old look.
+        let view = DiffView::new(42, diff_starting_at(1));
+        assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
+        let view = DiffView::new(42, diff_starting_at(9997));
+        assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
+    }
+
+    #[test]
+    fn test_line_number_width_grows_for_a_wider_number() {
+        // The bug: `{:>4}` is a minimum, so a five-digit number took a fifth
+        // cell and shifted that row's separator and content one column right.
+        let view = DiffView::new(42, diff_starting_at(10_848));
+        assert_eq!(view.line_number_width, 5);
+
+        let view = DiffView::new(42, diff_starting_at(100_000));
+        assert_eq!(view.line_number_width, 6);
+    }
+
+    #[test]
+    fn test_line_number_width_is_taken_from_the_widest_line_in_the_diff() {
+        // A diff whose first hunk is narrow and whose last is not must use the
+        // wider gutter throughout, or the two hunks disagree on the column.
+        let diff = format!("{}{}", diff_starting_at(12), {
+            let mut second = diff_starting_at(15_610);
+            second.push('\n');
+            second
+        });
+        let view = DiffView::new(42, diff);
+        assert_eq!(view.line_number_width, 5);
+    }
+
+    #[test]
+    fn test_line_number_width_handles_a_diff_with_no_numbers() {
+        // Meta-only output (a rename with no hunks) has no line numbers at all.
+        let view = DiffView::new(
+            42,
+            "diff --git a/a.txt b/b.txt\nsimilarity index 100%\nrename from a.txt\nrename to b.txt\n"
+                .to_string(),
+        );
+        assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
+    }
+
+    /// A diff of a tab-indented file, as `gofmt` would produce it.
+    fn tab_indented_diff() -> String {
+        [
+            "diff --git a/handler.go b/handler.go",
+            "index 1111111..2222222 100644",
+            "--- a/handler.go",
+            "+++ b/handler.go",
+            "@@ -1,6 +1,7 @@",
+            " func handle() error {",
+            " \tif err := check(); err != nil {",
+            "+\t\treturn fmt.Errorf(\"check: %w\", err)",
+            "-\t\treturn err",
+            " \t}",
+            " }",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn test_diff_view_expands_tabs_so_indentation_survives() {
+        let view = DiffView::new(42, tab_indented_diff());
+
+        let content: Vec<&str> = view
+            .all_lines
+            .iter()
+            .map(|l| l.content.as_str())
+            .filter(|c| c.contains("return") || c.contains("if err"))
+            .collect();
+
+        assert_eq!(
+            content,
+            vec![
+                " \u{20}\u{20}\u{20}\u{20}if err := check(); err != nil {",
+                "+        return fmt.Errorf(\"check: %w\", err)",
+                "-        return err",
+            ],
+            "tabs must reach the rendered content as spaces, or the file displays flush-left"
+        );
+        assert!(
+            !view.all_lines.iter().any(|l| l.content.contains('\t')),
+            "no tab may survive into a rendered line"
+        );
+    }
+
+    #[test]
+    fn test_diff_view_keeps_the_marker_out_of_the_tab_stops() {
+        let view = DiffView::new(42, tab_indented_diff());
+        let added = view
+            .all_lines
+            .iter()
+            .find(|l| l.line_type == DiffLineType::Addition)
+            .expect("an addition");
+
+        // One marker, then a full tab stop per tab — not three spaces because
+        // the marker ate a column.
+        assert!(added.content.starts_with('+'));
+        assert_eq!(
+            added.content[1..].len() - added.content[1..].trim_start().len(),
+            8,
+            "two tabs of source indent must survive as two full stops"
+        );
+    }
+
+    #[test]
+    fn test_diff_view_expands_tabs_in_the_highlighted_spans_too() {
+        // A highlighted line renders from its spans, not from `content`, so a
+        // tab surviving there would leave syntax-highlighted code sitting at a
+        // different indent from everything else.
+        let view = DiffView::new(42, tab_indented_diff());
+        let mut highlighted_lines = 0;
+        for line in &view.all_lines {
+            if let Some(ref spans) = line.syntax_highlighted {
+                highlighted_lines += 1;
+                let text: String = spans.iter().map(|(_, t)| t.as_str()).collect();
+                assert!(!text.contains('\t'), "a span kept its tab: {text:?}");
+            }
+        }
+        assert!(
+            highlighted_lines > 0,
+            "fixture produced no highlighted lines, so this proves nothing"
+        );
+    }
+
     #[test]
     fn test_diff_view_file_tree_scroll_offset_default() {
         let diff = "\
@@ -5499,6 +6094,236 @@ index 123456..789012 100644
 ";
         let view = DiffView::new(42, diff.to_string());
         assert_eq!(view.file_tree_scroll_offset, 0);
+    }
+
+    fn review_fixture() -> DiffView {
+        let diff = "\
+diff --git a/src/app.rs b/src/app.rs
+index 123456..789012 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -1,1 +1,1 @@
+- old
++ new
+diff --git a/src/main.rs b/src/main.rs
+index 123456..789012 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,1 +1,1 @@
+- old
++ new
+diff --git a/README.md b/README.md
+index 123456..789012 100644
+--- a/README.md
++++ b/README.md
+@@ -1,1 +1,1 @@
+- old
++ new
+";
+        DiffView::new(42, diff.to_string())
+    }
+
+    #[test]
+    fn test_toggle_reviewed_marks_selected_file() {
+        let mut view = review_fixture();
+        // Tree (directories sort first): src/, src/app.rs, src/main.rs, README.md
+        assert_eq!(view.visible_nodes.len(), 4);
+        assert_eq!(view.review_progress(), (0, 3));
+
+        view.selected_visible_idx = 3; // README.md
+        assert_eq!(view.toggle_reviewed(), Some((1, true)));
+        assert!(view.reviewed_files.contains("README.md"));
+        assert_eq!(view.review_progress(), (1, 3));
+        assert!(view.visible_nodes[3].is_reviewed);
+        // Still listed — only the filter hides files.
+        assert_eq!(view.visible_nodes.len(), 4);
+
+        assert_eq!(view.toggle_reviewed(), Some((1, false)));
+        assert!(view.reviewed_files.is_empty());
+        assert!(!view.visible_nodes[3].is_reviewed);
+    }
+
+    #[test]
+    fn test_toggle_reviewed_on_directory_marks_every_file_below() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        assert!(view.visible_nodes[0].is_dir);
+
+        assert_eq!(view.toggle_reviewed(), Some((2, true)));
+        assert_eq!(view.review_progress(), (2, 3));
+        // The directory reads as reviewed once all of its files are.
+        assert!(view.visible_nodes[0].is_reviewed);
+
+        // Completing it also folds it, so reopen it to reach a single file.
+        view.root_node.toggle_expanded("root/src", "");
+        view.rebuild_visible_nodes();
+
+        // Unmarking one file leaves the directory pending again.
+        view.selected_visible_idx = 1; // src/app.rs
+        assert_eq!(view.toggle_reviewed(), Some((1, false)));
+        assert!(!view.visible_nodes[0].is_reviewed);
+        assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    #[test]
+    fn test_hide_reviewed_filters_files_and_empty_directories() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        view.toggle_reviewed();
+
+        assert!(view.toggle_hide_reviewed());
+        // Both src files are reviewed, so the directory drops out too.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["README.md"]);
+
+        // Unfiltering brings the completed directory back — folded, since all of
+        // its files are reviewed.
+        assert!(!view.toggle_hide_reviewed());
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+    }
+
+    #[test]
+    fn test_hide_reviewed_keeps_directory_with_pending_files_when_collapsed() {
+        let mut view = review_fixture();
+        view.reviewed_files.insert("src/app.rs".to_string());
+        view.collapse_all();
+        view.hide_reviewed = true;
+        view.rebuild_visible_nodes();
+
+        // src/ still holds an unreviewed file, so it must stay visible even
+        // though collapsing means none of its children are flattened.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+    }
+
+    #[test]
+    fn test_completing_a_directory_folds_it() {
+        let mut view = review_fixture();
+        // Tree: src/, src/app.rs, src/main.rs, README.md
+        view.selected_visible_idx = 1; // src/app.rs
+        view.toggle_reviewed();
+        // One file left pending — the directory stays open.
+        assert!(view.visible_nodes[0].is_expanded);
+        assert_eq!(view.visible_nodes.len(), 4);
+
+        view.selected_visible_idx = 2; // src/main.rs
+        view.toggle_reviewed();
+
+        // src/ is complete: folded, and its files no longer clutter the tree.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+        assert!(!view.visible_nodes[0].is_expanded);
+        assert!(view.visible_nodes[0].is_reviewed);
+        // The cursor follows the fold onto the directory that just completed.
+        assert_eq!(view.selected_visible_idx, 0);
+    }
+
+    #[test]
+    fn test_folding_cascades_through_nested_directories() {
+        let diff = "\
+diff --git a/a/b/c/deep.rs b/a/b/c/deep.rs
+index 123456..789012 100644
+--- a/a/b/c/deep.rs
++++ b/a/b/c/deep.rs
+@@ -1,1 +1,1 @@
+- old
++ new
+diff --git a/README.md b/README.md
+index 123456..789012 100644
+--- a/README.md
++++ b/README.md
+@@ -1,1 +1,1 @@
+- old
++ new
+";
+        let mut view = DiffView::new(42, diff.to_string());
+        assert_eq!(view.visible_nodes.len(), 5); // a, b, c, deep.rs, README.md
+
+        view.selected_visible_idx = 3; // a/b/c/deep.rs
+        view.toggle_reviewed();
+
+        // Every ancestor is complete, so the whole branch folds into `a`.
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "README.md"]);
+        assert!(!view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_unmarking_a_folded_directory_reopens_it() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        view.toggle_reviewed();
+        assert!(!view.visible_nodes[0].is_expanded);
+
+        // Pressing `m` again on the folded directory unmarks it and reopens it,
+        // so the files that need another pass are visible again.
+        view.toggle_reviewed();
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "app.rs", "main.rs", "README.md"]);
+        assert!(view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_reopened_reviewed_directory_stays_open_on_unrelated_marks() {
+        let mut view = review_fixture();
+        view.selected_visible_idx = 0; // src/
+        view.toggle_reviewed();
+        assert!(!view.visible_nodes[0].is_expanded);
+
+        // The user reopens the completed directory by hand to look again.
+        view.root_node.toggle_expanded("root/src", "");
+        view.rebuild_visible_nodes();
+        assert!(view.visible_nodes[0].is_expanded);
+
+        // Marking an unrelated file must not re-fold it: only a change in the
+        // directory's own review state moves it.
+        view.selected_visible_idx = 3; // README.md
+        view.toggle_reviewed();
+        assert!(view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_restore_review_state_opens_completed_directories_folded() {
+        let mut view = review_fixture();
+        let cached: HashSet<String> = ["src/app.rs", "src/main.rs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        view.restore_review_state(cached, false);
+
+        let names: Vec<&str> = view.visible_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["src", "README.md"]);
+        assert!(!view.visible_nodes[0].is_expanded);
+    }
+
+    #[test]
+    fn test_restore_review_state_drops_paths_no_longer_in_the_diff() {
+        let mut view = review_fixture();
+        let cached: HashSet<String> = ["src/app.rs", "deleted/elsewhere.rs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        view.restore_review_state(cached, false);
+
+        assert_eq!(
+            view.reviewed_files,
+            ["src/app.rs".to_string()].into_iter().collect()
+        );
+        assert_eq!(view.review_progress(), (1, 3));
+    }
+
+    #[test]
+    fn test_marking_with_filter_on_advances_to_the_next_file() {
+        let mut view = review_fixture();
+        view.hide_reviewed = true;
+        view.selected_visible_idx = 1; // src/app.rs
+        view.toggle_reviewed();
+
+        // app.rs vanished; the cursor keeps its slot, so the next pending file
+        // slides underneath it instead of jumping back to the top.
+        assert_eq!(view.selected_visible_idx, 1);
+        assert_eq!(view.visible_nodes[1].name, "main.rs");
     }
 
     fn mr_fixture(
@@ -6079,5 +6904,64 @@ index 123456..789012 100644
         app.show_error("boom".to_string());
 
         assert_eq!(app.terminal_commands[0].status, "Success");
+    }
+
+    #[test]
+    fn pipeline_ref_is_searchable_and_filterable_by_its_displayed_text() {
+        // GitLab MR pipelines carry `refs/merge-requests/<iid>/head`, but the
+        // Ref cell shows "MR !<iid>". Searching or filtering by what the row
+        // actually says used to match nothing, so a pipeline sitting visibly in
+        // the table looked missing.
+        let mut app = App::default();
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 22598077,
+            status: "running".to_string(),
+            r#ref: "refs/merge-requests/2208/head".to_string(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: "merge_request_event".to_string(),
+            head_sha: "abc123".to_string(),
+            actor_login: "alice".to_string(),
+            duration_seconds: None,
+            created_at: None,
+            source: Some("merge_request_event".to_string()),
+        }];
+        let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
+        let jobs = std::collections::HashMap::new();
+
+        for query in ["MR !2208", "2208", "merge-requests"] {
+            assert_eq!(
+                App::filter_pipelines_list(&app.pipelines.items, query, &jobs, &cols).len(),
+                1,
+                "search for {query:?} must find the MR pipeline"
+            );
+        }
+
+        // The picker offers the displayed text …
+        let offered = app.collect_unique_column_values(Tab::Pipelines, "Ref");
+        assert_eq!(offered, vec!["MR !2208".to_string()]);
+
+        // … and filtering by it keeps the row.
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Ref".to_string(),
+                ["MR !2208".to_string()].into_iter().collect(),
+            );
+        assert_eq!(app.filtered_pipelines().len(), 1);
+
+        // A filter saved before the cell switched to `format_ref` still works.
+        app.column_filters
+            .entry(Tab::Pipelines)
+            .or_default()
+            .insert(
+                "Ref".to_string(),
+                ["refs/merge-requests/2208/head".to_string()]
+                    .into_iter()
+                    .collect(),
+            );
+        assert_eq!(app.filtered_pipelines().len(), 1);
     }
 }

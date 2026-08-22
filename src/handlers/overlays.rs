@@ -25,15 +25,39 @@ pub fn handle_submit_dialog(
         .modifiers
         .contains(crossterm::event::KeyModifiers::SHIFT);
     match key_event.code {
-        KeyCode::Left
-        | KeyCode::Up
-        | KeyCode::BackTab
-        | KeyCode::Char('h')
-        | KeyCode::Char('k') => {
-            dialog.move_prev();
+        KeyCode::Up | KeyCode::Char('k') => {
+            if dialog.is_on_submit() || dialog.is_on_cancel() {
+                if !dialog.options.is_empty() {
+                    dialog.cursor_idx = dialog.options.len();
+                }
+            } else if dialog.cursor_idx > 1 {
+                dialog.cursor_idx -= 1;
+            }
         }
-        KeyCode::Right | KeyCode::Down | KeyCode::Tab | KeyCode::Char('l') | KeyCode::Char('j') => {
+        KeyCode::Down | KeyCode::Char('j') => {
+            if !dialog.is_on_cancel() && !dialog.is_on_submit() {
+                if dialog.cursor_idx < dialog.options.len() {
+                    dialog.cursor_idx += 1;
+                } else {
+                    dialog.cursor_idx = dialog.cancel_idx();
+                }
+            }
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            if dialog.is_on_submit() || dialog.is_on_cancel() {
+                dialog.cursor_idx = dialog.cancel_idx(); // Cancel is visually on the left
+            }
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            if dialog.is_on_submit() || dialog.is_on_cancel() {
+                dialog.cursor_idx = crate::app::SubmitDialog::SUBMIT_IDX; // Submit is visually on the right
+            }
+        }
+        KeyCode::Tab => {
             dialog.move_next();
+        }
+        KeyCode::BackTab => {
+            dialog.move_prev();
         }
         KeyCode::Char(' ') => {
             dialog.toggle_focused_option();

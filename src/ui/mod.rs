@@ -21,6 +21,7 @@ use self::modal::clear_area;
 use self::overlays::render_overlays;
 use crate::app::{App, DiffLine, Tab};
 use crate::config::{ICONS, THEME};
+use crate::utils::format::truncate;
 use std::collections::HashSet;
 
 /// Render the active edit/create menu as an interactive inspector into the
@@ -1933,25 +1934,49 @@ pub fn render(f: &mut Frame, app: &mut App) {
             app.error_message_at = Some(std::time::Instant::now());
         }
         if let Some(at) = app.error_message_at {
-            if at.elapsed() > std::time::Duration::from_secs(4) {
+            if at.elapsed() > std::time::Duration::from_secs(5) {
                 app.error_message = None;
                 app.error_message_at = None;
             }
         }
     }
     if let Some(ref msg) = app.error_message {
-        let toast_width = (msg.len() as u16 + 4).min(size.width.saturating_sub(4));
-        let toast_h = 1;
-        let toast_y = size.height.saturating_sub(1);
-        let toast_area = Rect::new(
-            (size.width.saturating_sub(toast_width)) / 2,
-            toast_y,
-            toast_width,
-            toast_h,
+        let theme = THEME.read().unwrap();
+        let icons = ICONS.read().unwrap();
+
+        // Inner content: "  <icon> <msg>  "
+        let label = format!("  {} {}  ", icons.status_failed, msg);
+        // Box width: content + 2 border chars, capped to terminal width
+        let inner_w = (label.chars().count() as u16).min(size.width.saturating_sub(4));
+        let box_w = inner_w + 2;
+        // Anchor near the bottom but above the last row so the border is never clipped
+        let box_h = 3u16;
+        let box_x = size.x + (size.width.saturating_sub(box_w)) / 2;
+        let box_y = size.height.saturating_sub(box_h + 1);
+        let toast_area = Rect::new(box_x, box_y, box_w, box_h);
+
+        // Clear + paint background so it sits cleanly over whatever is below
+        use ratatui::widgets::{BorderType, Wrap};
+        f.render_widget(ratatui::widgets::Clear, toast_area);
+        f.render_widget(
+            Block::default().style(Style::default().bg(theme.red_bg)),
+            toast_area,
         );
-        let toast = Paragraph::new(msg.as_str())
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme.red))
+            .style(Style::default().bg(theme.red_bg));
+        let inner = block.inner(toast_area);
+        f.render_widget(block, toast_area);
+
+        // Truncate label to inner width so it never overflows the border
+        let display = truncate(&label, inner.width as usize);
+        let toast = Paragraph::new(display.as_str())
             .alignment(Alignment::Center)
-            .style(Style::default().fg(THEME.read().unwrap().red));
-        f.render_widget(toast, toast_area);
+            .style(Style::default().fg(theme.red).add_modifier(Modifier::BOLD))
+            .wrap(Wrap { trim: false });
+        f.render_widget(toast, inner);
     }
 }

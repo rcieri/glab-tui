@@ -2611,6 +2611,39 @@ impl App {
         self.edit_menu = Some(menu);
     }
 
+    /// Single entry point for surfacing a runtime error. Sets the transient
+    /// error toast (`error_message`) and marks the failed terminal command so
+    /// both UI surfaces stay in sync.
+    ///
+    /// The failed command is matched with the same two-tier preference the
+    /// `CommandCompleted` handler used before this helper: a still-running
+    /// command whose description names the underlying CLI (`glab`/`gh`) or a
+    /// bulk/submit operation takes precedence, falling back to the most
+    /// recent running command.
+    pub fn show_error(&mut self, msg: String) {
+        self.error_message_at = Some(std::time::Instant::now());
+        let failed_status = format!("Failed: {}", msg);
+        self.error_message = Some(msg);
+        let pos = self
+            .terminal_commands
+            .iter()
+            .rposition(|cmd| {
+                (cmd.command.contains("glab")
+                    || cmd.command.contains("gh")
+                    || cmd.command.contains("submit")
+                    || cmd.command.contains("bulk"))
+                    && cmd.status == "Running"
+            })
+            .or_else(|| {
+                self.terminal_commands
+                    .iter()
+                    .rposition(|cmd| cmd.status == "Running")
+            });
+        if let Some(pos) = pos {
+            self.terminal_commands[pos].status = failed_status;
+        }
+    }
+
     pub fn kind(&self) -> BackendKind {
         self.gitlab_client
             .as_ref()
@@ -6807,6 +6840,70 @@ index 123456..789012 100644
             app.collect_unique_column_values(Tab::Pipelines, "Source")
                 .contains(&"schedule".to_string())
         );
+    }
+
+    #[test]
+    fn show_error_sets_toast_and_marks_running_command() {
+        let mut app = App::default();
+        app.terminal_commands.push(TerminalCommand {
+            timestamp: String::new(),
+            command: "glab mr list".to_string(),
+            status: "Running".to_string(),
+        });
+
+        app.show_error("boom".to_string());
+
+        assert_eq!(app.error_message, Some("boom".to_string()));
+        assert!(app.error_message_at.is_some());
+        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+    }
+
+    #[test]
+    fn show_error_prefers_cli_command_over_older_running() {
+        let mut app = App::default();
+        app.terminal_commands.push(TerminalCommand {
+            timestamp: String::new(),
+            command: "deferred task".to_string(),
+            status: "Running".to_string(),
+        });
+        app.terminal_commands.push(TerminalCommand {
+            timestamp: String::new(),
+            command: "gh pr list".to_string(),
+            status: "Running".to_string(),
+        });
+
+        app.show_error("boom".to_string());
+
+        assert_eq!(app.terminal_commands[0].status, "Running");
+        assert_eq!(app.terminal_commands[1].status, "Failed: boom");
+    }
+
+    #[test]
+    fn show_error_falls_back_to_most_recent_running_when_no_cli() {
+        let mut app = App::default();
+        app.terminal_commands.push(TerminalCommand {
+            timestamp: String::new(),
+            command: "deferred task".to_string(),
+            status: "Running".to_string(),
+        });
+
+        app.show_error("boom".to_string());
+
+        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+    }
+
+    #[test]
+    fn show_error_leaves_completed_commands_untouched() {
+        let mut app = App::default();
+        app.terminal_commands.push(TerminalCommand {
+            timestamp: String::new(),
+            command: "glab mr list".to_string(),
+            status: "Success".to_string(),
+        });
+
+        app.show_error("boom".to_string());
+
+        assert_eq!(app.terminal_commands[0].status, "Success");
     }
 
     #[test]

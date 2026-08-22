@@ -1487,13 +1487,7 @@ async fn main() -> Result<()> {
                         }
                         crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
-                            if selector.field_type == "milestone" {
-                                let mut ms_items = vec!["--".to_string()];
-                                ms_items.extend(items.into_iter().filter(|i| i != "--"));
-                                selector.all_items = ms_items;
-                            } else {
-                                selector.all_items = items;
-                            }
+                            selector.all_items = items;
                             selector.is_loading = false;
                             app.selector = Some(selector);
                         }
@@ -5316,6 +5310,20 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
+                                        let original_milestone = app
+                                            .issues
+                                            .items
+                                            .iter()
+                                            .find(|i| i.iid == entity_iid)
+                                            .and_then(|i| {
+                                                i.milestone.as_ref().map(|m| m.title.clone())
+                                            });
+                                        let new_milestone =
+                                            if milestone.is_empty() || milestone == "--" {
+                                                None
+                                            } else {
+                                                Some(milestone.clone())
+                                            };
                                         if let Some(item) = app
                                             .issues
                                             .items
@@ -5326,6 +5334,9 @@ async fn main() -> Result<()> {
                                                 item.title = title.clone();
                                             }
                                             item.description = Some(description.clone());
+                                            item.milestone = new_milestone.clone().map(|t| {
+                                                crate::domain::issues::Milestone { title: t }
+                                            });
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
@@ -5386,10 +5397,14 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "--" {
+                                            if new_milestone != original_milestone {
+                                                let milestone_val =
+                                                    new_milestone.clone().unwrap_or_default();
                                                 let _ = client
                                                     .update_issue_milestone(
-                                                        &project, entity_iid, &milestone,
+                                                        &project,
+                                                        entity_iid,
+                                                        &milestone_val,
                                                     )
                                                     .await;
                                             }
@@ -5484,6 +5499,20 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
+                                        let original_milestone = app
+                                            .mrs
+                                            .items
+                                            .iter()
+                                            .find(|m| m.iid == entity_iid)
+                                            .and_then(|m| {
+                                                m.milestone.as_ref().map(|ms| ms.title.clone())
+                                            });
+                                        let new_milestone =
+                                            if milestone.is_empty() || milestone == "--" {
+                                                None
+                                            } else {
+                                                Some(milestone.clone())
+                                            };
                                         if let Some(item) =
                                             app.mrs.items.iter_mut().find(|m| m.iid == entity_iid)
                                         {
@@ -5491,6 +5520,9 @@ async fn main() -> Result<()> {
                                                 item.title = title.clone();
                                             }
                                             item.description = Some(description.clone());
+                                            item.milestone = new_milestone
+                                                .clone()
+                                                .map(|t| crate::domain::mr::Milestone { title: t });
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
@@ -5566,10 +5598,14 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "--" {
+                                            if new_milestone != original_milestone {
+                                                let milestone_val =
+                                                    new_milestone.clone().unwrap_or_default();
                                                 let _ = client
                                                     .update_mr_milestone(
-                                                        &project, entity_iid, &milestone,
+                                                        &project,
+                                                        entity_iid,
+                                                        &milestone_val,
                                                     )
                                                     .await;
                                             }
@@ -5812,15 +5848,13 @@ async fn main() -> Result<()> {
                                             is_loading = false;
                                         }
                                     } else if field_type == "milestone" {
-                                        let mut ms_items = vec!["--".to_string()];
-                                        ms_items.extend(
-                                            app.milestones
-                                                .items
-                                                .iter()
-                                                .map(|m| m.title.clone())
-                                                .filter(|t| t != "--"),
-                                        );
-                                        all_items = ms_items;
+                                        all_items = app
+                                            .milestones
+                                            .items
+                                            .iter()
+                                            .map(|m| m.title.clone())
+                                            .filter(|t| t != "--")
+                                            .collect();
                                         is_loading = false;
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"

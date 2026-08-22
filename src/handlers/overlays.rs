@@ -26,20 +26,20 @@ pub fn handle_submit_dialog(
         .contains(crossterm::event::KeyModifiers::SHIFT);
     match key_event.code {
         KeyCode::Up | KeyCode::Char('k') => {
-            if dialog.is_on_submit() || dialog.is_on_cancel() {
-                if !dialog.options.is_empty() {
-                    dialog.cursor_idx = dialog.options.len();
+            if !dialog.is_on_submit() && !dialog.is_on_cancel() && !dialog.options.is_empty() {
+                if dialog.cursor_idx > 1 {
+                    dialog.cursor_idx -= 1;
+                } else {
+                    dialog.cursor_idx = dialog.options.len(); // wrap to bottom option
                 }
-            } else if dialog.cursor_idx > 1 {
-                dialog.cursor_idx -= 1;
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if !dialog.is_on_cancel() && !dialog.is_on_submit() {
+            if !dialog.is_on_submit() && !dialog.is_on_cancel() && !dialog.options.is_empty() {
                 if dialog.cursor_idx < dialog.options.len() {
                     dialog.cursor_idx += 1;
                 } else {
-                    dialog.cursor_idx = dialog.cancel_idx();
+                    dialog.cursor_idx = 1; // wrap to top option
                 }
             }
         }

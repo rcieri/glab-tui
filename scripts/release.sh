@@ -217,8 +217,8 @@ select_start_phase() {
     "$PHASE_GIFS"$'\t'"2 · Generate GIFs only   (re-run generate-demos.sh, push, rebuild PR if needed)"
     "$PHASE_REVIEW"$'\t'"3 · Review & merge       (squash-merge an existing PR and tag)"
     "$PHASE_WAIT_CI"$'\t'"4 · Wait for CI build    (poll release assets for an already-tagged version)"
-    "$PHASE_POST_RELEASE"$'\t'"5 · Post-release         (release notes, Homebrew formula, Scoop manifest)"
-    "$PHASE_PUBLISH"$'\t'"6 · Publish              (Docker image → GHCR + crate → crates.io)"
+    "$PHASE_POST_RELEASE"$'\t'"5 · Post-release         (release notes, Homebrew formula, Scoop manifest — Homebrew/Scoop skipped for nightly)"
+    "$PHASE_PUBLISH"$'\t'"6 · Publish              (Docker image → GHCR + crate → crates.io — crates.io skipped for nightly)"
   )
 
   note "Where would you like to start?"
@@ -231,22 +231,45 @@ select_start_phase() {
 # State bootstrap helpers — prompt for values that skipped phases would set
 # ---------------------------------------------------------------------------
 
+# True when the current build targets a nightly tag (ends in `-nightly` or
+# the `INCREMENT=nightly` CLI arg / menu pick was used). Nightlies skip the
+# Cargo.toml bump, the prepare PR, Homebrew/Scoop syncs, and crates.io
+# publish; they still get release notes and a `:nightly` Docker image.
+is_nightly() {
+  [[ "${INCREMENT:-}" == "nightly" ]] || [[ "${NEW_TAG:-}" == *-nightly* ]]
+}
+
 # Ensure NEW_TAG / VERSION are set; fetch from git tags or prompt.
 ensure_version() {
   if [[ -n "${NEW_TAG:-}" ]]; then return; fi
 
   git fetch --tags --prune 2>/dev/null || true
+
+  # For nightly invocations, auto-detect the most recent nightly tag so the
+  # user doesn't have to paste it.
+  if [[ "${INCREMENT:-}" == "nightly" ]]; then
+    local latest_nightly
+    latest_nightly="$(git tag --list 'v*-nightly*' --sort=-v:refname 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$latest_nightly" ]]; then
+      NEW_TAG="$latest_nightly"
+      VERSION="${NEW_TAG#v}"
+      ok "Auto-detected nightly tag: $NEW_TAG"
+      return 0
+    fi
+  fi
+
   local latest_tag
   latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
 
-  printf '\n%sEnter the release tag%s (e.g. v1.2.3)' "$C_BOLD" "$C_RESET"
+  printf '\n%sEnter the release tag%s (e.g. v1.2.3 or v1.2.3-nightly.20260822)' "$C_BOLD" "$C_RESET"
   if [[ -n "$latest_tag" ]]; then
     printf ' [latest tag: %s]' "$latest_tag"
   fi
   printf ': '
   read -r NEW_TAG
   [[ -n "$NEW_TAG" ]] || die "version tag is required"
-  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || die "tag must match vX.Y.Z (got '$NEW_TAG')"
+  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-nightly(\.[0-9]+)?)?$ ]] || \
+    die "tag must match vX.Y.Z or vX.Y.Z-nightly[.YYYYMMDD] (got '$NEW_TAG')"
   VERSION="${NEW_TAG#v}"
   ok "Version: $NEW_TAG"
 }
@@ -309,7 +332,7 @@ preflight() {
 next_version() {
   git fetch --tags --prune
   local latest_tag version base_major base_minor base_patch
-  local major_v minor_v patch_v
+  local major_v minor_v patch_v date_suffix nightly_v
   latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
   version="${latest_tag#v}"
   IFS='.' read -r base_major base_minor base_patch <<< "$version"
@@ -317,25 +340,30 @@ next_version() {
   major_v="$((base_major + 1)).0.0"
   minor_v="$base_major.$((base_minor + 1)).0"
   patch_v="$base_major.$base_minor.$((base_patch + 1))"
+  date_suffix="$(date -u +%Y%m%d)"
+  nightly_v="${patch_v}-nightly.${date_suffix}"
 
   if [[ -z "$INCREMENT" ]]; then
     printf '\n%sCurrent version:%s %s\n' "$C_BOLD" "$C_RESET" "$latest_tag"
-    printf '  %s1)%s patch  -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
-    printf '  %s2)%s minor  -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
-    printf '  %s3)%s major  -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
-    read -r -p "Select release increment [1/2/3] (default patch): " choice
+    printf '  %s1)%s patch   -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
+    printf '  %s2)%s minor   -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
+    printf '  %s3)%s major   -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
+    printf '  %s4)%s nightly -> v%s  (pre-release, skip publish)\n' "$C_BOLD" "$C_RESET" "$nightly_v"
+    read -r -p "Select release increment [1/2/3/4] (default patch): " choice
     case "${choice:-1}" in
-      1|patch) VERSION="$patch_v" ;;
-      2|minor) VERSION="$minor_v" ;;
-      3|major) VERSION="$major_v" ;;
+      1|patch)   VERSION="$patch_v" ;;
+      2|minor)   VERSION="$minor_v" ;;
+      3|major)   VERSION="$major_v" ;;
+      4|nightly) INCREMENT="nightly"; VERSION="$nightly_v" ;;
       *) die "invalid selection '$choice'" ;;
     esac
   else
     case "$INCREMENT" in
-      major) VERSION="$major_v" ;;
-      minor) VERSION="$minor_v" ;;
-      patch) VERSION="$patch_v" ;;
-      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major)" ;;
+      major)   VERSION="$major_v" ;;
+      minor)   VERSION="$minor_v" ;;
+      patch)   VERSION="$patch_v" ;;
+      nightly) VERSION="$nightly_v" ;;
+      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major|nightly)" ;;
     esac
   fi
 
@@ -357,6 +385,12 @@ bump_cargo_version() {
 
 prepare() {
   ensure_version   # no-op if next_version() already ran
+
+  if is_nightly; then
+    note "Nightly release — skipping Cargo.toml bump, docs regeneration, and PR creation"
+    note "(nightly tag $NEW_TAG should already be pushed to origin; CI will build the assets)"
+    return 0
+  fi
 
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout "$BRANCH"
@@ -389,6 +423,11 @@ The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSI
 # ---------------------------------------------------------------------------
 generate_gifs() {
   ensure_branch
+
+  if is_nightly; then
+    note "Nightly release — skipping GIF generation and PR creation"
+    return 0
+  fi
 
   # Make sure there is a built binary on PATH.
   if [[ ! -x "$ROOT/target/release/glab-tui" ]]; then
@@ -428,6 +467,10 @@ Review, then this script will merge and cut the release.")"
 # Phase 3: wait for review, then merge and tag
 # ---------------------------------------------------------------------------
 review_gate() {
+  if is_nightly; then
+    note "Nightly release — no PR to review (nightly tag is pushed manually)"
+    return 0
+  fi
   ensure_pr_number
   PR_URL="https://github.com/$REPO/pull/$PR_NUMBER"
   note "Pause for review — PR: $PR_URL"
@@ -436,6 +479,16 @@ review_gate() {
 
 merge_and_tag() {
   ensure_version
+
+  if is_nightly; then
+    note "Nightly release — tag $NEW_TAG should already be pushed to origin"
+    # Verify the tag exists locally; bail out if not so the user knows.
+    if ! git rev-parse --verify --quiet "refs/tags/$NEW_TAG" >/dev/null; then
+      die "nightly tag $NEW_TAG not found locally — push it first (e.g. 'git push origin $NEW_TAG')"
+    fi
+    return 0
+  fi
+
   ensure_pr_number
 
   note "Merging PR #$PR_NUMBER (squash, auto-merge when checks pass)..."
@@ -714,6 +767,11 @@ Use the content from CHANGELOG.md for the current version as the source material
   note "Updating release $NEW_TAG body..."
   spinner "Updating release $NEW_TAG body" gh release edit "$NEW_TAG" --repo "$REPO" --notes-file RELEASE_NOTES.md
 
+  if is_nightly; then
+    note "Skipping Homebrew/Scoop manifest updates for nightly $NEW_TAG"
+    return 0
+  fi
+
   update_homebrew
   update_scoop
 }
@@ -735,11 +793,18 @@ publish() {
   user="$(gh api user --jq .login)"
   spinner "Authenticating to GHCR" bash -c 'gh auth token | docker login ghcr.io -u "$0" --password-stdin' "$user"
   local tags_args=(-t "ghcr.io/$REPO:$NEW_TAG")
-  if [[ "$NEW_TAG" != *-* ]]; then
+  if is_nightly; then
+    tags_args+=(-t "ghcr.io/$REPO:nightly")
+  elif [[ "$NEW_TAG" != *-* ]]; then
     tags_args+=(-t "ghcr.io/$REPO:latest")
   fi
   spinner "Building & pushing Docker image to GHCR" docker buildx build --push "${tags_args[@]}" .
   ok "Docker image pushed to GHCR"
+
+  if is_nightly; then
+    note "Skipping crates.io publish for nightly $NEW_TAG (pre-release versions are rejected)"
+    return 0
+  fi
 
   spinner "Publishing crate v$package_version to crates.io" cargo publish --locked
   ok "crate v$package_version published to crates.io"

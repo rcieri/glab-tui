@@ -1329,7 +1329,7 @@ pub async fn handle_active_tab_key(
                                 value: current_desc,
                                 action: crate::app::TextInputAction::EditField {
                                     entity_iid: runner_id,
-                                    entity_type: "runner".to_string(),
+                                    entity_kind: crate::app::EditEntityKind::EditRunner,
                                     field_type: "runner_description".to_string(),
                                 },
                             });
@@ -1381,7 +1381,11 @@ pub async fn handle_active_tab_key(
                             .iter()
                             .position(|r| r.tag_name == tag_name)
                         {
-                            rebuild_edit_menu(app, "release", idx as u64);
+                            rebuild_edit_menu(
+                                app,
+                                crate::app::EditEntityKind::EditRelease,
+                                idx as u64,
+                            );
                         }
                     }
                 }

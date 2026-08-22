@@ -438,7 +438,7 @@ impl Tab {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditEntityKind {
     CreateIssue,
     EditIssue,
@@ -449,8 +449,10 @@ pub enum EditEntityKind {
     CreateMilestone,
     EditMilestone,
     CreateRelease,
+    EditRelease,
     CreatePipeline,
     CreateBranch,
+    EditRunner,
 }
 
 impl EditEntityKind {
@@ -488,14 +490,40 @@ impl EditEntityKind {
             Self::CreateIssue | Self::EditIssue | Self::BulkEditIssues => "issue",
             Self::CreateMr | Self::EditMr | Self::BulkEditMrs => "mr",
             Self::CreateMilestone | Self::EditMilestone => "milestone",
-            Self::CreateRelease => "release",
+            Self::CreateRelease | Self::EditRelease => "release",
             Self::CreatePipeline => "pipeline",
             Self::CreateBranch => "branch",
+            Self::EditRunner => "runner",
         }
     }
 
-    /// Return the legacy entity_type string for backward compat.
-    pub fn legacy_string(&self) -> String {
+    /// Map the legacy `entity_type` strings used by `Selector` and other
+    /// call sites onto the typed enum. Returns `None` for values that aren't
+    /// entity kinds (e.g. `"app"`, `"theme_selector"`, `"runner_description"`).
+    pub fn from_legacy_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "issue" | "edit_issue" => Self::EditIssue,
+            "new_issue" => Self::CreateIssue,
+            "new_bulk_edit_issues" => Self::BulkEditIssues,
+            "mr" | "edit_mr" => Self::EditMr,
+            "new_mr" => Self::CreateMr,
+            "new_bulk_edit_mrs" => Self::BulkEditMrs,
+            "milestone" | "edit_milestone" => Self::EditMilestone,
+            "new_milestone" => Self::CreateMilestone,
+            "release" => Self::EditRelease,
+            "new_release" => Self::CreateRelease,
+            "new_pipeline" => Self::CreatePipeline,
+            "new_branch" => Self::CreateBranch,
+            "runner" | "runner_description" => Self::EditRunner,
+            _ => return None,
+        })
+    }
+
+    /// Inverse of [`Self::from_legacy_str`]. Only used at the few call sites
+    /// that still bridge into the string-typed `Selector.entity_type` slot
+    /// — selectors carry non-entity variants too (`"app"`, `"theme_selector"`,
+    /// `"global_search"`), so they can't be typed at the struct level.
+    pub fn legacy_string(&self) -> &'static str {
         match self {
             Self::CreateIssue => "new_issue",
             Self::EditIssue => "issue",
@@ -506,10 +534,11 @@ impl EditEntityKind {
             Self::CreateMilestone => "new_milestone",
             Self::EditMilestone => "milestone",
             Self::CreateRelease => "new_release",
+            Self::EditRelease => "release",
             Self::CreatePipeline => "new_pipeline",
             Self::CreateBranch => "new_branch",
+            Self::EditRunner => "runner",
         }
-        .to_string()
     }
 }
 
@@ -2210,7 +2239,7 @@ pub struct DraftComment {
 pub enum TextInputAction {
     EditField {
         entity_iid: u64,
-        entity_type: String,
+        entity_kind: EditEntityKind,
         field_type: String,
     },
     /// Edit a field inside a "new entity" EditMenu (iid=0). The value is
@@ -2264,7 +2293,7 @@ pub struct DatePicker {
 pub enum DatePickerAction {
     EditField {
         entity_iid: u64,
-        entity_type: String,
+        entity_kind: EditEntityKind,
         field_type: String,
     },
     EditNewField {
@@ -5106,6 +5135,66 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_edit_entity_kind_legacy_str_round_trip() {
+        // Every variant should map to itself through from_legacy_str ∘ legacy_string.
+        let variants = [
+            EditEntityKind::CreateIssue,
+            EditEntityKind::EditIssue,
+            EditEntityKind::BulkEditIssues,
+            EditEntityKind::CreateMr,
+            EditEntityKind::EditMr,
+            EditEntityKind::BulkEditMrs,
+            EditEntityKind::CreateMilestone,
+            EditEntityKind::EditMilestone,
+            EditEntityKind::CreateRelease,
+            EditEntityKind::EditRelease,
+            EditEntityKind::CreatePipeline,
+            EditEntityKind::CreateBranch,
+            EditEntityKind::EditRunner,
+        ];
+        for v in variants {
+            let s = v.legacy_string();
+            let back = EditEntityKind::from_legacy_str(s)
+                .unwrap_or_else(|| panic!("missing legacy mapping for {v:?}"));
+            assert_eq!(v, back, "round-trip failed for {v:?}");
+        }
+    }
+
+    #[test]
+    fn test_edit_entity_kind_from_legacy_str_aliases() {
+        // Both "edit_X" and bare "X" forms should resolve to the same variant.
+        assert_eq!(
+            EditEntityKind::from_legacy_str("issue"),
+            Some(EditEntityKind::EditIssue)
+        );
+        assert_eq!(
+            EditEntityKind::from_legacy_str("edit_issue"),
+            Some(EditEntityKind::EditIssue)
+        );
+        assert_eq!(
+            EditEntityKind::from_legacy_str("mr"),
+            Some(EditEntityKind::EditMr)
+        );
+        assert_eq!(
+            EditEntityKind::from_legacy_str("edit_mr"),
+            Some(EditEntityKind::EditMr)
+        );
+        assert_eq!(
+            EditEntityKind::from_legacy_str("milestone"),
+            Some(EditEntityKind::EditMilestone)
+        );
+        assert_eq!(
+            EditEntityKind::from_legacy_str("edit_milestone"),
+            Some(EditEntityKind::EditMilestone)
+        );
+        // Unknown / non-entity strings (e.g. selector modes) must return None.
+        assert_eq!(EditEntityKind::from_legacy_str("app"), None);
+        assert_eq!(EditEntityKind::from_legacy_str("theme_selector"), None);
+        assert_eq!(EditEntityKind::from_legacy_str("global_search"), None);
+        assert_eq!(EditEntityKind::from_legacy_str(""), None);
+    }
 
     #[test]
     fn test_date_picker_navigation() {

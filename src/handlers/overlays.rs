@@ -440,13 +440,13 @@ pub fn handle_date_picker(
                 match date_picker.action {
                     crate::app::DatePickerAction::EditField {
                         entity_iid,
-                        entity_type,
+                        entity_kind,
                         field_type,
                     } => {
                         let active_tab = app.active_tab;
                         apply_field_text_change(
                             app,
-                            &entity_type,
+                            entity_kind,
                             entity_iid,
                             &field_type,
                             selected_val,
@@ -454,7 +454,7 @@ pub fn handle_date_picker(
                             tx,
                             active_tab,
                         );
-                        rebuild_edit_menu(app, &entity_type, entity_iid);
+                        rebuild_edit_menu(app, entity_kind, entity_iid);
                     }
                     crate::app::DatePickerAction::EditNewField { field_idx } => {
                         if let Some(ref mut menu) = app.edit_menu {

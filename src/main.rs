@@ -1817,13 +1817,13 @@ async fn main() -> Result<()> {
                                     }
                                     crate::app::TextInputAction::EditField {
                                         entity_iid,
-                                        entity_type,
+                                        entity_kind,
                                         field_type,
                                     } => {
                                         let active_tab = app.active_tab;
                                         apply_field_text_change(
                                             &mut app,
-                                            &entity_type,
+                                            entity_kind,
                                             entity_iid,
                                             &field_type,
                                             value,
@@ -1831,7 +1831,7 @@ async fn main() -> Result<()> {
                                             events.sender(),
                                             active_tab,
                                         );
-                                        rebuild_edit_menu(&mut app, &entity_type, entity_iid);
+                                        rebuild_edit_menu(&mut app, entity_kind, entity_iid);
                                     }
                                     crate::app::TextInputAction::CreateIssue => {
                                         if !value.trim().is_empty() {
@@ -3399,9 +3399,14 @@ async fn main() -> Result<()> {
                                                         .unwrap_or(0),
                                                 }
                                             } else {
+                                                let entity_kind =
+                                                    crate::app::EditEntityKind::from_legacy_str(
+                                                        &entity_type,
+                                                    )
+                                                    .unwrap_or(crate::app::EditEntityKind::EditMr);
                                                 crate::app::TextInputAction::EditField {
                                                     entity_iid,
-                                                    entity_type: entity_type.clone(),
+                                                    entity_kind,
                                                     field_type: "description".to_string(),
                                                 }
                                             };
@@ -4293,18 +4298,24 @@ async fn main() -> Result<()> {
                                         }
                                     } else {
                                         let active_tab = app.active_tab;
-                                        apply_selector_changes(
-                                            &mut app,
-                                            &entity_type,
-                                            entity_iid,
-                                            &field_type,
-                                            selected_list,
-                                            &mut terminal,
-                                            events.sender(),
-                                            active_tab,
-                                        );
+                                        if let Some(entity_kind) =
+                                            crate::app::EditEntityKind::from_legacy_str(
+                                                &entity_type,
+                                            )
+                                        {
+                                            apply_selector_changes(
+                                                &mut app,
+                                                entity_kind,
+                                                entity_iid,
+                                                &field_type,
+                                                selected_list,
+                                                &mut terminal,
+                                                events.sender(),
+                                                active_tab,
+                                            );
 
-                                        rebuild_edit_menu(&mut app, &entity_type, entity_iid);
+                                            rebuild_edit_menu(&mut app, entity_kind, entity_iid);
+                                        }
                                     }
                                 }
                                 _ => {
@@ -4614,13 +4625,12 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Enter => {
                                 let entity_iid = menu.entity_iid;
-                                let entity_type = menu.entity_kind.legacy_string();
-                                let is_new_entity =
-                                    entity_iid == 0 || entity_type.starts_with("new_");
+                                let entity_kind = menu.entity_kind;
+                                let is_new_entity = entity_iid == 0 || entity_kind.is_create();
                                 let is_on_submit = menu.selected_idx == menu.fields.len() + 1;
 
                                 if is_on_submit {
-                                    if entity_type == "new_issue" {
+                                    if entity_kind == crate::app::EditEntityKind::CreateIssue {
                                         let title = menu
                                             .fields
                                             .iter()
@@ -4699,7 +4709,7 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                         continue;
-                                    } else if entity_type == "new_mr" {
+                                    } else if entity_kind == crate::app::EditEntityKind::CreateMr {
                                         let title = menu
                                             .fields
                                             .iter()
@@ -4808,7 +4818,9 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                         continue;
-                                    } else if entity_type == "new_bulk_edit_issues" {
+                                    } else if entity_kind
+                                        == crate::app::EditEntityKind::BulkEditIssues
+                                    {
                                         let labels = menu
                                             .fields
                                             .iter()
@@ -4890,7 +4902,8 @@ async fn main() -> Result<()> {
                                             let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
                                         });
                                         continue;
-                                    } else if entity_type == "new_bulk_edit_mrs" {
+                                    } else if entity_kind == crate::app::EditEntityKind::BulkEditMrs
+                                    {
                                         let labels = menu
                                             .fields
                                             .iter()
@@ -4972,7 +4985,9 @@ async fn main() -> Result<()> {
                                             let _ = tx.send(Event::CommandCompleted(tab, Ok(())));
                                         });
                                         continue;
-                                    } else if entity_type == "new_milestone" {
+                                    } else if entity_kind
+                                        == crate::app::EditEntityKind::CreateMilestone
+                                    {
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5045,7 +5060,9 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                         continue;
-                                    } else if entity_type == "new_pipeline" {
+                                    } else if entity_kind
+                                        == crate::app::EditEntityKind::CreatePipeline
+                                    {
                                         let branch = menu
                                             .fields
                                             .iter()
@@ -5136,7 +5153,9 @@ async fn main() -> Result<()> {
                                                 }
                                             }
                                         });
-                                    } else if entity_type == "new_release" {
+                                    } else if entity_kind
+                                        == crate::app::EditEntityKind::CreateRelease
+                                    {
                                         let tag = menu
                                             .fields
                                             .iter()
@@ -5191,8 +5210,7 @@ async fn main() -> Result<()> {
                                             });
                                         }
                                         continue;
-                                    } else if entity_type == "issue" || entity_type == "edit_issue"
-                                    {
+                                    } else if entity_kind == crate::app::EditEntityKind::EditIssue {
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5378,7 +5396,7 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                         continue;
-                                    } else if entity_type == "mr" || entity_type == "edit_mr" {
+                                    } else if entity_kind == crate::app::EditEntityKind::EditMr {
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5571,8 +5589,8 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                         continue;
-                                    } else if entity_type == "milestone"
-                                        || entity_type == "edit_milestone"
+                                    } else if entity_kind
+                                        == crate::app::EditEntityKind::EditMilestone
                                     {
                                         let title = menu
                                             .fields
@@ -5744,7 +5762,7 @@ async fn main() -> Result<()> {
                                         all_items = vec!["Draft".to_string(), "Ready".to_string()];
                                         is_loading = false;
                                         let is_new_entity =
-                                            entity_iid == 0 || entity_type.starts_with("new_");
+                                            entity_iid == 0 || entity_kind.is_create();
                                         if is_new_entity {
                                             let current_val =
                                                 menu.fields[menu.selected_idx].value.clone();
@@ -5766,7 +5784,7 @@ async fn main() -> Result<()> {
                                         all_items = vec!["Yes".to_string(), "No".to_string()];
                                         is_loading = false;
                                         let is_new_entity =
-                                            entity_iid == 0 || entity_type.starts_with("new_");
+                                            entity_iid == 0 || entity_kind.is_create();
                                         if is_new_entity {
                                             let current_val =
                                                 menu.fields[menu.selected_idx].value.clone();
@@ -5896,7 +5914,9 @@ async fn main() -> Result<()> {
                                         all_items = issues;
                                         is_loading = false;
                                     } else if field_type == "description_template" {
-                                        let template_type = if entity_type == "new_mr" {
+                                        let template_type = if entity_kind
+                                            == crate::app::EditEntityKind::CreateMr
+                                        {
                                             "mr"
                                         } else {
                                             "issue"
@@ -5910,7 +5930,7 @@ async fn main() -> Result<()> {
                                         is_loading = false;
                                     }
 
-                                    if entity_iid == 0 || entity_type.starts_with("new_") {
+                                    if entity_iid == 0 || entity_kind.is_create() {
                                         let current_val =
                                             menu.fields[menu.selected_idx].value.clone();
                                         if !current_val.is_empty()
@@ -5928,7 +5948,7 @@ async fn main() -> Result<()> {
                                                 current_set.insert(current_val);
                                             }
                                         }
-                                    } else if entity_type == "issue" {
+                                    } else if entity_kind == crate::app::EditEntityKind::EditIssue {
                                         if let Some(issue) =
                                             app.issues.items.iter().find(|i| i.iid == entity_iid)
                                         {
@@ -5952,7 +5972,7 @@ async fn main() -> Result<()> {
                                                 _ => {}
                                             }
                                         }
-                                    } else if entity_type == "mr" {
+                                    } else if entity_kind == crate::app::EditEntityKind::EditMr {
                                         if let Some(mr) =
                                             app.mrs.items.iter().find(|m| m.iid == entity_iid)
                                         {
@@ -6006,7 +6026,7 @@ async fn main() -> Result<()> {
                                         is_filtering: false,
                                         is_loading,
                                         entity_iid,
-                                        entity_type: entity_type.clone(),
+                                        entity_type: entity_kind.legacy_string().to_string(),
                                         field_type: if field_name.starts_with("Input: ") {
                                             field_name.clone()
                                         } else {
@@ -6071,10 +6091,12 @@ async fn main() -> Result<()> {
 
                                 if field_name == "Description" {
                                     // For new entities with empty description, show template selector
-                                    if entity_iid == 0 || entity_type.starts_with("new_") {
+                                    if entity_iid == 0 || entity_kind.is_create() {
                                         let raw_val = menu.fields[menu.selected_idx].value.clone();
                                         if raw_val.trim().is_empty() {
-                                            let template_type = if entity_type == "new_mr" {
+                                            let template_type = if entity_kind
+                                                == crate::app::EditEntityKind::CreateMr
+                                            {
                                                 "mr"
                                             } else {
                                                 "issue"
@@ -6089,7 +6111,9 @@ async fn main() -> Result<()> {
                                                                 .map(|(n, _)| n.clone()),
                                                         )
                                                         .collect();
-                                                let field_type = if entity_type == "new_mr" {
+                                                let field_type = if entity_kind
+                                                    == crate::app::EditEntityKind::CreateMr
+                                                {
                                                     "mr_template_selector"
                                                 } else {
                                                     "issue_template_selector"
@@ -6111,7 +6135,9 @@ async fn main() -> Result<()> {
                                                     is_filtering: false,
                                                     is_loading: false,
                                                     entity_iid: 0,
-                                                    entity_type: entity_type.clone(),
+                                                    entity_type: entity_kind
+                                                        .legacy_string()
+                                                        .to_string(),
                                                     field_type: if field_name.starts_with("Input: ")
                                                     {
                                                         field_name.clone()
@@ -6136,51 +6162,52 @@ async fn main() -> Result<()> {
                                 }
 
                                 if field_name == "Due Date" || field_name == "Start Date" {
-                                    let current_val =
-                                        if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            menu.fields[menu.selected_idx].value.clone()
-                                        } else {
-                                            if entity_type == "issue" {
-                                                app.issues
-                                                    .items
-                                                    .iter()
-                                                    .find(|i| i.iid == entity_iid)
-                                                    .and_then(|i| i.due_date.clone())
+                                    let current_val = if entity_iid == 0 || entity_kind.is_create()
+                                    {
+                                        menu.fields[menu.selected_idx].value.clone()
+                                    } else {
+                                        if entity_kind == crate::app::EditEntityKind::EditIssue {
+                                            app.issues
+                                                .items
+                                                .iter()
+                                                .find(|i| i.iid == entity_iid)
+                                                .and_then(|i| i.due_date.clone())
+                                                .unwrap_or_default()
+                                        } else if entity_kind
+                                            == crate::app::EditEntityKind::EditMilestone
+                                        {
+                                            let m = app
+                                                .milestones
+                                                .items
+                                                .iter()
+                                                .find(|m| m.iid == entity_iid);
+                                            if field_name == "Start Date" {
+                                                m.and_then(|m| m.start_date.clone())
                                                     .unwrap_or_default()
-                                            } else if entity_type == "milestone" {
-                                                let m = app
-                                                    .milestones
-                                                    .items
-                                                    .iter()
-                                                    .find(|m| m.iid == entity_iid);
-                                                if field_name == "Start Date" {
-                                                    m.and_then(|m| m.start_date.clone())
-                                                        .unwrap_or_default()
-                                                } else {
-                                                    m.and_then(|m| m.due_date.clone())
-                                                        .unwrap_or_default()
-                                                }
                                             } else {
-                                                String::new()
-                                            }
-                                        };
-                                    let action =
-                                        if entity_iid != 0 && !entity_type.starts_with("new_") {
-                                            let ft = match field_name.as_str() {
-                                                "Due Date" => "due_date",
-                                                "Start Date" => "start_date",
-                                                _ => "",
-                                            };
-                                            crate::app::DatePickerAction::EditField {
-                                                entity_iid,
-                                                entity_type: entity_type.clone(),
-                                                field_type: ft.to_string(),
+                                                m.and_then(|m| m.due_date.clone())
+                                                    .unwrap_or_default()
                                             }
                                         } else {
-                                            crate::app::DatePickerAction::EditNewField {
-                                                field_idx: menu.selected_idx,
-                                            }
+                                            String::new()
+                                        }
+                                    };
+                                    let action = if entity_iid != 0 && !entity_kind.is_create() {
+                                        let ft = match field_name.as_str() {
+                                            "Due Date" => "due_date",
+                                            "Start Date" => "start_date",
+                                            _ => "",
                                         };
+                                        crate::app::DatePickerAction::EditField {
+                                            entity_iid,
+                                            entity_kind,
+                                            field_type: ft.to_string(),
+                                        }
+                                    } else {
+                                        crate::app::DatePickerAction::EditNewField {
+                                            field_idx: menu.selected_idx,
+                                        }
+                                    };
                                     app.date_picker = Some(crate::app::DatePicker::new(
                                         format!(" Select {}", field_name),
                                         &current_val,
@@ -6195,66 +6222,70 @@ async fn main() -> Result<()> {
                                     || field_name == "Inputs"
                                     || field_name == "Release Name"
                                 {
-                                    let current_val =
-                                        if entity_iid == 0 || entity_type.starts_with("new_") {
-                                            menu.fields[menu.selected_idx].value.clone()
-                                        } else {
-                                            let field_type = match field_name.as_str() {
-                                                "Title" => "title",
-                                                "Target Branch" => "target_branch",
-                                                "Weight" => "weight",
-                                                "Release Name" => "release_name",
-                                                "Tag" => "tag",
-                                                _ => "",
-                                            };
-                                            match field_type {
-                                                "title" => {
-                                                    if entity_type == "issue" {
-                                                        app.issues
-                                                            .items
-                                                            .iter()
-                                                            .find(|i| i.iid == entity_iid)
-                                                            .map(|i| i.title.clone())
-                                                            .unwrap_or_default()
-                                                    } else if entity_type == "milestone" {
-                                                        app.milestones
-                                                            .items
-                                                            .iter()
-                                                            .find(|m| m.iid == entity_iid)
-                                                            .map(|m| m.title.clone())
-                                                            .unwrap_or_default()
-                                                    } else {
-                                                        app.mrs
-                                                            .items
-                                                            .iter()
-                                                            .find(|m| m.iid == entity_iid)
-                                                            .map(|m| m.title.clone())
-                                                            .unwrap_or_default()
-                                                    }
-                                                }
-                                                "target_branch" => app
-                                                    .mrs
-                                                    .items
-                                                    .iter()
-                                                    .find(|m| m.iid == entity_iid)
-                                                    .map(|m| m.target_branch.clone())
-                                                    .unwrap_or_default(),
-                                                "weight" => "0".to_string(),
-                                                "release_name" => app
-                                                    .releases
-                                                    .items
-                                                    .get(entity_iid as usize)
-                                                    .map(|r| r.name.clone())
-                                                    .unwrap_or_default(),
-                                                "tag" => app
-                                                    .releases
-                                                    .items
-                                                    .get(entity_iid as usize)
-                                                    .map(|r| r.tag_name.clone())
-                                                    .unwrap_or_default(),
-                                                _ => String::new(),
-                                            }
+                                    let current_val = if entity_iid == 0 || entity_kind.is_create()
+                                    {
+                                        menu.fields[menu.selected_idx].value.clone()
+                                    } else {
+                                        let field_type = match field_name.as_str() {
+                                            "Title" => "title",
+                                            "Target Branch" => "target_branch",
+                                            "Weight" => "weight",
+                                            "Release Name" => "release_name",
+                                            "Tag" => "tag",
+                                            _ => "",
                                         };
+                                        match field_type {
+                                            "title" => {
+                                                if entity_kind
+                                                    == crate::app::EditEntityKind::EditIssue
+                                                {
+                                                    app.issues
+                                                        .items
+                                                        .iter()
+                                                        .find(|i| i.iid == entity_iid)
+                                                        .map(|i| i.title.clone())
+                                                        .unwrap_or_default()
+                                                } else if entity_kind
+                                                    == crate::app::EditEntityKind::EditMilestone
+                                                {
+                                                    app.milestones
+                                                        .items
+                                                        .iter()
+                                                        .find(|m| m.iid == entity_iid)
+                                                        .map(|m| m.title.clone())
+                                                        .unwrap_or_default()
+                                                } else {
+                                                    app.mrs
+                                                        .items
+                                                        .iter()
+                                                        .find(|m| m.iid == entity_iid)
+                                                        .map(|m| m.title.clone())
+                                                        .unwrap_or_default()
+                                                }
+                                            }
+                                            "target_branch" => app
+                                                .mrs
+                                                .items
+                                                .iter()
+                                                .find(|m| m.iid == entity_iid)
+                                                .map(|m| m.target_branch.clone())
+                                                .unwrap_or_default(),
+                                            "weight" => "0".to_string(),
+                                            "release_name" => app
+                                                .releases
+                                                .items
+                                                .get(entity_iid as usize)
+                                                .map(|r| r.name.clone())
+                                                .unwrap_or_default(),
+                                            "tag" => app
+                                                .releases
+                                                .items
+                                                .get(entity_iid as usize)
+                                                .map(|r| r.tag_name.clone())
+                                                .unwrap_or_default(),
+                                            _ => String::new(),
+                                        }
+                                    };
 
                                     let action = crate::app::TextInputAction::EditNewField {
                                         field_idx: menu.selected_idx,

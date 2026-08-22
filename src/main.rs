@@ -314,8 +314,10 @@ fn handle_submit_dialog_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
     }
 
     // Option rows sit just above the separator, after the body.
-    let body_width = 56usize;
-    let body_lines = textwrap_for_dialog(&dialog.body, body_width).len().max(1);
+    let body_lines =
+        crate::utils::format::wrap_text(&dialog.body, crate::app::SubmitDialog::BODY_INNER_WIDTH)
+            .len()
+            .max(1);
     let option_rows = dialog.options.len();
     if option_rows > 0 {
         let options_y_start = rect.y + 2 + body_lines as u16;
@@ -327,35 +329,6 @@ fn handle_submit_dialog_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
             }
         }
     }
-}
-
-fn textwrap_for_dialog(text: &str, width: usize) -> Vec<String> {
-    if width == 0 {
-        return vec![text.to_string()];
-    }
-    let mut out: Vec<String> = Vec::new();
-    for paragraph in text.split("\n") {
-        if paragraph.is_empty() {
-            out.push(String::new());
-            continue;
-        }
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            if current.is_empty() {
-                current.push_str(word);
-            } else if current.len() + 1 + word.len() <= width {
-                current.push(' ');
-                current.push_str(word);
-            } else {
-                out.push(std::mem::take(&mut current));
-                current.push_str(word);
-            }
-        }
-        if !current.is_empty() {
-            out.push(current);
-        }
-    }
-    out
 }
 
 /// Mouse click on selector list area.

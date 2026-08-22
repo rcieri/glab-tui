@@ -21,9 +21,6 @@ pub fn handle_submit_dialog(
     let mut submit = false;
     let mut cancel = false;
 
-    let shift = key_event
-        .modifiers
-        .contains(crossterm::event::KeyModifiers::SHIFT);
     match key_event.code {
         KeyCode::Up | KeyCode::Char('k') => {
             if dialog.is_on_submit() || dialog.is_on_cancel() {
@@ -105,7 +102,6 @@ pub fn handle_submit_dialog(
         app.submit_dialog = Some(dialog);
     }
 
-    let _ = shift; // SHIFT is consumed above via BackTab
     true
 }
 

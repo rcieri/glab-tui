@@ -467,8 +467,13 @@ impl GlabBackend {
             args.push("--remove-source-branch".into());
         }
         if let Some(s) = strategy {
-            if s == "rebase" {
-                args.push("--rebase".into());
+            match s {
+                "rebase" => args.push("--rebase".into()),
+                // "merge" and "squash" are the default behaviors — squash
+                // is set via the `squash` flag above, and plain merge is
+                // implicit when no flag is passed.
+                "merge" | "squash" => {}
+                other => debug_assert!(false, "unknown merge strategy: {other}"),
             }
         }
         if auto_merge {
@@ -2740,6 +2745,21 @@ mod tests {
                 "--yes",
             ]
         );
+    }
+
+    #[test]
+    fn merge_args_rebase_strategy_adds_rebase_flag() {
+        let args =
+            GlabBackend::merge_args("group/project", 42, false, false, Some("rebase"), false);
+        assert!(args.contains(&"--rebase".to_string()));
+        assert!(!args.contains(&"--squash".to_string()));
+    }
+
+    #[test]
+    fn merge_args_merge_strategy_is_default() {
+        let args = GlabBackend::merge_args("group/project", 42, false, false, Some("merge"), false);
+        assert!(!args.contains(&"--rebase".to_string()));
+        assert!(!args.contains(&"--squash".to_string()));
     }
 
     // ── iid batching (GraphQL 100-node connection cap) ──

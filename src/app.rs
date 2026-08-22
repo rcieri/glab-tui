@@ -2442,16 +2442,19 @@ impl SubmitOption {
 /// │ [x] <option label>             │
 /// │                                │
 /// ├────────────────────────────────┤
-/// │  [ Cancel ]      [ Submit ]    │
+/// │  [ Submit ]      [ Cancel ]    │
 /// └────────────────────────────────┘
 /// ```
 ///
-/// Cursor layout: index `0` is Cancel, `1..=options.len()` are the
-/// options (one per toggle), `options.len() + 1` is Submit.
+/// Cursor layout: index `0` is Submit (leftmost button), `1..=options.len()`
+/// are the options (one per toggle), `options.len() + 1` is Cancel
+/// (rightmost button).
 ///
 /// Keyboard:
-/// - `Tab` / `l` / `→` — next row
-/// - `Shift-Tab` / `h` / `←` — previous row
+/// - `Tab` / `Shift-Tab` — move vertically through all rows (options + buttons)
+/// - `j` / `Down` / `k` / `Up` — move vertically through options only
+/// - `h` / `Left` (on a button) — jump to the Submit button
+/// - `l` / `Right` (on a button) — jump to the Cancel button
 /// - `Enter` — activate focused (Cancel closes, option toggles, Submit runs the action)
 /// - `Space` — toggle the focused option (no-op on buttons)
 /// - `Esc` — cancel (equivalent to Cancel)
@@ -2462,13 +2465,19 @@ pub struct SubmitDialog {
     pub body: String,
     pub options: Vec<SubmitOption>,
     pub submit_label: String,
-    /// `0` = Cancel, `1..=options.len()` = options, `options.len() + 1` = Submit.
+    /// `0` = Submit, `1..=options.len()` = options, `options.len() + 1` = Cancel.
     pub cursor_idx: usize,
 }
 
 impl SubmitDialog {
     /// Leftmost position: the Submit button (rendered on the left).
     pub const SUBMIT_IDX: usize = 0;
+
+    /// Outer width of the dialog (including borders/padding).
+    pub const DIALOG_WIDTH: u16 = 64;
+    /// Inner width available for the wrapped body text. Derived from
+    /// `DIALOG_WIDTH` minus the block's borders and horizontal padding.
+    pub const BODY_INNER_WIDTH: usize = 56;
 
     /// Index of the Cancel button (rendered on the right, after the options).
     pub fn cancel_idx(&self) -> usize {
@@ -2685,19 +2694,24 @@ impl SubmitDialog {
                     false,
                 )
             }
-            ConfirmAction::BulkMergeMrs(iids) => (
-                format!("Merge {} {}s", iids.len(), mr),
-                format!("Merging {} {}s", iids.len(), mr_short),
-                "Merge".to_string(),
-                vec![
+            ConfirmAction::BulkMergeMrs(iids) => {
+                let mut options = vec![
                     SubmitOption::new("Strategy: Merge commit", false),
                     SubmitOption::new("Strategy: Squash", true),
                     SubmitOption::new("Strategy: Rebase", false),
                     SubmitOption::new("Delete source branch", true),
-                    SubmitOption::new("Auto-merge", false),
-                ],
-                false,
-            ),
+                ];
+                if !kind.is_github() {
+                    options.push(SubmitOption::new("Auto-merge", false));
+                }
+                (
+                    format!("Merge {} {}s", iids.len(), mr),
+                    format!("Merging {} {}s", iids.len(), mr_short),
+                    "Merge".to_string(),
+                    options,
+                    false,
+                )
+            }
             ConfirmAction::RevokeMr(iid) => (
                 "Revoke Approval".to_string(),
                 format!("Are you sure you want to revoke your approval on {mr_short} #{iid}?"),

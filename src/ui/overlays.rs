@@ -1709,7 +1709,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let max_h = size.height.saturating_sub(2).max(11);
         dialog_height = dialog_height.clamp(11, max_h);
 
-        let area = centered_rect_fixed(64, dialog_height, size);
+        let area = centered_rect_fixed(crate::app::SubmitDialog::DIALOG_WIDTH, dialog_height, size);
         app.overlay_stack
             .push((crate::app::OverlayKind::ConfirmPopup, area));
 
@@ -1920,30 +1920,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 /// returning one `Line` per wrapped line. Hard-break overlong words
 /// instead of panicking on zero width.
 fn textwrap(text: &str, width: usize) -> Vec<Line<'static>> {
-    if width == 0 {
-        return vec![Line::from(text.to_string())];
-    }
-    let mut out: Vec<Line<'static>> = Vec::new();
-    for paragraph in text.split('\n') {
-        if paragraph.is_empty() {
-            out.push(Line::from(String::new()));
-            continue;
-        }
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            if current.is_empty() {
-                current.push_str(word);
-            } else if current.len() + 1 + word.len() <= width {
-                current.push(' ');
-                current.push_str(word);
-            } else {
-                out.push(Line::from(std::mem::take(&mut current)));
-                current.push_str(word);
-            }
-        }
-        if !current.is_empty() {
-            out.push(Line::from(current));
-        }
-    }
-    out
+    crate::utils::format::wrap_text(text, width)
+        .into_iter()
+        .map(Line::from)
+        .collect()
 }

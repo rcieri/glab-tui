@@ -40,6 +40,37 @@ pub fn truncate(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Word-wrap `text` to `width` columns, preserving blank lines between
+/// paragraphs (separated by `\n`). Words are never broken mid-word.
+pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            if current.is_empty() {
+                current.push_str(word);
+            } else if current.len() + 1 + word.len() <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                out.push(std::mem::take(&mut current));
+                current.push_str(word);
+            }
+        }
+        if !current.is_empty() {
+            out.push(current);
+        }
+    }
+    out
+}
+
 pub fn time_ago(date_str: &str) -> String {
     if let Ok(parsed_time) = date_str.parse::<DateTime<Utc>>() {
         let now = Utc::now();

@@ -1778,7 +1778,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         if option_rows > 0 {
             let mut state = ListState::default();
-            state.select(Some(dialog.cursor_idx.saturating_sub(1)));
+            state.select(dialog.option_idx());
             let items: Vec<Line<'static>> = dialog
                 .options
                 .iter()

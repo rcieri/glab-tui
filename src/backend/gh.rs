@@ -611,24 +611,28 @@ impl Backend for GhBackend {
     }
 
     async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "None" || milestone.is_empty() {
-            ""
+        let args: Vec<String> = if milestone == "--" || milestone.is_empty() {
+            vec![
+                "issue".to_string(),
+                "edit".to_string(),
+                iid.to_string(),
+                "--remove-milestone".to_string(),
+                "-R".to_string(),
+                project.to_string(),
+            ]
         } else {
-            milestone
+            vec![
+                "issue".to_string(),
+                "edit".to_string(),
+                iid.to_string(),
+                "--milestone".to_string(),
+                milestone.to_string(),
+                "-R".to_string(),
+                project.to_string(),
+            ]
         };
-        self.run_gh(
-            &[
-                "issue",
-                "edit",
-                &iid.to_string(),
-                "--milestone",
-                val,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "UPDATING ISSUE").await?;
         Ok(())
     }
 
@@ -1138,7 +1142,7 @@ impl Backend for GhBackend {
         assignees: &str,
         reviewers: &str,
         milestone: &str,
-        _issue_iid: Option<u64>,
+        issue_iid: Option<u64>,
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "pr".into(),
@@ -1156,9 +1160,20 @@ impl Backend for GhBackend {
             args.push("--base".into());
             args.push(target_branch.into());
         }
-        if !description.is_empty() {
+        let body = if let Some(iid) = issue_iid {
+            if description.is_empty() {
+                format!("Closes #{}", iid)
+            } else if !description.contains("Closes #") {
+                format!("{}\n\nCloses #{}", description, iid)
+            } else {
+                description.to_string()
+            }
+        } else {
+            description.to_string()
+        };
+        if !body.is_empty() {
             args.push("--body".into());
-            args.push(description.into());
+            args.push(body.into());
         }
         if !labels.is_empty() {
             args.push("--label".into());
@@ -1329,24 +1344,28 @@ impl Backend for GhBackend {
     }
 
     async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "None" || milestone.is_empty() {
-            ""
+        let args: Vec<String> = if milestone == "--" || milestone.is_empty() {
+            vec![
+                "pr".to_string(),
+                "edit".to_string(),
+                iid.to_string(),
+                "--remove-milestone".to_string(),
+                "-R".to_string(),
+                project.to_string(),
+            ]
         } else {
-            milestone
+            vec![
+                "pr".to_string(),
+                "edit".to_string(),
+                iid.to_string(),
+                "--milestone".to_string(),
+                milestone.to_string(),
+                "-R".to_string(),
+                project.to_string(),
+            ]
         };
-        self.run_gh(
-            &[
-                "pr",
-                "edit",
-                &iid.to_string(),
-                "--milestone",
-                val,
-                "-R",
-                project,
-            ],
-            "UPDATING PR",
-        )
-        .await?;
+        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        self.run_gh(&args_refs, "UPDATING PR").await?;
         Ok(())
     }
 

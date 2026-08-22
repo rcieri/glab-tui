@@ -231,7 +231,7 @@ The generated file is fully annotated. Key sections:
 
 ```toml
 # Pick a built-in theme preset
-theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
+theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
 
 # Items per API request (1-100) — lower this if your GitLab instance truncates
 # large JSON response bodies. GitLab-only; GitHub paginates with --limit.
@@ -482,6 +482,8 @@ Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `Enter` / `Space` | In file tree: open file; in diff: toggle zoom (hide/show file tree) |
 | `[` / `]` | Previous / next hunk |
 | `z` / `Z` | Collapse / expand all files |
+| `m` | Mark / unmark file as reviewed (on a directory: every file below it) |
+| `M` | Hide / show reviewed files in the file tree |
 | `d` | Toggle unified / side-by-side layout |
 | `v` / `V` | Start / stop multi-line selection for comments |
 | `c` | Add comment on current line / selection |
@@ -493,6 +495,8 @@ Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `Ctrl+N` | Next search match |
 | `Ctrl+Shift+N` | Previous search match |
 | `?` / `F1` | Show help |
+
+**Marking files as reviewed.** On a large MR, press `m` to tick off a file you are done with — from the file tree, or from the diff pane, where it marks the file you are currently reading. Reviewed files get a check indicator and fade to muted; a directory fades **and folds itself** once every file below it is reviewed — cascading up through parents, so a finished branch collapses to a single line — and the tree header shows your progress (`12/200`). Unmarking reopens the directory, and a completed directory you reopen by hand stays open. Press `M` to hide reviewed files altogether and leave only the pending ones. Marks are stored per MR/PR in `~/.cache/glab-tui/<repo>.json` and restored the next time you open the same diff (files that are no longer part of the diff are dropped). They are local to `glab-tui` — GitLab's own "viewed" checkboxes are not synced.
 
 ---
 

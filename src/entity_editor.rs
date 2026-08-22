@@ -10,6 +10,8 @@ use crate::app::App;
 use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crossterm::event::KeyCode;
+use ratatui::Terminal;
+use ratatui::backend::Backend;
 
 /// Return a muted dash for empty values so optional fields read cleanly
 /// instead of cluttering the preview with "None" or blank rows.
@@ -893,13 +895,13 @@ pub fn apply_field_text_change(
     }
 }
 
-pub fn apply_selector_changes(
+pub fn apply_selector_changes<B: Backend>(
     app: &mut App,
     entity_type: &str,
     iid: u64,
     field_type: &str,
     values: Vec<String>,
-    terminal: &mut AppTerminal,
+    terminal: &mut Terminal<B>,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
     tab: crate::app::Tab,
 ) {
@@ -1101,7 +1103,7 @@ pub fn apply_selector_changes(
         }
         "milestone" => {
             let first_val = values.first().cloned().unwrap_or_default();
-            let clear_milestone = first_val.is_empty() || first_val == "None";
+            let clear_milestone = first_val.is_empty() || first_val == "--";
             if entity_type == "issue" || entity_type == "edit_issue" || entity_type == "edit_issue"
             {
                 if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
@@ -1601,22 +1603,16 @@ mod tests {
         app.mrs.items = vec![mr];
 
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let mut terminal = ratatui::Terminal::with_options(
-            backend,
-            ratatui::TerminalOptions {
-                viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
-            },
-        )
-        .unwrap();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
 
-        // Clear milestone by passing "None" on Issue
+        // Clear milestone by passing no value (deselected in the selector) on Issue
         apply_selector_changes(
             &mut app,
             "issue",
             1,
             "milestone",
-            vec!["None".to_string()],
+            vec![],
             &mut terminal,
             tx.clone(),
             crate::app::Tab::Issues,
@@ -1624,13 +1620,13 @@ mod tests {
 
         assert!(app.issues.items[0].milestone.is_none());
 
-        // Clear milestone by passing "None" on MR
+        // Clear milestone by passing no value on MR
         apply_selector_changes(
             &mut app,
             "mr",
             1,
             "milestone",
-            vec!["None".to_string()],
+            vec![],
             &mut terminal,
             tx,
             crate::app::Tab::MergeRequests,

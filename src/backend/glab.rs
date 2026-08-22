@@ -1995,7 +1995,7 @@ impl Backend for GlabBackend {
         self.run_glab(
             &[
                 "release",
-                "update",
+                "create",
                 tag_name,
                 "-R",
                 project,

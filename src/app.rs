@@ -379,7 +379,7 @@ impl Tab {
                 "Date",
                 "Author",
                 "Assets",
-                "Description",
+                "Release Notes",
             ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
@@ -449,6 +449,7 @@ pub enum EditEntityKind {
     CreateMilestone,
     EditMilestone,
     CreateRelease,
+    EditRelease,
     CreatePipeline,
     CreateBranch,
 }
@@ -478,6 +479,7 @@ impl EditEntityKind {
                 | Self::CreateMilestone
                 | Self::EditMilestone
                 | Self::CreateRelease
+                | Self::EditRelease
                 | Self::CreatePipeline
                 | Self::CreateBranch
         )
@@ -488,7 +490,7 @@ impl EditEntityKind {
             Self::CreateIssue | Self::EditIssue | Self::BulkEditIssues => "issue",
             Self::CreateMr | Self::EditMr | Self::BulkEditMrs => "mr",
             Self::CreateMilestone | Self::EditMilestone => "milestone",
-            Self::CreateRelease => "release",
+            Self::CreateRelease | Self::EditRelease => "release",
             Self::CreatePipeline => "pipeline",
             Self::CreateBranch => "branch",
         }
@@ -506,6 +508,7 @@ impl EditEntityKind {
             Self::CreateMilestone => "new_milestone",
             Self::EditMilestone => "milestone",
             Self::CreateRelease => "new_release",
+            Self::EditRelease => "release",
             Self::CreatePipeline => "new_pipeline",
             Self::CreateBranch => "new_branch",
         }
@@ -535,7 +538,10 @@ impl EditMenu {
     pub fn get_description_value(&self) -> String {
         self.fields
             .iter()
-            .find(|f| f.label == "Description" && f.kind == FieldType::Text)
+            .find(|f| {
+                (f.label == "Description" || f.label == "Release Notes")
+                    && f.kind == FieldType::Text
+            })
             .map(|f| f.value.clone())
             .unwrap_or_default()
     }

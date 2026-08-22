@@ -1351,8 +1351,8 @@ pub async fn handle_active_tab_key(
                         crate::app::Field::section("Details"),
                         crate::app::Field::ref_field("Tag", String::new()),
                         crate::app::Field::text("Release Name", String::new()),
-                        crate::app::Field::section("Description"),
-                        crate::app::Field::text("Description", String::new()),
+                        crate::app::Field::section("Release Notes"),
+                        crate::app::Field::text("Release Notes", String::new()),
                     ],
                     selected_idx: 0,
                     entity_iid: 0,
@@ -2143,7 +2143,7 @@ pub async fn handle_active_tab_key(
                                             fields: doc.fields,
                                             selected_idx: 0,
                                             entity_iid: 0,
-                                            entity_kind: crate::app::EditEntityKind::CreateRelease,
+                                            entity_kind: crate::app::EditEntityKind::EditRelease,
                                             state: {
                                                 let mut s = ListState::default();
                                                 s.select(Some(0));

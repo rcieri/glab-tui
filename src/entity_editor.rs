@@ -12,7 +12,7 @@ use crate::event::Event;
 use crossterm::event::KeyCode;
 
 /// Return a muted dash for empty values so optional fields read cleanly
-/// instead of cluttering the preview with "None" or blank rows.
+/// instead of cluttering the preview with "--" or blank rows.
 pub(crate) fn display_branch(value: &str) -> &str {
     if value.trim().is_empty() || value == "--" {
         "\u{2014}"

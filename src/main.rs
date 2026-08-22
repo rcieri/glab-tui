@@ -1488,8 +1488,8 @@ async fn main() -> Result<()> {
                         crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
                             if selector.field_type == "milestone" {
-                                let mut ms_items = vec!["None".to_string()];
-                                ms_items.extend(items.into_iter().filter(|i| i != "None"));
+                                let mut ms_items = vec!["--".to_string()];
+                                ms_items.extend(items.into_iter().filter(|i| i != "--"));
                                 selector.all_items = ms_items;
                             } else {
                                 selector.all_items = items;
@@ -3187,7 +3187,7 @@ async fn main() -> Result<()> {
                                         }
                                         let choice = selected_val.unwrap_or_default();
                                         let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
+                                        if choice != "-- (blank)" {
                                             let templates = list_templates("issue");
                                             if let Some(content) = templates
                                                 .iter()
@@ -4036,7 +4036,7 @@ async fn main() -> Result<()> {
                                             "issue"
                                         };
                                         let mut desc_val = String::new();
-                                        if choice != "None (blank)" {
+                                        if choice != "-- (blank)" {
                                             if let Some(content) = list_templates(template_type)
                                                 .iter()
                                                 .find(|(n, _)| n == &choice)
@@ -4058,7 +4058,7 @@ async fn main() -> Result<()> {
                                                 .iter_mut()
                                                 .find(|f| f.label == "Description Template")
                                             {
-                                                f.value = if choice == "None (blank)" {
+                                                f.value = if choice == "-- (blank)" {
                                                     String::new()
                                                 } else {
                                                     choice
@@ -5292,7 +5292,7 @@ async fn main() -> Result<()> {
                                             {
                                                 last_err = Some(e.to_string());
                                             }
-                                            if !labels.is_empty() && labels != "None" {
+                                            if !labels.is_empty() && labels != "--" {
                                                 let add: Vec<String> = labels
                                                     .split(',')
                                                     .map(|s| s.trim().to_string())
@@ -5307,7 +5307,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !assignees.is_empty() && assignees != "None" {
+                                            if !assignees.is_empty() && assignees != "--" {
                                                 let add: Vec<String> = assignees
                                                     .split(',')
                                                     .map(|s| {
@@ -5324,7 +5324,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "None" {
+                                            if !milestone.is_empty() && milestone != "--" {
                                                 let _ = client
                                                     .update_issue_milestone(
                                                         &project, entity_iid, &milestone,
@@ -5455,7 +5455,7 @@ async fn main() -> Result<()> {
                                             {
                                                 last_err = Some(e.to_string());
                                             }
-                                            if !labels.is_empty() && labels != "None" {
+                                            if !labels.is_empty() && labels != "--" {
                                                 let add: Vec<String> = labels
                                                     .split(',')
                                                     .map(|s| s.trim().to_string())
@@ -5470,7 +5470,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !assignees.is_empty() && assignees != "None" {
+                                            if !assignees.is_empty() && assignees != "--" {
                                                 let add: Vec<String> = assignees
                                                     .split(',')
                                                     .map(|s| {
@@ -5487,7 +5487,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !reviewers.is_empty() && reviewers != "None" {
+                                            if !reviewers.is_empty() && reviewers != "--" {
                                                 let add: Vec<String> = reviewers
                                                     .split(',')
                                                     .map(|s| {
@@ -5504,7 +5504,7 @@ async fn main() -> Result<()> {
                                                     )
                                                     .await;
                                             }
-                                            if !milestone.is_empty() && milestone != "None" {
+                                            if !milestone.is_empty() && milestone != "--" {
                                                 let _ = client
                                                     .update_mr_milestone(
                                                         &project, entity_iid, &milestone,
@@ -5754,13 +5754,13 @@ async fn main() -> Result<()> {
                                             is_loading = false;
                                         }
                                     } else if field_type == "milestone" {
-                                        let mut ms_items = vec!["None".to_string()];
+                                        let mut ms_items = vec!["--".to_string()];
                                         ms_items.extend(
                                             app.milestones
                                                 .items
                                                 .iter()
                                                 .map(|m| m.title.clone())
-                                                .filter(|t| t != "None"),
+                                                .filter(|t| t != "--"),
                                         );
                                         all_items = ms_items;
                                         is_loading = false;
@@ -5871,7 +5871,7 @@ async fn main() -> Result<()> {
                                         };
                                         let templates = list_templates(template_type);
                                         let template_names: Vec<String> =
-                                            std::iter::once("None (blank)".to_string())
+                                            std::iter::once("-- (blank)".to_string())
                                                 .chain(templates.iter().map(|(n, _)| n.clone()))
                                                 .collect();
                                         all_items = template_names;
@@ -6050,7 +6050,7 @@ async fn main() -> Result<()> {
                                             let templates = list_templates(template_type);
                                             if !templates.is_empty() {
                                                 let template_names: Vec<String> =
-                                                    std::iter::once("None (blank)".to_string())
+                                                    std::iter::once("-- (blank)".to_string())
                                                         .chain(
                                                             templates
                                                                 .iter()

@@ -2149,7 +2149,7 @@ pub(crate) fn render_tab_releases(
                     Alignment::Left,
                 ));
             }
-            if app.is_column_visible(Tab::Releases, "Description") {
+            if app.is_column_visible(Tab::Releases, "Release Notes") {
                 let desc = r.description.as_deref().unwrap_or("");
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(desc, 80),
@@ -2191,8 +2191,8 @@ pub(crate) fn render_tab_releases(
             header_cells.push(Cell::from("Assets"));
             widths.push(Constraint::Length(12));
         }
-        if app.is_column_visible(Tab::Releases, "Description") {
-            header_cells.push(Cell::from("Description"));
+        if app.is_column_visible(Tab::Releases, "Release Notes") {
+            header_cells.push(Cell::from("Release Notes"));
             widths.push(Constraint::Fill(1));
         }
 

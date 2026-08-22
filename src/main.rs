@@ -3179,7 +3179,7 @@ async fn main() -> Result<()> {
                                         }
                                         if let Some(ref mut menu) = app.edit_menu {
                                             if let Some(f) = menu.fields.iter_mut().find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             }) {
                                                 f.value = desc_val.clone();
@@ -3240,7 +3240,7 @@ async fn main() -> Result<()> {
                                                     .and_then(|m| {
                                                         m.fields
                                                             .iter()
-                                                            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
+                                                            .find(|f| f.label == "Description" || f.label == "Release Notes" && f.kind == crate::app::FieldType::Text)
                                                             .map(|f| f.value.clone())
                                                     })
                                                     .unwrap_or_default()
@@ -3277,7 +3277,7 @@ async fn main() -> Result<()> {
                                                 if let Some(ref mut menu) = app.edit_menu {
                                                     if let Some(f) =
                                                         menu.fields.iter_mut().find(|f| {
-                                                            f.label == "Description"
+                                                            f.label == "Description" || f.label == "Release Notes"
                                                                 && f.kind
                                                                     == crate::app::FieldType::Text
                                                         })
@@ -3354,7 +3354,7 @@ async fn main() -> Result<()> {
                                                     .and_then(|m| {
                                                         m.fields
                                                             .iter()
-                                                            .find(|f| f.label == "Description" && f.kind == crate::app::FieldType::Text)
+                                                            .find(|f| f.label == "Description" || f.label == "Release Notes" && f.kind == crate::app::FieldType::Text)
                                                             .map(|f| f.value.clone())
                                                     })
                                                     .unwrap_or_default()
@@ -3393,7 +3393,7 @@ async fn main() -> Result<()> {
                                                         .as_ref()
                                                         .and_then(|m| {
                                                             m.fields.iter().position(|f| {
-                                                                f.label == "Description"
+                                                                f.label == "Description" || f.label == "Release Notes"
                                                             })
                                                         })
                                                         .unwrap_or(0),
@@ -4026,11 +4026,9 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         if let Some(ref mut menu) = app.edit_menu {
-                                            if let Some(f) = menu
-                                                .fields
-                                                .iter_mut()
-                                                .find(|f| f.label == "Description")
-                                            {
+                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
+                                                f.label == "Description" || f.label == "Release Notes"
+                                            }) {
                                                 f.value = desc_val;
                                             }
                                             if let Some(f) = menu
@@ -4325,8 +4323,13 @@ async fn main() -> Result<()> {
                                 KeyCode::Left => {
                                     if menu.selected_idx < menu.fields.len()
                                         && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label == "Name"
                                             || menu.fields[menu.selected_idx].label
-                                                == "Description")
+                                                == "Release Name"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Release Notes")
                                     {
                                         if let Some(f) = menu.fields.get(menu.selected_idx) {
                                             if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
@@ -4344,8 +4347,13 @@ async fn main() -> Result<()> {
                                 KeyCode::Right => {
                                     if menu.selected_idx < menu.fields.len()
                                         && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label == "Name"
                                             || menu.fields[menu.selected_idx].label
-                                                == "Description")
+                                                == "Release Name"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Release Notes")
                                     {
                                         if let Some(f) = menu.fields.get(menu.selected_idx) {
                                             let char_len = f.value[menu.cursor_pos..]
@@ -4365,8 +4373,13 @@ async fn main() -> Result<()> {
                                 KeyCode::Home => {
                                     if menu.selected_idx < menu.fields.len()
                                         && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label == "Name"
                                             || menu.fields[menu.selected_idx].label
-                                                == "Description")
+                                                == "Release Name"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Release Notes")
                                     {
                                         menu.cursor_pos = 0;
                                     }
@@ -4375,8 +4388,13 @@ async fn main() -> Result<()> {
                                 KeyCode::End => {
                                     if menu.selected_idx < menu.fields.len()
                                         && (menu.fields[menu.selected_idx].label == "Title"
+                                            || menu.fields[menu.selected_idx].label == "Name"
                                             || menu.fields[menu.selected_idx].label
-                                                == "Description")
+                                                == "Release Name"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Description"
+                                            || menu.fields[menu.selected_idx].label
+                                                == "Release Notes")
                                     {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
@@ -4390,8 +4408,11 @@ async fn main() -> Result<()> {
                                         String::new()
                                     };
                                     if field_name == "Title"
+                                        || field_name == "Name"
+                                        || field_name == "Release Name"
                                         || field_name == "Branch Name"
                                         || field_name == "Description"
+                                        || field_name == "Release Notes"
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
@@ -4412,8 +4433,11 @@ async fn main() -> Result<()> {
                                         String::new()
                                     };
                                     if field_name == "Title"
+                                        || field_name == "Name"
+                                        || field_name == "Release Name"
                                         || field_name == "Branch Name"
                                         || field_name == "Description"
+                                        || field_name == "Release Notes"
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             if menu.cursor_pos < f.value.len() {
@@ -4432,9 +4456,10 @@ async fn main() -> Result<()> {
                                     } else {
                                         String::new()
                                     };
-                                    if field_name == "Description" {
+                                    if field_name == "Description" || field_name == "Release Notes"
+                                    {
                                         let desc = if let Some(f) = menu.fields.iter().find(|f| {
-                                            f.label == "Description"
+                                            f.label == "Description" || f.label == "Release Notes"
                                                 && f.kind == crate::app::FieldType::Text
                                         }) {
                                             f.value.clone()
@@ -4447,7 +4472,7 @@ async fn main() -> Result<()> {
                                         {
                                             if let Some(menu) = &mut app.edit_menu {
                                                 if let Some(f) = menu.fields.iter_mut().find(|f| {
-                                                    f.label == "Description"
+                                                    f.label == "Description" || f.label == "Release Notes"
                                                         && f.kind == crate::app::FieldType::Text
                                                 }) {
                                                     f.value = new_desc;
@@ -4465,8 +4490,11 @@ async fn main() -> Result<()> {
                                         String::new()
                                     };
                                     if field_name == "Title"
+                                        || field_name == "Name"
+                                        || field_name == "Release Name"
                                         || field_name == "Branch Name"
                                         || field_name == "Description"
+                                        || field_name == "Release Notes"
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);
@@ -4512,7 +4540,8 @@ async fn main() -> Result<()> {
                                         == crate::app::FieldType::Section
                                         || menu.fields[menu.selected_idx].kind
                                             == crate::app::FieldType::ReadOnly
-                                        || menu.fields[menu.selected_idx].label == "Description")
+                                        || menu.fields[menu.selected_idx].label == "Description"
+                                        || menu.fields[menu.selected_idx].label == "Release Notes")
                                 {
                                     menu.selected_idx += 1;
                                 }
@@ -4524,8 +4553,11 @@ async fn main() -> Result<()> {
                                 if menu.selected_idx < menu.fields.len() {
                                     let label = &menu.fields[menu.selected_idx].label;
                                     if label == "Title"
+                                        || label == "Name"
+                                        || label == "Release Name"
                                         || label == "Branch Name"
                                         || label == "Description"
+                                        || label == "Release Notes"
                                     {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
@@ -4552,7 +4584,7 @@ async fn main() -> Result<()> {
                             // l: jump to right pane (Description field) if present
                             KeyCode::Char('l') | KeyCode::Right => {
                                 if let Some(target) = menu.fields.iter().position(|f| {
-                                    f.label == "Description"
+                                    f.label == "Description" || f.label == "Release Notes"
                                         && f.kind == crate::app::FieldType::Text
                                 }) {
                                     menu.selected_idx = target;
@@ -4589,7 +4621,8 @@ async fn main() -> Result<()> {
                                         == crate::app::FieldType::Section
                                         || menu.fields[menu.selected_idx].kind
                                             == crate::app::FieldType::ReadOnly
-                                        || menu.fields[menu.selected_idx].label == "Description")
+                                        || menu.fields[menu.selected_idx].label == "Description"
+                                        || menu.fields[menu.selected_idx].label == "Release Notes")
                                     && menu.selected_idx > 0
                                 {
                                     menu.selected_idx -= 1;
@@ -4603,8 +4636,11 @@ async fn main() -> Result<()> {
                                 if menu.selected_idx < menu.fields.len() {
                                     let label = &menu.fields[menu.selected_idx].label;
                                     if label == "Title"
+                                        || label == "Name"
+                                        || label == "Release Name"
                                         || label == "Branch Name"
                                         || label == "Description"
+                                        || label == "Release Notes"
                                     {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
@@ -4631,7 +4667,7 @@ async fn main() -> Result<()> {
                                             .fields
                                             .iter()
                                             .find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             })
                                             .map(|f| f.value.trim().to_string())
@@ -4746,7 +4782,7 @@ async fn main() -> Result<()> {
                                             .fields
                                             .iter()
                                             .find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             })
                                             .map(|f| f.value.trim().to_string())
@@ -4983,7 +5019,7 @@ async fn main() -> Result<()> {
                                             .fields
                                             .iter()
                                             .find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             })
                                             .map(|f| f.value.trim().to_string())
@@ -5153,7 +5189,7 @@ async fn main() -> Result<()> {
                                             .fields
                                             .iter()
                                             .find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             })
                                             .map(|f| f.value.trim().to_string())
@@ -5191,6 +5227,65 @@ async fn main() -> Result<()> {
                                             });
                                         }
                                         continue;
+                                    } else if entity_type == "release" {
+                                        let tag = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Tag")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let name = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Name")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let description = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| {
+                                                f.label == "Release Notes"
+                                                    && f.kind == crate::app::FieldType::Text
+                                            })
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        if !tag.is_empty() {
+                                            app.edit_menu = None;
+                                            let client = app.gitlab_client.clone().unwrap();
+                                            let project = app.project_context.clone();
+                                            let tx = events.sender();
+                                            let tab = app.active_tab;
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Updating Release: {}",
+                                                tag
+                                            )));
+                                            tokio::spawn(async move {
+                                                match crate::domain::releases::update_release(
+                                                    &client,
+                                                    &project,
+                                                    &tag,
+                                                    &name,
+                                                    &description,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            tab,
+                                                            Ok(()),
+                                                        ));
+                                                        let _ = tx.send(Event::ReleaseUpdated);
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            tab,
+                                                            Err(e.to_string()),
+                                                        ));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                        continue;
                                     } else if entity_type == "issue" || entity_type == "edit_issue"
                                     {
                                         let title = menu
@@ -5203,7 +5298,7 @@ async fn main() -> Result<()> {
                                             .fields
                                             .iter()
                                             .find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             })
                                             .map(|f| f.value.trim().to_string())
@@ -5389,7 +5484,7 @@ async fn main() -> Result<()> {
                                             .fields
                                             .iter()
                                             .find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             })
                                             .map(|f| f.value.trim().to_string())
@@ -5584,7 +5679,7 @@ async fn main() -> Result<()> {
                                             .fields
                                             .iter()
                                             .find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             })
                                             .map(|f| f.value.trim().to_string())
@@ -5678,8 +5773,11 @@ async fn main() -> Result<()> {
 
                                 // Title / Branch Name / Description: Enter toggles inline edit mode
                                 if field_name == "Title"
+                                    || field_name == "Name"
+                                    || field_name == "Release Name"
                                     || field_name == "Branch Name"
                                     || field_name == "Description"
+                                    || field_name == "Release Notes"
                                 {
                                     if menu.editing {
                                         menu.editing = false;
@@ -6069,7 +6167,7 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
 
-                                if field_name == "Description" {
+                                if field_name == "Description" || field_name == "Release Notes" {
                                     // For new entities with empty description, show template selector
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
                                         let raw_val = menu.fields[menu.selected_idx].value.clone();
@@ -6279,8 +6377,11 @@ async fn main() -> Result<()> {
                                         String::new()
                                     };
                                     if field_name == "Title"
+                                        || field_name == "Name"
+                                        || field_name == "Release Name"
                                         || field_name == "Branch Name"
                                         || field_name == "Description"
+                                        || field_name == "Release Notes"
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
@@ -6304,11 +6405,11 @@ async fn main() -> Result<()> {
                                 } else {
                                     String::new()
                                 };
-                                if field_name == "Description" {
+                                if field_name == "Description" || field_name == "Release Notes" {
                                     let entity_iid = menu.entity_iid;
                                     let entity_type = menu.entity_kind.legacy_string();
                                     let desc = if let Some(f) = menu.fields.iter().find(|f| {
-                                        f.label == "Description"
+                                        f.label == "Description" || f.label == "Release Notes"
                                             && f.kind == crate::app::FieldType::Text
                                     }) {
                                         f.value.clone()
@@ -6321,7 +6422,7 @@ async fn main() -> Result<()> {
                                     {
                                         if let Some(menu) = &mut app.edit_menu {
                                             if let Some(f) = menu.fields.iter_mut().find(|f| {
-                                                f.label == "Description"
+                                                f.label == "Description" || f.label == "Release Notes"
                                                     && f.kind == crate::app::FieldType::Text
                                             }) {
                                                 f.value = new_desc;
@@ -6340,8 +6441,11 @@ async fn main() -> Result<()> {
                                         String::new()
                                     };
                                     if field_name == "Title"
+                                        || field_name == "Name"
+                                        || field_name == "Release Name"
                                         || field_name == "Branch Name"
                                         || field_name == "Description"
+                                        || field_name == "Release Notes"
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);

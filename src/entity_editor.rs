@@ -1292,28 +1292,11 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             });
         }
     } else if entity_type == "release" {
-        // Identify the release by the current menu's read-only "Tag" field.
-        let tag = app
-            .edit_menu
-            .as_ref()
-            .and_then(|m| {
-                m.fields
-                    .iter()
-                    .find(|f| f.label == "Tag")
-                    .map(|f| f.value.clone())
-            })
-            .unwrap_or_default();
-        if let Some(release) = app
-            .releases
-            .items
-            .iter()
-            .find(|r| r.tag_name == tag)
-            .cloned()
-        {
+        if let Some(release) = app.releases.items.get(entity_iid as usize).cloned() {
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
             let mut doc = build_release_document(&release);
             doc.fields.push(crate::app::Field::text(
-                "Description",
+                "Release Notes",
                 release.description.clone().unwrap_or_default(),
             ));
 

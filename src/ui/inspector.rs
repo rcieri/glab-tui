@@ -113,9 +113,10 @@ pub(crate) fn render_entity_inspector(
     // mode-driven inputs to the shared layout below.
     let (has_content, selected_idx, editing, cursor_pos, skip_description) = match &mode {
         InspectorMode::Interactive { menu } => (
-            menu.fields
-                .iter()
-                .any(|f| f.label == "Description" && f.kind == FieldType::Text),
+            menu.fields.iter().any(|f| {
+                (f.label == "Description" || f.label == "Release Notes")
+                    && f.kind == FieldType::Text
+            }),
             Some(menu.selected_idx),
             menu.editing,
             menu.cursor_pos,
@@ -182,7 +183,11 @@ pub(crate) fn render_entity_inspector(
         let field_count = doc
             .fields
             .iter()
-            .filter(|f| !(f.kind == FieldType::Section && f.label.to_uppercase() == "DESCRIPTION"))
+            .filter(|f| {
+                !(f.kind == FieldType::Section
+                    && (f.label.to_uppercase() == "DESCRIPTION"
+                        || f.label.to_uppercase() == "RELEASE NOTES"))
+            })
             .count() as u16;
         let split_height = (field_count + 1).min(inner.height.saturating_sub(4)).max(3);
 
@@ -272,7 +277,8 @@ fn render_content_pane(
             // Description pane is driven by the document content (the helper
             // builds the doc from the menu), keyed off the Description field.
             let is_desc_selected = menu.selected_idx < doc.fields.len()
-                && doc.fields[menu.selected_idx].label == "Description"
+                && (doc.fields[menu.selected_idx].label == "Description"
+                    || doc.fields[menu.selected_idx].label == "Release Notes")
                 && doc.fields[menu.selected_idx].kind == FieldType::Text;
             let desc_value = match &doc.content {
                 InspectorContent::Markdown(m) => m.clone(),
@@ -449,7 +455,10 @@ pub(crate) fn build_field_list_items(
             if f.kind == FieldType::Section {
                 return false;
             }
-            if skip_description && f.kind == FieldType::Text && f.label == "Description" {
+            if skip_description
+                && f.kind == FieldType::Text
+                && (f.label == "Description" || f.label == "Release Notes")
+            {
                 return false;
             }
             true
@@ -464,8 +473,11 @@ pub(crate) fn build_field_list_items(
         .enumerate()
         .filter(|(_, f)| {
             if skip_description {
-                !(f.kind == FieldType::Section && f.label.to_uppercase() == "DESCRIPTION")
-                    && !(f.kind == FieldType::Text && f.label == "Description")
+                !(f.kind == FieldType::Section
+                    && (f.label.to_uppercase() == "DESCRIPTION"
+                        || f.label.to_uppercase() == "RELEASE NOTES"))
+                    && !(f.kind == FieldType::Text
+                        && (f.label == "Description" || f.label == "Release Notes"))
             } else {
                 true
             }

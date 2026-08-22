@@ -1699,14 +1699,8 @@ impl Backend for GhBackend {
         let raw = self
             .run_gh(
                 &[
-                    "release",
-                    "list",
-                    "--json",
-                    "name,tagName,publishedAt,isDraft,isPrerelease,createdAt",
-                    "-R",
-                    project,
-                    "--limit",
-                    &page_size.to_string(),
+                    "api",
+                    &format!("repos/{}/releases?per_page={}", project, page_size),
                 ],
                 "Fetching Releases",
             )
@@ -1715,13 +1709,15 @@ impl Backend for GhBackend {
         #[derive(Deserialize)]
         struct GhRel {
             name: Option<String>,
-            #[serde(rename = "tagName")]
             tag_name: String,
-            #[serde(rename = "publishedAt")]
             published_at: Option<String>,
-            #[serde(rename = "createdAt")]
-            #[allow(dead_code)]
             created_at: Option<String>,
+            body: Option<String>,
+            author: Option<GhAuthor>,
+        }
+        #[derive(Deserialize)]
+        struct GhAuthor {
+            login: String,
         }
 
         let rels: Vec<GhRel> = serde_json::from_str(&raw)?;
@@ -1734,9 +1730,14 @@ impl Backend for GhBackend {
                     .published_at
                     .as_deref()
                     .map(|s| s.chars().take(10).collect::<String>())
-                    .unwrap_or_default(),
-                description: None,
-                author_name: None,
+                    .unwrap_or_else(|| {
+                        r.created_at
+                            .as_deref()
+                            .map(|s| s.chars().take(10).collect::<String>())
+                            .unwrap_or_default()
+                    }),
+                description: r.body,
+                author_name: r.author.map(|a| a.login),
                 commit_id: None,
                 commit_title: None,
                 assets_link: None,
@@ -1776,21 +1777,49 @@ impl Backend for GhBackend {
         name: &str,
         description: &str,
     ) -> Result<()> {
+        // 1. Fetch release ID by tag
+        let get_endpoint = format!("repos/{}/releases/tags/{}", project, tag_name);
+        let raw = self
+            .run_gh(&["api", &get_endpoint], "Fetching Release ID")
+            .await?;
+
+        #[derive(Deserialize)]
+        struct GhRelId {
+            id: u64,
+        }
+        let rel: GhRelId = serde_json::from_str(&raw)?;
+
+        // 2. Patch release
+        let patch_endpoint = format!("repos/{}/releases/{}", project, rel.id);
+
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "name".to_string(),
+            serde_json::Value::String(name.to_string()),
+        );
+        body.insert(
+            "body".to_string(),
+            serde_json::Value::String(description.to_string()),
+        );
+
+        let mut temp = tempfile::NamedTempFile::new()?;
+        use std::io::Write;
+        let body_str = serde_json::Value::Object(body).to_string();
+        temp.write_all(body_str.as_bytes())?;
+
         self.run_gh(
             &[
-                "release",
-                "edit",
-                tag_name,
-                "-R",
-                project,
-                "-t",
-                name,
-                "-n",
-                description,
+                "api",
+                &patch_endpoint,
+                "-X",
+                "PATCH",
+                "--input",
+                temp.path().to_str().unwrap(),
             ],
             "Updating Release",
         )
         .await?;
+
         Ok(())
     }
 

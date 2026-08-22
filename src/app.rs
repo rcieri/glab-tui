@@ -379,7 +379,7 @@ impl Tab {
                 "Date",
                 "Author",
                 "Assets",
-                "Description",
+                "Release Notes",
             ],
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
@@ -538,7 +538,10 @@ impl EditMenu {
     pub fn get_description_value(&self) -> String {
         self.fields
             .iter()
-            .find(|f| f.label == "Description" && f.kind == FieldType::Text)
+            .find(|f| {
+                (f.label == "Description" || f.label == "Release Notes")
+                    && f.kind == FieldType::Text
+            })
             .map(|f| f.value.clone())
             .unwrap_or_default()
     }

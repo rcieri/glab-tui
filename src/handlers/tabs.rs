@@ -5,32 +5,9 @@ use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
-use crate::templates::get_default_template;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
-
-/// Insert the currently-highlighted Issue/MR into its selection set. Used by
-/// select mode: toggling the mode on and moving the cursor both mark items.
-fn mark_current_selected(app: &mut App) {
-    match app.active_tab {
-        crate::app::Tab::Issues => {
-            if let Some(idx) = app.issues.state.selected() {
-                if let Some(iid) = app.filtered_issues().get(idx).map(|i| i.iid) {
-                    app.selected_issues.insert(iid);
-                }
-            }
-        }
-        crate::app::Tab::MergeRequests => {
-            if let Some(idx) = app.mrs.state.selected() {
-                if let Some(iid) = app.filtered_mrs().get(idx).map(|m| m.iid) {
-                    app.selected_mrs.insert(iid);
-                }
-            }
-        }
-        _ => {}
-    }
-}
 
 fn open_merge_selector(app: &mut App, mr_iid: u64, selected_count: usize) {
     let is_github = app.is_github();
@@ -82,59 +59,34 @@ pub async fn handle_active_tab_key(
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
-                let templates = crate::templates::list_templates("issue");
-                if !templates.is_empty() {
-                    let template_names: Vec<String> = std::iter::once("-- (blank)".to_string())
-                        .chain(templates.iter().map(|(n, _)| n.clone()))
-                        .collect();
-                    app.selector = Some(crate::app::Selector {
-                        title: " Select Issue Template ".to_string(),
-                        all_items: template_names,
-                        selected_items: std::collections::HashSet::new(),
-                        cursor_idx: 0,
-                        search_query: String::new(),
-                        is_filtering: false,
-                        is_loading: false,
-                        entity_iid: 0,
-                        entity_type: "new_issue".to_string(),
-                        field_type: "issue_template_selector".to_string(),
-                        multi_select: false,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(0));
-                            s
-                        },
-                    });
-                } else {
-                    let is_github = app.is_github();
-                    let fields = crate::entity_editor::issue_fields(
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        "No".to_string(),
-                        String::new(),
-                        "0".to_string(),
-                        String::new(),
-                        is_github,
-                    );
-                    app.open_edit_menu(crate::app::EditMenu {
-                        title: "Create Issue".to_string(),
-                        fields,
-                        selected_idx: 0,
-                        entity_iid: 0,
-                        entity_kind: crate::app::EditEntityKind::CreateIssue,
-                        state: {
-                            let mut s = ListState::default();
-                            s.select(Some(0));
-                            s
-                        },
-                        workflow_inputs: vec![],
-                        cursor_pos: 0,
-                        editing: false,
-                        desc_scroll: 0,
-                    });
-                }
+                let is_github = app.is_github();
+                let fields = crate::entity_editor::issue_fields(
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    "No".to_string(),
+                    String::new(),
+                    "0".to_string(),
+                    String::new(),
+                    is_github,
+                );
+                app.open_edit_menu(crate::app::EditMenu {
+                    title: "Create Issue".to_string(),
+                    fields,
+                    selected_idx: 0,
+                    entity_iid: 0,
+                    entity_kind: crate::app::EditEntityKind::CreateIssue,
+                    state: {
+                        let mut s = ListState::default();
+                        s.select(Some(0));
+                        s
+                    },
+                    workflow_inputs: vec![],
+                    cursor_pos: 0,
+                    editing: false,
+                    desc_scroll: 0,
+                });
             }
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
                 if app.selected_issues.len() > 1 {
@@ -261,12 +213,6 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
-            _ if keybinding_matches(&app.config.keybindings.issues.selection_toggle, key_event) => {
-                app.select_mode = !app.select_mode;
-                if app.select_mode {
-                    mark_current_selected(app);
-                }
-            }
             _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
@@ -300,36 +246,29 @@ pub async fn handle_active_tab_key(
                             .as_ref()
                             .map(|m| m.title.clone())
                             .unwrap_or_default();
-                        let description_val = if let Some(ref d) = issue.description {
-                            format!("Closes #{}\n\n{}", issue.iid, d)
-                        } else {
-                            let mr_tmpl = get_default_template("mr").unwrap_or_default();
-                            if mr_tmpl.is_empty() {
-                                format!("Closes #{}", issue.iid)
-                            } else {
-                                format!("Closes #{}\n\n{}", issue.iid, mr_tmpl)
-                            }
-                        };
-
+                        let target_branch_val =
+                            get_default_branch().unwrap_or_else(|| "main".to_string());
+                        let create_from_val = format!("#{} {}", issue.iid, issue.title);
+                        let mut fields = crate::entity_editor::mr_fields(
+                            title_val,
+                            labels_val,
+                            assignees_val,
+                            String::new(),
+                            milestone_val,
+                            target_branch_val,
+                            "Draft".to_string(),
+                            String::new(),
+                            is_github,
+                        );
+                        // Pre-fill the "Create from Issue" row since we launched
+                        // the form directly from this issue.
+                        if let Some(f) = fields.iter_mut().find(|f| f.label == "Create from Issue")
+                        {
+                            f.value = create_from_val;
+                        }
                         app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Create {} from #{}", pr_suffix, issue.iid),
-                            fields: vec![
-                                crate::app::Field::text("Title", title_val),
-                                crate::app::Field::toggle(
-                                    "Status (Draft/Ready)",
-                                    "Draft".to_string(),
-                                ),
-                                crate::app::Field::ref_field("Source Branch", source_branch_val),
-                                crate::app::Field::ref_field(
-                                    "Target Branch",
-                                    get_default_branch().unwrap_or_else(|| "main".to_string()),
-                                ),
-                                crate::app::Field::multi_select("Assignees", assignees_val),
-                                crate::app::Field::multi_select("Reviewers", String::new()),
-                                crate::app::Field::multi_select("Milestone", milestone_val),
-                                crate::app::Field::multi_select("Labels", labels_val),
-                                crate::app::Field::text("Description", description_val),
-                            ],
+                            fields,
                             selected_idx: 0,
                             entity_iid: issue.iid,
                             entity_kind: crate::app::EditEntityKind::CreateMr,
@@ -356,46 +295,34 @@ pub async fn handle_active_tab_key(
                 } else {
                     "Merge Request"
                 };
-
-                let mut all_items = vec!["Create blank (No issue)".to_string()];
-                let is_loading = app.issues.items.is_empty();
-                if !is_loading {
-                    for issue in &app.issues.items {
-                        if issue.state == "opened" || issue.state == "open" {
-                            all_items.push(format!("#{} {}", issue.iid, issue.title));
-                        }
-                    }
-                }
-
-                app.selector = Some(crate::app::Selector {
-                    title: format!(" Select Issue to Base {} On ", pr_suffix),
-                    all_items,
-                    selected_items: std::collections::HashSet::new(),
-                    cursor_idx: 0,
-                    search_query: String::new(),
-                    is_filtering: false,
-                    is_loading,
+                let target_branch_val = get_default_branch().unwrap_or_else(|| "main".to_string());
+                let fields = crate::entity_editor::mr_fields(
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    target_branch_val,
+                    "Draft".to_string(),
+                    String::new(),
+                    is_github,
+                );
+                app.open_edit_menu(crate::app::EditMenu {
+                    title: format!("Create {}", pr_suffix),
+                    fields,
+                    selected_idx: 0,
                     entity_iid: 0,
-                    entity_type: "new_mr_selector".to_string(),
-                    field_type: "create_mr".to_string(),
-                    multi_select: false,
+                    entity_kind: crate::app::EditEntityKind::CreateMr,
                     state: {
                         let mut s = ListState::default();
                         s.select(Some(0));
                         s
                     },
+                    workflow_inputs: vec![],
+                    cursor_pos: 0,
+                    editing: false,
+                    desc_scroll: 0,
                 });
-
-                if is_loading {
-                    if let Some(client) = &app.gitlab_client {
-                        spawn_refresh_active_tab(
-                            client,
-                            &app.project_context,
-                            crate::app::Tab::Issues,
-                            tx.clone(),
-                        );
-                    }
-                }
             } else if keybinding_matches(&app.config.keybindings.mrs.select_mr, key_event) {
                 if let Some(selected_idx) = app.mrs.state.selected() {
                     let iid = app.filtered_mrs().get(selected_idx).map(|m| m.iid);
@@ -406,11 +333,6 @@ pub async fn handle_active_tab_key(
                             app.selected_mrs.insert(iid);
                         }
                     }
-                }
-            } else if keybinding_matches(&app.config.keybindings.mrs.selection_toggle, key_event) {
-                app.select_mode = !app.select_mode;
-                if app.select_mode {
-                    mark_current_selected(app);
                 }
             } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
                 if app.selected_mrs.len() > 1 {
@@ -1962,7 +1884,6 @@ pub async fn handle_active_tab_key(
                     app.selected_mrs.clear();
                     app.selected_pipelines.clear();
                     app.selected_jobs.clear();
-                    app.select_mode = false;
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {
@@ -2331,9 +2252,6 @@ pub async fn handle_active_tab_key(
                             app.terminal_scroll = app.terminal_scroll.saturating_sub(1);
                         }
                     }
-                    if app.select_mode {
-                        mark_current_selected(app);
-                    }
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -2378,9 +2296,6 @@ pub async fn handle_active_tab_key(
                         crate::app::Tab::Terminal => {
                             app.terminal_scroll = app.terminal_scroll.saturating_add(1);
                         }
-                    }
-                    if app.select_mode {
-                        mark_current_selected(app);
                     }
                 }
             }

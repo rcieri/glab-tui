@@ -3232,68 +3232,6 @@ async fn main() -> Result<()> {
                                         continue;
                                     }
 
-                                    if field_type == "mr_template_selector" {
-                                        let filtered_items = selector.get_filtered_items();
-                                        let mut selected_val =
-                                            selector.selected_items.iter().next().cloned();
-                                        if selected_val.is_none() && !filtered_items.is_empty() {
-                                            selected_val =
-                                                Some(filtered_items[selector.cursor_idx].clone());
-                                        }
-                                        let choice = selected_val.unwrap_or_default();
-                                        let mut desc_val = String::new();
-                                        if choice != "-- (blank)" {
-                                            let templates = list_templates("mr");
-                                            if let Some(content) = templates
-                                                .iter()
-                                                .find(|(n, _)| n == &choice)
-                                                .map(|(_, c)| c)
-                                            {
-                                                desc_val = content.clone();
-                                            }
-                                        }
-                                        if let Some(ref mut menu) = app.edit_menu {
-                                            if let Some(f) = menu.fields.iter_mut().find(|f| {
-                                                f.label == "Description"
-                                                    && f.kind == crate::app::FieldType::Text
-                                            }) {
-                                                f.value = desc_val.clone();
-                                            }
-                                        } else {
-                                            let is_github = app.is_github();
-                                            let target_branch = get_default_branch()
-                                                .unwrap_or_else(|| "main".to_string());
-                                            let fields = crate::entity_editor::mr_fields(
-                                                String::new(),
-                                                String::new(),
-                                                String::new(),
-                                                String::new(),
-                                                String::new(),
-                                                target_branch,
-                                                "Ready".to_string(),
-                                                desc_val,
-                                                is_github,
-                                            );
-                                            app.open_edit_menu(crate::app::EditMenu {
-                                                title: "Create Merge Request".to_string(),
-                                                fields,
-                                                selected_idx: 0,
-                                                entity_iid: 0,
-                                                entity_kind: crate::app::EditEntityKind::CreateMr,
-                                                state: {
-                                                    let mut s = ListState::default();
-                                                    s.select(Some(0));
-                                                    s
-                                                },
-                                                workflow_inputs: vec![],
-                                                cursor_pos: 0,
-                                                editing: false,
-                                                desc_scroll: 0,
-                                            });
-                                        }
-                                        continue;
-                                    }
-
                                     if field_type == "description_action" {
                                         let filtered_items = selector.get_filtered_items();
                                         let mut selected_val =
@@ -3505,159 +3443,6 @@ async fn main() -> Result<()> {
                                             app.config.theme_preset = Some(name);
                                             app.apply_config();
                                         }
-                                        continue;
-                                    }
-
-                                    if field_type == "create_mr" {
-                                        let filtered_items = selector.get_filtered_items();
-                                        let mut selected_val =
-                                            selector.selected_items.iter().next().cloned();
-                                        if selected_val.is_none() && !filtered_items.is_empty() {
-                                            selected_val =
-                                                Some(filtered_items[selector.cursor_idx].clone());
-                                        }
-
-                                        app.selector = None;
-
-                                        let is_github = app.is_github();
-                                        let pr_suffix = if is_github {
-                                            "Pull Request"
-                                        } else {
-                                            "Merge Request"
-                                        };
-
-                                        let mut title_val = String::new();
-                                        let mut labels_val = String::new();
-                                        let mut assignees_val = String::new();
-                                        let mut milestone_val = String::new();
-                                        let mut source_branch_val =
-                                            get_current_branch().unwrap_or_default();
-                                        let mut description_val = String::new();
-                                        let mut issue_iid = 0;
-
-                                        if let Some(item) = selected_val {
-                                            if item == "Create blank (No issue)" {
-                                                let mr_tmpl =
-                                                    get_default_template("mr").unwrap_or_default();
-                                                description_val = mr_tmpl;
-                                            } else {
-                                                let id_val = item.clone();
-                                                let parsed_iid = if id_val.starts_with('#') {
-                                                    id_val
-                                                        .strip_prefix('#')
-                                                        .and_then(|s| {
-                                                            s.split(|c: char| !c.is_numeric())
-                                                                .next()
-                                                        })
-                                                        .and_then(|s| s.parse::<u64>().ok())
-                                                } else {
-                                                    id_val.trim().parse::<u64>().ok()
-                                                };
-
-                                                if let Some(iid) = parsed_iid {
-                                                    if let Some(issue) = app
-                                                        .issues
-                                                        .items
-                                                        .iter()
-                                                        .find(|i| i.iid == iid)
-                                                    {
-                                                        issue_iid = issue.iid;
-                                                        title_val = issue.title.clone();
-                                                        source_branch_val = format!(
-                                                            "{}-{}",
-                                                            issue.iid,
-                                                            slugify(&issue.title)
-                                                        );
-                                                        if !issue.labels.is_empty() {
-                                                            labels_val = issue.labels.join(", ");
-                                                        }
-                                                        if !issue.assignees.is_empty() {
-                                                            assignees_val = issue
-                                                                .assignees
-                                                                .iter()
-                                                                .map(|a| format!("@{}", a.username))
-                                                                .collect::<Vec<_>>()
-                                                                .join(", ");
-                                                        }
-                                                        if let Some(ref m) = issue.milestone {
-                                                            milestone_val = m.title.clone();
-                                                        }
-                                                        if let Some(ref d) = issue.description {
-                                                            description_val = format!(
-                                                                "Closes #{}\n\n{}",
-                                                                issue.iid, d
-                                                            );
-                                                        } else {
-                                                            let mr_tmpl =
-                                                                get_default_template("mr")
-                                                                    .unwrap_or_default();
-                                                            if mr_tmpl.is_empty() {
-                                                                description_val = format!(
-                                                                    "Closes #{}",
-                                                                    issue.iid
-                                                                );
-                                                            } else {
-                                                                description_val = format!(
-                                                                    "Closes #{}\n\n{}",
-                                                                    issue.iid, mr_tmpl
-                                                                );
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        app.open_edit_menu(crate::app::EditMenu {
-                                            title: format!("Create {}", pr_suffix),
-                                            fields: vec![
-                                                crate::app::Field::text("Title", title_val),
-                                                crate::app::Field::toggle(
-                                                    "Status (Draft/Ready)",
-                                                    "Draft".to_string(),
-                                                ),
-                                                crate::app::Field::ref_field(
-                                                    "Source Branch",
-                                                    source_branch_val,
-                                                ),
-                                                crate::app::Field::ref_field(
-                                                    "Target Branch",
-                                                    get_default_branch()
-                                                        .unwrap_or_else(|| "main".to_string()),
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Assignees",
-                                                    assignees_val,
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Reviewers",
-                                                    String::new(),
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Milestone",
-                                                    milestone_val,
-                                                ),
-                                                crate::app::Field::multi_select(
-                                                    "Labels", labels_val,
-                                                ),
-                                                crate::app::Field::text(
-                                                    "Description",
-                                                    description_val,
-                                                ),
-                                            ],
-                                            selected_idx: 0,
-                                            entity_iid: issue_iid,
-                                            entity_kind: crate::app::EditEntityKind::CreateMr,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                            workflow_inputs: vec![],
-                                            cursor_pos: 0,
-                                            editing: false,
-                                            desc_scroll: 0,
-                                        });
                                         continue;
                                     }
 
@@ -4227,6 +4012,171 @@ async fn main() -> Result<()> {
                                                 }
                                             }
                                         }
+                                        continue;
+                                    }
+
+                                    if field_type == "description_template" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        let choice = selected_val.unwrap_or_default();
+                                        let template_type = if selector.entity_type == "new_mr" {
+                                            "mr"
+                                        } else {
+                                            "issue"
+                                        };
+                                        let mut desc_val = String::new();
+                                        if choice != "-- (blank)" {
+                                            if let Some(content) = list_templates(template_type)
+                                                .iter()
+                                                .find(|(n, _)| n == &choice)
+                                                .map(|(_, c)| c)
+                                            {
+                                                desc_val = content.clone();
+                                            }
+                                        }
+                                        if let Some(ref mut menu) = app.edit_menu {
+                                            if let Some(f) = menu
+                                                .fields
+                                                .iter_mut()
+                                                .find(|f| f.label == "Description")
+                                            {
+                                                f.value = desc_val;
+                                            }
+                                            if let Some(f) = menu
+                                                .fields
+                                                .iter_mut()
+                                                .find(|f| f.label == "Description Template")
+                                            {
+                                                f.value = if choice == "-- (blank)" {
+                                                    String::new()
+                                                } else {
+                                                    choice
+                                                };
+                                            }
+                                        }
+                                        app.selector = None;
+                                        continue;
+                                    }
+
+                                    if field_type == "create_mr_from_issue" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let mut selected_val =
+                                            selector.selected_items.iter().next().cloned();
+                                        if selected_val.is_none() && !filtered_items.is_empty() {
+                                            selected_val =
+                                                Some(filtered_items[selector.cursor_idx].clone());
+                                        }
+                                        if let Some(val) = selected_val {
+                                            let current_val = app
+                                                .edit_menu
+                                                .as_ref()
+                                                .and_then(|m| {
+                                                    m.fields
+                                                        .iter()
+                                                        .find(|f| f.label == "Create from Issue")
+                                                })
+                                                .map(|f| f.value.clone())
+                                                .unwrap_or_default();
+
+                                            if val == current_val {
+                                                // Deselect if it's already selected
+                                                if let Some(ref mut menu) = app.edit_menu {
+                                                    for label in [
+                                                        "Title",
+                                                        "Source Branch",
+                                                        "Assignees",
+                                                        "Milestone",
+                                                        "Labels",
+                                                        "Create from Issue",
+                                                    ] {
+                                                        if let Some(f) = menu
+                                                            .fields
+                                                            .iter_mut()
+                                                            .find(|f| f.label == label)
+                                                        {
+                                                            f.value = String::new();
+                                                        }
+                                                    }
+                                                    menu.entity_iid = 0;
+                                                }
+                                            } else {
+                                                let parsed_iid = val
+                                                    .strip_prefix('#')
+                                                    .and_then(|s| {
+                                                        s.split(|c: char| !c.is_numeric()).next()
+                                                    })
+                                                    .and_then(|s| s.parse::<u64>().ok());
+                                                if let Some(iid) = parsed_iid {
+                                                    if let Some(issue) = app
+                                                        .issues
+                                                        .items
+                                                        .iter()
+                                                        .find(|i| i.iid == iid)
+                                                    {
+                                                        let title = issue.title.clone();
+                                                        let source_branch = format!(
+                                                            "{}-{}",
+                                                            issue.iid,
+                                                            slugify(&issue.title)
+                                                        );
+                                                        let labels = if issue.labels.is_empty() {
+                                                            String::new()
+                                                        } else {
+                                                            issue.labels.join(", ")
+                                                        };
+                                                        let assignees = if issue
+                                                            .assignees
+                                                            .is_empty()
+                                                        {
+                                                            String::new()
+                                                        } else {
+                                                            issue
+                                                                .assignees
+                                                                .iter()
+                                                                .map(|a| format!("@{}", a.username))
+                                                                .collect::<Vec<_>>()
+                                                                .join(", ")
+                                                        };
+                                                        let milestone = issue
+                                                            .milestone
+                                                            .as_ref()
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default();
+                                                        if let Some(ref mut menu) = app.edit_menu {
+                                                            for (label, value) in [
+                                                                ("Title", title.clone()),
+                                                                ("Source Branch", source_branch),
+                                                                ("Assignees", assignees.clone()),
+                                                                ("Milestone", milestone),
+                                                                ("Labels", labels.clone()),
+                                                            ] {
+                                                                if let Some(f) = menu
+                                                                    .fields
+                                                                    .iter_mut()
+                                                                    .find(|f| f.label == label)
+                                                                {
+                                                                    f.value = value;
+                                                                }
+                                                            }
+                                                            if let Some(f) =
+                                                                menu.fields.iter_mut().find(|f| {
+                                                                    f.label == "Create from Issue"
+                                                                })
+                                                            {
+                                                                f.value = val.clone();
+                                                            }
+                                                            menu.entity_iid = issue.iid;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        app.selector = None;
                                         continue;
                                     }
 
@@ -5769,6 +5719,8 @@ async fn main() -> Result<()> {
                                     || field_name == "Branch / Ref"
                                     || field_name == "Workflow File"
                                     || field_name == "Tag"
+                                    || field_name == "Create from Issue"
+                                    || field_name == "Description Template"
                                     || field_name.starts_with("Input: ")
                                 {
                                     let mut current_set = std::collections::HashSet::new();
@@ -5784,6 +5736,8 @@ async fn main() -> Result<()> {
                                         "Target Branch" => "target_branch",
                                         "Branch / Ref" => "pipeline_branch",
                                         "Create From" => "create_from",
+                                        "Create from Issue" => "create_mr_from_issue",
+                                        "Description Template" => "description_template",
                                         "Workflow File" => "workflow_file",
                                         "Tag" => "tag",
                                         _ => "",
@@ -5945,6 +5899,29 @@ async fn main() -> Result<()> {
                                         if !current_val.is_empty() {
                                             current_set.insert(current_val);
                                         }
+                                    } else if field_type == "create_mr_from_issue" {
+                                        let issues: Vec<String> = app
+                                            .issues
+                                            .items
+                                            .iter()
+                                            .filter(|i| i.state == "opened" || i.state == "open")
+                                            .map(|i| format!("#{} {}", i.iid, i.title))
+                                            .collect();
+                                        all_items = issues;
+                                        is_loading = false;
+                                    } else if field_type == "description_template" {
+                                        let template_type = if entity_type == "new_mr" {
+                                            "mr"
+                                        } else {
+                                            "issue"
+                                        };
+                                        let templates = list_templates(template_type);
+                                        let template_names: Vec<String> =
+                                            std::iter::once("-- (blank)".to_string())
+                                                .chain(templates.iter().map(|(n, _)| n.clone()))
+                                                .collect();
+                                        all_items = template_names;
+                                        is_loading = false;
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {

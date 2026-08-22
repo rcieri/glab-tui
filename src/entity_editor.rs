@@ -14,7 +14,7 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 
 /// Return a muted dash for empty values so optional fields read cleanly
-/// instead of cluttering the preview with "None" or blank rows.
+/// instead of cluttering the preview with "--" or blank rows.
 pub(crate) fn display_branch(value: &str) -> &str {
     if value.trim().is_empty() || value == "--" {
         "\u{2014}"
@@ -47,6 +47,10 @@ pub fn issue_fields(
         fields.push(crate::app::Field::date("Due Date", due_date));
         fields.push(crate::app::Field::text("Weight", weight));
     }
+    fields.push(crate::app::Field::ref_field(
+        "Description Template",
+        String::new(),
+    ));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }
@@ -70,10 +74,19 @@ pub fn mr_fields(
         ));
         fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
     }
+    fields.push(crate::app::Field::ref_field(
+        "Create from Issue",
+        String::new(),
+    ));
+    fields.push(crate::app::Field::ref_field("Source Branch", String::new()));
     fields.push(crate::app::Field::multi_select("Assignees", assignees));
     fields.push(crate::app::Field::multi_select("Reviewers", reviewers));
     fields.push(crate::app::Field::multi_select("Milestone", milestone));
     fields.push(crate::app::Field::multi_select("Labels", labels));
+    fields.push(crate::app::Field::ref_field(
+        "Description Template",
+        String::new(),
+    ));
     fields.push(crate::app::Field::text("Description", description));
     fields
 }

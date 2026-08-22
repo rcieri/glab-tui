@@ -1992,23 +1992,21 @@ impl Backend for GlabBackend {
         name: &str,
         description: &str,
     ) -> Result<()> {
-        let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/releases/{}", encoded, tag_name);
-
-        let mut body = serde_json::Map::new();
-        body.insert(
-            "name".to_string(),
-            serde_json::Value::String(name.to_string()),
-        );
-        body.insert(
-            "description".to_string(),
-            serde_json::Value::String(description.to_string()),
-        );
-
-        let body_str = serde_json::Value::Object(body).to_string();
-
-        self.raw_api(&endpoint, "PUT", Some(&body_str), "Updating Release")
-            .await?;
+        self.run_glab(
+            &[
+                "release",
+                "create",
+                tag_name,
+                "-R",
+                project,
+                "-n",
+                name,
+                "-N",
+                description,
+            ],
+            "Updating Release",
+        )
+        .await?;
         Ok(())
     }
 

@@ -1777,49 +1777,21 @@ impl Backend for GhBackend {
         name: &str,
         description: &str,
     ) -> Result<()> {
-        // 1. Fetch release ID by tag
-        let get_endpoint = format!("repos/{}/releases/tags/{}", project, tag_name);
-        let raw = self
-            .run_gh(&["api", &get_endpoint], "Fetching Release ID")
-            .await?;
-
-        #[derive(Deserialize)]
-        struct GhRelId {
-            id: u64,
-        }
-        let rel: GhRelId = serde_json::from_str(&raw)?;
-
-        // 2. Patch release
-        let patch_endpoint = format!("repos/{}/releases/{}", project, rel.id);
-
-        let mut body = serde_json::Map::new();
-        body.insert(
-            "name".to_string(),
-            serde_json::Value::String(name.to_string()),
-        );
-        body.insert(
-            "body".to_string(),
-            serde_json::Value::String(description.to_string()),
-        );
-
-        let mut temp = tempfile::NamedTempFile::new()?;
-        use std::io::Write;
-        let body_str = serde_json::Value::Object(body).to_string();
-        temp.write_all(body_str.as_bytes())?;
-
         self.run_gh(
             &[
-                "api",
-                &patch_endpoint,
-                "-X",
-                "PATCH",
-                "--input",
-                temp.path().to_str().unwrap(),
+                "release",
+                "edit",
+                tag_name,
+                "-R",
+                project,
+                "-t",
+                name,
+                "-n",
+                description,
             ],
             "Updating Release",
         )
         .await?;
-
         Ok(())
     }
 

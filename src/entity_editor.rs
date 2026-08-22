@@ -459,7 +459,7 @@ pub fn build_release_document(
 ) -> crate::app::EntityDocument {
     let mut fields = vec![
         crate::app::Field::read_only("Tag", release.tag_name.clone()),
-        crate::app::Field::text("Name", release.name.clone()),
+        crate::app::Field::text("Release Name", release.name.clone()),
     ];
     if let Some(author) = &release.author_name {
         fields.push(crate::app::Field::read_only(
@@ -720,6 +720,15 @@ pub fn apply_field_text_change(
                 "tag" => tag = value.clone(),
                 "description" => description = value.clone(),
                 _ => {}
+            }
+
+            if let Some(item) = app.releases.items.get_mut(iid as usize) {
+                if field_type == "title" || field_type == "release_name" {
+                    item.name = value.clone();
+                }
+                if field_type == "description" {
+                    item.description = Some(value.clone());
+                }
             }
 
             let Some(client) = app.gitlab_client.clone() else {
@@ -1304,7 +1313,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 title: format!("Edit Release {}", release.tag_name),
                 fields: doc.fields,
                 selected_idx,
-                entity_iid: 0,
+                entity_iid,
                 entity_kind: crate::app::EditEntityKind::EditRelease,
                 state: {
                     let mut s = ratatui::widgets::ListState::default();

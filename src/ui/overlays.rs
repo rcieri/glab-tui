@@ -1716,7 +1716,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.border_focused))
-            .border_type(BorderType::Double)
             .style(Style::default().bg(theme.bg));
 
         // Draw the backdrop + border first so the content below renders
@@ -1770,6 +1769,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .iter()
                 .map(|o| {
                     let is_radio = o.label.starts_with("Strategy: ");
+                    let display_label = if is_radio {
+                        o.label.trim_start_matches("Strategy: ")
+                    } else {
+                        &o.label
+                    };
                     let mark = if is_radio {
                         if o.checked {
                             format!("({}) ", icons.check_on)
@@ -1783,7 +1787,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             "[ ] ".to_string()
                         }
                     };
-                    Line::from(format!("{mark}{}", o.label))
+                    Line::from(format!("{mark}{}", display_label))
                 })
                 .collect();
             let list = List::new(items)
@@ -1793,14 +1797,16 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         .bg(theme.border_focused)
                         .fg(theme.bg)
                         .add_modifier(Modifier::BOLD),
-                )
-                .highlight_symbol("> ");
+                );
 
             // Center the options list to match the centered body text
             let max_option_width = dialog
                 .options
                 .iter()
-                .map(|o| o.label.chars().count() + 6) // "[x] " + "> "
+                .map(|o| {
+                    let text = o.label.trim_start_matches("Strategy: ");
+                    text.chars().count() + 4 // "[x] "
+                })
                 .max()
                 .unwrap_or(20) as u16;
             let pad = content_chunks[1].width.saturating_sub(max_option_width) / 2;
@@ -1825,7 +1831,11 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
         let halves = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
+            .constraints([
+                Constraint::Ratio(1, 2),
+                Constraint::Length(1),
+                Constraint::Ratio(1, 2),
+            ])
             .split(buttons);
 
         let submit_selected = dialog.is_on_submit();
@@ -1853,7 +1863,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             Modifier::empty()
                         }),
                 ),
-            halves[1],
+            halves[2],
         );
 
         // Submit button (left half)

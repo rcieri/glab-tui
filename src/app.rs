@@ -5570,8 +5570,8 @@ mod tests {
         // Reversible action defaults to Submit.
         let merge = SubmitDialog::build(ConfirmAction::MergeMr(99), &app);
         assert!(merge.is_on_submit());
-        assert_eq!(merge.options.len(), 2);
-        assert!(merge.options.iter().any(|o| o.label == "Squash"));
+        assert_eq!(merge.options.len(), 5);
+        assert!(merge.options.iter().any(|o| o.label == "Strategy: Squash"));
         assert!(
             merge
                 .options

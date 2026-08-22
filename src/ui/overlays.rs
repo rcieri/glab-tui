@@ -1791,13 +1791,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     };
                     let mark = if is_radio {
                         if o.checked {
-                            format!("({}) ", icons.check_on)
+                            "(x) ".to_string()
                         } else {
                             "( ) ".to_string()
                         }
                     } else {
                         if o.checked {
-                            format!("[{}] ", icons.check_on)
+                            "[x] ".to_string()
                         } else {
                             "[ ] ".to_string()
                         }

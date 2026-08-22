@@ -7,7 +7,7 @@ use ratatui::{
     widgets::Cell,
 };
 
-use crate::config::THEME;
+use crate::config::{Icons, THEME, Theme};
 use crate::utils::format::truncate;
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -86,6 +86,35 @@ fn is_light_color(color: Color) -> bool {
         }
         _ => false,
     }
+}
+
+/// The gutter for a side-by-side row whose side has no line: the marker column,
+/// a blank line-number field and the separator — the same cells a row with a
+/// line draws before its content begins.
+///
+/// `num_width` is the (dynamic) line-number column width, so the blank field
+/// stays the same width as the numbered rows on either side. `sel_bg` appends
+/// one further cell, so a selected or search-matched empty row still has
+/// somewhere to show its highlight. That cell is deliberately absent otherwise:
+/// painting it in the gutter colour ran the gutter one column past where a
+/// numbered row ends it, which read as a ragged edge on every padding row.
+pub(crate) fn empty_side_gutter_spans(
+    marker: &'static str,
+    marker_style: Style,
+    num_style: Style,
+    sep_style: Style,
+    num_width: usize,
+    sel_bg: Option<Color>,
+) -> Vec<Span<'static>> {
+    let mut spans = vec![
+        Span::styled(marker, marker_style),
+        Span::styled(" ".repeat(num_width + 1), num_style),
+        Span::styled("│ ", sep_style),
+    ];
+    if let Some(bg) = sel_bg {
+        spans.push(Span::styled(" ", Style::default().bg(bg)));
+    }
+    spans
 }
 
 pub(crate) fn floor_char_boundary(s: &str, mut index: usize) -> usize {
@@ -646,6 +675,198 @@ pub(crate) fn status_span(status: &str) -> Span<'static> {
     }
 }
 
+/// Single source of truth for badge styling shared by the inspector preview and
+/// the table column renderers. Maps a field `label`/`val` pair to its
+/// `(fg, badge_background, bold, formatted_text)` so the two render paths can
+/// never drift apart.
+///
+/// `item_bg` is the fallback background used by neutral badges (e.g. "canceled"
+/// or a NO toggle); `is_selected` swaps the active badge background for the
+/// highlighted background. `formatted_text` is `None` when the caller should
+/// fall back to its own default display.
+pub(crate) fn badge_style_for(
+    label: &str,
+    val: &str,
+    is_selected: bool,
+    item_bg: Color,
+    theme: &Theme,
+    icons: &Icons,
+) -> (Color, Option<Color>, bool, Option<String>) {
+    let active_bg = |color: Color| -> Option<Color> {
+        if is_selected {
+            Some(theme.highlight_bg)
+        } else {
+            Some(color)
+        }
+    };
+    match label {
+        "State" => match val.to_lowercase().as_str() {
+            "opened" | "open" | "active" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} OPEN ", icons.state_open)),
+            ),
+            "closed" | "close" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CLOSED ", icons.state_closed)),
+            ),
+            "merged" => (
+                theme.purple,
+                active_bg(theme.purple_bg),
+                true,
+                Some(format!(" {} MERGED ", icons.state_merged)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Status" | "Deploy Status" => match val.to_lowercase().as_str() {
+            "success" | "online" | "ready" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} SUCCESS ", icons.status_success)),
+            ),
+            "failed" | "offline" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} FAILED ", icons.status_failed)),
+            ),
+            "running" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" {} RUNNING ", icons.status_running)),
+            ),
+            "pending" | "waiting" | "draft" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} PENDING ", icons.status_pending)),
+            ),
+            "canceled" | "cancelled" => (
+                theme.text_muted,
+                Some(item_bg),
+                false,
+                Some(format!(" {} CANCELED ", icons.status_canceled)),
+            ),
+            "paused" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} PAUSED ", icons.runner_paused)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Approval" => match val.to_uppercase().as_str() {
+            "APPROVED" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} APPROVED ", icons.approval_approved)),
+            ),
+            "CHANGES" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CHANGES ", icons.approval_changes)),
+            ),
+            "YOURS" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" \u{f007} YOURS ")),
+            ),
+            "AWAITING" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} AWAITING ", icons.approval_pending)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Mergeable" => match val.to_uppercase().as_str() {
+            "CLEAN" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} CLEAN ", icons.merge_clean)),
+            ),
+            "CONFLICT" | "BLOCKED" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CONFLICT ", icons.merge_conflict)),
+            ),
+            "REBASE" | "BEHIND" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} REBASE ", icons.merge_rebase)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Workflow" => match val.to_uppercase().as_str() {
+            "APPROVED" => (
+                theme.green,
+                active_bg(theme.green_bg),
+                true,
+                Some(format!(" {} APPROVED ", icons.approval_approved)),
+            ),
+            "REVIEW" => (
+                theme.blue,
+                active_bg(theme.blue_bg),
+                true,
+                Some(format!(" {} REVIEW ", icons.workflow_review)),
+            ),
+            "CHANGES" => (
+                theme.red,
+                active_bg(theme.red_bg),
+                true,
+                Some(format!(" {} CHANGES ", icons.approval_changes)),
+            ),
+            "DRAFT" => (
+                theme.yellow,
+                active_bg(theme.yellow_bg),
+                true,
+                Some(format!(" {} DRAFT ", icons.status_draft)),
+            ),
+            _ => (theme.text_normal, None, false, None),
+        },
+        "Default" | "Protected" | "Can Push" | "Active" | "Confidential" => {
+            if val == "YES" || val == "Yes" || val == "true" {
+                (
+                    theme.green,
+                    active_bg(theme.green_bg),
+                    true,
+                    Some(format!(" {} YES ", icons.check_on)),
+                )
+            } else {
+                (
+                    theme.text_muted,
+                    Some(item_bg),
+                    false,
+                    Some(format!(" {} NO ", icons.check_off)),
+                )
+            }
+        }
+        "Milestone" | "Branch" | "Ref" | "Deploy Ref" | "Stage" => {
+            (theme.purple, None, false, None)
+        }
+        "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target" | "Project" => {
+            (theme.blue, None, false, None)
+        }
+        "Updated" | "Created" | "Duration" | "Released" | "Deployed" | "Date" | "Due Date"
+        | "Start Date" | "Avg Wait" => (theme.yellow, None, false, None),
+        "ID" | "SHA" | "Commit" | "Runner" | "Tag" | "Deploy SHA" | "Deploy ID" => {
+            (theme.blue, None, false, None)
+        }
+        _ => (theme.text_normal, None, false, None),
+    }
+}
+
 /// Return a styled yellow span for a relative timestamp.
 pub(crate) fn time_ago_span(date: &str) -> Span<'static> {
     Span::styled(
@@ -686,6 +907,32 @@ pub(crate) fn label_spans(text: &str) -> Vec<Span<'static>> {
         ));
     }
     spans
+}
+
+/// Lays out one row of the diff file tree: truncates `name` to what is left
+/// after the prefix and the trailing stats, and returns it with the padding
+/// that pushes those stats flush against the panel's right edge.
+///
+/// Every width here is counted in **characters, not bytes**. The folder icons
+/// and the reviewed-file check are multi-byte but occupy one column each, so
+/// byte lengths overstate the row and shorten the padding — which pulls the
+/// `+N -M` stats away from the border, and moves them the moment a file is
+/// marked as reviewed and its indicator changes.
+pub(crate) fn diff_tree_row_layout(
+    panel_inner_width: usize,
+    prefix: &str,
+    name: &str,
+    stats_width: usize,
+) -> (String, String) {
+    let prefix_width = prefix.chars().count();
+    let name_avail = panel_inner_width
+        .saturating_sub(prefix_width)
+        .saturating_sub(stats_width);
+    let name_display = truncate(name, name_avail.max(8));
+    let padding = " ".repeat(
+        panel_inner_width.saturating_sub(prefix_width + name_display.chars().count() + stats_width),
+    );
+    (name_display, padding)
 }
 
 #[cfg(test)]
@@ -843,5 +1090,112 @@ mod tests {
         assert_eq!(floor_char_boundary(s, 4), 4);
         assert_eq!(floor_char_boundary(s, 5), 5);
         assert_eq!(floor_char_boundary(s, 999), s.len());
+    }
+
+    /// Width of a laid-out row as the terminal draws it.
+    fn row_width(prefix: &str, name: &str, padding: &str, stats_width: usize) -> usize {
+        prefix.chars().count() + name.chars().count() + padding.chars().count() + stats_width
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_fills_the_panel_width() {
+        let (name, padding) = diff_tree_row_layout(40, "     ", "app.rs", 7);
+        assert_eq!(name, "app.rs");
+        assert_eq!(row_width("     ", &name, &padding, 7), 40);
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_is_unmoved_by_the_reviewed_indicator() {
+        // The two indicators differ in bytes (2 vs 4) but not in columns, so a
+        // file must lay out identically before and after it is marked reviewed
+        // — otherwise its +N -M stats jump sideways on every `m`.
+        // Both prefixes are " " + a 2-column indent + a 2-column indicator:
+        // 5 columns each, but 5 bytes vs 7.
+        let pending = diff_tree_row_layout(40, "     ", "app.rs", 7);
+        let reviewed = diff_tree_row_layout(40, "   \u{f4a7} ", "app.rs", 7);
+        assert_eq!(pending.0.chars().count(), reviewed.0.chars().count());
+        assert_eq!(pending, reviewed);
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_multibyte_prefix_reaches_the_border() {
+        // A directory row: the folder icon is three bytes wide and one column.
+        let prefix = format!("  {} ", "\u{f07c}");
+        let (name, padding) = diff_tree_row_layout(40, &prefix, "src", 0);
+        assert_eq!(row_width(&prefix, &name, &padding, 0), 40);
+    }
+
+    #[test]
+    fn test_diff_tree_row_layout_truncates_a_long_name() {
+        let (name, padding) = diff_tree_row_layout(30, "   ", "a_very_long_file_name_indeed.rs", 8);
+        assert!(name.ends_with("..."));
+        assert!(row_width("   ", &name, &padding, 8) <= 30 + 3);
+    }
+
+    /// Rendered width of a span run, in cells.
+    fn spans_width(spans: &[Span<'static>]) -> usize {
+        spans.iter().map(|s| s.content.chars().count()).sum()
+    }
+
+    /// The gutter a side-by-side row with a line draws: marker, line number,
+    /// separator. Kept here as the reference width an empty row must match.
+    // 3 marker cells + a 4-wide number and its trailing space + separator and
+    // its trailing space.
+    const OCCUPIED_ROW_GUTTER_WIDTH: usize = 3 + 5 + 2;
+
+    #[test]
+    fn test_empty_side_gutter_matches_an_occupied_row() {
+        let spans = empty_side_gutter_spans(
+            "   ",
+            Style::default(),
+            Style::default(),
+            Style::default(),
+            4,
+            None,
+        );
+        assert_eq!(
+            spans_width(&spans),
+            OCCUPIED_ROW_GUTTER_WIDTH,
+            "a padding row must end its gutter where a numbered row does"
+        );
+        assert!(
+            spans.iter().all(|s| s.style.bg.is_none()),
+            "nothing here may paint a background of its own"
+        );
+    }
+
+    #[test]
+    fn test_empty_side_gutter_still_shows_a_selection() {
+        // The reason the extra cell exists: a selected empty row needs
+        // somewhere to show the highlight, or it reads as unselected.
+        let spans = empty_side_gutter_spans(
+            " ▐ ",
+            Style::default(),
+            Style::default(),
+            Style::default(),
+            4,
+            Some(Color::Rgb(1, 2, 3)),
+        );
+        assert_eq!(spans_width(&spans), OCCUPIED_ROW_GUTTER_WIDTH + 1);
+        assert_eq!(
+            spans.last().map(|s| s.style.bg),
+            Some(Some(Color::Rgb(1, 2, 3))),
+            "the highlight colour must reach the appended cell"
+        );
+    }
+
+    #[test]
+    fn test_empty_side_gutter_keeps_its_styles_on_the_right_cells() {
+        let marker = Style::default().fg(Color::Rgb(9, 9, 9));
+        let num = Style::default().fg(Color::Rgb(8, 8, 8));
+        let sep = Style::default().fg(Color::Rgb(7, 7, 7));
+        let spans = empty_side_gutter_spans(" ❯ ", marker, num, sep, 4, None);
+
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].content, " ❯ ");
+        assert_eq!(spans[0].style, marker);
+        assert_eq!(spans[1].style, num);
+        assert_eq!(spans[2].content, "│ ");
+        assert_eq!(spans[2].style, sep);
     }
 }

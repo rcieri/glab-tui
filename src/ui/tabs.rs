@@ -29,6 +29,7 @@ pub(crate) fn render_tab_issues(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     if super::render_edit_menu_if_active(f, app, detail_rect) {
         return;
     }
@@ -38,7 +39,7 @@ pub(crate) fn render_tab_issues(
             Paragraph::new(format!("\n\n {} Loading issues...", icons.label_loading))
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
         f.render_widget(
@@ -47,9 +48,9 @@ pub(crate) fn render_tab_issues(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else {
@@ -91,13 +92,13 @@ pub(crate) fn render_tab_issues(
                 (
                     format!("{} OPEN", icons.state_open),
                     Style::default()
-                        .fg(THEME.read().unwrap().green)
+                        .fg(theme.green)
                         .bg(if is_selected {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else if is_checked {
-                            THEME.read().unwrap().checked_bg
+                            theme.checked_bg
                         } else {
-                            THEME.read().unwrap().green_bg
+                            theme.green_bg
                         })
                         .add_modifier(Modifier::BOLD),
                 )
@@ -105,13 +106,13 @@ pub(crate) fn render_tab_issues(
                 (
                     format!("{} CLOSED", icons.state_closed),
                     Style::default()
-                        .fg(THEME.read().unwrap().red)
+                        .fg(theme.red)
                         .bg(if is_selected {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else if is_checked {
-                            THEME.read().unwrap().checked_bg
+                            theme.checked_bg
                         } else {
-                            THEME.read().unwrap().red_bg
+                            theme.red_bg
                         })
                         .add_modifier(Modifier::BOLD),
                 )
@@ -123,7 +124,7 @@ pub(crate) fn render_tab_issues(
                     &app.search_query,
                     is_selected,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -143,7 +144,7 @@ pub(crate) fn render_tab_issues(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -162,7 +163,7 @@ pub(crate) fn render_tab_issues(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
@@ -187,7 +188,7 @@ pub(crate) fn render_tab_issues(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().yellow),
+                    Style::default().fg(theme.yellow),
                     Alignment::Left,
                 ));
             }
@@ -198,7 +199,7 @@ pub(crate) fn render_tab_issues(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().yellow),
+                    Style::default().fg(theme.yellow),
                     Alignment::Left,
                 ));
             }
@@ -209,14 +210,14 @@ pub(crate) fn render_tab_issues(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_selected {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else if is_checked {
-                Style::default().bg(THEME.read().unwrap().checked_bg)
+                Style::default().bg(theme.checked_bg)
             } else {
                 Style::default()
             };
@@ -272,11 +273,11 @@ pub(crate) fn render_tab_issues(
         f.render_stateful_widget(table, content_area, &mut app.issues.state);
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border))
+            .border_style(Style::default().fg(theme.border))
             .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             );
         let selected_issue_idx = app.issues.state.selected();
@@ -301,7 +302,7 @@ pub(crate) fn render_tab_issues(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -316,6 +317,7 @@ pub(crate) fn render_tab_merge_requests(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     if super::render_edit_menu_if_active(f, app, detail_rect) {
         return;
     }
@@ -328,7 +330,7 @@ pub(crate) fn render_tab_merge_requests(
             ))
             .alignment(Alignment::Center)
             .block(main_block.clone())
-            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
         f.render_widget(
@@ -337,9 +339,9 @@ pub(crate) fn render_tab_merge_requests(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else {
@@ -393,13 +395,13 @@ pub(crate) fn render_tab_merge_requests(
                 (
                     format!("{} OPEN", icons.state_open),
                     Style::default()
-                        .fg(THEME.read().unwrap().green)
+                        .fg(theme.green)
                         .bg(if is_selected {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else if is_checked {
-                            THEME.read().unwrap().checked_bg
+                            theme.checked_bg
                         } else {
-                            THEME.read().unwrap().green_bg
+                            theme.green_bg
                         })
                         .add_modifier(Modifier::BOLD),
                 )
@@ -407,13 +409,13 @@ pub(crate) fn render_tab_merge_requests(
                 (
                     format!("{} MERGED", icons.state_merged),
                     Style::default()
-                        .fg(THEME.read().unwrap().purple)
+                        .fg(theme.purple)
                         .bg(if is_selected {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else if is_checked {
-                            THEME.read().unwrap().checked_bg
+                            theme.checked_bg
                         } else {
-                            THEME.read().unwrap().purple_bg
+                            theme.purple_bg
                         })
                         .add_modifier(Modifier::BOLD),
                 )
@@ -421,13 +423,13 @@ pub(crate) fn render_tab_merge_requests(
                 (
                     format!("{} CLOSED", icons.state_closed),
                     Style::default()
-                        .fg(THEME.read().unwrap().red)
+                        .fg(theme.red)
                         .bg(if is_selected {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else if is_checked {
-                            THEME.read().unwrap().checked_bg
+                            theme.checked_bg
                         } else {
-                            THEME.read().unwrap().red_bg
+                            theme.red_bg
                         })
                         .add_modifier(Modifier::BOLD),
                 )
@@ -437,13 +439,13 @@ pub(crate) fn render_tab_merge_requests(
                 (
                     format!("{} DRAFT", icons.status_draft),
                     Style::default()
-                        .fg(THEME.read().unwrap().yellow)
+                        .fg(theme.yellow)
                         .bg(if is_selected {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else if is_checked {
-                            THEME.read().unwrap().checked_bg
+                            theme.checked_bg
                         } else {
-                            THEME.read().unwrap().yellow_bg
+                            theme.yellow_bg
                         })
                         .add_modifier(Modifier::BOLD),
                 )
@@ -453,13 +455,13 @@ pub(crate) fn render_tab_merge_requests(
                     (
                         format!("{} DRAFT", icons.status_draft),
                         Style::default()
-                            .fg(THEME.read().unwrap().yellow)
+                            .fg(theme.yellow)
                             .bg(if is_selected {
-                                THEME.read().unwrap().highlight_bg
+                                theme.highlight_bg
                             } else if is_checked {
-                                THEME.read().unwrap().checked_bg
+                                theme.checked_bg
                             } else {
-                                THEME.read().unwrap().yellow_bg
+                                theme.yellow_bg
                             })
                             .add_modifier(Modifier::BOLD),
                     )
@@ -467,13 +469,13 @@ pub(crate) fn render_tab_merge_requests(
                     (
                         format!("{} READY", icons.approval_approved),
                         Style::default()
-                            .fg(THEME.read().unwrap().green)
+                            .fg(theme.green)
                             .bg(if is_selected {
-                                THEME.read().unwrap().highlight_bg
+                                theme.highlight_bg
                             } else if is_checked {
-                                THEME.read().unwrap().checked_bg
+                                theme.checked_bg
                             } else {
-                                THEME.read().unwrap().green_bg
+                                theme.green_bg
                             })
                             .add_modifier(Modifier::BOLD),
                     )
@@ -493,7 +495,7 @@ pub(crate) fn render_tab_merge_requests(
                     &app.search_query,
                     is_selected,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -520,7 +522,7 @@ pub(crate) fn render_tab_merge_requests(
             if app.is_column_visible(Tab::MergeRequests, "Mergeable") {
                 let (text, tone) = crate::domain::mr_state::mergeable_cell(m.mergeability.as_ref());
                 let style = {
-                    let t = THEME.read().unwrap();
+                    let t = &theme;
                     match tone {
                         crate::domain::mr_state::MergeTone::Conflict => Style::default()
                             .fg(t.red)
@@ -578,7 +580,7 @@ pub(crate) fn render_tab_merge_requests(
                 let (text, tone) =
                     crate::domain::mr_state::approval_cell(m.approval.as_ref(), app.is_github());
                 let style = {
-                    let t = THEME.read().unwrap();
+                    let t = &theme;
                     match tone {
                         crate::domain::mr_state::ApprovalTone::ChangesRequested => Style::default()
                             .fg(t.red)
@@ -638,7 +640,7 @@ pub(crate) fn render_tab_merge_requests(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -657,7 +659,7 @@ pub(crate) fn render_tab_merge_requests(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
@@ -676,14 +678,14 @@ pub(crate) fn render_tab_merge_requests(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
             if app.is_column_visible(Tab::MergeRequests, "Workflow") {
                 let text = crate::domain::mr_state::workflow_cell(m.workflow);
                 let (color, bg_color) = {
-                    let t = THEME.read().unwrap();
+                    let t = &theme;
                     match m.workflow {
                         Some(crate::domain::mr_state::WorkflowStatus::ReturnedToYou) => {
                             (t.red, Some(t.red_bg))
@@ -702,7 +704,7 @@ pub(crate) fn render_tab_merge_requests(
                 };
                 let mut wf_style = Style::default().fg(color);
                 if let Some(bg) = bg_color {
-                    let t = THEME.read().unwrap();
+                    let t = &theme;
                     wf_style = wf_style
                         .bg(if is_selected {
                             t.highlight_bg
@@ -758,44 +760,44 @@ pub(crate) fn render_tab_merge_requests(
                         let (pipe_text, pipe_color, pipe_bg) = match pipe.status() {
                             "success" => (
                                 format!("{} SUCCESS", icons.status_success),
-                                THEME.read().unwrap().green,
-                                THEME.read().unwrap().green_bg,
+                                theme.green,
+                                theme.green_bg,
                             ),
                             "failed" => (
                                 format!("{} FAILED", icons.status_failed),
-                                THEME.read().unwrap().red,
-                                THEME.read().unwrap().red_bg,
+                                theme.red,
+                                theme.red_bg,
                             ),
                             "running" => (
                                 format!("{} RUNNING", icons.status_running),
-                                THEME.read().unwrap().blue,
-                                THEME.read().unwrap().blue_bg,
+                                theme.blue,
+                                theme.blue_bg,
                             ),
                             "canceled" => (
                                 format!("{} CANCEL", icons.status_canceled),
-                                THEME.read().unwrap().text_muted,
-                                THEME.read().unwrap().inactive_bg,
+                                theme.text_muted,
+                                theme.inactive_bg,
                             ),
                             "pending" => (
                                 format!("{} PENDING", icons.status_pending),
-                                THEME.read().unwrap().yellow,
-                                THEME.read().unwrap().yellow_bg,
+                                theme.yellow,
+                                theme.yellow_bg,
                             ),
                             "skipped" => (
                                 format!("{} SKIP", icons.status_skipped),
-                                THEME.read().unwrap().text_muted,
-                                THEME.read().unwrap().inactive_bg,
+                                theme.text_muted,
+                                theme.inactive_bg,
                             ),
                             _ => (
                                 format!("{} UNKNOWN", icons.status_unknown),
-                                THEME.read().unwrap().text_muted,
-                                THEME.read().unwrap().inactive_bg,
+                                theme.text_muted,
+                                theme.inactive_bg,
                             ),
                         };
                         let bg = if is_selected {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else if is_checked {
-                            THEME.read().unwrap().checked_bg
+                            theme.checked_bg
                         } else {
                             pipe_bg
                         };
@@ -816,7 +818,7 @@ pub(crate) fn render_tab_merge_requests(
                             &app.search_query,
                             is_selected,
                             is_checked,
-                            Style::default().fg(THEME.read().unwrap().text_normal),
+                            Style::default().fg(theme.text_normal),
                             Alignment::Left,
                         ));
                     }
@@ -826,7 +828,7 @@ pub(crate) fn render_tab_merge_requests(
                         &app.search_query,
                         is_selected,
                         is_checked,
-                        Style::default().fg(THEME.read().unwrap().text_muted),
+                        Style::default().fg(theme.text_muted),
                         Alignment::Center,
                     ));
                 }
@@ -842,7 +844,7 @@ pub(crate) fn render_tab_merge_requests(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().yellow),
+                    Style::default().fg(theme.yellow),
                     Alignment::Left,
                 ));
             }
@@ -853,14 +855,14 @@ pub(crate) fn render_tab_merge_requests(
                     &app.search_query,
                     is_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_selected {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else if is_checked {
-                Style::default().bg(THEME.read().unwrap().checked_bg)
+                Style::default().bg(theme.checked_bg)
             } else {
                 Style::default()
             };
@@ -952,11 +954,11 @@ pub(crate) fn render_tab_merge_requests(
 
         let preview_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border))
+            .border_style(Style::default().fg(theme.border))
             .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             );
         if let Some(selected) = app.mrs.state.selected() {
@@ -996,7 +998,7 @@ pub(crate) fn render_tab_merge_requests(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -1011,6 +1013,7 @@ pub(crate) fn render_tab_pipelines(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     if super::render_edit_menu_if_active(f, app, detail_rect) {
         return;
     }
@@ -1025,7 +1028,7 @@ pub(crate) fn render_tab_pipelines(
             })
             .alignment(Alignment::Center)
             .block(main_block.clone())
-            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
         f.render_widget(
@@ -1038,9 +1041,9 @@ pub(crate) fn render_tab_pipelines(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(format!(" {} Preview ", icons.label_details))
-                    .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                    .border_style(Style::default().fg(theme.border)),
             )
-            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else {
@@ -1059,17 +1062,7 @@ pub(crate) fn render_tab_pipelines(
             &mut filtered_pipelines,
             &app.column_filters,
             Tab::Pipelines,
-            |item, col| match col {
-                "ID" => vec![item.id().to_string()],
-                "Status" => vec![item.status().to_string()],
-                "Ref" => vec![item.ref_branch().to_string()],
-                "Name" => vec![item.name().to_string()],
-                "Event" => vec![item.event().to_string()],
-                "SHA" => vec![item.head_sha().to_string()],
-                "Actor" => vec![item.actor_login().to_string()],
-                "Created" => vec![item.created_at().unwrap_or_default().to_string()],
-                _ => vec![],
-            },
+            App::pipeline_filter_values,
         );
 
         let rows = filtered_pipelines.iter().enumerate().map(|(idx, p)| {
@@ -1077,43 +1070,43 @@ pub(crate) fn render_tab_pipelines(
             let (status_text, status_color, bg_color) = match p.status() {
                 "success" => (
                     format!("{} SUCCESS", icons.status_success),
-                    THEME.read().unwrap().green,
-                    THEME.read().unwrap().green_bg,
+                    theme.green,
+                    theme.green_bg,
                 ),
                 "failed" => (
                     format!("{} FAILED", icons.status_failed),
-                    THEME.read().unwrap().red,
-                    THEME.read().unwrap().red_bg,
+                    theme.red,
+                    theme.red_bg,
                 ),
                 "running" => (
                     format!("{} RUNNING", icons.status_running),
-                    THEME.read().unwrap().blue,
-                    THEME.read().unwrap().blue_bg,
+                    theme.blue,
+                    theme.blue_bg,
                 ),
                 "canceled" => (
                     format!("{} CANCEL", icons.status_canceled),
-                    THEME.read().unwrap().text_muted,
-                    THEME.read().unwrap().inactive_bg,
+                    theme.text_muted,
+                    theme.inactive_bg,
                 ),
                 "pending" => (
                     format!("{} PENDING", icons.status_pending),
-                    THEME.read().unwrap().yellow,
-                    THEME.read().unwrap().yellow_bg,
+                    theme.yellow,
+                    theme.yellow_bg,
                 ),
                 "skipped" => (
                     format!("{} SKIP", icons.status_skipped),
-                    THEME.read().unwrap().text_muted,
-                    THEME.read().unwrap().inactive_bg,
+                    theme.text_muted,
+                    theme.inactive_bg,
                 ),
                 "manual" => (
                     format!("{} MANUAL", icons.status_manual),
-                    THEME.read().unwrap().text_muted,
-                    THEME.read().unwrap().inactive_bg,
+                    theme.text_muted,
+                    theme.inactive_bg,
                 ),
                 _ => (
                     format!("{} UNKNOWN", icons.status_unknown),
-                    THEME.read().unwrap().text_muted,
-                    THEME.read().unwrap().inactive_bg,
+                    theme.text_muted,
+                    theme.inactive_bg,
                 ),
             };
             let stages_dots = if let Some(jobs) = app.pipeline_jobs.get(&p.id()) {
@@ -1123,9 +1116,9 @@ pub(crate) fn render_tab_pipelines(
             };
             let is_checked = app.selected_pipelines.contains(&p.id());
             let status_bg = if is_row_highlighted {
-                THEME.read().unwrap().highlight_bg
+                theme.highlight_bg
             } else if is_checked {
-                THEME.read().unwrap().checked_bg
+                theme.checked_bg
             } else {
                 bg_color
             };
@@ -1136,7 +1129,7 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1159,7 +1152,7 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1169,7 +1162,7 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Style::default().fg(theme.text_muted),
                     Alignment::Left,
                 ));
             }
@@ -1179,7 +1172,7 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1189,7 +1182,7 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1199,7 +1192,7 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Style::default().fg(theme.text_muted),
                     Alignment::Left,
                 ));
             }
@@ -1209,7 +1202,7 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1217,7 +1210,7 @@ pub(crate) fn render_tab_pipelines(
                 let created_str = p.created_at().map(|c| time_ago(c)).unwrap_or_default();
                 row_cells.push(Cell::from(Span::styled(
                     truncate(&created_str, 15),
-                    Style::default().fg(THEME.read().unwrap().yellow),
+                    Style::default().fg(theme.yellow),
                 )));
             }
             if app.is_column_visible(Tab::Pipelines, "Duration") {
@@ -1227,7 +1220,7 @@ pub(crate) fn render_tab_pipelines(
                     .unwrap_or_else(|| "-".to_string());
                 row_cells.push(Cell::from(Span::styled(
                     duration,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                 )));
             }
             if app.is_column_visible(Tab::Pipelines, "Ref") {
@@ -1236,14 +1229,14 @@ pub(crate) fn render_tab_pipelines(
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().purple),
+                    Style::default().fg(theme.purple),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_row_highlighted {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else if is_checked {
-                Style::default().bg(THEME.read().unwrap().checked_bg)
+                Style::default().bg(theme.checked_bg)
             } else {
                 Style::default()
             };
@@ -1317,10 +1310,10 @@ pub(crate) fn render_tab_pipelines(
             .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             )
-            .border_style(Style::default().fg(THEME.read().unwrap().border));
+            .border_style(Style::default().fg(theme.border));
         if let Some(selected) = app.pipelines.state.selected() {
             if let Some(p) = filtered_pipelines.get(selected) {
                 let jobs = app.pipeline_jobs.get(&p.id()).cloned().unwrap_or_default();
@@ -1342,7 +1335,7 @@ pub(crate) fn render_tab_pipelines(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -1357,13 +1350,14 @@ pub(crate) fn render_tab_jobs(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
     if app.jobs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading jobs...", icons.label_loading))
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
         f.render_widget(
@@ -1372,9 +1366,9 @@ pub(crate) fn render_tab_jobs(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else if !app.jobs.items.is_empty() {
@@ -1411,48 +1405,48 @@ pub(crate) fn render_tab_jobs(
                 let (status_text, status_color, bg_color) = match j.status() {
                     "success" => (
                         format!("{} SUCCESS", icons.status_success),
-                        THEME.read().unwrap().green,
-                        THEME.read().unwrap().green_bg,
+                        theme.green,
+                        theme.green_bg,
                     ),
                     "failed" => (
                         format!("{} FAILED", icons.status_failed),
-                        THEME.read().unwrap().red,
-                        THEME.read().unwrap().red_bg,
+                        theme.red,
+                        theme.red_bg,
                     ),
                     "running" => (
                         format!("{} RUNNING", icons.status_running),
-                        THEME.read().unwrap().blue,
-                        THEME.read().unwrap().blue_bg,
+                        theme.blue,
+                        theme.blue_bg,
                     ),
                     "canceled" => (
                         format!("{} CANCEL", icons.status_canceled),
-                        THEME.read().unwrap().text_muted,
-                        THEME.read().unwrap().inactive_bg,
+                        theme.text_muted,
+                        theme.inactive_bg,
                     ),
                     "pending" => (
                         format!("{} PENDING", icons.status_pending),
-                        THEME.read().unwrap().yellow,
-                        THEME.read().unwrap().yellow_bg,
+                        theme.yellow,
+                        theme.yellow_bg,
                     ),
                     "skipped" => (
                         format!("{} SKIP", icons.status_skipped),
-                        THEME.read().unwrap().text_muted,
-                        THEME.read().unwrap().inactive_bg,
+                        theme.text_muted,
+                        theme.inactive_bg,
                     ),
                     "manual" => (
                         format!("{} MANUAL", icons.status_manual),
-                        THEME.read().unwrap().text_muted,
-                        THEME.read().unwrap().inactive_bg,
+                        theme.text_muted,
+                        theme.inactive_bg,
                     ),
                     "preparing" => (
                         format!("{} PREPARE", icons.status_pending),
-                        THEME.read().unwrap().yellow,
-                        THEME.read().unwrap().yellow_bg,
+                        theme.yellow,
+                        theme.yellow_bg,
                     ),
                     _ => (
                         format!("{} UNKNOWN", icons.status_unknown),
-                        THEME.read().unwrap().text_muted,
-                        THEME.read().unwrap().inactive_bg,
+                        theme.text_muted,
+                        theme.inactive_bg,
                     ),
                 };
                 let m_str = if let Some(m) = j.matrix() {
@@ -1466,9 +1460,9 @@ pub(crate) fn render_tab_jobs(
             let is_job_selected = Some(i) == app.jobs.state.selected();
             let is_checked = app.selected_jobs.contains(&j.id());
             let status_bg = if is_job_selected {
-                THEME.read().unwrap().highlight_bg
+                theme.highlight_bg
             } else if is_checked {
-                THEME.read().unwrap().checked_bg
+                theme.checked_bg
             } else {
                 status_bg_display
             };
@@ -1483,7 +1477,7 @@ pub(crate) fn render_tab_jobs(
                     &app.search_query,
                     is_job_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1493,7 +1487,7 @@ pub(crate) fn render_tab_jobs(
                     &app.search_query,
                     is_job_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().purple),
+                    Style::default().fg(theme.purple),
                     Alignment::Left,
                 ));
             }
@@ -1516,7 +1510,7 @@ pub(crate) fn render_tab_jobs(
                     &app.search_query,
                     is_job_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1526,7 +1520,7 @@ pub(crate) fn render_tab_jobs(
                     &app.search_query,
                     is_job_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Style::default().fg(theme.text_muted),
                     Alignment::Left,
                 ));
             }
@@ -1537,7 +1531,7 @@ pub(crate) fn render_tab_jobs(
                     &app.search_query,
                     is_job_selected,
                     is_checked,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1549,7 +1543,7 @@ pub(crate) fn render_tab_jobs(
                 };
                 row_cells.push(Cell::from(Span::styled(
                     truncate(&needs_str, 25),
-                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Style::default().fg(theme.text_muted),
                 )));
             }
             if app.is_column_visible(Tab::Jobs, "Duration") {
@@ -1559,13 +1553,13 @@ pub(crate) fn render_tab_jobs(
                 };
                 row_cells.push(Cell::from(Span::styled(
                     dur_str,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                 )));
             }
             let row_style = if is_job_selected {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else if is_checked {
-                Style::default().bg(THEME.read().unwrap().checked_bg)
+                Style::default().bg(theme.checked_bg)
             } else {
                 Style::default()
             };
@@ -1643,24 +1637,23 @@ pub(crate) fn render_tab_jobs(
                 .title(format!(" {} Preview ", icons.label_details))
                 .title_style(
                     Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
+                        .fg(theme.text_muted)
                         .add_modifier(Modifier::BOLD),
                 )
-                .border_style(Style::default().fg(THEME.read().unwrap().border));
+                .border_style(Style::default().fg(theme.border));
 
             f.render_widget(
                 Paragraph::new("\n\n  Loading job trace... (Press Esc to cancel)")
                     .alignment(Alignment::Center)
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         } else if let Some(trace) = &app.job_trace {
             let width = detail_rect.width.saturating_sub(2) as usize;
             let height = detail_rect.height.saturating_sub(2) as usize;
 
-            let formatted_lines =
-                crate::utils::format::parse_ansi_trace(trace, &THEME.read().unwrap());
+            let formatted_lines = crate::utils::format::parse_ansi_trace(trace, &theme);
 
             let total_lines = if app.job_trace_wrap {
                 let stripped = crate::utils::format::strip_ansi_escapes(trace);
@@ -1709,17 +1702,17 @@ pub(crate) fn render_tab_jobs(
                 ))
                 .title_style(
                     Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
+                        .fg(theme.text_muted)
                         .add_modifier(Modifier::BOLD),
                 )
                 .title_bottom(
                     ratatui::text::Line::from(vec![Span::styled(
                         help_text,
-                        Style::default().fg(THEME.read().unwrap().text_muted),
+                        Style::default().fg(theme.text_muted),
                     )])
                     .alignment(Alignment::Right),
                 )
-                .border_style(Style::default().fg(THEME.read().unwrap().border));
+                .border_style(Style::default().fg(theme.border));
 
             let mut paragraph = Paragraph::new(formatted_lines)
                 .block(preview_block)
@@ -1736,41 +1729,35 @@ pub(crate) fn render_tab_jobs(
                 .title(format!(" {} Preview ", icons.label_details))
                 .title_style(
                     Style::default()
-                        .fg(THEME.read().unwrap().text_muted)
+                        .fg(theme.text_muted)
                         .add_modifier(Modifier::BOLD),
                 )
-                .border_style(Style::default().fg(THEME.read().unwrap().border));
+                .border_style(Style::default().fg(theme.border));
             let mut text = Vec::new();
 
             // Show selected job metadata first
             if let Some(selected) = app.jobs.state.selected() {
                 if let Some(j) = filtered_jobs.get(selected) {
                     let (status_text, status_color) = match j.status() {
-                        "success" => ("success", THEME.read().unwrap().green),
-                        "failed" => ("failed", THEME.read().unwrap().red),
-                        "running" => ("running", THEME.read().unwrap().blue),
-                        "canceled" => ("canceled", THEME.read().unwrap().text_muted),
-                        "pending" => ("pending", THEME.read().unwrap().yellow),
-                        "skipped" => ("skipped", THEME.read().unwrap().text_muted),
-                        _ => ("unknown", THEME.read().unwrap().text_muted),
+                        "success" => ("success", theme.green),
+                        "failed" => ("failed", theme.red),
+                        "running" => ("running", theme.blue),
+                        "canceled" => ("canceled", theme.text_muted),
+                        "pending" => ("pending", theme.yellow),
+                        "skipped" => ("skipped", theme.text_muted),
+                        _ => ("unknown", theme.text_muted),
                     };
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Name:     ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Name:     ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             j.name().to_string(),
                             Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
+                                .fg(theme.text_normal)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ]));
                     text.push(Line::from(vec![
-                        Span::styled(
-                            "Status:   ",
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ),
+                        Span::styled("Status:   ", Style::default().fg(theme.text_muted)),
                         Span::styled(
                             status_text,
                             Style::default()
@@ -1780,37 +1767,22 @@ pub(crate) fn render_tab_jobs(
                     ]));
                     if !is_github {
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Stage:    ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                j.stage().to_string(),
-                                Style::default().fg(THEME.read().unwrap().purple),
-                            ),
+                            Span::styled("Stage:    ", Style::default().fg(theme.text_muted)),
+                            Span::styled(j.stage().to_string(), Style::default().fg(theme.purple)),
                         ]));
                     }
                     if let Some(matrix) = j.matrix() {
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Matrix:   ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                matrix.to_string(),
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
+                            Span::styled("Matrix:   ", Style::default().fg(theme.text_muted)),
+                            Span::styled(matrix.to_string(), Style::default().fg(theme.text_muted)),
                         ]));
                     }
                     if let Some(runner) = j.runner() {
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Runner:   ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
+                            Span::styled("Runner:   ", Style::default().fg(theme.text_muted)),
                             Span::styled(
                                 runner.to_string(),
-                                Style::default().fg(THEME.read().unwrap().text_normal),
+                                Style::default().fg(theme.text_normal),
                             ),
                         ]));
                     }
@@ -1818,26 +1790,17 @@ pub(crate) fn render_tab_jobs(
                         let mins = dur / 60;
                         let secs = dur % 60;
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Duration: ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
+                            Span::styled("Duration: ", Style::default().fg(theme.text_muted)),
                             Span::styled(
                                 format!("{}m {}s", mins, secs),
-                                Style::default().fg(THEME.read().unwrap().text_normal),
+                                Style::default().fg(theme.text_normal),
                             ),
                         ]));
                     }
                     if !j.needs().is_empty() {
                         text.push(Line::from(vec![
-                            Span::styled(
-                                "Needs:    ",
-                                Style::default().fg(THEME.read().unwrap().text_muted),
-                            ),
-                            Span::styled(
-                                j.needs().join(", "),
-                                Style::default().fg(THEME.read().unwrap().yellow),
-                            ),
+                            Span::styled("Needs:    ", Style::default().fg(theme.text_muted)),
+                            Span::styled(j.needs().join(", "), Style::default().fg(theme.yellow)),
                         ]));
                     }
                     text.push(Line::from(""));
@@ -1852,7 +1815,7 @@ pub(crate) fn render_tab_jobs(
             text.push(Line::from(vec![Span::styled(
                 stage_label,
                 Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
+                    .fg(theme.header_fg)
                     .add_modifier(Modifier::BOLD),
             )]));
             text.push(Line::from(""));
@@ -1869,16 +1832,16 @@ pub(crate) fn render_tab_jobs(
             );
         }
     } else {
-        f.render_widget(Paragraph::new("\n\n No jobs loaded.\n Press 'p' to manually enter a pipeline ID to fetch jobs for,\n or view a pipeline in Pipelines tab and press Enter.").alignment(Alignment::Center).block(main_block).style(Style::default().fg(THEME.read().unwrap().text_muted)), content_area);
+        f.render_widget(Paragraph::new("\n\n No jobs loaded.\n Press 'p' to manually enter a pipeline ID to fetch jobs for,\n or view a pipeline in Pipelines tab and press Enter.").alignment(Alignment::Center).block(main_block).style(Style::default().fg(theme.text_muted)), content_area);
         f.render_widget(
             Paragraph::new("Select a job to view preview...")
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     }
@@ -1893,13 +1856,14 @@ pub(crate) fn render_tab_runners(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
     if app.runners.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading runners...", icons.label_loading))
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
         f.render_widget(
@@ -1908,9 +1872,9 @@ pub(crate) fn render_tab_runners(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else {
@@ -1938,23 +1902,23 @@ pub(crate) fn render_tab_runners(
             let (status_text, status_color, bg_color) = match r.status.as_str() {
                 "online" => (
                     format!("{} ONLINE", icons.runner_online),
-                    THEME.read().unwrap().green,
-                    THEME.read().unwrap().green_bg,
+                    theme.green,
+                    theme.green_bg,
                 ),
                 "paused" => (
                     format!("{} PAUSED", icons.runner_paused),
-                    THEME.read().unwrap().yellow,
-                    THEME.read().unwrap().yellow_bg,
+                    theme.yellow,
+                    theme.yellow_bg,
                 ),
                 "offline" => (
                     format!("{} OFFLINE", icons.runner_offline),
-                    THEME.read().unwrap().red,
-                    THEME.read().unwrap().red_bg,
+                    theme.red,
+                    theme.red_bg,
                 ),
                 _ => (
                     format!("{} UNKNOWN", icons.status_unknown),
-                    THEME.read().unwrap().text_muted,
-                    THEME.read().unwrap().inactive_bg,
+                    theme.text_muted,
+                    theme.inactive_bg,
                 ),
             };
             let desc = r.description.as_deref().unwrap_or("No description");
@@ -1965,7 +1929,7 @@ pub(crate) fn render_tab_runners(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1975,7 +1939,7 @@ pub(crate) fn render_tab_runners(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -1988,7 +1952,7 @@ pub(crate) fn render_tab_runners(
                     Style::default()
                         .fg(status_color)
                         .bg(if is_row_highlighted {
-                            THEME.read().unwrap().highlight_bg
+                            theme.highlight_bg
                         } else {
                             bg_color
                         })
@@ -2002,16 +1966,12 @@ pub(crate) fn render_tab_runners(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(if r.active {
-                        THEME.read().unwrap().green
-                    } else {
-                        THEME.read().unwrap().red
-                    }),
+                    Style::default().fg(if r.active { theme.green } else { theme.red }),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_row_highlighted {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else {
                 Style::default()
             };
@@ -2059,10 +2019,10 @@ pub(crate) fn render_tab_runners(
             .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             )
-            .border_style(Style::default().fg(THEME.read().unwrap().border));
+            .border_style(Style::default().fg(theme.border));
         if let Some(selected) = app.runners.state.selected() {
             if let Some(r) = filtered_runners.get(selected) {
                 let doc = crate::entity_editor::build_runner_document(r);
@@ -2083,7 +2043,7 @@ pub(crate) fn render_tab_runners(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -2098,6 +2058,7 @@ pub(crate) fn render_tab_releases(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     if super::render_edit_menu_if_active(f, app, detail_rect) {
         return;
     }
@@ -2107,7 +2068,7 @@ pub(crate) fn render_tab_releases(
             Paragraph::new(format!("\n\n {} Loading releases...", icons.label_loading))
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
         f.render_widget(
@@ -2116,9 +2077,9 @@ pub(crate) fn render_tab_releases(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else {
@@ -2163,7 +2124,7 @@ pub(crate) fn render_tab_releases(
                     is_row_highlighted,
                     false,
                     Style::default()
-                        .fg(THEME.read().unwrap().green)
+                        .fg(theme.green)
                         .add_modifier(Modifier::BOLD),
                     Alignment::Left,
                 ));
@@ -2174,7 +2135,7 @@ pub(crate) fn render_tab_releases(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -2184,7 +2145,7 @@ pub(crate) fn render_tab_releases(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().yellow),
+                    Style::default().fg(theme.yellow),
                     Alignment::Left,
                 ));
             }
@@ -2195,7 +2156,7 @@ pub(crate) fn render_tab_releases(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
@@ -2206,7 +2167,7 @@ pub(crate) fn render_tab_releases(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
@@ -2217,12 +2178,12 @@ pub(crate) fn render_tab_releases(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Style::default().fg(theme.text_muted),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_row_highlighted {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else {
                 Style::default()
             };
@@ -2274,10 +2235,10 @@ pub(crate) fn render_tab_releases(
             .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             )
-            .border_style(Style::default().fg(THEME.read().unwrap().border));
+            .border_style(Style::default().fg(theme.border));
         if let Some(selected) = app.releases.state.selected() {
             if let Some(r) = filtered_releases.get(selected) {
                 let doc = crate::entity_editor::build_release_document(r);
@@ -2298,7 +2259,7 @@ pub(crate) fn render_tab_releases(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -2313,6 +2274,7 @@ pub(crate) fn render_tab_todos(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
     if app.todos.items.is_empty() {
         let entity_label = if app.kind().is_github() {
@@ -2328,7 +2290,7 @@ pub(crate) fn render_tab_todos(
                 ))
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
                 content_area,
             );
         } else {
@@ -2336,7 +2298,7 @@ pub(crate) fn render_tab_todos(
                 Paragraph::new(format!("\n\n {} No {}", icons.label_details, entity_label))
                     .alignment(Alignment::Center)
                     .block(main_block.clone())
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 content_area,
             );
         }
@@ -2346,9 +2308,9 @@ pub(crate) fn render_tab_todos(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else {
@@ -2384,24 +2346,19 @@ pub(crate) fn render_tab_todos(
                 (
                     " NEW",
                     Style::default()
-                        .fg(THEME.read().unwrap().green)
+                        .fg(theme.green)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
-                (
-                    " READ",
-                    Style::default().fg(THEME.read().unwrap().text_muted),
-                )
+                (" READ", Style::default().fg(theme.text_muted))
             };
 
             let type_style = if n.target_type == "MergeRequest" {
                 Style::default()
-                    .fg(THEME.read().unwrap().purple)
+                    .fg(theme.purple)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default()
-                    .fg(THEME.read().unwrap().blue)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.blue).add_modifier(Modifier::BOLD)
             };
 
             let mut row_cells = Vec::new();
@@ -2421,7 +2378,7 @@ pub(crate) fn render_tab_todos(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_muted),
+                    Style::default().fg(theme.text_muted),
                     Alignment::Left,
                 ));
             }
@@ -2446,7 +2403,7 @@ pub(crate) fn render_tab_todos(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                     Alignment::Left,
                 ));
             }
@@ -2456,7 +2413,7 @@ pub(crate) fn render_tab_todos(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().text_normal),
+                    Style::default().fg(theme.text_normal),
                     Alignment::Left,
                 ));
             }
@@ -2466,12 +2423,12 @@ pub(crate) fn render_tab_todos(
                     &app.search_query,
                     is_row_highlighted,
                     false,
-                    Style::default().fg(THEME.read().unwrap().yellow),
+                    Style::default().fg(theme.yellow),
                     Alignment::Left,
                 ));
             }
             let row_style = if is_row_highlighted {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else {
                 Style::default()
             };
@@ -2523,10 +2480,10 @@ pub(crate) fn render_tab_todos(
             .title(format!(" {} Preview ", icons.label_details))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             )
-            .border_style(Style::default().fg(THEME.read().unwrap().border));
+            .border_style(Style::default().fg(theme.border));
         if let Some(selected) = app.todos.state.selected() {
             if let Some(n) = filtered_todos.get(selected) {
                 let doc = crate::entity_editor::build_todo_document(n);
@@ -2547,7 +2504,7 @@ pub(crate) fn render_tab_todos(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -2562,6 +2519,7 @@ pub(crate) fn render_tab_milestones(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     if super::render_edit_menu_if_active(f, app, detail_rect) {
         return;
     }
@@ -2574,7 +2532,7 @@ pub(crate) fn render_tab_milestones(
             ))
             .alignment(Alignment::Center)
             .block(main_block.clone())
-            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
         f.render_widget(
@@ -2583,9 +2541,9 @@ pub(crate) fn render_tab_milestones(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Preview ", icons.label_details))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             detail_rect,
         );
     } else {
@@ -2642,7 +2600,7 @@ pub(crate) fn render_tab_milestones(
                                 &app.search_query,
                                 is_selected,
                                 false,
-                                Style::default().fg(THEME.read().unwrap().text_normal),
+                                Style::default().fg(theme.text_normal),
                                 Alignment::Left,
                             ));
                         }
@@ -2653,7 +2611,7 @@ pub(crate) fn render_tab_milestones(
                                 is_selected,
                                 false,
                                 Style::default()
-                                    .fg(THEME.read().unwrap().text_normal)
+                                    .fg(theme.text_normal)
                                     .add_modifier(Modifier::BOLD),
                                 Alignment::Left,
                             ));
@@ -2663,11 +2621,11 @@ pub(crate) fn render_tab_milestones(
                                 (
                                     "ACTIVE",
                                     Style::default()
-                                        .fg(THEME.read().unwrap().green)
+                                        .fg(theme.green)
                                         .bg(if is_selected {
-                                            THEME.read().unwrap().highlight_bg
+                                            theme.highlight_bg
                                         } else {
-                                            THEME.read().unwrap().green_bg
+                                            theme.green_bg
                                         })
                                         .add_modifier(Modifier::BOLD),
                                 )
@@ -2675,11 +2633,11 @@ pub(crate) fn render_tab_milestones(
                                 (
                                     "CLOSED",
                                     Style::default()
-                                        .fg(THEME.read().unwrap().red)
+                                        .fg(theme.red)
                                         .bg(if is_selected {
-                                            THEME.read().unwrap().highlight_bg
+                                            theme.highlight_bg
                                         } else {
-                                            THEME.read().unwrap().red_bg
+                                            theme.red_bg
                                         })
                                         .add_modifier(Modifier::BOLD),
                                 )
@@ -2697,7 +2655,7 @@ pub(crate) fn render_tab_milestones(
                                 &app.search_query,
                                 is_selected,
                                 false,
-                                Style::default().fg(THEME.read().unwrap().blue),
+                                Style::default().fg(theme.blue),
                                 Alignment::Left,
                             ));
                         }
@@ -2708,7 +2666,7 @@ pub(crate) fn render_tab_milestones(
                                 &app.search_query,
                                 is_selected,
                                 false,
-                                Style::default().fg(THEME.read().unwrap().yellow),
+                                Style::default().fg(theme.yellow),
                                 Alignment::Left,
                             ));
                         }
@@ -2721,11 +2679,11 @@ pub(crate) fn render_tab_milestones(
                                             issues.iter().filter(|i| i.state == "closed").count();
                                         let pct = (closed as f32 / total as f32) * 100.0;
                                         let color = if pct <= 33.0 {
-                                            THEME.read().unwrap().red
+                                            theme.red
                                         } else if pct <= 66.0 {
-                                            THEME.read().unwrap().yellow
+                                            theme.yellow
                                         } else {
-                                            THEME.read().unwrap().green
+                                            theme.green
                                         };
                                         let bar_segments = 10;
                                         let filled_len = (closed * bar_segments) / total;
@@ -2739,12 +2697,12 @@ pub(crate) fn render_tab_milestones(
                                             color,
                                         )
                                     } else {
-                                        ("[░░░░░░░░░░] 0%".to_string(), THEME.read().unwrap().red)
+                                        ("[░░░░░░░░░░] 0%".to_string(), theme.red)
                                     }
                                 } else if app.selected_milestone_iid == Some(m.iid) {
-                                    ("Loading...".to_string(), THEME.read().unwrap().text_muted)
+                                    ("Loading...".to_string(), theme.text_muted)
                                 } else {
-                                    ("-".to_string(), THEME.read().unwrap().text_muted)
+                                    ("-".to_string(), theme.text_muted)
                                 };
                             cells.push(Cell::from(bar_text).style(Style::default().fg(color)));
                         }
@@ -2755,7 +2713,7 @@ pub(crate) fn render_tab_milestones(
                 }
             }
             let row_style = if is_selected {
-                Style::default().bg(THEME.read().unwrap().highlight_bg)
+                Style::default().bg(theme.highlight_bg)
             } else {
                 Style::default()
             };
@@ -2779,10 +2737,10 @@ pub(crate) fn render_tab_milestones(
             .title(format!(" {} Preview ", icons.label_milestone))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             )
-            .border_style(Style::default().fg(THEME.read().unwrap().border));
+            .border_style(Style::default().fg(theme.border));
 
         if let Some(selected_idx) = app.milestones.state.selected() {
             if let Some(m) = filtered_milestones.get(selected_idx) {
@@ -2809,7 +2767,7 @@ pub(crate) fn render_tab_milestones(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -2824,6 +2782,7 @@ pub(crate) fn render_tab_branches(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     if super::render_edit_menu_if_active(f, app, detail_rect) {
         return;
     }
@@ -2833,7 +2792,7 @@ pub(crate) fn render_tab_branches(
             Paragraph::new(format!("\n\n {} Loading branches...", icons.label_loading))
                 .alignment(Alignment::Center)
                 .block(main_block.clone())
-                .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
     } else {
@@ -2867,19 +2826,16 @@ pub(crate) fn render_tab_branches(
                     Cell::from(Span::styled(
                         format!(" {} YES ", icons.radio_on),
                         Style::default()
-                            .fg(THEME.read().unwrap().green)
+                            .fg(theme.green)
                             .bg(if is_selected {
-                                THEME.read().unwrap().highlight_bg
+                                theme.highlight_bg
                             } else {
-                                THEME.read().unwrap().green_bg
+                                theme.green_bg
                             })
                             .add_modifier(Modifier::BOLD),
                     ))
                 } else {
-                    Cell::from(Span::styled(
-                        " NO ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ))
+                    Cell::from(Span::styled(" NO ", Style::default().fg(theme.text_muted)))
                 };
                 cells.push(cell);
             }
@@ -2888,25 +2844,22 @@ pub(crate) fn render_tab_branches(
                     Cell::from(Span::styled(
                         format!(" \u{f023} YES "),
                         Style::default()
-                            .fg(THEME.read().unwrap().yellow)
+                            .fg(theme.yellow)
                             .bg(if is_selected {
-                                THEME.read().unwrap().highlight_bg
+                                theme.highlight_bg
                             } else {
-                                THEME.read().unwrap().yellow_bg
+                                theme.yellow_bg
                             })
                             .add_modifier(Modifier::BOLD),
                     ))
                 } else {
-                    Cell::from(Span::styled(
-                        " NO ",
-                        Style::default().fg(THEME.read().unwrap().text_muted),
-                    ))
+                    Cell::from(Span::styled(" NO ", Style::default().fg(theme.text_muted)))
                 };
                 cells.push(cell);
             }
             if app.is_column_visible(Tab::Branches, "SHA") {
                 let sha_text = if b.commit_sha.is_empty() {
-                    "None".to_string()
+                    "--".to_string()
                 } else {
                     crate::utils::format::truncate(&b.commit_sha, 8)
                 };
@@ -2956,10 +2909,10 @@ pub(crate) fn render_tab_branches(
             .title(format!(" {} Preview ", icons.label_branch))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             )
-            .border_style(Style::default().fg(THEME.read().unwrap().border));
+            .border_style(Style::default().fg(theme.border));
         if let Some(idx) = app.branches.state.selected() {
             if let Some(branch) = filtered.get(idx) {
                 let doc = crate::entity_editor::build_branch_document(branch);
@@ -2980,7 +2933,7 @@ pub(crate) fn render_tab_branches(
             f.render_widget(
                 Paragraph::new("Select an item to view preview...")
                     .block(preview_block)
-                    .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                    .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
         }
@@ -2995,6 +2948,7 @@ pub(crate) fn render_tab_environments(
     highlight_style: Style,
     header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
     if app.environments.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
@@ -3004,7 +2958,7 @@ pub(crate) fn render_tab_environments(
             ))
             .alignment(Alignment::Center)
             .block(main_block.clone())
-            .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+            .style(Style::default().fg(theme.text_muted)),
             content_area,
         );
     } else {
@@ -3062,7 +3016,7 @@ pub(crate) fn render_tab_environments(
                 let url = e.external_url.as_deref().unwrap_or("-");
                 cells.push(Cell::from(Span::styled(
                     url,
-                    Style::default().fg(THEME.read().unwrap().blue),
+                    Style::default().fg(theme.blue),
                 )));
             }
             Row::new(cells).style(row_style).height(1)
@@ -3102,10 +3056,10 @@ pub(crate) fn render_tab_environments(
             .title(format!(" {} Preview ", icons.label_environment))
             .title_style(
                 Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
+                    .fg(theme.text_muted)
                     .add_modifier(Modifier::BOLD),
             )
-            .border_style(Style::default().fg(THEME.read().unwrap().border));
+            .border_style(Style::default().fg(theme.border));
         if app.deployments.items.is_empty() {
             if let Some(idx) = app.environments.state.selected() {
                 if let Some(env) = filtered.get(idx) {
@@ -3125,7 +3079,7 @@ pub(crate) fn render_tab_environments(
                 f.render_widget(
                     Paragraph::new("Select an environment to view details...")
                         .block(preview_block)
-                        .style(Style::default().fg(THEME.read().unwrap().text_muted)),
+                        .style(Style::default().fg(theme.text_muted)),
                     detail_rect,
                 );
             }
@@ -3137,11 +3091,11 @@ pub(crate) fn render_tab_environments(
                 .iter()
                 .map(|d| {
                     let status_color = match d.status.as_str() {
-                        "success" => THEME.read().unwrap().green,
-                        "failed" => THEME.read().unwrap().red,
-                        "running" => THEME.read().unwrap().blue,
-                        "canceled" => THEME.read().unwrap().text_muted,
-                        _ => THEME.read().unwrap().text_muted,
+                        "success" => theme.green,
+                        "failed" => theme.red,
+                        "running" => theme.blue,
+                        "canceled" => theme.text_muted,
+                        _ => theme.text_muted,
                     };
                     let cells = vec![
                         Cell::from(Span::styled(
@@ -3176,7 +3130,7 @@ pub(crate) fn render_tab_environments(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!(" {} Deployments ", icons.label_deployment))
-                        .border_style(Style::default().fg(THEME.read().unwrap().border)),
+                        .border_style(Style::default().fg(theme.border)),
                 )
                 .row_highlight_style(highlight_style);
             f.render_stateful_widget(deploy_table, detail_rect, &mut app.deployments.state);
@@ -3193,14 +3147,15 @@ pub(crate) fn render_tab_terminal(
     _highlight_style: Style,
     _header_style: Style,
 ) {
+    let theme = THEME.read().unwrap();
     let num_cmds = app.terminal_commands.len();
     let area = content_area;
     let base_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app.focus_column_checklist {
-            THEME.read().unwrap().border
+            theme.border
         } else {
-            THEME.read().unwrap().border_focused
+            theme.border_focused
         }));
     let inner_rect = base_block.inner(area);
     let log_height = inner_rect.height as usize;
@@ -3240,7 +3195,7 @@ pub(crate) fn render_tab_terminal(
     };
     let custom_main_block = base_block.clone().title(block_title).title_style(
         Style::default()
-            .fg(THEME.read().unwrap().header_fg)
+            .fg(theme.header_fg)
             .add_modifier(Modifier::BOLD),
     );
 

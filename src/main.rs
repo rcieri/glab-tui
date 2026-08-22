@@ -4072,66 +4072,94 @@ async fn main() -> Result<()> {
                                                 Some(filtered_items[selector.cursor_idx].clone());
                                         }
                                         if let Some(val) = selected_val {
-                                            let parsed_iid = val
-                                                .strip_prefix('#')
-                                                .and_then(|s| {
-                                                    s.split(|c: char| !c.is_numeric()).next()
-                                                })
-                                                .and_then(|s| s.parse::<u64>().ok());
-                                            if let Some(iid) = parsed_iid {
-                                                if let Some(issue) =
-                                                    app.issues.items.iter().find(|i| i.iid == iid)
-                                                {
-                                                    let title = issue.title.clone();
-                                                    let source_branch = format!(
-                                                        "{}-{}",
-                                                        issue.iid,
-                                                        slugify(&issue.title)
-                                                    );
-                                                    let labels = if issue.labels.is_empty() {
-                                                        String::new()
-                                                    } else {
-                                                        issue.labels.join(", ")
-                                                    };
-                                                    let assignees = if issue.assignees.is_empty() {
-                                                        String::new()
-                                                    } else {
-                                                        issue
-                                                            .assignees
-                                                            .iter()
-                                                            .map(|a| format!("@{}", a.username))
-                                                            .collect::<Vec<_>>()
-                                                            .join(", ")
-                                                    };
-                                                    let milestone = issue
-                                                        .milestone
-                                                        .as_ref()
-                                                        .map(|m| m.title.clone())
-                                                        .unwrap_or_default();
-                                                    if let Some(ref mut menu) = app.edit_menu {
-                                                        for (label, value) in [
-                                                            ("Title", title.clone()),
-                                                            ("Source Branch", source_branch),
-                                                            ("Assignees", assignees.clone()),
-                                                            ("Milestone", milestone),
-                                                            ("Labels", labels.clone()),
-                                                        ] {
-                                                            if let Some(f) = menu
-                                                                .fields
-                                                                .iter_mut()
-                                                                .find(|f| f.label == label)
-                                                            {
-                                                                f.value = value;
-                                                            }
-                                                        }
-                                                        if let Some(f) =
-                                                            menu.fields.iter_mut().find(|f| {
-                                                                f.label == "Create from Issue"
-                                                            })
+                                            let current_val = app.edit_menu.as_ref()
+                                                .and_then(|m| m.fields.iter().find(|f| f.label == "Create from Issue"))
+                                                .map(|f| f.value.clone())
+                                                .unwrap_or_default();
+
+                                            if val == current_val {
+                                                // Deselect if it's already selected
+                                                if let Some(ref mut menu) = app.edit_menu {
+                                                    for label in [
+                                                        "Title",
+                                                        "Source Branch",
+                                                        "Assignees",
+                                                        "Milestone",
+                                                        "Labels",
+                                                        "Create from Issue",
+                                                    ] {
+                                                        if let Some(f) = menu
+                                                            .fields
+                                                            .iter_mut()
+                                                            .find(|f| f.label == label)
                                                         {
-                                                            f.value = val.clone();
+                                                            f.value = String::new();
                                                         }
-                                                        menu.entity_iid = issue.iid;
+                                                    }
+                                                    menu.entity_iid = 0;
+                                                }
+                                            } else {
+                                                let parsed_iid = val
+                                                    .strip_prefix('#')
+                                                    .and_then(|s| {
+                                                        s.split(|c: char| !c.is_numeric()).next()
+                                                    })
+                                                    .and_then(|s| s.parse::<u64>().ok());
+                                                if let Some(iid) = parsed_iid {
+                                                    if let Some(issue) =
+                                                        app.issues.items.iter().find(|i| i.iid == iid)
+                                                    {
+                                                        let title = issue.title.clone();
+                                                        let source_branch = format!(
+                                                            "{}-{}",
+                                                            issue.iid,
+                                                            slugify(&issue.title)
+                                                        );
+                                                        let labels = if issue.labels.is_empty() {
+                                                            String::new()
+                                                        } else {
+                                                            issue.labels.join(", ")
+                                                        };
+                                                        let assignees = if issue.assignees.is_empty() {
+                                                            String::new()
+                                                        } else {
+                                                            issue
+                                                                .assignees
+                                                                .iter()
+                                                                .map(|a| format!("@{}", a.username))
+                                                                .collect::<Vec<_>>()
+                                                                .join(", ")
+                                                        };
+                                                        let milestone = issue
+                                                            .milestone
+                                                            .as_ref()
+                                                            .map(|m| m.title.clone())
+                                                            .unwrap_or_default();
+                                                        if let Some(ref mut menu) = app.edit_menu {
+                                                            for (label, value) in [
+                                                                ("Title", title.clone()),
+                                                                ("Source Branch", source_branch),
+                                                                ("Assignees", assignees.clone()),
+                                                                ("Milestone", milestone),
+                                                                ("Labels", labels.clone()),
+                                                            ] {
+                                                                if let Some(f) = menu
+                                                                    .fields
+                                                                    .iter_mut()
+                                                                    .find(|f| f.label == label)
+                                                                {
+                                                                    f.value = value;
+                                                                }
+                                                            }
+                                                            if let Some(f) =
+                                                                menu.fields.iter_mut().find(|f| {
+                                                                    f.label == "Create from Issue"
+                                                                })
+                                                            {
+                                                                f.value = val.clone();
+                                                            }
+                                                            menu.entity_iid = issue.iid;
+                                                        }
                                                     }
                                                 }
                                             }

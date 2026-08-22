@@ -2,6 +2,33 @@ use chrono::{DateTime, Utc};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+/// Replaces tab characters with spaces, advancing to the next `tab_width`
+/// column each time.
+///
+/// Tab stops rather than a fixed number of spaces per tab, because a tab in the
+/// middle of a line is an alignment request, not an indent: `gofmt` lines up
+/// consecutive struct fields and their tags that way, and expanding each tab to
+/// the same width would leave those columns ragged.
+pub fn expand_tabs(text: &str, tab_width: usize) -> String {
+    if !text.contains('\t') {
+        return text.to_string();
+    }
+    let tab_width = tab_width.max(1);
+    let mut out = String::with_capacity(text.len() + tab_width);
+    let mut column = 0usize;
+    for ch in text.chars() {
+        if ch == '\t' {
+            let pad = tab_width - (column % tab_width);
+            out.push_str(&" ".repeat(pad));
+            column += pad;
+        } else {
+            out.push(ch);
+            column += 1;
+        }
+    }
+    out
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
         None => String::from(s),
@@ -132,20 +159,20 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
 
 pub fn strip_ansi_escapes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut bytes = s.bytes();
-    while let Some(b) = bytes.next() {
-        if b == 0x1b {
-            if let Some(next_b) = bytes.next() {
-                if next_b == b'[' {
-                    while let Some(next_c) = bytes.next() {
-                        if (0x40..=0x7e).contains(&next_c) {
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if let Some(next_c) = chars.next() {
+                if next_c == '[' {
+                    for seq_c in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&seq_c) {
                             break;
                         }
                     }
                 }
             }
         } else {
-            result.push(b as char);
+            result.push(c);
         }
     }
     result
@@ -155,7 +182,8 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
     trace
         .lines()
         .map(|raw_line| {
-            let (prefix, content) = split_gh_prefix(raw_line);
+            let (gl_ts, line) = strip_gl_ts(raw_line);
+            let (prefix, content) = split_gh_prefix(line);
 
             let content_spans = if content.contains('\x1b') {
                 parse_ansi_line(content, theme)
@@ -163,16 +191,23 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
                 format_plain_line(content, theme)
             };
 
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            if let Some(ts) = gl_ts {
+                spans.push(Span::styled(
+                    format!("{} ", ts),
+                    Style::default()
+                        .fg(theme.text_muted)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+            }
             if let Some(p) = prefix {
-                let mut spans = vec![Span::styled(
+                spans.push(Span::styled(
                     p.to_string(),
                     Style::default().fg(theme.text_muted),
-                )];
-                spans.extend(content_spans);
-                Line::from(spans)
-            } else {
-                Line::from(content_spans)
+                ));
             }
+            spans.extend(content_spans);
+            Line::from(spans)
         })
         .collect()
 }
@@ -193,12 +228,12 @@ fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut current_style = Style::default().fg(theme.text_normal);
     let mut current_text = String::new();
-    let bytes: Vec<u8> = line.bytes().collect();
+    let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
 
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == '\u{1b}' && i + 1 < chars.len() && chars[i + 1] == '[' {
             if !current_text.is_empty() {
                 spans.push(Span::styled(
                     std::mem::take(&mut current_text),
@@ -209,13 +244,13 @@ fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static
             let mut params = Vec::new();
             let mut num_buf = String::new();
             loop {
-                if i >= bytes.len() {
+                if i >= chars.len() {
                     break;
                 }
-                let c = bytes[i];
+                let c = chars[i];
                 i += 1;
-                if (0x40..=0x7e).contains(&c) {
-                    if c == b'm' {
+                if ('\u{40}'..='\u{7e}').contains(&c) {
+                    if c == 'm' {
                         if !num_buf.is_empty() {
                             params.push(num_buf);
                         }
@@ -224,23 +259,23 @@ fn parse_ansi_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'static
                     break;
                 }
                 match c {
-                    b';' => {
+                    ';' => {
                         if !num_buf.is_empty() {
                             params.push(std::mem::take(&mut num_buf));
                         } else {
                             params.push("0".to_string());
                         }
                     }
-                    b'0'..=b'9' => {
-                        num_buf.push(c as char);
+                    '0'..='9' => {
+                        num_buf.push(c);
                     }
                     _ => {
-                        num_buf.push(c as char);
+                        num_buf.push(c);
                     }
                 }
             }
         } else {
-            current_text.push(b as char);
+            current_text.push(ch);
             i += 1;
         }
     }
@@ -386,6 +421,32 @@ fn format_plain_line(line: &str, theme: &crate::config::Theme) -> Vec<Span<'stat
     }
     spans.push(Span::styled(body.to_string(), body_style));
     spans
+}
+
+/// Strips a GitLab Runner timestamped-log prefix (`FF_TIMESTAMPS`), which
+/// prepends every line with an ISO 8601 timestamp, a space, and a 4-character
+/// metadata field: two hex flag digits, a stream indicator (`O` stdout, `E`
+/// stderr) and an append flag (`+` when the line continues the previous one, a
+/// space otherwise) — e.g. `2024-05-14T11:19:20.000000Z 00O+`.
+///
+/// Returns `(Some(timestamp), content)`, dropping the metadata field the same
+/// way GitLab's own log viewer does, or `(None, original)` when the prefix is
+/// absent — which leaves GitHub Actions timestamps to `strip_gh_ts`.
+fn strip_gl_ts(line: &str) -> (Option<&str>, &str) {
+    let (Some(ts), rest) = strip_gh_ts(line) else {
+        return (None, line);
+    };
+    let meta = rest.as_bytes();
+    if meta.len() >= 5
+        && meta[0] == b' '
+        && meta[1].is_ascii_hexdigit()
+        && meta[2].is_ascii_hexdigit()
+        && (meta[3] == b'O' || meta[3] == b'E')
+        && (meta[4] == b' ' || meta[4] == b'+')
+    {
+        return (Some(ts), &rest[5..]);
+    }
+    (None, line)
 }
 
 /// Strips a GitHub Actions timestamp (`YYYY-MM-DDTHH:MM:SS.fffffffZ`) from
@@ -565,6 +626,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_expand_tabs_indentation() {
+        assert_eq!(expand_tabs("no tabs here", 4), "no tabs here");
+        assert_eq!(expand_tabs("\tone", 4), "    one");
+        assert_eq!(expand_tabs("\t\ttwo", 4), "        two");
+        assert_eq!(expand_tabs("\tone", 8), "        one");
+        assert_eq!(expand_tabs("", 4), "");
+    }
+
+    #[test]
+    fn test_expand_tabs_advances_to_the_next_stop() {
+        // Not a fixed width per tab: the pad is whatever reaches the next stop.
+        assert_eq!(expand_tabs("ab\tc", 4), "ab  c");
+        assert_eq!(expand_tabs("abc\td", 4), "abc d");
+        assert_eq!(expand_tabs("abcd\te", 4), "abcd    e");
+    }
+
+    #[test]
+    fn test_expand_tabs_keeps_a_column_grid() {
+        // Two lines whose text lands in the same stop keep the same column
+        // after a tab, which a fixed number of spaces per tab would not give.
+        let a = expand_tabs("ab\tX", 4);
+        let b = expand_tabs("abc\tX", 4);
+        assert_eq!(a.find('X'), b.find('X'));
+    }
+
+    #[test]
+    fn test_expand_tabs_treats_zero_width_as_one() {
+        // A misconfigured width must not divide by zero or eat the tab.
+        assert_eq!(expand_tabs("\tx", 0), " x");
+    }
+
+    #[test]
+    fn test_expand_tabs_leaves_multibyte_text_intact() {
+        assert_eq!(expand_tabs("\tπλ→", 4), "    πλ→");
+    }
+
+    #[test]
     fn test_format_ref() {
         assert_eq!(format_ref("refs/merge-requests/123/merge"), "MR !123");
         assert_eq!(format_ref("refs/merge-requests/456/head"), "MR !456");
@@ -650,6 +748,59 @@ mod tests {
         assert_eq!(
             strip_ansi_escapes(input),
             "[SUCCESS] Job finished successfully"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_escapes_preserves_non_ascii() {
+        let input = "\u{1b}[32m✓\u{1b}[0m src/lib.rs — 3 tests ✔";
+        assert_eq!(strip_ansi_escapes(input), "✓ src/lib.rs — 3 tests ✔");
+    }
+
+    #[test]
+    fn test_parse_ansi_line_preserves_non_ascii() {
+        let theme = crate::config::Theme::default();
+        let spans = parse_ansi_line("\u{1b}[32m✓\u{1b}[0m tests passed — é 日本", &theme);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "✓ tests passed — é 日本");
+    }
+
+    #[test]
+    fn test_strip_gl_ts_drops_metadata_field() {
+        assert_eq!(
+            strip_gl_ts("2024-05-14T11:19:20.000000Z 00O Preparing docker"),
+            (Some("2024-05-14T11:19:20.000000Z"), "Preparing docker")
+        );
+        assert_eq!(
+            strip_gl_ts("2024-05-14T11:19:20.000000Z 01E error: boom"),
+            (Some("2024-05-14T11:19:20.000000Z"), "error: boom")
+        );
+        // `+` marks a line continuing the previous one
+        assert_eq!(
+            strip_gl_ts("2024-05-14T11:19:20.000000Z 00O+environment..."),
+            (Some("2024-05-14T11:19:20.000000Z"), "environment...")
+        );
+    }
+
+    #[test]
+    fn test_strip_gl_ts_leaves_other_lines_untouched() {
+        // GitHub Actions: same timestamp shape, no GitLab metadata field
+        let gh = "2024-05-14T11:19:20.0000000Z Run actions/checkout@v4";
+        assert_eq!(strip_gl_ts(gh), (None, gh));
+        let plain = "$ cargo test";
+        assert_eq!(strip_gl_ts(plain), (None, plain));
+    }
+
+    #[test]
+    fn test_parse_ansi_trace_strips_gitlab_prefix() {
+        let theme = crate::config::Theme::default();
+        let trace =
+            "2026-08-18T16:54:49.475670Z 01O \u{1b}[32m✓\u{1b}[0m src/foo.test.ts (19 tests)";
+        let lines = parse_ansi_trace(trace, &theme);
+        let text: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(
+            text,
+            "2026-08-18T16:54:49.475670Z ✓ src/foo.test.ts (19 tests)"
         );
     }
 }

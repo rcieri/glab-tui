@@ -1062,17 +1062,7 @@ pub(crate) fn render_tab_pipelines(
             &mut filtered_pipelines,
             &app.column_filters,
             Tab::Pipelines,
-            |item, col| match col {
-                "ID" => vec![item.id().to_string()],
-                "Status" => vec![item.status().to_string()],
-                "Ref" => vec![item.ref_branch().to_string()],
-                "Name" => vec![item.name().to_string()],
-                "Event" => vec![item.event().to_string()],
-                "SHA" => vec![item.head_sha().to_string()],
-                "Actor" => vec![item.actor_login().to_string()],
-                "Created" => vec![item.created_at().unwrap_or_default().to_string()],
-                _ => vec![],
-            },
+            App::pipeline_filter_values,
         );
 
         let rows = filtered_pipelines.iter().enumerate().map(|(idx, p)| {

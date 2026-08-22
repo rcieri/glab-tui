@@ -9,46 +9,6 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
-fn open_merge_selector(app: &mut App, mr_iid: u64, selected_count: usize) {
-    let is_github = app.is_github();
-    let all_items = if is_github {
-        vec![
-            "Squash".to_string(),
-            "Delete source branch".to_string(),
-            "Create merge commit".to_string(),
-            "Rebase and merge".to_string(),
-        ]
-    } else {
-        vec!["Squash".to_string(), "Delete source branch".to_string()]
-    };
-    let mut selected_items = std::collections::HashSet::new();
-    selected_items.insert("Squash".to_string());
-    selected_items.insert("Delete source branch".to_string());
-
-    app.selector = Some(crate::app::Selector {
-        title: if selected_count > 1 {
-            format!(" Merge {} MRs/PRs - Options ", selected_count)
-        } else {
-            format!(" Merge MR/PR #{} - Options ", mr_iid)
-        },
-        all_items,
-        selected_items,
-        cursor_idx: 0,
-        search_query: String::new(),
-        is_filtering: false,
-        is_loading: false,
-        entity_iid: if selected_count > 1 { 0 } else { mr_iid },
-        entity_type: if selected_count > 1 {
-            "bulk_merge_mrs".to_string()
-        } else {
-            "mr".to_string()
-        },
-        field_type: "merge_options".to_string(),
-        multi_select: true,
-        state: ListState::default(),
-    });
-}
-
 pub async fn handle_active_tab_key(
     app: &mut App,
     key_event: &KeyEvent,
@@ -144,7 +104,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.confirm_popup = Some(crate::app::ConfirmAction::CloseIssue(issue_iid));
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::CloseIssue(issue_iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -153,7 +116,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.confirm_popup = Some(crate::app::ConfirmAction::DeleteIssue(issue_iid));
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::DeleteIssue(issue_iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -183,21 +149,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid)
-                        {
-                            item.state = "opened".to_string();
-                        }
-                        if let Some(client) = app.gitlab_client.clone() {
-                            let project_path = app.project_context.clone();
-                            let tx2 = tx.clone();
-                            tokio::spawn(async move {
-                                let result = client.reopen_issue(&project_path, issue_iid).await;
-                                let _ = tx2.send(Event::CommandCompleted(
-                                    crate::app::Tab::Issues,
-                                    result.map_err(|e| e.to_string()),
-                                ));
-                            });
-                        }
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::ReopenIssue(issue_iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -396,7 +351,11 @@ pub async fn handle_active_tab_key(
             } else if app.selected_mrs.len() > 1
                 && keybinding_matches(&app.config.keybindings.mrs.merge_mr, key_event)
             {
-                open_merge_selector(app, 0, app.selected_mrs.len());
+                let iids: Vec<u64> = app.selected_mrs.iter().copied().collect();
+                app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                    crate::app::ConfirmAction::BulkMergeMrs(iids),
+                    app,
+                ));
             } else if let Some(selected_idx) = app.mrs.state.selected() {
                 let filtered = app.filtered_mrs();
                 let mr_ref = filtered.get(selected_idx);
@@ -436,8 +395,10 @@ pub async fn handle_active_tab_key(
                                     Some("Revoking approval isn't supported on GitHub".to_string());
                                 app.error_message_at = Some(std::time::Instant::now());
                             } else {
-                                app.confirm_popup =
-                                    Some(crate::app::ConfirmAction::RevokeMr(mr_iid));
+                                app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                    crate::app::ConfirmAction::RevokeMr(mr_iid),
+                                    app,
+                                ));
                             }
                         }
                         _ if keybinding_matches(
@@ -448,8 +409,10 @@ pub async fn handle_active_tab_key(
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
                                 RebaseGate::Allowed => {
-                                    app.confirm_popup =
-                                        Some(crate::app::ConfirmAction::RebaseMr(mr_iid));
+                                    app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                        crate::app::ConfirmAction::RebaseMr(mr_iid),
+                                        app,
+                                    ));
                                 }
                                 RebaseGate::ResolveLocally => {
                                     app.show_error(
@@ -467,7 +430,10 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            open_merge_selector(app, mr_iid, 1);
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                crate::app::ConfirmAction::MergeMr(mr_iid),
+                                app,
+                            ));
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.view_diff,
@@ -618,7 +584,10 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.confirm_popup = Some(crate::app::ConfirmAction::CloseMr(mr_iid));
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                crate::app::ConfirmAction::CloseMr(mr_iid),
+                                app,
+                            ));
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.delete_entity,
@@ -631,8 +600,10 @@ pub async fn handle_active_tab_key(
                                 .map(|c| c.is_github)
                                 .unwrap_or(false)
                             {
-                                app.confirm_popup =
-                                    Some(crate::app::ConfirmAction::DeleteMr(mr_iid));
+                                app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                    crate::app::ConfirmAction::DeleteMr(mr_iid),
+                                    app,
+                                ));
                             } else {
                                 app.show_error(
                                     "GitHub does not support deleting pull requests".to_string(),
@@ -644,20 +615,10 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
-                                item.state = "opened".to_string();
-                            }
-                            if let Some(client) = app.gitlab_client.clone() {
-                                let project_path = app.project_context.clone();
-                                let tx2 = tx.clone();
-                                tokio::spawn(async move {
-                                    let result = client.reopen_mr(&project_path, mr_iid).await;
-                                    let _ = tx2.send(Event::CommandCompleted(
-                                        crate::app::Tab::MergeRequests,
-                                        result.map_err(|e| e.to_string()),
-                                    ));
-                                });
-                            }
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                crate::app::ConfirmAction::ReopenMr(mr_iid),
+                                app,
+                            ));
                         }
                         _ => handled = false,
                     }
@@ -1390,8 +1351,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.releases.state.selected() {
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
-                        app.confirm_popup = Some(crate::app::ConfirmAction::DeleteRelease(
-                            release.tag_name.clone(),
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()),
+                            app,
                         ));
                     }
                 }
@@ -1589,42 +1551,10 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let Some(client) = app.gitlab_client.clone() else {
-                            return;
-                        };
-                        let project_path = app.project_context.clone();
-                        let milestone_iid = milestone.iid;
-                        // Optimistic local update
-                        app.project_cache.milestones = app.milestones.items.clone();
-                        if let Some(m) = app
-                            .milestones
-                            .items
-                            .iter_mut()
-                            .find(|m| m.iid == milestone_iid)
-                        {
-                            m.state = "closed".to_string();
-                        }
-                        let tx = tx.clone();
-                        tokio::spawn(async move {
-                            let res = crate::domain::milestones::update_milestone_state(
-                                &client,
-                                &project_path,
-                                milestone_iid,
-                                true,
-                            )
-                            .await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::MilestoneClosed);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        crate::app::Tab::Milestones,
-                                        Err(e.to_string()),
-                                    ));
-                                }
-                            }
-                        });
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::CloseMilestone(milestone.iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -1636,42 +1566,10 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        let Some(client) = app.gitlab_client.clone() else {
-                            return;
-                        };
-                        let project_path = app.project_context.clone();
-                        let milestone_iid = milestone.iid;
-                        // Optimistic local update
-                        app.project_cache.milestones = app.milestones.items.clone();
-                        if let Some(m) = app
-                            .milestones
-                            .items
-                            .iter_mut()
-                            .find(|m| m.iid == milestone_iid)
-                        {
-                            m.state = "active".to_string();
-                        }
-                        let tx = tx.clone();
-                        tokio::spawn(async move {
-                            let res = crate::domain::milestones::update_milestone_state(
-                                &client,
-                                &project_path,
-                                milestone_iid,
-                                false,
-                            )
-                            .await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(Event::MilestoneReopened);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Event::CommandCompleted(
-                                        crate::app::Tab::Milestones,
-                                        Err(e.to_string()),
-                                    ));
-                                }
-                            }
-                        });
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::ReopenMilestone(milestone.iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -1683,8 +1581,10 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        app.confirm_popup =
-                            Some(crate::app::ConfirmAction::DeleteMilestone(milestone.iid));
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::DeleteMilestone(milestone.iid),
+                            app,
+                        ));
                     }
                 }
             }
@@ -1748,8 +1648,10 @@ pub async fn handle_active_tab_key(
                         &app.config.keybindings.branches.delete_branch,
                         key_event,
                     ) {
-                        app.confirm_popup =
-                            Some(crate::app::ConfirmAction::DeleteBranch(branch_name.clone()));
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            crate::app::ConfirmAction::DeleteBranch(branch_name.clone()),
+                            app,
+                        ));
                     }
                 }
             }

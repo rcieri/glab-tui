@@ -451,6 +451,7 @@ impl GlabBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Vec<String> {
         let mut args = vec![
             "mr".into(),
@@ -466,7 +467,19 @@ impl GlabBackend {
             args.push("--remove-source-branch".into());
         }
         if let Some(s) = strategy {
-            args.push(format!("--{}", s));
+            match s {
+                "rebase" => args.push("--rebase".into()),
+                // "merge" and "squash" are the default behaviors — squash
+                // is set via the `squash` flag above, and plain merge is
+                // implicit when no flag is passed.
+                "merge" | "squash" => {}
+                other => debug_assert!(false, "unknown merge strategy: {other}"),
+            }
+        }
+        if auto_merge {
+            args.push("--auto-merge=true".into());
+        } else {
+            args.push("--auto-merge=false".into());
         }
         args.push("--yes".into());
         args
@@ -1347,8 +1360,9 @@ impl Backend for GlabBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()> {
-        let args = Self::merge_args(project, iid, squash, delete_branch, strategy);
+        let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "MERGING MR").await?;
         Ok(())
@@ -2715,7 +2729,7 @@ mod tests {
 
     #[test]
     fn merge_args_skip_confirmation_prompt() {
-        let args = GlabBackend::merge_args("group/project", 42, true, true, None);
+        let args = GlabBackend::merge_args("group/project", 42, true, true, None, false);
 
         assert_eq!(
             args,
@@ -2727,9 +2741,25 @@ mod tests {
                 "group/project",
                 "--squash",
                 "--remove-source-branch",
+                "--auto-merge=false",
                 "--yes",
             ]
         );
+    }
+
+    #[test]
+    fn merge_args_rebase_strategy_adds_rebase_flag() {
+        let args =
+            GlabBackend::merge_args("group/project", 42, false, false, Some("rebase"), false);
+        assert!(args.contains(&"--rebase".to_string()));
+        assert!(!args.contains(&"--squash".to_string()));
+    }
+
+    #[test]
+    fn merge_args_merge_strategy_is_default() {
+        let args = GlabBackend::merge_args("group/project", 42, false, false, Some("merge"), false);
+        assert!(!args.contains(&"--rebase".to_string()));
+        assert!(!args.contains(&"--squash".to_string()));
     }
 
     // ── iid batching (GraphQL 100-node connection cap) ──

@@ -193,9 +193,10 @@ impl GitlabClient {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()> {
         self.backend
-            .merge_mr(project, iid, squash, delete_branch, strategy)
+            .merge_mr(project, iid, squash, delete_branch, strategy, auto_merge)
             .await
     }
 

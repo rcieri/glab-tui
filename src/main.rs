@@ -212,7 +212,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                 let inner = border_inner(*rect);
                 match kind {
                     OverlayKind::ConfirmPopup => {
-                        handle_confirm_popup_mouse(app, *rect, row, col);
+                        handle_submit_dialog_mouse(app, *rect, row, col);
                         return;
                     }
                     OverlayKind::ColumnFilter => {
@@ -281,224 +281,51 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
     }
 }
 
-/// Mouse click on confirm popup YES/NO buttons.
-fn handle_confirm_popup_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
-    // Footer area: last 3 rows of 60x9 = rows 6-8
-    let footer_y = rect.y + 6;
-    if row < footer_y || row >= rect.y + rect.height {
+/// Mouse click on SubmitDialog buttons and option rows.
+///
+/// The dialog button band sits at the bottom of the popup area; the
+/// options (if any) sit between the body and the button band. Clicks
+/// outside both zones are ignored — keyboard navigation still drives
+/// the dialog otherwise.
+fn handle_submit_dialog_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
+    let Some(dialog) = app.submit_dialog.as_ref() else {
+        return;
+    };
+
+    let button_height: u16 = 3;
+    let band_top = rect.y + rect.height.saturating_sub(button_height);
+
+    // Click anywhere in the button band.
+    if row >= band_top && row < rect.y + rect.height {
+        let mid = rect.x + rect.width / 2;
+        let cancel_idx = dialog.cancel_idx();
+        let new_cursor = if col < mid { 0 } else { cancel_idx };
+        if let Some(d) = app.submit_dialog.as_mut() {
+            d.cursor_idx = new_cursor;
+        }
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        if let Some(tx) = app.tx.clone() {
+            let _ = handle_submit_dialog(app, &key, tx);
+        }
         return;
     }
-    let inner = border_inner(rect);
-    let mid = inner.x + inner.width / 2;
-    if col < mid {
-        app.confirm_popup_selected_yes = true;
-    } else {
-        app.confirm_popup_selected_yes = false;
-    }
-    // Execute or cancel
-    if let Some(confirm_action) = app.confirm_popup.take() {
-        if app.confirm_popup_selected_yes {
-            let client = app.gitlab_client.clone();
-            let project_path = app.project_context.clone();
-            let tx = client.as_ref().and_then(|c| c.tx.clone());
-            if let (Some(client), Some(tx)) = (client, tx) {
-                match confirm_action {
-                    crate::app::ConfirmAction::DeleteMilestone(iid) => {
-                        tokio::spawn(async move {
-                            let res = crate::domain::milestones::delete_milestone(
-                                &client,
-                                &project_path,
-                                iid,
-                            )
-                            .await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::Milestones,
-                                        Ok(()),
-                                    ));
-                                    let _ = tx.send(crate::event::Event::MilestoneDeleted);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::Milestones,
-                                        Err(e.to_string()),
-                                    ));
-                                }
-                            }
-                        });
-                    }
-                    crate::app::ConfirmAction::DeleteRelease(tag_name) => {
-                        tokio::spawn(async move {
-                            let res = crate::domain::releases::delete_release(
-                                &client,
-                                &project_path,
-                                &tag_name,
-                            )
-                            .await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::Releases,
-                                        Ok(()),
-                                    ));
-                                    let _ = tx.send(crate::event::Event::ReleaseDeleted);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::Releases,
-                                        Err(e.to_string()),
-                                    ));
-                                }
-                            }
-                        });
-                    }
-                    crate::app::ConfirmAction::DeleteBranch(branch_name) => {
-                        tokio::spawn(async move {
-                            let res = crate::domain::branches::delete_branch(
-                                &client,
-                                &project_path,
-                                &branch_name,
-                            )
-                            .await;
-                            let _ = tx.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::Branches,
-                                res.map(|_| ())
-                                    .map_err(|e| format!("Failed to delete branch: {}", e)),
-                            ));
-                        });
-                    }
-                    crate::app::ConfirmAction::CloseIssue(iid) => {
-                        if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
-                            app.issues.items.remove(pos);
-                        }
-                        app.update_filter_selection();
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let result = client.close_issue(&project_path, iid).await;
-                            let _ = tx2.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::Issues,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    }
-                    crate::app::ConfirmAction::DeleteIssue(iid) => {
-                        tokio::spawn(async move {
-                            let res = client.delete_issue(&project_path, iid).await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::Issues,
-                                        Ok(()),
-                                    ));
-                                    let _ = tx.send(crate::event::Event::IssueDeleted);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::Issues,
-                                        Err(format!("Failed to delete issue: {}", e)),
-                                    ));
-                                }
-                            }
-                        });
-                    }
-                    crate::app::ConfirmAction::CloseMr(iid) => {
-                        if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
-                            app.mrs.items.remove(pos);
-                        }
-                        app.update_filter_selection();
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let result = client.close_mr(&project_path, iid).await;
-                            let _ = tx2.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::MergeRequests,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    }
-                    crate::app::ConfirmAction::DeleteMr(iid) => {
-                        tokio::spawn(async move {
-                            let res = client.delete_mr(&project_path, iid).await;
-                            match res {
-                                Ok(_) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::MergeRequests,
-                                        Ok(()),
-                                    ));
-                                    let _ = tx.send(crate::event::Event::MrDeleted);
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(crate::event::Event::CommandCompleted(
-                                        crate::app::Tab::MergeRequests,
-                                        Err(format!("Failed to delete merge request: {}", e)),
-                                    ));
-                                }
-                            }
-                        });
-                    }
-                    crate::app::ConfirmAction::MergeMr(iid) => {
-                        if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
-                            app.mrs.items.remove(pos);
-                        }
-                        app.update_filter_selection();
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let result =
-                                client.merge_mr(&project_path, iid, true, true, None).await;
-                            let _ = tx2.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::MergeRequests,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    }
-                    crate::app::ConfirmAction::RevokeMr(iid) => {
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let result = client.revoke_mr(&project_path, iid).await;
-                            let _ = tx2.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::MergeRequests,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    }
-                    crate::app::ConfirmAction::RebaseMr(iid) => {
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let result = client.rebase_mr(&project_path, iid).await;
-                            let _ = tx2.send(crate::event::Event::CommandCompleted(
-                                crate::app::Tab::MergeRequests,
-                                result.map_err(|e| e.to_string()),
-                            ));
-                        });
-                    }
-                    crate::app::ConfirmAction::SubmitReview(mr_iid) => {
-                        app.selector = Some(crate::app::Selector {
-                            title: " Submit Pull Request Review ".to_string(),
-                            all_items: vec![
-                                "Approve".to_string(),
-                                "Request Changes".to_string(),
-                                "Comment".to_string(),
-                            ],
-                            selected_items: std::collections::HashSet::new(),
-                            cursor_idx: 0,
-                            search_query: String::new(),
-                            is_filtering: false,
-                            is_loading: false,
-                            entity_iid: mr_iid,
-                            entity_type: "mr".to_string(),
-                            field_type: "review_submit_status".to_string(),
-                            multi_select: false,
-                            state: ratatui::widgets::ListState::default(),
-                        });
-                    }
-                }
-            }
-        } else {
-            // NO clicked — if the confirm_action was SubmitReview, clean up
-            if matches!(confirm_action, crate::app::ConfirmAction::SubmitReview(_)) {
-                app.draft_comments.clear();
-                app.in_review_mode = false;
-                app.diff_view = None;
+
+    // Option rows sit just above the separator, after the body.
+    let body_lines =
+        crate::utils::format::wrap_text(&dialog.body, crate::app::SubmitDialog::BODY_INNER_WIDTH)
+            .len()
+            .max(1);
+    let option_rows = dialog.options.len();
+    if option_rows > 0 {
+        let options_y_start = rect.y + 2 + body_lines as u16;
+        if row >= options_y_start && row < options_y_start + option_rows as u16 {
+            let option_idx = (row - options_y_start) as usize;
+            if let Some(d) = app.submit_dialog.as_mut() {
+                d.cursor_idx = option_idx + 1;
+                d.toggle_focused_option();
             }
         }
     }
@@ -1734,7 +1561,7 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if handle_confirm_popup(&mut app, &key_event, &mut terminal, events.sender())
+                    if handle_submit_dialog(&mut app, &key_event, events.sender())
                         || handle_help_keybinding(&mut app, &key_event)
                         || handle_help_overlay(&mut app, &key_event)
                         || handle_switch_repo(&mut app, &key_event)
@@ -3524,6 +3351,7 @@ async fn main() -> Result<()> {
                                                         squash,
                                                         delete_branch,
                                                         merge_strategy,
+                                                        false,
                                                     )
                                                     .await
                                                 {
@@ -6504,10 +6332,12 @@ async fn main() -> Result<()> {
                                     diff_view.file_tree_visible = true;
                                 } else {
                                     if !app.draft_comments.is_empty() {
-                                        app.confirm_popup =
-                                            Some(crate::app::ConfirmAction::SubmitReview(
+                                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                            crate::app::ConfirmAction::SubmitReview(
                                                 diff_view.mr_iid,
-                                            ));
+                                            ),
+                                            &app,
+                                        ));
                                     } else {
                                         app.diff_view = None;
                                         continue;
@@ -6568,10 +6398,12 @@ async fn main() -> Result<()> {
                                         diff_view.search_active = false;
                                     }
                                     if !app.draft_comments.is_empty() {
-                                        app.confirm_popup =
-                                            Some(crate::app::ConfirmAction::SubmitReview(
+                                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                                            crate::app::ConfirmAction::SubmitReview(
                                                 diff_view.mr_iid,
-                                            ));
+                                            ),
+                                            &app,
+                                        ));
                                     } else {
                                         app.diff_view = None;
                                         continue;

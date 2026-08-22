@@ -4532,7 +4532,7 @@ impl App {
                         "Author" => i.author.username.clone(),
                         "Labels" => {
                             if i.labels.is_empty() {
-                                "None".to_string()
+                                "--".to_string()
                             } else {
                                 i.labels[0].clone()
                             }
@@ -4541,7 +4541,7 @@ impl App {
                             .milestone
                             .as_ref()
                             .map(|m| m.title.clone())
-                            .unwrap_or_else(|| "None".to_string()),
+                            .unwrap_or_else(|| "--".to_string()),
                         "Assignees" => {
                             if i.assignees.is_empty() {
                                 "Unassigned".to_string()
@@ -4574,7 +4574,7 @@ impl App {
                         "Author" => m.author.username.clone(),
                         "Labels" => {
                             if m.labels.is_empty() {
-                                "None".to_string()
+                                "--".to_string()
                             } else {
                                 m.labels[0].clone()
                             }
@@ -4583,7 +4583,7 @@ impl App {
                             .milestone
                             .as_ref()
                             .map(|m| m.title.clone())
-                            .unwrap_or_else(|| "None".to_string()),
+                            .unwrap_or_else(|| "--".to_string()),
                         "Assignees" => {
                             if m.assignees.is_empty() {
                                 "Unassigned".to_string()
@@ -4597,7 +4597,7 @@ impl App {
                         }
                         "Reviewers" => {
                             if m.reviewers.is_empty() {
-                                "None".to_string()
+                                "--".to_string()
                             } else {
                                 m.reviewers
                                     .iter()
@@ -4721,8 +4721,8 @@ impl App {
                 for (idx, m) in items.iter().enumerate() {
                     let key = match col.as_str() {
                         "State" => m.state.clone(),
-                        "Start Date" => m.start_date.clone().unwrap_or_else(|| "None".to_string()),
-                        "Due Date" => m.due_date.clone().unwrap_or_else(|| "None".to_string()),
+                        "Start Date" => m.start_date.clone().unwrap_or_else(|| "--".to_string()),
+                        "Due Date" => m.due_date.clone().unwrap_or_else(|| "--".to_string()),
                         "Title" => m.title.clone(),
                         "ID" => format!("#{}", m.iid),
                         _ => "Unknown".to_string(),

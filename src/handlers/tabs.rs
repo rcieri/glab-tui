@@ -62,7 +62,7 @@ pub async fn handle_active_tab_key(
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
                 let templates = crate::templates::list_templates("issue");
                 if !templates.is_empty() {
-                    let template_names: Vec<String> = std::iter::once("None (blank)".to_string())
+                    let template_names: Vec<String> = std::iter::once("-- (blank)".to_string())
                         .chain(templates.iter().map(|(n, _)| n.clone()))
                         .collect();
                     app.selector = Some(crate::app::Selector {

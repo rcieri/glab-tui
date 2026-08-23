@@ -10,16 +10,17 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Primary Language:** Rust (Edition 2024)
 * **TUI Framework:** `ratatui` (v0.30.1)
 * **Syntax Highlighting:** `syntect` (v5, `default-fancy` features)
+* **Markdown Rendering:** `pulldown-cmark` (v0.13.0, GFM tables/code/lists)
 * **Async Runtime:** `tokio` (v1.38, full)
-* **Async Traits:** `async-trait` (v0.1)
+* **Async Traits:** `async-trait` (v0.1.92)
 * **CLI Parsing:** `clap` (v4, derive)
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.8.4`)
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.0`)
 
 ### Dual-Engine Architecture
-The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
+The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes (with or without `www.` prefix) resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
 
 The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call is extracted from the remote URL by `git_helpers::parse_project_path` ([src/git_helpers.rs](src/git_helpers.rs)), which keeps every path segment after the host so nested GitLab subgroup namespaces (`group/subgroup/project`) resolve correctly. Always use this helper — do not reimplement remote-URL parsing inline.
 
@@ -28,7 +29,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 ## 2. Directory Structure
 
 * [src/main.rs](src/main.rs): Entry point. Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
-* [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic.
+* [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `SubmitDialog`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic.
 * [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/backend/](src/backend/): CLI backend layer.
@@ -54,26 +55,26 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
-    * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (confirm popup, date picker, help, refresh, repo switcher).
+    * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json`.
-    * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation.
+    * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
-    * [update.rs](src/utils/update.rs): GitHub releases self-updater.
+    * [update.rs](src/utils/update.rs): GitHub releases self-updater with multi-target Linux asset selection.
 * [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`) and ANSI-styled diagnostic output.
 * [src/templates.rs](src/templates.rs): Default issue/MR description templates.
 * [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`).
-* [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic.
-* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`) and ANSI-styled diagnostic output.
+* [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic and creation form helpers.
 * [src/ui/](src/ui/): Ratatui render functions.
     * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
+    * [inspector.rs](src/ui/inspector.rs): Unified entity inspector component (`render_entity_inspector`, `EntityDocument`, `InspectorMode`). Drives both read-only detail previews and interactive edit/create forms in a single-column layout.
     * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions.
-    * [overlays.rs](src/ui/overlays.rs): Overlay render functions.
-    * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers.
+    * [overlays.rs](src/ui/overlays.rs): Overlay render functions (`SubmitDialog`, selectors, date picker, help).
+    * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers (`badge_style_for`, `render_fuzzy_cell`).
     * [diff.rs](src/ui/diff.rs): Diff view render functions.
     * [modal.rs](src/ui/modal.rs): Unified modal component.
-* [src/themes/](src/themes/): 16 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84, rose-pine, rose-pine-moon, rose-pine-dawn).
+* [src/themes/](src/themes/): 18 bundled theme TOML files (default, tokyo-night, gruvbox, nord, catppuccin-mocha, dracula, clean, deep-space, everforest-dark, monokai, one-dark, solarized-dark, synthwave-84, oled, github-dark-hc, rose-pine, rose-pine-moon, rose-pine-dawn).
 
 ## 3. Core Architectural Patterns
 
@@ -96,25 +97,43 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 ### Syntax Highlighting (`syntect`)
 * Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
 * `SYNTAX_SET` and `THEME_SET` are global `LazyLock` statics using `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`.
-* **Theme-safe:** `highlight_line_syntax` builds the `syntect` theme from the active `THEME` — foreground/background taken from the `text_normal`/`bg` tokens and all syntect scope colors stripped — so highlighting always matches the active theme. Never reintroduce hardcoded syntect palette colors.
+* **Theme-safe:** `highlight_line_syntax` builds highlighting tokens dynamically derived from the active `THEME`'s semantic tokens (mapped from syntect scope names) while reusing syntect's resolved font modifiers (bold/italic/underline). Highlighting remains theme-safe (no hardcoded palette) while fuzzy search match highlights (`yellow_bg`) are preserved.
 * The public function `highlight_line_syntax(file_path, line_content, ext)` returns `Option<Vec<(ratatui::style::Style, String)>>`.
-* `syntect_style_to_ratatui()` maps only `syntect` font modifiers (bold/italic/underline) to `ratatui::style::Modifier`; colors are intentionally ignored because they come from the theme.
 * `DiffLine` contains an optional `syntax_highlighted: Option<Vec<(Style, String)>>` field populated during parsing.
 
-### Code Review System
-* **Diff view** supports inline comments, code suggestions, and draft reviews:
+### Entity Inspector & Form Architecture (`src/ui/inspector.rs`)
+* **Unified Render Pipeline:** Read-only details preview and interactive edit/create modes share a single rendering path driven by `render_entity_inspector(f, &doc, area, mode, &label_colors)`. `InspectorMode` (`ReadOnly` vs `Interactive`) is the only structural switch, and `EntityDocument` is the single source of truth for both modes.
+* **Single-Column Layout:** The markdown description spans full-width at the top, and the metadata fields list is cleanly stacked beneath it with aligned `│` separators.
+* **Navigation & Inline Editing:** In interactive mode, `j`/`k`/arrows navigate across all editable rows including Description/Release Notes. `Enter` toggles inline editing (or opens external `$EDITOR` / `Ctrl+E`). `ReadOnly` and `Section` spacer fields are skipped during interactive navigation and render with a muted shield icon (`readonly` nerd font icon).
+* **Mode Indicators:** The top banner right-aligns a vim/helix-style mode badge (`[NORMAL]`, `[PREVIEW]`, `[EDIT]`, `[CREATE]`) mapped to semantic badge theme colors. Pressing `Esc` in edit forms pops back to the previous zoom state predictably.
+* **In-Menu Creation Forms:** Issue and MR/PR creation forms embed "Create from Issue" (fuzzy-searches existing issues, populates fields, links via `--related-issue` on GitLab or `Closes #N` on GitHub) and "Description Template" rows directly in the menu.
+* **Bulk Edit Selection:** Bulk edit menus carry `InspectorContent::Custom` displaying the full list of selected `#iid` / titles in the descriptor pane so users can verify affected entities before submission.
+
+### Visual Select Mode (Yazi-Style)
+* `v` (`selection_toggle` keybinding) toggles select mode on the Issues and MRs tabs. Navigating (`j`/`k`/arrows) paints row selection dynamically.
+* Selected rows display a 1-wide leftmost colored bar (`checked_bg`) and the top-right header shows a `[SELECT]` mode badge.
+* `Space` (`select_issue` / `select_mr`) continues to toggle individual item selection.
+
+### Unified Error Handling (`App::show_error`)
+* All API errors, network failures, and guard violations route through `App::show_error(msg)` instead of setting `error_message` directly.
+* Displays a 3-row floating rounded toast box with `status_failed` icon and auto-dismiss after 5 seconds.
+* Automatically stamps the most recent running command in the terminal commands bar as failed, keeping both UI surfaces synchronized.
+
+### Code Review & Diff System
+* **Diff view** supports inline comments, code suggestions, draft reviews, dynamic gutter sizing, and tab expansion:
   - `DiscussionNote` / `NotePosition` structs in [src/domain/mr.rs](src/domain/mr.rs).
   - `list_mr_notes()` fetches notes for an MR via the API.
   - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` and submitted atomically.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
-  - `DiffFetched` event now uses named fields: `{ mr_iid, raw_diff, comments }`.
-  - Leaving the diff view with pending drafts opens the standard confirm popup (`ConfirmAction::SubmitReview(mr_iid)`); confirming opens the Approve / Request Changes / Comment selector, declining clears the drafts and exits review mode.
-* **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui.rs](src/ui.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
+  - `DiffFetched` event uses named fields: `{ mr_iid, raw_diff, comments }`.
+  - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`).
+  - Open diff key is `D` (remappable via `keybindings.mrs.view_diff`).
+* **Dynamic line numbers & tab expansion:** Gutter width is dynamically calculated in `DiffView::new` from the widest line number in the diff (floored at 4). Tabs are expanded to spaces at tab stops at diff parse time (`expand_tabs`) so Go/Makefiles maintain indentation without breaking syntax highlighting or search indices.
+* **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui/helpers.rs](src/ui/helpers.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
 * **Reviewed-file marks:** `m` toggles `DiffView::reviewed_files` (a `HashSet` of diff-relative file paths) for the selected file, or for every file below the selected directory; `M` toggles `DiffView::hide_reviewed`. Both are purely local — neither GitLab nor GitHub's "viewed" state is synced.
-  - The tree is flattened through `DiffTreeNode::flatten_ex(depth, prefix, reviewed, hide_reviewed, out)`, which stamps `FlatDiffTreeNode::is_reviewed` (on a directory: every file below it is reviewed) and, when filtering, drops reviewed files plus directories left with no unreviewed file. Filtering must stay in `flatten_ex` rather than post-processing the flat list — a *collapsed* directory emits no children, so its pending files are only visible to a walk of the tree itself.
-  - `DiffTreeNode::sync_expansion_to_review(before, after)` folds a directory when it becomes fully reviewed and unfolds it when it stops being fully reviewed, cascading up through parents. It acts on *transitions between the two review sets only* — never on the current state — so a completed directory the user reopened by hand is not re-folded by an unrelated mark elsewhere.
-  - `rebuild_visible_nodes` resets the selection to the top when the selected node disappears (collapse-all); review changes instead go through `rebuild_visible_nodes_keep_position`, which follows a vanished selection onto its closest *collapsed* ancestor (the directory that just folded) and otherwise holds the cursor slot so the next pending file slides underneath it. The collapsed check matters: without it, marking a file while the hide filter is on would drag the cursor back onto the still-open parent directory instead of advancing.
-  - Marks persist in `ProjectCache::reviewed_files` (`mr_iid → Vec<String>`), written via `App::store_reviewed_files_for_mr` + `save_cache` on every toggle and re-seeded by `DiffView::restore_review_state` on `DiffFetched`, which drops paths no longer present in the diff. `App::hide_reviewed_files` carries the filter across diff opens within a session.
+  - The tree is flattened through `DiffTreeNode::flatten_ex(depth, prefix, reviewed, hide_reviewed, out)`, which stamps `FlatDiffTreeNode::is_reviewed` (on a directory: every file below it is reviewed) and, when filtering, drops reviewed files plus directories left with no unreviewed file.
+  - `DiffTreeNode::sync_expansion_to_review(before, after)` folds a directory when it becomes fully reviewed and unfolds it when it stops being fully reviewed, cascading up through parents.
+  - Marks persist in `ProjectCache::reviewed_files` (`mr_iid → Vec<String>`), written via `App::store_reviewed_files_for_mr` + `save_cache` on every toggle and re-seeded by `DiffView::restore_review_state` on `DiffFetched`.
 
 ### MR Review State (Approval / Mergeable / Workflow)
 * The MR/PR table's `Approval`, `Mergeable`, and `Workflow` columns are derived, not fetched. `ApprovalState` / `MergeabilityState` / `WorkflowStatus` and the display/sort/filter helpers live in [src/domain/mr_state.rs](src/domain/mr_state.rs); cell text uses ALL-CAPS display strings (e.g. `CONFLICT`, `REBASE`, `CLEAN`, `APPROVED`, `AWAITING`) that the column-filter picker also shows.
@@ -124,7 +143,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
-* `ProjectCache` now stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, and `label_colors` (a `name → hex` map used by the Labels column) in addition to API data.
+* `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, and `reviewed_files` in addition to API data.
 * Cache is written on every successful data fetch; read on startup.
 
 ### Config & Theme System
@@ -133,10 +152,10 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 * `Config` exposes both `page_size` (total item budget per tab) and `api_per_page` (items per HTTP request, clamped to GitLab's `1–100` `per_page` range via `api_per_page_clamped()`). Thread both through the `Backend` pagination methods; `_per_request` is a no-op on GitHub, which paginates with `--limit`.
 * `fetch_label_colors` (default `true`) selects between the real label colors returned by `glab label list` / `gh label list` and the theme's label palette. The API colors are stored as a `name → Color` map on `app.label_colors` (populated from the cache at startup and refreshed on `RepoAttributesFetched`); light GitHub-style label colors fall back to the theme palette because they are unreadable as foreground text on dark themes (`is_light_color()` luminance check in [src/ui/helpers.rs](src/ui/helpers.rs)).
 * `Config::load()` only reads existing config files (global then repo-local) and merges overrides; it **never** writes. `config.toml` is created solely by an explicit save (`save_layout` / the `save_view` keybinding), targeting either global (`~/.config/glab-tui/config.toml`) or repo-local (`.glab-tui/config.toml`). If no config file exists, the app boots from in-memory defaults.
-* Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`. `Theme::default()` derives directly from `src/themes/default.toml` — there is no hardcoded in-code fallback, so the bundled TOML is the single source of truth.
+* Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`. `Theme::default()` derives directly from `src/themes/default.toml` — there is no hardcoded in-code fallback, so the bundled TOML is the single source of truth. Invalid user theme overrides automatically fall back to bundled presets.
 * Icons: The global `ICONS` `RwLock` is initialized at startup with hardcoded nerd font defaults and is not user-configurable.
-* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (16 presets including the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
-* **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens to `Theme` if needed.
+* Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (18 presets including `oled`, `github-dark-hc`, and the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
+* **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens (`diff_gutter_bg`, `diff_sep`, etc.) to `Theme` if needed.
 
 ### Keybinding System
 * All keybinding defaults are defined via the `keybind_defaults!` macro in [src/config.rs](src/config.rs).
@@ -153,24 +172,27 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 * Open it by pushing `Some(DatePicker::new(...))` into `app.date_picker`; close it by setting to `None`.
 * Navigation: `h`/`l` → previous/next month, `j`/`k` → previous/next day, `Enter` → confirm, `Esc` → cancel.
 
-### Confirmation Popup
-* Destructive actions (close issue/MR, merge MR, delete branch/release/milestone/issue/MR) and review submission with pending draft comments (`ConfirmAction::SubmitReview`) show a confirmation popup before executing.
-* `ConfirmAction` enum in [src/app.rs](src/app.rs) lists all confirmable actions. The UI renders a yes/no box; the selected state is `app.confirm_popup_selected_yes: bool`.
-* Add new variants to `ConfirmAction` when introducing destructive operations. Handle the confirmation flow in [src/main.rs](src/main.rs) by checking `app.confirm_popup` before proceeding.
+### Submit Dialog & Confirmations (`SubmitDialog`)
+* Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review) open a `SubmitDialog` ([src/app.rs](src/app.rs)).
+* Includes title, context-aware description body, optional toggleable options (squash, delete branch, auto-merge), and explicit `[ Submit ]` (left, idx 0) and `[ Cancel ]` (right) buttons.
+* Navigation: `h`/`l` / Left/Right for horizontal button jumping, `j`/`k` / Up/Down for vertical option traversal, `Tab`/`BackTab` for full control cycling, `Space` to toggle options, `Enter` to activate focused button, `Esc` to cancel.
+* Destructive actions (close, delete, revoke) default the cursor to Cancel; reversible actions (merge, rebase, review) default to Submit.
+* Mouse clicks on button boxes or option rows are supported.
 
 ### Mouse Support
 * Mouse events (`crossterm::event::MouseEvent`) are handled in the event loop for selecting tabs, scrolling tables, and interacting with overlays.
-* All modal and overlay interactions (confirm popups, selectors, date picker, help) have click handlers routed through their respective state components.
+* All modal and overlay interactions (submit dialogs, selectors, date picker, help) have click handlers routed through their respective state components.
 * Selector overlays compute mouse target positions based on search bar presence (determined by `field_type`) and footer height.
 * Add new mouse handlers following the pattern in [src/handlers/overlays.rs](src/handlers/overlays.rs) and [src/handlers/tabs.rs](src/handlers/tabs.rs).
 
 ### Column Configure Popup
 * The configure overlay (`Tab`) has three sections: **COLUMNS** (checkbox toggle), **GROUP BY** (single-select), and **ORDER** (Ascending/Descending).
+* Column lists use `ListState` scrolling with position counters to handle short terminals gracefully.
 * Value-based column filtering is available by pressing `Enter` on a focused column item, which opens a selector overlay with distinct values for that column.
 * Column filter state is tracked via `app.column_filter_context` and `app.column_filters: HashMap<Tab, HashMap<String, Vec<String>>>`.
 * Group state is tracked via `app.group_by_column: Option<String>` and `app.group_ascending: bool`.
 * When rendering the MR/PR pipeline status column, check `is_github` to display "Pipeline" (GitLab) or "Action" (GitHub) terminology.
-* MR/PR review-state columns (`Approval`, `Mergeable`, `Workflow`) are derived in [src/domain/mr_state.rs](src/domain/mr_state.rs); see the "MR review state" note under Core Architectural Patterns below.
+* MR/PR review-state columns (`Approval`, `Mergeable`, `Workflow`) are derived in [src/domain/mr_state.rs](src/domain/mr_state.rs).
 
 ## 4. UI & Rendering Guidelines (`ratatui`)
 
@@ -334,7 +356,7 @@ These are user-triggered mutations that shell out directly to the CLI without go
 
 ## 7. Development & Quality Standards
 
-* **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `app.error_message`. Do not `unwrap()` or `panic!()` in UI or event handling code.
+* **Error Handling:** Use `anyhow::Result`. Bubble up errors and display them in the UI via `App::show_error(msg)`. Do not `unwrap()` or `panic!()` in UI or event handling code.
 * **Test env isolation:** Unit tests that mutate process-global environment variables (config paths via `GLAB_TUI_CONFIG`/`XDG_CONFIG_HOME`, cache dirs) must acquire `config::TEST_ENV_MUTEX` first — env vars are visible to every test thread, and overlapping mutations caused an intermittent Windows CI failure. Never introduce a second ad-hoc mutex for env mutation; reuse the crate-wide one.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
@@ -344,7 +366,9 @@ These are user-triggered mutations that shell out directly to the CLI without go
 
 Releases are prepared, documented, and distributed from a maintainer's machine via a single orchestrator, `scripts/release.sh`. CI is only responsible for building the cross-platform release binaries. The demo GIFs must be recorded locally because `glab-tui` shells out to `gh`/`glab`, and CI tokens lack the permissions for a realistic recording.
 
-Run `scripts/release.sh [patch|minor|major]` (default `patch`) and the script walks the full release:
+Run `scripts/release.sh [patch|minor|major|nightly]` (default `patch`) and the script walks the full release:
+
+> **Nightly Pre-Releases:** `scripts/release.sh nightly` (or tags matching `vX.Y.Z-nightly[-suffix]`) runs a stripped-down flow that skips `Cargo.toml` bumping, docs regeneration, prepare PRs, demo GIFs, review gates, Homebrew/Scoop manifest syncs, and crates.io publishing, while still building matrix binaries and updating GitHub release notes.
 
 1. **Preflight** — checks `gh`/`opencode`/`cargo`/`jq`/`vhs`/`ttyd`/`ffmpeg`/`unzip`, `gh auth`, JetBrainsMono Nerd Font, and push access to both manifest repos (`rcieri/homebrew-glab-tui`, `rcieri/scoop-glab-tui`); exits non-zero with a clear message if a prerequisite is missing. Long-running steps run under the script's `spinner`/`progress_bar` helpers (animated spinner with captured logs, auto-disabled when not a TTY), and phases are numbered `1/7` … for progress reporting.
 2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the opencode model (provider → model → variant; see below) unless `OPENCODE_MODEL` is set, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.

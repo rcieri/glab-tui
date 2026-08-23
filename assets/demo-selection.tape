@@ -2,7 +2,7 @@ Output assets/demo-selection.gif
 
 Set FontSize 18
 Set FontFamily "JetBrainsMono Nerd Font"
-Set Theme "Builtin Dark"
+Set Theme "GruvboxDark"
 Set Width 1920
 Set Height 1200
 Set Framerate 10

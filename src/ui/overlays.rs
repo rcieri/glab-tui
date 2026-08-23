@@ -399,783 +399,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         f.render_widget(table, chunks[1]);
     }
 
-    if app.show_help {
-        struct Shortcut {
-            category: &'static str,
-            key: std::borrow::Cow<'static, str>,
-            action: &'static str,
-        }
-
-        let s = |k: &'static str| std::borrow::Cow::Borrowed(k);
-        let d = |k: String| std::borrow::Cow::Owned(k);
-
-        let shortcuts: Vec<Shortcut> = vec![
-            // ── Global & Nav ──
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!("{} / →", app.config.keybindings.global.next_tab)),
-                action: "Next tab",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!("{} / ←", app.config.keybindings.global.prev_tab)),
-                action: "Previous tab",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!("{}", app.config.keybindings.global.configure)),
-                action: "Toggle columns config popup (filter / group / sort)",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: s("j / k / ↓ / ↑"),
-                action: "Select item / Scroll page",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!(
-                    "{} / {}",
-                    app.config.keybindings.global.scroll_down,
-                    app.config.keybindings.global.scroll_up
-                )),
-                action: "Scroll description / trace / notes",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!("{} / f", app.config.keybindings.global.search)),
-                action: "Open fuzzy search / filter bar",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!(
-                    "F5 / Ctrl+R / {}",
-                    app.config.keybindings.global.refresh
-                )),
-                action: "Refresh active tab data",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: s("Ctrl+S"),
-                action: "Switch repository",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!("{}", app.config.keybindings.global.global_search)),
-                action: "Global search across all tabs",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: s("u"),
-                action: "Check for updates",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!("{} / F1", app.config.keybindings.global.help)),
-                action: "Show this help modal",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(format!("{}", app.config.keybindings.global.save_view)),
-                action: "Save view layout to config",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: d(app.config.keybindings.global.quit.clone()),
-                action: "Quit program",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: s("Esc"),
-                action: "Close active overlay",
-            },
-            Shortcut {
-                category: "Global & Nav",
-                key: s("Ctrl+C"),
-                action: "Quit program",
-            },
-            // ── Issues ──
-            Shortcut {
-                category: "Issues",
-                key: d(format!("{}", app.config.keybindings.issues.create_issue)),
-                action: "Create new Issue",
-            },
-            Shortcut {
-                category: "Issues",
-                key: d(format!("{}", app.config.keybindings.issues.select_issue)),
-                action: "Toggle issue selection (bulk edit with e)",
-            },
-            Shortcut {
-                category: "Issues",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.issues.selection_toggle
-                )),
-                action: "Toggle select mode (paint selection while navigating)",
-            },
-            Shortcut {
-                category: "Issues",
-                key: d(format!("{}", app.config.keybindings.issues.edit_entity)),
-                action: "Open parameter edit menu",
-            },
-            Shortcut {
-                category: "Issues",
-                key: d(format!("{}", app.config.keybindings.issues.close_entity)),
-                action: "Close selected Issue",
-            },
-            Shortcut {
-                category: "Issues",
-                key: d(format!("{}", app.config.keybindings.issues.reopen_entity)),
-                action: "Reopen selected Issue",
-            },
-            Shortcut {
-                category: "Issues",
-                key: d(format!("{}", app.config.keybindings.issues.delete_entity)),
-                action: "Delete selected Issue",
-            },
-            Shortcut {
-                category: "Issues",
-                key: s("o"),
-                action: "Open selected Issue in browser",
-            },
-            Shortcut {
-                category: "Issues",
-                key: d(format!("{}", app.config.keybindings.issues.create_mr)),
-                action: "Create Merge Request from selected Issue",
-            },
-            // ── Merge Requests ──
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.create_mr)),
-                action: "Create new Merge Request",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.select_mr)),
-                action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.selection_toggle)),
-                action: "Toggle select mode (paint selection while navigating)",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.edit_entity)),
-                action: "Open parameter edit menu",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.approve_mr)),
-                action: "Approve selected MR",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.revoke_mr)),
-                action: "Revoke your approval (GitLab only)",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.rebase_mr)),
-                action: "Rebase source branch onto target",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.merge_mr)),
-                action: "Merge selected MR (configure squash/delete)",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.toggle_draft)),
-                action: "Toggle Draft / Ready status",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.view_diff)),
-                action: "View Merge Request diff changes",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.mrs.view_related_pipelines
-                )),
-                action: "View related pipelines for selected MR",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.close_entity)),
-                action: "Close selected MR",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.reopen_entity)),
-                action: "Reopen selected MR",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: d(format!("{}", app.config.keybindings.mrs.delete_entity)),
-                action: "Delete selected MR",
-            },
-            Shortcut {
-                category: "Merge Requests",
-                key: s("o"),
-                action: "Open selected MR in browser",
-            },
-            // ── Pipelines ──
-            Shortcut {
-                category: "Pipelines",
-                key: s("Enter"),
-                action: "View pipeline jobs list",
-            },
-            Shortcut {
-                category: "Pipelines",
-                key: s("n"),
-                action: "Create pipeline with interactive form",
-            },
-            Shortcut {
-                category: "Pipelines",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.pipelines.trigger_pipeline
-                )),
-                action: "Trigger new pipeline from MR",
-            },
-            Shortcut {
-                category: "Pipelines",
-                key: d(format!("{}", app.config.keybindings.pipelines.retry)),
-                action: "Retry selected pipeline(s)",
-            },
-            Shortcut {
-                category: "Pipelines",
-                key: d(format!("{}", app.config.keybindings.pipelines.cancel)),
-                action: "Cancel pipeline execution",
-            },
-            Shortcut {
-                category: "Pipelines",
-                key: s("Space"),
-                action: "Check / uncheck pipeline for bulk retry",
-            },
-            Shortcut {
-                category: "Pipelines",
-                key: s("o"),
-                action: "Open pipeline in browser",
-            },
-            // ── Jobs ──
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.view_trace)),
-                action: "View job trace (toggle zoom)",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: s("Esc / Backspc"),
-                action: "Go back to Pipelines list",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.enter_pipeline)),
-                action: "Switch to pipeline selector",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.retry)),
-                action: "Retry selected job(s)",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.start_job)),
-                action: "Start manual job (GitLab only)",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.cancel)),
-                action: "Cancel selected job(s)",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.select_job)),
-                action: "Check / uncheck job for bulk retry/cancel",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.select_stage)),
-                action: "Select all jobs in stage",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.download_artifact)),
-                action: "Download job artifact",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.view_trace_editor)),
-                action: "Open job trace in external $EDITOR",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.open_in_browser)),
-                action: "Open selected job in browser",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: d(format!("{}", app.config.keybindings.jobs.toggle_trace_wrap)),
-                action: "Toggle trace word wrap / clipped view",
-            },
-            Shortcut {
-                category: "Jobs",
-                key: s("m"),
-                action: "Collapse / expand matrix jobs",
-            },
-            // ── Milestones ──
-            Shortcut {
-                category: "Milestones",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.milestones.create_milestone
-                )),
-                action: "Create new milestone",
-            },
-            Shortcut {
-                category: "Milestones",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.milestones.edit_milestone
-                )),
-                action: "Edit selected milestone",
-            },
-            Shortcut {
-                category: "Milestones",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.milestones.close_milestone
-                )),
-                action: "Close selected milestone",
-            },
-            Shortcut {
-                category: "Milestones",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.milestones.reopen_milestone
-                )),
-                action: "Reopen selected milestone",
-            },
-            Shortcut {
-                category: "Milestones",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.milestones.delete_milestone
-                )),
-                action: "Delete selected milestone",
-            },
-            Shortcut {
-                category: "Milestones",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.milestones.open_in_browser
-                )),
-                action: "Open milestone in browser",
-            },
-            // ── Runners ──
-            Shortcut {
-                category: "Runners",
-                key: d(format!(
-                    "{} / {}",
-                    app.config.keybindings.runners.pause, app.config.keybindings.runners.resume,
-                )),
-                action: "Pause / Resume runner",
-            },
-            Shortcut {
-                category: "Runners",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.runners.edit_description
-                )),
-                action: "Edit runner description text",
-            },
-            // ── Releases ──
-            Shortcut {
-                category: "Releases",
-                key: s("Enter"),
-                action: "View release notes (toggle zoom)",
-            },
-            Shortcut {
-                category: "Releases",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.releases.create_release
-                )),
-                action: "Create new release tag & changelog",
-            },
-            Shortcut {
-                category: "Releases",
-                key: d(format!("{}", app.config.keybindings.releases.edit_release)),
-                action: "Edit selected release",
-            },
-            Shortcut {
-                category: "Releases",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.releases.delete_release
-                )),
-                action: "Delete selected release",
-            },
-            Shortcut {
-                category: "Releases",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.releases.open_in_browser
-                )),
-                action: "Open release in browser",
-            },
-            // ── TODOs ──
-            Shortcut {
-                category: "TODOs",
-                key: d(format!("{}", app.config.keybindings.todos.mark_as_read)),
-                action: "Open todo target & mark read",
-            },
-            Shortcut {
-                category: "TODOs",
-                key: d(format!("{}", app.config.keybindings.todos.open_in_browser)),
-                action: "Open todo in browser",
-            },
-            // ── Terminal ──
-            Shortcut {
-                category: "Terminal",
-                key: s("j / k / ↑ / ↓"),
-                action: "Scroll terminal log",
-            },
-            Shortcut {
-                category: "Terminal",
-                key: d(format!("{}", app.config.keybindings.terminal.toggle_wrap)),
-                action: "Toggle terminal line wrapping",
-            },
-            // ── Branches ──
-            Shortcut {
-                category: "Branches",
-                key: d(format!("{}", app.config.keybindings.branches.create_branch)),
-                action: "Create new branch",
-            },
-            Shortcut {
-                category: "Branches",
-                key: d(format!("{}", app.config.keybindings.branches.delete_branch)),
-                action: "Delete selected branch",
-            },
-            // ── Environments ──
-            Shortcut {
-                category: "Environments",
-                key: d(format!(
-                    "{}",
-                    app.config.keybindings.environments.view_deployments
-                )),
-                action: "View deployments list for environment",
-            },
-            // ── Diff View ──
-            Shortcut {
-                category: "Diff View",
-                key: s("q / Esc"),
-                action: "Exit Diff View",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("Tab"),
-                action: "Toggle Focus (Files / Diff)",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("h / l / Left / Right"),
-                action: "Switch Panel Focus",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("j / k / ↓ / ↑"),
-                action: "Navigate files or diff lines",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("J / K"),
-                action: "Page down / Page up",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("[ / ]"),
-                action: "Previous / Next Hunk",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("c"),
-                action: "Add Comment on Line",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("r"),
-                action: "Submit Review (approve/changes/comment)",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("d"),
-                action: "Toggle unified / side-by-side layout",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("v / V"),
-                action: "Start / Stop line selection for comment",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("a"),
-                action: "Interact with comments on current line",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("C"),
-                action: "Add comment via external $EDITOR",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("e"),
-                action: "Add code suggestion via $EDITOR",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("/ f"),
-                action: "Search within diff",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("Ctrl+n / Ctrl+N"),
-                action: "Search next / previous match",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("z / Z"),
-                action: "Collapse / Expand all files",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("m"),
-                action: "Mark / unmark file (or directory) as reviewed",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("M"),
-                action: "Hide / show reviewed files in the tree",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("Enter / Space"),
-                action: "Expand file tree / Toggle zoom",
-            },
-            Shortcut {
-                category: "Diff View",
-                key: s("? / F1"),
-                action: "Show this help modal",
-            },
-        ];
-
-        let active_categories: &[&str] = if app.diff_view.is_some() {
-            &["Diff View"]
-        } else {
-            match app.active_tab {
-                Tab::Issues => &["Global & Nav", "Issues"],
-                Tab::MergeRequests => &["Global & Nav", "Merge Requests"],
-                Tab::Pipelines => &["Global & Nav", "Pipelines"],
-                Tab::Jobs => &["Global & Nav", "Jobs"],
-                Tab::Milestones => &["Global & Nav", "Milestones"],
-                Tab::Runners => &["Global & Nav", "Runners"],
-                Tab::Releases => &["Global & Nav", "Releases"],
-                Tab::Todos => &["Global & Nav", "TODOs"],
-                Tab::Branches => &["Global & Nav", "Branches"],
-                Tab::Environments => &["Global & Nav", "Environments"],
-                Tab::Terminal => &["Global & Nav", "Terminal"],
-            }
-        };
-
-        let filtered_shortcuts: Vec<&Shortcut> = shortcuts
-            .iter()
-            .filter(|s| active_categories.contains(&s.category))
-            .collect();
-
-        let block = Block::default()
-            .title(format!(" {} Keyboard Shortcuts ", icons.label_keyboard))
-            .title_style(
-                Style::default()
-                    .fg(THEME.read().unwrap().header_fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
-            .border_type(BorderType::Double)
-            .style(Style::default().bg(THEME.read().unwrap().bg));
-
-        let area = centered_rect_fixed(90, 40, size);
-        app.overlay_stack
-            .push((crate::app::OverlayKind::Help, area));
-
-        let help_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints(
-                [
-                    Constraint::Length(3), // Search / Filter
-                    Constraint::Min(0),    // Table
-                ]
-                .as_ref(),
-            )
-            .split(area);
-
-        // Action column width: inner table width minus the two fixed columns
-        // (16 + 18) and the inter-column spacing (2 gaps of 2).
-        let action_width = help_chunks[1].width.saturating_sub(16 + 18 + 4).max(8);
-
-        let border_color = if app.help_search_query.is_empty() {
-            THEME.read().unwrap().border
-        } else {
-            THEME.read().unwrap().border_focused
-        };
-        let search_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_color))
-            .title(" Filter Shortcuts ")
-            .title_style(
-                Style::default()
-                    .fg(THEME.read().unwrap().text_muted)
-                    .add_modifier(Modifier::BOLD),
-            );
-
-        let search_text = if app.help_search_query.is_empty() {
-            "Type to search commands...▋".to_string()
-        } else {
-            format!("{}▋", app.help_search_query)
-        };
-
-        let search_style = if app.help_search_query.is_empty() {
-            Style::default()
-                .fg(THEME.read().unwrap().text_muted)
-                .add_modifier(Modifier::ITALIC)
-        } else {
-            Style::default().fg(THEME.read().unwrap().text_normal)
-        };
-
-        let search_p = Paragraph::new(search_text)
-            .style(search_style)
-            .block(search_block)
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
-        let rows: Vec<Row> =
-            if app.help_search_query.is_empty() {
-                let mut result_rows = Vec::new();
-                let mut last_category = "";
-                for s in &filtered_shortcuts {
-                    if s.category != last_category {
-                        if !last_category.is_empty() {
-                            result_rows.push(Row::new(vec![
-                                Cell::from(""),
-                                Cell::from(""),
-                                Cell::from(""),
-                            ])); // spacer
-                        }
-                        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
-                        result_rows.push(
-                            Row::new(vec![
-                                Cell::from(Span::styled(
-                                    s.category,
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().purple)
-                                        .add_modifier(Modifier::BOLD),
-                                )),
-                                Cell::from(Span::styled(
-                                    s.key.clone(),
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().text_normal)
-                                        .add_modifier(Modifier::BOLD),
-                                )),
-                                Cell::from(action_text.patch_style(
-                                    Style::default().fg(THEME.read().unwrap().text_normal),
-                                )),
-                            ])
-                            .height(action_lines),
-                        );
-                        last_category = s.category;
-                    } else {
-                        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
-                        result_rows.push(
-                            Row::new(vec![
-                                Cell::from(""),
-                                Cell::from(Span::styled(
-                                    s.key.clone(),
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().text_normal)
-                                        .add_modifier(Modifier::BOLD),
-                                )),
-                                Cell::from(action_text.patch_style(
-                                    Style::default().fg(THEME.read().unwrap().text_normal),
-                                )),
-                            ])
-                            .height(action_lines),
-                        );
-                    }
-                }
-                result_rows
-            } else {
-                let query = app.help_search_query.to_lowercase();
-                filtered_shortcuts
-                    .iter()
-                    .filter(|s| {
-                        s.category.to_lowercase().contains(&query)
-                            || s.key.to_lowercase().contains(&query)
-                            || s.action.to_lowercase().contains(&query)
-                    })
-                    .map(|s| {
-                        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
-                        Row::new(vec![
-                            Cell::from(Span::styled(
-                                s.category,
-                                Style::default()
-                                    .fg(THEME.read().unwrap().purple)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
-                            Cell::from(Span::styled(
-                                s.key.clone(),
-                                Style::default()
-                                    .fg(THEME.read().unwrap().text_normal)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
-                            Cell::from(action_text.patch_style(
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            )),
-                        ])
-                        .height(action_lines)
-                    })
-                    .collect()
-            };
-
-        let widths = [
-            Constraint::Length(16),
-            Constraint::Length(18),
-            Constraint::Min(0),
-        ];
-
-        let header_style = Style::default()
-            .fg(THEME.read().unwrap().header_fg)
-            .add_modifier(Modifier::BOLD);
-        let table = Table::new(rows, widths)
-            .header(
-                Row::new(vec![
-                    Cell::from(Span::styled("Category", header_style)),
-                    Cell::from(Span::styled("Key", header_style)),
-                    Cell::from(Span::styled("Action", header_style)),
-                ])
-                .height(1),
-            )
-            .block(block)
-            .row_highlight_style(Style::default())
-            .column_spacing(2);
-
-        clear_area(f, area);
-        f.render_widget(search_p, help_chunks[0]);
-        f.render_widget(table, help_chunks[1]);
-    }
-
     if app.focus_column_checklist && app.selector.is_none() {
         let tab = app.active_tab;
         let kind = app.kind();
@@ -1914,6 +1137,892 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             halves[0],
         );
     }
+
+    render_help(f, app, size);
+}
+
+pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
+    if !app.show_help {
+        return;
+    }
+
+    let icons = ICONS.read().unwrap();
+
+    struct Shortcut {
+        category: &'static str,
+        key: std::borrow::Cow<'static, str>,
+        action: &'static str,
+    }
+
+    let s = |k: &'static str| std::borrow::Cow::Borrowed(k);
+    let d = |k: String| std::borrow::Cow::Owned(k);
+
+    let shortcuts: Vec<Shortcut> = vec![
+        // ── Global & Nav ──
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{} / →", app.config.keybindings.global.next_tab)),
+            action: "Next tab",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{} / ←", app.config.keybindings.global.prev_tab)),
+            action: "Previous tab",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{}", app.config.keybindings.global.configure)),
+            action: "Toggle columns config popup (filter / group / sort)",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: s("j / k / ↓ / ↑"),
+            action: "Select item / Scroll page",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!(
+                "{} / {}",
+                app.config.keybindings.global.scroll_down, app.config.keybindings.global.scroll_up
+            )),
+            action: "Scroll description / trace / notes",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{} / f", app.config.keybindings.global.search)),
+            action: "Open fuzzy search / filter bar",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!(
+                "F5 / Ctrl+R / {}",
+                app.config.keybindings.global.refresh
+            )),
+            action: "Refresh active tab data",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: s("Ctrl+S"),
+            action: "Switch repository",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{}", app.config.keybindings.global.global_search)),
+            action: "Global search across all tabs",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: s("u"),
+            action: "Check for updates",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
+            action: "Show this help modal",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{}", app.config.keybindings.global.save_view)),
+            action: "Save view layout to config",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(app.config.keybindings.global.quit.clone()),
+            action: "Quit program",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: s("Esc"),
+            action: "Close active overlay",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: s("Ctrl+C"),
+            action: "Quit program",
+        },
+        // ── Issues ──
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.create_issue.clone()),
+            action: "Create new Issue",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.select_issue.clone()),
+            action: "Toggle issue selection (bulk edit with e)",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.selection_toggle.clone()),
+            action: "Toggle select mode (paint selection while navigating)",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.edit_entity.clone()),
+            action: "Open parameter edit menu",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.close_entity.clone()),
+            action: "Close selected Issue",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.reopen_entity.clone()),
+            action: "Reopen selected Issue",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.delete_entity.clone()),
+            action: "Delete selected Issue",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.open_in_browser.clone()),
+            action: "Open selected Issue in browser",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.create_mr.clone()),
+            action: "Create Merge Request from selected Issue",
+        },
+        // ── Merge Requests ──
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.create_mr.clone()),
+            action: "Create new Merge Request",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.select_mr.clone()),
+            action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.selection_toggle.clone()),
+            action: "Toggle select mode (paint selection while navigating)",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.edit_entity.clone()),
+            action: "Open parameter edit menu",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.approve_mr.clone()),
+            action: "Approve selected MR",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.revoke_mr.clone()),
+            action: "Revoke your approval (GitLab only)",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.rebase_mr.clone()),
+            action: "Rebase source branch onto target",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.merge_mr.clone()),
+            action: "Merge selected MR (configure squash/delete)",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.toggle_draft.clone()),
+            action: "Toggle Draft / Ready status",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.view_diff.clone()),
+            action: "View Merge Request diff changes",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.view_related_pipelines.clone()),
+            action: "View related pipelines for selected MR",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.close_entity.clone()),
+            action: "Close selected MR",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.reopen_entity.clone()),
+            action: "Reopen selected MR",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.delete_entity.clone()),
+            action: "Delete selected MR",
+        },
+        Shortcut {
+            category: "Merge Requests",
+            key: d(app.config.keybindings.mrs.open_in_browser.clone()),
+            action: "Open selected MR in browser",
+        },
+        // ── Pipelines ──
+        Shortcut {
+            category: "Pipelines",
+            key: s("Enter"),
+            action: "View pipeline jobs list",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.run_new.clone()),
+            action: "Create pipeline with interactive form",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.trigger_pipeline.clone()),
+            action: "Trigger new pipeline from MR",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.retry.clone()),
+            action: "Retry selected pipeline(s)",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.cancel.clone()),
+            action: "Cancel pipeline execution",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.open_workflow.clone()),
+            action: "Open pipeline workflow in browser",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: s("Space"),
+            action: "Check / uncheck pipeline for bulk retry",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.open_in_browser.clone()),
+            action: "Open pipeline in browser",
+        },
+        // ── Jobs ──
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.view_trace.clone()),
+            action: "View job trace (toggle zoom)",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: s("Esc / Backspc"),
+            action: "Go back to Pipelines list",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.enter_pipeline.clone()),
+            action: "Switch to pipeline selector",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.retry.clone()),
+            action: "Retry selected job(s)",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.start_job.clone()),
+            action: "Start manual job (GitLab only)",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.cancel.clone()),
+            action: "Cancel selected job(s)",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.select_job.clone()),
+            action: "Check / uncheck job for bulk retry/cancel",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.select_stage.clone()),
+            action: "Select all jobs in stage",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.download_artifact.clone()),
+            action: "Download job artifact",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.view_trace_editor.clone()),
+            action: "Open job trace in external $EDITOR",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.open_in_browser.clone()),
+            action: "Open selected job in browser",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.toggle_trace_wrap.clone()),
+            action: "Toggle trace word wrap / clipped view",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.trace_search.clone()),
+            action: "Search within job trace",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.toggle_trace_follow.clone()),
+            action: "Toggle trace auto-follow mode",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: s("m"),
+            action: "Collapse / expand matrix jobs",
+        },
+        // ── Milestones ──
+        Shortcut {
+            category: "Milestones",
+            key: d(app.config.keybindings.milestones.create_milestone.clone()),
+            action: "Create new milestone",
+        },
+        Shortcut {
+            category: "Milestones",
+            key: d(app.config.keybindings.milestones.edit_milestone.clone()),
+            action: "Edit selected milestone",
+        },
+        Shortcut {
+            category: "Milestones",
+            key: d(app.config.keybindings.milestones.close_milestone.clone()),
+            action: "Close selected milestone",
+        },
+        Shortcut {
+            category: "Milestones",
+            key: d(app.config.keybindings.milestones.reopen_milestone.clone()),
+            action: "Reopen selected milestone",
+        },
+        Shortcut {
+            category: "Milestones",
+            key: d(app.config.keybindings.milestones.delete_milestone.clone()),
+            action: "Delete selected milestone",
+        },
+        Shortcut {
+            category: "Milestones",
+            key: d(app.config.keybindings.milestones.open_in_browser.clone()),
+            action: "Open milestone in browser",
+        },
+        // ── Runners ──
+        Shortcut {
+            category: "Runners",
+            key: d(format!(
+                "{} / {}",
+                app.config.keybindings.runners.pause, app.config.keybindings.runners.resume,
+            )),
+            action: "Pause / Resume runner",
+        },
+        Shortcut {
+            category: "Runners",
+            key: d(app.config.keybindings.runners.edit_description.clone()),
+            action: "Edit runner description text",
+        },
+        // ── Releases ──
+        Shortcut {
+            category: "Releases",
+            key: s("Enter"),
+            action: "View release notes (toggle zoom)",
+        },
+        Shortcut {
+            category: "Releases",
+            key: d(app.config.keybindings.releases.create_release.clone()),
+            action: "Create new release tag & changelog",
+        },
+        Shortcut {
+            category: "Releases",
+            key: d(app.config.keybindings.releases.edit_release.clone()),
+            action: "Edit selected release",
+        },
+        Shortcut {
+            category: "Releases",
+            key: d(app.config.keybindings.releases.delete_release.clone()),
+            action: "Delete selected release",
+        },
+        Shortcut {
+            category: "Releases",
+            key: d(app.config.keybindings.releases.open_in_browser.clone()),
+            action: "Open release in browser",
+        },
+        // ── TODOs ──
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.mark_as_read.clone()),
+            action: "Open todo target & mark read",
+        },
+        Shortcut {
+            category: "TODOs",
+            key: d(app.config.keybindings.todos.open_in_browser.clone()),
+            action: "Open todo in browser",
+        },
+        // ── Terminal ──
+        Shortcut {
+            category: "Terminal",
+            key: s("j / k / ↑ / ↓"),
+            action: "Scroll terminal log",
+        },
+        Shortcut {
+            category: "Terminal",
+            key: d(app.config.keybindings.terminal.toggle_wrap.clone()),
+            action: "Toggle terminal line wrapping",
+        },
+        // ── Branches ──
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.create_branch.clone()),
+            action: "Create new branch",
+        },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.delete_branch.clone()),
+            action: "Delete selected branch",
+        },
+        // ── Environments ──
+        Shortcut {
+            category: "Environments",
+            key: d(app.config.keybindings.environments.view_deployments.clone()),
+            action: "View deployments list for environment",
+        },
+        // ── Diff View ──
+        Shortcut {
+            category: "Diff View",
+            key: s("q / Esc"),
+            action: "Exit Diff View",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("Tab"),
+            action: "Toggle Focus (Files / Diff)",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("h / l / Left / Right"),
+            action: "Switch Panel Focus",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("j / k / ↓ / ↑"),
+            action: "Navigate files or diff lines",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("J / K"),
+            action: "Page down / Page up",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("[ / ]"),
+            action: "Previous / Next Hunk",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("c"),
+            action: "Add Comment on Line",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("r"),
+            action: "Submit Review (approve/changes/comment)",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("d"),
+            action: "Toggle unified / side-by-side layout",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("v / V"),
+            action: "Start / Stop line selection for comment",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("a"),
+            action: "Interact with comments on current line",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("C"),
+            action: "Add comment via external $EDITOR",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("e"),
+            action: "Add code suggestion via $EDITOR",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("/ f"),
+            action: "Search within diff",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("Ctrl+n / Ctrl+N"),
+            action: "Search next / previous match",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("z / Z"),
+            action: "Collapse / Expand all files",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("m"),
+            action: "Mark / unmark file (or directory) as reviewed",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("M"),
+            action: "Hide / show reviewed files in the tree",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("Enter / Space"),
+            action: "Expand file tree / Toggle zoom",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
+            action: "Show this help modal",
+        },
+        // ── Inspector / Editor ──
+        Shortcut {
+            category: "Inspector / Editor",
+            key: s("j / k / ↓ / ↑ / Tab / Shift+Tab"),
+            action: "Navigate fields & buttons",
+        },
+        Shortcut {
+            category: "Inspector / Editor",
+            key: s("Enter / Space"),
+            action: "Edit field / Select option / Submit",
+        },
+        Shortcut {
+            category: "Inspector / Editor",
+            key: s("Ctrl+E"),
+            action: "Edit description / notes in $EDITOR",
+        },
+        Shortcut {
+            category: "Inspector / Editor",
+            key: s("J / K"),
+            action: "Scroll description / notes pane",
+        },
+        Shortcut {
+            category: "Inspector / Editor",
+            key: s("Esc"),
+            action: "Exit inspector / Close editor form",
+        },
+        Shortcut {
+            category: "Inspector / Editor",
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
+            action: "Show this help modal",
+        },
+        // ── Selector / Filter ──
+        Shortcut {
+            category: "Selector / Filter",
+            key: s("j / k / ↓ / ↑"),
+            action: "Navigate options",
+        },
+        Shortcut {
+            category: "Selector / Filter",
+            key: s("Enter"),
+            action: "Confirm selection",
+        },
+        Shortcut {
+            category: "Selector / Filter",
+            key: s("Space"),
+            action: "Toggle item (multi-select)",
+        },
+        Shortcut {
+            category: "Selector / Filter",
+            key: s("Esc"),
+            action: "Close selector overlay",
+        },
+        Shortcut {
+            category: "Selector / Filter",
+            key: s("Type to search"),
+            action: "Fuzzy filter available items",
+        },
+        Shortcut {
+            category: "Selector / Filter",
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
+            action: "Show this help modal",
+        },
+        // ── Column Config ──
+        Shortcut {
+            category: "Column Config",
+            key: s("j / k / ↓ / ↑"),
+            action: "Navigate columns & group-by options",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("Space"),
+            action: "Toggle column visibility checkbox",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("Enter"),
+            action: "Open value filter selector for column",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: d(app.config.keybindings.global.save_view.clone()),
+            action: "Save layout to config",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: s("Esc"),
+            action: "Close columns config popup",
+        },
+        Shortcut {
+            category: "Column Config",
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
+            action: "Show this help modal",
+        },
+        // ── Date Picker ──
+        Shortcut {
+            category: "Date Picker",
+            key: s("h / l / ← / →"),
+            action: "Previous / Next month",
+        },
+        Shortcut {
+            category: "Date Picker",
+            key: s("j / k / ↓ / ↑"),
+            action: "Previous / Next day",
+        },
+        Shortcut {
+            category: "Date Picker",
+            key: s("Enter"),
+            action: "Confirm date selection",
+        },
+        Shortcut {
+            category: "Date Picker",
+            key: s("Esc"),
+            action: "Cancel date selection",
+        },
+        Shortcut {
+            category: "Date Picker",
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
+            action: "Show this help modal",
+        },
+    ];
+
+    let active_categories: &[&str] = if app.diff_view.is_some() {
+        &["Diff View"]
+    } else if app.edit_menu.is_some() {
+        &["Global & Nav", "Inspector / Editor"]
+    } else if app.focus_column_checklist {
+        &["Global & Nav", "Column Config"]
+    } else if app.date_picker.is_some() {
+        &["Global & Nav", "Date Picker"]
+    } else if app.selector.is_some() {
+        &["Global & Nav", "Selector / Filter"]
+    } else {
+        match app.active_tab {
+            Tab::Issues => &["Global & Nav", "Issues"],
+            Tab::MergeRequests => &["Global & Nav", "Merge Requests"],
+            Tab::Pipelines => &["Global & Nav", "Pipelines"],
+            Tab::Jobs => &["Global & Nav", "Jobs"],
+            Tab::Milestones => &["Global & Nav", "Milestones"],
+            Tab::Runners => &["Global & Nav", "Runners"],
+            Tab::Releases => &["Global & Nav", "Releases"],
+            Tab::Todos => &["Global & Nav", "TODOs"],
+            Tab::Branches => &["Global & Nav", "Branches"],
+            Tab::Environments => &["Global & Nav", "Environments"],
+            Tab::Terminal => &["Global & Nav", "Terminal"],
+        }
+    };
+
+    let filtered_shortcuts: Vec<&Shortcut> = shortcuts
+        .iter()
+        .filter(|s| active_categories.contains(&s.category))
+        .collect();
+
+    let block = Block::default()
+        .title(format!(" {} Keyboard Shortcuts ", icons.label_keyboard))
+        .title_style(
+            Style::default()
+                .fg(THEME.read().unwrap().header_fg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
+        .border_type(BorderType::Double)
+        .style(Style::default().bg(THEME.read().unwrap().bg));
+
+    let area = centered_rect_min(90, 85, 95, 38, size);
+    app.overlay_stack
+        .push((crate::app::OverlayKind::Help, area));
+
+    let help_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints(
+            [
+                Constraint::Length(3), // Search / Filter
+                Constraint::Min(0),    // Table
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    // Action column width: inner table width minus the two fixed columns
+    // (20 + 24) and the inter-column spacing (2 gaps of 2).
+    let action_width = help_chunks[1].width.saturating_sub(20 + 24 + 4).max(8);
+
+    let border_color = if app.help_search_query.is_empty() {
+        THEME.read().unwrap().border
+    } else {
+        THEME.read().unwrap().border_focused
+    };
+    let search_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .title(" Filter Shortcuts ")
+        .title_style(
+            Style::default()
+                .fg(THEME.read().unwrap().text_muted)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let search_text = if app.help_search_query.is_empty() {
+        "Type to search commands...▋".to_string()
+    } else {
+        format!("{}▋", app.help_search_query)
+    };
+
+    let search_style = if app.help_search_query.is_empty() {
+        Style::default()
+            .fg(THEME.read().unwrap().text_muted)
+            .add_modifier(Modifier::ITALIC)
+    } else {
+        Style::default().fg(THEME.read().unwrap().text_normal)
+    };
+
+    let search_p = Paragraph::new(search_text)
+        .style(search_style)
+        .block(search_block)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    let rows: Vec<Row> =
+        if app.help_search_query.is_empty() {
+            let mut result_rows = Vec::new();
+            let mut last_category = "";
+            for s in &filtered_shortcuts {
+                if s.category != last_category {
+                    if !last_category.is_empty() {
+                        result_rows.push(Row::new(vec![
+                            Cell::from(""),
+                            Cell::from(""),
+                            Cell::from(""),
+                        ])); // spacer
+                    }
+                    let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+                    result_rows.push(
+                        Row::new(vec![
+                            Cell::from(Span::styled(
+                                s.category,
+                                Style::default()
+                                    .fg(THEME.read().unwrap().purple)
+                                    .add_modifier(Modifier::BOLD),
+                            )),
+                            Cell::from(Span::styled(
+                                s.key.clone(),
+                                Style::default()
+                                    .fg(THEME.read().unwrap().text_normal)
+                                    .add_modifier(Modifier::BOLD),
+                            )),
+                            Cell::from(action_text.patch_style(
+                                Style::default().fg(THEME.read().unwrap().text_normal),
+                            )),
+                        ])
+                        .height(action_lines),
+                    );
+                    last_category = s.category;
+                } else {
+                    let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+                    result_rows.push(
+                        Row::new(vec![
+                            Cell::from(""),
+                            Cell::from(Span::styled(
+                                s.key.clone(),
+                                Style::default()
+                                    .fg(THEME.read().unwrap().text_normal)
+                                    .add_modifier(Modifier::BOLD),
+                            )),
+                            Cell::from(action_text.patch_style(
+                                Style::default().fg(THEME.read().unwrap().text_normal),
+                            )),
+                        ])
+                        .height(action_lines),
+                    );
+                }
+            }
+            result_rows
+        } else {
+            let query = app.help_search_query.to_lowercase();
+            shortcuts
+                .iter()
+                .filter(|s| {
+                    s.category.to_lowercase().contains(&query)
+                        || s.key.to_lowercase().contains(&query)
+                        || s.action.to_lowercase().contains(&query)
+                })
+                .map(|s| {
+                    let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+                    Row::new(vec![
+                        Cell::from(Span::styled(
+                            s.category,
+                            Style::default()
+                                .fg(THEME.read().unwrap().purple)
+                                .add_modifier(Modifier::BOLD),
+                        )),
+                        Cell::from(Span::styled(
+                            s.key.clone(),
+                            Style::default()
+                                .fg(THEME.read().unwrap().text_normal)
+                                .add_modifier(Modifier::BOLD),
+                        )),
+                        Cell::from(
+                            action_text.patch_style(
+                                Style::default().fg(THEME.read().unwrap().text_normal),
+                            ),
+                        ),
+                    ])
+                    .height(action_lines)
+                })
+                .collect()
+        };
+
+    let widths = [
+        Constraint::Length(20),
+        Constraint::Length(24),
+        Constraint::Min(0),
+    ];
+
+    let header_style = Style::default()
+        .fg(THEME.read().unwrap().header_fg)
+        .add_modifier(Modifier::BOLD);
+    let table = Table::new(rows, widths)
+        .header(
+            Row::new(vec![
+                Cell::from(Span::styled("Category", header_style)),
+                Cell::from(Span::styled("Key", header_style)),
+                Cell::from(Span::styled("Action", header_style)),
+            ])
+            .height(1),
+        )
+        .block(block)
+        .row_highlight_style(Style::default())
+        .column_spacing(2);
+
+    clear_area(f, area);
+    f.render_widget(search_p, help_chunks[0]);
+    f.render_widget(table, help_chunks[1]);
 }
 
 /// Wrap a string into `width`-character lines at word boundaries,

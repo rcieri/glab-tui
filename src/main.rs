@@ -1526,9 +1526,9 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if handle_submit_dialog(&mut app, &key_event, events.sender())
+                    if handle_help_overlay(&mut app, &key_event)
                         || handle_help_keybinding(&mut app, &key_event)
-                        || handle_help_overlay(&mut app, &key_event)
+                        || handle_submit_dialog(&mut app, &key_event, events.sender())
                         || handle_switch_repo(&mut app, &key_event)
                         || handle_refresh(&mut app, &key_event, &mut last_refresh, events.sender())
                         || handle_date_picker(&mut app, &key_event, &mut terminal, events.sender())

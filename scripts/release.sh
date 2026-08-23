@@ -6,9 +6,9 @@ set -euo pipefail
 # Usage: scripts/release.sh [patch|minor|major]
 #
 # With no argument, you are prompted to pick the release increment (patch is
-# the default). You are also prompted to pick the opencode model used for the
-# regenerated docs and release notes (the `opencode models` printout piped
-# through fzf; set OPENCODE_MODEL to skip the prompt). Walks the whole
+# the default). You are also prompted to pick the AI tool (agy or opencode)
+# and model used for the regenerated docs and release notes (set AI_TOOL,
+# AGY_MODEL, or OPENCODE_MODEL to skip prompts). Walks the whole
 # release: bumps the crate version, regenerates docs and demo GIFs locally
 # (where `gh` is authenticated), opens a prepare PR, waits for you to review
 # it, squash-merges it, tags and pushes the version, waits for the CI release
@@ -26,8 +26,12 @@ cd "$ROOT"
 REPO="rcieri/glab-tui"
 INCREMENT="${1:-}"
 RELEASE_WAIT_MIN="${RELEASE_WAIT_MIN:-45}"
+AI_TOOL_FROM_ENV="${AI_TOOL:-}"
+AI_TOOL="${AI_TOOL:-}"
 OPENCODE_MODEL_FROM_ENV="${OPENCODE_MODEL:-}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
+AGY_MODEL_FROM_ENV="${AGY_MODEL:-}"
+AGY_MODEL="${AGY_MODEL:-gemini-3.7-flash-high}"
 REQUIRED_ASSETS_STATIC=(
   glab-tui-linux-amd64-ubuntu-22.04.tar.gz
   glab-tui-linux-amd64-ubuntu-24.04.tar.gz
@@ -131,16 +135,25 @@ progress_bar() {
     "$C_YELLOW" "$bar" "$C_RESET" "$pct" "$C_DIM" "$*" "$C_RESET"
 }
 
-run_opencode() {
-  note "opencode ($OPENCODE_MODEL), output logged to $TMP_DIR/spinner.log"
-  if ! spinner "opencode ($OPENCODE_MODEL)" \
-      opencode run --auto --model "$OPENCODE_MODEL" "$1"; then
-    die "opencode failed (log: $TMP_DIR/spinner.log)"
+run_ai() {
+  local prompt="$1"
+  if [[ "$AI_TOOL" == "agy" ]]; then
+    note "agy ($AGY_MODEL), output logged to $TMP_DIR/spinner.log"
+    if ! spinner "agy ($AGY_MODEL)" \
+        agy --dangerously-skip-permissions --model "$AGY_MODEL" -p="$prompt"; then
+      die "agy failed (log: $TMP_DIR/spinner.log)"
+    fi
+  else
+    note "opencode ($OPENCODE_MODEL), output logged to $TMP_DIR/spinner.log"
+    if ! spinner "opencode ($OPENCODE_MODEL)" \
+        opencode run --auto --model "$OPENCODE_MODEL" "$prompt"; then
+      die "opencode failed (log: $TMP_DIR/spinner.log)"
+    fi
   fi
 }
 
 # ---------------------------------------------------------------------------
-# opencode model selection (fzf over the `opencode models` printout)
+# AI tool and model selection
 # ---------------------------------------------------------------------------
 PICK_RESULT=''
 
@@ -175,25 +188,97 @@ pick() {
   fi
 }
 
-select_opencode_model() {
-  local all_models selected current
-  local -a model_lines=()
+select_ai_tool() {
+  if [[ -n "${AI_TOOL:-}" ]]; then
+    return 0
+  fi
 
-  all_models="$(opencode models)"
-  [[ -n "$all_models" ]] || die "'opencode models' returned no models"
-  current="${OPENCODE_MODEL:-opencode/big-pickle}"
+  local has_agy=0 has_opencode=0
+  command -v agy >/dev/null 2>&1 && has_agy=1 || true
+  command -v opencode >/dev/null 2>&1 && has_opencode=1 || true
 
-  note "Select the opencode model used to regenerate docs and release notes"
-  while read -r id; do
-    model_lines+=("$id"$'\t'"$id")
-  done <<< "$all_models"
-  pick "model" "$current" "${model_lines[@]}"
-  selected="$PICK_RESULT"
+  if (( has_agy == 0 && has_opencode == 0 )); then
+    die "missing required AI tool: install agy (Google Antigravity) or opencode"
+  fi
 
-  OPENCODE_MODEL="$selected"
-  grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
-    die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
-  ok "opencode model: $OPENCODE_MODEL"
+  if (( has_agy == 1 && has_opencode == 0 )); then
+    AI_TOOL="agy"
+    ok "Using agy (opencode not installed)"
+    return 0
+  fi
+
+  if (( has_agy == 0 && has_opencode == 1 )); then
+    AI_TOOL="opencode"
+    ok "Using opencode (agy not installed)"
+    return 0
+  fi
+
+  local -a tool_lines=(
+    "agy"$'\t'"agy        (Google Antigravity CLI)"
+    "opencode"$'\t'"opencode   (OpenCode CLI)"
+  )
+  note "Select the AI engine used to regenerate docs and release notes"
+  pick "AI tool" "agy" "${tool_lines[@]}"
+  AI_TOOL="$PICK_RESULT"
+  ok "Selected AI tool: $AI_TOOL"
+}
+
+select_ai_model() {
+  select_ai_tool
+
+  if [[ "$AI_TOOL" == "agy" ]]; then
+    if [[ -n "$AGY_MODEL_FROM_ENV" ]]; then
+      AGY_MODEL="$AGY_MODEL_FROM_ENV"
+      ok "using AGY_MODEL from environment: $AGY_MODEL"
+      return 0
+    fi
+
+    local raw_models selected current
+    local -a model_lines=()
+    raw_models="$(agy models 2>/dev/null || true)"
+    [[ -n "$raw_models" ]] || die "'agy models' returned no models"
+    current="${AGY_MODEL:-gemini-3.7-flash-high}"
+
+    note "Select the agy model used to regenerate docs and release notes"
+    while IFS=$'\t' read -r id desc; do
+      [[ -n "$id" ]] || continue
+      if [[ -n "$desc" && "$desc" != "$id" ]]; then
+        model_lines+=("$id"$'\t'"$id ($desc)")
+      else
+        model_lines+=("$id"$'\t'"$id")
+      fi
+    done <<< "$raw_models"
+
+    pick "model" "$current" "${model_lines[@]}"
+    selected="$PICK_RESULT"
+    AGY_MODEL="$selected"
+    ok "agy model: $AGY_MODEL"
+  else
+    if [[ -n "$OPENCODE_MODEL_FROM_ENV" ]]; then
+      OPENCODE_MODEL="$OPENCODE_MODEL_FROM_ENV"
+      ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+      return 0
+    fi
+
+    local all_models selected current
+    local -a model_lines=()
+    all_models="$(opencode models 2>/dev/null || true)"
+    [[ -n "$all_models" ]] || die "'opencode models' returned no models"
+    current="${OPENCODE_MODEL:-opencode/big-pickle}"
+
+    note "Select the opencode model used to regenerate docs and release notes"
+    while read -r id; do
+      [[ -n "$id" ]] || continue
+      model_lines+=("$id"$'\t'"$id")
+    done <<< "$all_models"
+
+    pick "model" "$current" "${model_lines[@]}"
+    selected="$PICK_RESULT"
+    OPENCODE_MODEL="$selected"
+    grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
+      die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
+    ok "opencode model: $OPENCODE_MODEL"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -213,7 +298,7 @@ START_PHASE=$PHASE_PREFLIGHT   # default: run everything
 select_start_phase() {
   local -a phase_lines=(
     "$PHASE_PREFLIGHT"$'\t'"0 · From the beginning  (preflight → prepare → GIFs → review → CI → post-release → publish)"
-    "$PHASE_PREPARE"$'\t'"1 · Prepare docs & PR    (version bump, opencode docs, create PR — skips preflight)"
+    "$PHASE_PREPARE"$'\t'"1 · Prepare docs & PR    (version bump, AI docs, create PR — skips preflight)"
     "$PHASE_GIFS"$'\t'"2 · Generate GIFs only   (re-run generate-demos.sh, push, rebuild PR if needed)"
     "$PHASE_REVIEW"$'\t'"3 · Review & merge       (squash-merge an existing PR and tag)"
     "$PHASE_WAIT_CI"$'\t'"4 · Wait for CI build    (poll release assets for an already-tagged version)"
@@ -278,7 +363,8 @@ ensure_version() {
 ensure_branch() {
   if [[ -n "${BRANCH:-}" ]]; then return; fi
   ensure_version
-  BRANCH="opencode-release/$NEW_TAG"
+  local prefix="${AI_TOOL:-release}"
+  BRANCH="${prefix}-release/$NEW_TAG"
 }
 
 # Ensure PR_NUMBER is set; look it up or prompt.
@@ -289,6 +375,14 @@ ensure_pr_number() {
   PR_NUMBER="$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
   if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
     PR_NUMBER="$(gh pr list --repo "$REPO" --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+  fi
+  if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+    for candidate_branch in "agy-release/$NEW_TAG" "opencode-release/$NEW_TAG" "release/$NEW_TAG"; do
+      PR_NUMBER="$(gh pr list --repo "$REPO" --head "$candidate_branch" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+      [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]] && break
+      PR_NUMBER="$(gh pr list --repo "$REPO" --head "$candidate_branch" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+      [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]] && break
+    done
   fi
 
   if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
@@ -305,7 +399,12 @@ ensure_pr_number() {
 preflight() {
   [[ -t 0 ]] || die "release.sh is interactive; run it in a terminal"
   require gh "see https://cli.github.com"
-  require opencode "install from https://opencode.ai"
+  if [[ -n "$AI_TOOL" ]]; then
+    require "$AI_TOOL"
+  else
+    command -v agy >/dev/null 2>&1 || command -v opencode >/dev/null 2>&1 || \
+      die "missing required AI tool: install agy (Google Antigravity) or opencode"
+  fi
   require cargo "install Rust via https://rustup.rs"
   require jq "apt install jq / brew install jq"
   require vhs "go install github.com/charmbracelet/vhs@latest"
@@ -372,7 +471,8 @@ next_version() {
   fi
 
   NEW_TAG="v$VERSION"
-  BRANCH="opencode-release/$NEW_TAG"
+  local prefix="${AI_TOOL:-release}"
+  BRANCH="${prefix}-release/$NEW_TAG"
   note "Next version: $NEW_TAG"
 }
 
@@ -414,7 +514,7 @@ prepare() {
   bump_cargo_version
   spinner "Building release binary" cargo build --release
 
-  note "Regenerating CHANGELOG.md / AGENTS.md / README.md via opencode..."
+  note "Regenerating CHANGELOG.md / AGENTS.md / README.md via ${AI_TOOL}..."
   PROMPT="We are prepping a new repository release. The upcoming version tag is going to be: $NEW_TAG.
 
 Your task is to analyze the git commits, merged pull requests, and codebase changes since the last version tag, and update the following three files directly in the workspace:
@@ -425,7 +525,7 @@ Your task is to analyze the git commits, merged pull requests, and codebase chan
 
 The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSION; do not modify those files. Save and write these file modifications directly back into the working directory."
 
-  run_opencode "$PROMPT"
+  run_ai "$PROMPT"
   ok "CHANGELOG.md / AGENTS.md / README.md regenerated"
 }
 
@@ -712,8 +812,8 @@ EOF
   if git diff --cached --quiet; then
     note "Homebrew formula already up to date"
   else
-    git -c user.name="opencode-release[bot]" \
-        -c user.email="opencode-release[bot]@users.noreply.github.com" \
+    git -c user.name="${AI_TOOL:-release}-release[bot]" \
+        -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
         commit -m "Update to ${NEW_TAG}" >/dev/null
     spinner "Pushing Homebrew formula" git push
     ok "Homebrew formula updated and pushed"
@@ -740,8 +840,8 @@ update_scoop() {
   if git diff --cached --quiet; then
     note "Scoop manifest already up to date"
   else
-    git -c user.name="opencode-release[bot]" \
-        -c user.email="opencode-release[bot]@users.noreply.github.com" \
+    git -c user.name="${AI_TOOL:-release}-release[bot]" \
+        -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
         commit -m "Update to ${NEW_TAG}" >/dev/null
     spinner "Pushing Scoop manifest" git push
     ok "Scoop manifest updated and pushed"
@@ -756,7 +856,7 @@ post_release() {
   prev_tag="$(git describe --tags --abbrev=0 "${NEW_TAG}^" 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || true)"
   [[ -n "$prev_tag" ]] || die "could not determine the previous tag before $NEW_TAG"
 
-  note "Generating RELEASE_NOTES.md via opencode..."
+  note "Generating RELEASE_NOTES.md via ${AI_TOOL}..."
   prompt="Read CHANGELOG.md and extract the section for version $NEW_TAG.
 
 Also read the existing release notes for the previous tag $prev_tag (use \`gh release view $prev_tag --json body --jq .body\`) to match their formatting style.
@@ -771,7 +871,7 @@ Write the file RELEASE_NOTES.md matching the same format:
 
 Use the content from CHANGELOG.md for the current version as the source material."
 
-  run_opencode "$prompt"
+  run_ai "$prompt"
   [[ -f RELEASE_NOTES.md ]] || die "RELEASE_NOTES.md was not generated"
   ok "RELEASE_NOTES.md generated"
 
@@ -841,11 +941,7 @@ main() {
   if [[ "$START_PHASE" -le "$PHASE_PREPARE" ]]; then
     phase 2 "Prepare"
     next_version
-    if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
-      select_opencode_model
-    else
-      ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
-    fi
+    select_ai_model
     prepare
   fi
 
@@ -855,11 +951,7 @@ main() {
     # If jumping directly to this phase, hydrate required state.
     if [[ "$START_PHASE" -ge "$PHASE_GIFS" ]]; then
       ensure_version
-      if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
-        select_opencode_model
-      else
-        ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
-      fi
+      select_ai_model
     fi
     generate_gifs
   fi
@@ -885,11 +977,7 @@ main() {
     phase 6 "Post-release"
     if [[ "$START_PHASE" -ge "$PHASE_POST_RELEASE" ]]; then
       ensure_version
-      if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
-        select_opencode_model
-      else
-        ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
-      fi
+      select_ai_model
     fi
     post_release
   fi

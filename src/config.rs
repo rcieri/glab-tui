@@ -530,7 +530,9 @@ impl Theme {
         if theme_path.exists() {
             if let Ok(contents) = std::fs::read_to_string(&theme_path) {
                 if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
-                    return tf.to_theme();
+                    if let Some(theme) = tf.to_theme() {
+                        return Some(theme);
+                    }
                 }
             }
         }
@@ -1875,6 +1877,37 @@ page_size = 250
                 "Bundled theme '{name}' failed to parse into valid Theme"
             );
         }
+    }
+
+    #[test]
+    fn test_preset_falls_back_to_bundled_when_user_theme_is_invalid() {
+        let _guard = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let themes_dir = temp_dir.path().join("glab-tui").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        std::fs::write(
+            themes_dir.join("default.toml"),
+            "bg = \"\"\ninactive_bg = \"\"\n",
+        )
+        .unwrap();
+
+        let old_xdg = std::env::var("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+        let preset = Theme::preset("default");
+        if let Ok(old) = old_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+
+        let theme = preset.expect("invalid user override must fall back to bundled theme");
+        assert_eq!(theme, Theme::default());
     }
 
     #[test]

@@ -487,18 +487,33 @@ fn run_submit_action(
 }
 
 pub fn handle_help_keybinding(app: &mut App, key_event: &KeyEvent) -> bool {
-    if keybinding_matches(&app.config.keybindings.global.help, key_event)
-        && app.text_input.is_none()
-        && app.edit_menu.is_none()
-        && app.selector.is_none()
-        && !app.show_help
-        && !app.focus_column_checklist
-    {
-        app.show_help = true;
-        app.help_search_query.clear();
-        return true;
+    if app.show_help {
+        return false;
     }
-    false
+
+    let is_f1 = key_event.code == KeyCode::F(1);
+    let is_help_key = is_f1 || keybinding_matches(&app.config.keybindings.global.help, key_event);
+
+    if !is_help_key {
+        return false;
+    }
+
+    // When the user is actively typing raw text into a text field, allow F1 to open help,
+    // but keep regular character keys (like '?') so they can be typed into the field.
+    let is_typing_text = app.text_input.is_some()
+        || app.is_typing_search
+        || app.job_trace_searching
+        || app.edit_menu.as_ref().map_or(false, |m| m.editing)
+        || app.diff_view.as_ref().map_or(false, |d| d.search_active)
+        || app.selector.as_ref().map_or(false, |s| s.is_filtering);
+
+    if is_typing_text && !is_f1 {
+        return false;
+    }
+
+    app.show_help = true;
+    app.help_search_query.clear();
+    true
 }
 
 pub fn handle_help_overlay(app: &mut App, key_event: &KeyEvent) -> bool {
@@ -680,8 +695,8 @@ pub fn handle_date_picker(
 
 #[cfg(test)]
 mod tests {
-    use super::handle_help_overlay;
-    use crate::app::App;
+    use super::{handle_help_keybinding, handle_help_overlay};
+    use crate::app::{App, DiffView, EditEntityKind, EditMenu, Selector};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -697,5 +712,138 @@ mod tests {
         assert!(handled);
         assert_eq!(app.help_search_query, "q");
         assert!(app.show_help);
+    }
+
+    #[test]
+    fn help_keybinding_accessible_in_all_views() {
+        let mut app = App::default();
+
+        // 1. Normal view with '?' and F1
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+
+        // 2. Edit menu (Inspector / Form) - not actively editing text
+        app.edit_menu = Some(EditMenu {
+            entity_iid: 1,
+            entity_kind: EditEntityKind::EditIssue,
+            title: "Edit Issue".to_string(),
+            fields: vec![],
+            selected_idx: 0,
+            editing: false,
+            cursor_pos: 0,
+            state: ratatui::widgets::ListState::default(),
+            desc_scroll: 0,
+            workflow_inputs: vec![],
+        });
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+
+        // Edit menu - actively editing text: '?' types into field, but F1 opens help
+        if let Some(ref mut menu) = app.edit_menu {
+            menu.editing = true;
+        }
+        assert!(!handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(!app.show_help);
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+        app.edit_menu = None;
+
+        // 3. Diff View - not searching
+        app.diff_view = Some(DiffView::new(
+            1,
+            "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
+        ));
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+
+        // Diff View - searching: '?' types into search, F1 opens help
+        if let Some(ref mut diff_view) = app.diff_view {
+            diff_view.search_active = true;
+        }
+        assert!(!handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(!app.show_help);
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+        app.diff_view = None;
+
+        // 4. Selector overlay
+        app.selector = Some(Selector {
+            title: "Select Label".to_string(),
+            all_items: vec!["bug".to_string()],
+            selected_items: std::collections::HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid: 1,
+            entity_type: "issue".to_string(),
+            field_type: "labels".to_string(),
+            multi_select: true,
+            state: ratatui::widgets::ListState::default(),
+        });
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+        app.selector = None;
+
+        // 5. Column checklist
+        app.focus_column_checklist = true;
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+        app.focus_column_checklist = false;
+
+        // 6. Date picker
+        app.date_picker = Some(crate::app::DatePicker::new(
+            "Select Date".to_string(),
+            "2026-08-23",
+            crate::app::DatePickerAction::EditNewField { field_idx: 0 },
+        ));
+        assert!(handle_help_keybinding(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ));
+        assert!(app.show_help);
+        app.show_help = false;
+        app.date_picker = None;
     }
 }

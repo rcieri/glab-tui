@@ -1656,11 +1656,6 @@ pub(crate) fn render_tab_jobs(
                 String::new()
             };
 
-            let help_text = if app.job_trace_wrap {
-                " Esc: Back | Enter: Zoom | j/k: Scroll | /: Search | f: Follow | w: No-wrap "
-            } else {
-                " Esc: Back | Enter: Zoom | j/k: Scroll | /: Search | f: Follow | w: Wrap "
-            };
             let search_suffix = if app.job_trace_search_query.is_empty() {
                 String::new()
             } else {
@@ -1682,13 +1677,6 @@ pub(crate) fn render_tab_jobs(
                     Style::default()
                         .fg(theme.text_muted)
                         .add_modifier(Modifier::BOLD),
-                )
-                .title_bottom(
-                    ratatui::text::Line::from(vec![Span::styled(
-                        help_text,
-                        Style::default().fg(theme.text_muted),
-                    )])
-                    .alignment(Alignment::Right),
                 )
                 .border_style(Style::default().fg(theme.border));
 

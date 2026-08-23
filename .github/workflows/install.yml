@@ -44,7 +44,7 @@ jobs:
           docker pull "ghcr.io/rcieri/glab-tui:$TAG"
           docker run --rm "ghcr.io/rcieri/glab-tui:$TAG" --help
 
-  test-install-sh-ubuntu-22.04:
+  test-install-sh-ubuntu-22-04:
     name: install.sh (ubuntu-22.04 gnu)
     runs-on: ubuntu-22.04
     permissions:
@@ -69,7 +69,7 @@ jobs:
           PREFIX=$PWD/temp-bin ./install.sh
           ./temp-bin/glab-tui --help
 
-  test-install-sh-ubuntu-22.04-musl:
+  test-install-sh-ubuntu-22-04-musl:
     name: install.sh (musl static binary on ubuntu-22.04)
     runs-on: ubuntu-22.04
     permissions:
@@ -91,7 +91,7 @@ jobs:
             { echo "musl binary is not statically linked"; exit 1; }
           ./temp-bin/glab-tui --help
 
-  test-install-sh-ubuntu-24.04:
+  test-install-sh-ubuntu-24-04:
     name: install.sh (ubuntu-24.04 gnu)
     runs-on: ubuntu-24.04
     permissions:

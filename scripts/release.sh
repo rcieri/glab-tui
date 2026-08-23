@@ -166,7 +166,7 @@ pick() {
   local chosen="" i choice
   if command -v fzf >/dev/null 2>&1; then
     chosen="$(printf '%s\n' "${lines[@]}" |
-      fzf --prompt="$prompt> " --query="$default" --delimiter=$'\t' --with-nth=2 \
+      fzf --prompt="$prompt> " --delimiter=$'\t' --with-nth=2 \
           --exit-0 --height=40% --border --layout=reverse 2>/dev/null || true)"
   else
     printf '\n%sChoose %s%s (default: %s)\n' "$C_BOLD" "$prompt" "$C_RESET" "$default"
@@ -223,12 +223,17 @@ select_ai_tool() {
   ok "Selected AI tool: $AI_TOOL"
 }
 
+AI_MODEL_CONFIGURED=0
 select_ai_model() {
+  if (( AI_MODEL_CONFIGURED == 1 )); then
+    return 0
+  fi
   select_ai_tool
 
   if [[ "$AI_TOOL" == "agy" ]]; then
     if [[ -n "$AGY_MODEL_FROM_ENV" ]]; then
       AGY_MODEL="$AGY_MODEL_FROM_ENV"
+      AI_MODEL_CONFIGURED=1
       ok "using AGY_MODEL from environment: $AGY_MODEL"
       return 0
     fi
@@ -252,10 +257,12 @@ select_ai_model() {
     pick "model" "$current" "${model_lines[@]}"
     selected="$PICK_RESULT"
     AGY_MODEL="$selected"
+    AI_MODEL_CONFIGURED=1
     ok "agy model: $AGY_MODEL"
   else
     if [[ -n "$OPENCODE_MODEL_FROM_ENV" ]]; then
       OPENCODE_MODEL="$OPENCODE_MODEL_FROM_ENV"
+      AI_MODEL_CONFIGURED=1
       ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
       return 0
     fi
@@ -277,6 +284,7 @@ select_ai_model() {
     OPENCODE_MODEL="$selected"
     grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
       die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
+    AI_MODEL_CONFIGURED=1
     ok "opencode model: $OPENCODE_MODEL"
   fi
 }
@@ -352,6 +360,7 @@ ensure_version() {
   fi
   printf ': '
   read -r NEW_TAG
+  NEW_TAG="${NEW_TAG:-$latest_tag}"
   [[ -n "$NEW_TAG" ]] || die "version tag is required"
   [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-nightly([-.]?[A-Za-z0-9]+)*)?$ ]] || \
     die "tag must match vX.Y.Z or vX.Y.Z[-nightly][-.suffix] (got '$NEW_TAG')"
@@ -635,7 +644,7 @@ merge_and_tag() {
 wait_for_release() {
   ensure_version
 
-  local total i current elapsed required_min missing
+  local total i current elapsed missing
   total=$((RELEASE_WAIT_MIN * 3)) # one check every 20s
   note "Waiting for release $NEW_TAG assets (timeout ${RELEASE_WAIT_MIN}m)..."
   for i in $(seq 1 "$total"); do
@@ -648,23 +657,18 @@ wait_for_release() {
           missing+=("$asset")
         fi
       done
-      # At least one ubuntu-* asset whose version differs from the static
-      # 22.04 / 24.04 entries — that's the ubuntu-latest build.
-      local dynamic_count
-      dynamic_count=$(grep -E '^glab-tui-linux-(amd64|arm64)-ubuntu-([0-9]+\.[0-9]+)\.tar\.gz$' <<< "$current" \
-        | grep -Ev 'ubuntu-22\.04|ubuntu-24\.04' | sort -u | wc -l)
-      if [[ "${#missing[@]}" -eq 0 ]] && [[ "$dynamic_count" -ge 2 ]]; then
+      if [[ "${#missing[@]}" -eq 0 ]]; then
         [[ -t 1 ]] && printf '\r\e[2K'
         ok "All release assets present ($(echo "$current" | wc -l) total)"
         return 0
       fi
     fi
-    [[ $i -eq $total ]] && die "timed out waiting for release assets for $NEW_TAG (missing: ${missing[*]:-none}, dynamic: $dynamic_count)"
+    [[ $i -eq $total ]] && die "timed out waiting for release assets for $NEW_TAG (missing: ${missing[*]:-none})"
     if [[ -t 1 ]]; then
       elapsed=$((i * 20 / 60))
       local seen="${#current[@]}"
       [[ -z "$current" ]] && seen=0 || seen=$(echo "$current" | wc -l)
-      progress_bar "$seen" "20" "assets ($elapsed min elapsed)"
+      progress_bar "$seen" "${#REQUIRED_ASSETS_STATIC[@]}" "assets ($elapsed min elapsed)"
     fi
     sleep 20
   done
@@ -851,6 +855,7 @@ update_scoop() {
 
 post_release() {
   ensure_version
+  select_ai_model
 
   local prev_tag prompt
   prev_tag="$(git describe --tags --abbrev=0 "${NEW_TAG}^" 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || true)"
@@ -948,11 +953,6 @@ main() {
   # ── Phase 2: Generate GIFs ────────────────────────────────────────────────
   if [[ "$START_PHASE" -le "$PHASE_GIFS" ]]; then
     phase 3 "Generate GIFs"
-    # If jumping directly to this phase, hydrate required state.
-    if [[ "$START_PHASE" -ge "$PHASE_GIFS" ]]; then
-      ensure_version
-      select_ai_model
-    fi
     generate_gifs
   fi
 
@@ -966,28 +966,18 @@ main() {
   # ── Phase 4: Wait for CI build ────────────────────────────────────────────
   if [[ "$START_PHASE" -le "$PHASE_WAIT_CI" ]]; then
     phase 5 "Wait for CI build"
-    if [[ "$START_PHASE" -ge "$PHASE_WAIT_CI" ]]; then
-      ensure_version
-    fi
     wait_for_release
   fi
 
   # ── Phase 5: Post-release (notes, Homebrew, Scoop) ───────────────────────
   if [[ "$START_PHASE" -le "$PHASE_POST_RELEASE" ]]; then
     phase 6 "Post-release"
-    if [[ "$START_PHASE" -ge "$PHASE_POST_RELEASE" ]]; then
-      ensure_version
-      select_ai_model
-    fi
     post_release
   fi
 
   # ── Phase 6: Publish (Docker + crate) ────────────────────────────────────
   if [[ "$START_PHASE" -le "$PHASE_PUBLISH" ]]; then
     phase 7 "Publish"
-    if [[ "$START_PHASE" -ge "$PHASE_PUBLISH" ]]; then
-      ensure_version
-    fi
     publish
   fi
 

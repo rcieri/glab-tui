@@ -140,11 +140,27 @@ pub(crate) fn render_entity_inspector(
 
     let has_fields = !doc.fields.is_empty();
 
-    if has_content && has_fields && inner.width >= 70 {
-        // Two panes: fields on the left, content on the right.
+    if has_content && has_fields {
+        // Single column: metadata fields on top, full-width markdown below.
+        // Replaces the old side-by-side duplex (and the narrow stacked)
+        // layouts — the description now owns the full width beneath the
+        // metadata, which is always visible.
+        let field_count = doc
+            .fields
+            .iter()
+            .filter(|f| {
+                !(f.kind == FieldType::Section
+                    && (f.label.to_uppercase() == "DESCRIPTION"
+                        || f.label.to_uppercase() == "RELEASE NOTES"))
+            })
+            .count() as u16;
+        let field_height = (field_count + 1)
+            .min(main_area.height.saturating_sub(4))
+            .max(3);
+
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(field_height), Constraint::Min(3)])
             .split(main_area);
 
         render_fields_list(
@@ -160,11 +176,11 @@ pub(crate) fn render_entity_inspector(
             is_interactive,
             &theme,
         );
-        render_content_pane(f, &mut mode, doc, chunks[1], Borders::LEFT);
-    } else if has_content && !has_fields {
+        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP);
+    } else if has_content {
         // Only content.
         render_content_pane(f, &mut mode, doc, main_area, Borders::NONE);
-    } else if !has_content {
+    } else {
         // Only fields.
         render_fields_list(
             f,
@@ -179,39 +195,6 @@ pub(crate) fn render_entity_inspector(
             is_interactive,
             &theme,
         );
-    } else {
-        // Narrow terminal: stack fields above content.
-        let field_count = doc
-            .fields
-            .iter()
-            .filter(|f| {
-                !(f.kind == FieldType::Section
-                    && (f.label.to_uppercase() == "DESCRIPTION"
-                        || f.label.to_uppercase() == "RELEASE NOTES"))
-            })
-            .count() as u16;
-        let split_height = (field_count + 1).min(inner.height.saturating_sub(4)).max(3);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(split_height), Constraint::Min(3)])
-            .split(main_area);
-
-        render_fields_list(
-            f,
-            &mut mode,
-            &doc.fields,
-            selected_idx,
-            editing,
-            cursor_pos,
-            chunks[0],
-            label_colors,
-            skip_description,
-            is_interactive,
-            &theme,
-        );
-
-        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP);
     }
 
     // Submit/save footer (edit mode only).

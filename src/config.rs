@@ -530,7 +530,9 @@ impl Theme {
         if theme_path.exists() {
             if let Ok(contents) = std::fs::read_to_string(&theme_path) {
                 if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
-                    return tf.to_theme();
+                    if let Some(theme) = tf.to_theme() {
+                        return Some(theme);
+                    }
                 }
             }
         }

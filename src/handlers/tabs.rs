@@ -380,10 +380,11 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.revoke_mr,
-                            key_event,
-                        ) =>
+                        _ if (key_event.code == KeyCode::Char('A')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.revoke_mr,
+                                key_event,
+                            )) =>
                         {
                             let is_github = app
                                 .gitlab_client
@@ -401,10 +402,11 @@ pub async fn handle_active_tab_key(
                                 ));
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.rebase_mr,
-                            key_event,
-                        ) =>
+                        _ if (key_event.code == KeyCode::Char('R')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.rebase_mr,
+                                key_event,
+                            )) =>
                         {
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
@@ -435,77 +437,53 @@ pub async fn handle_active_tab_key(
                                 app,
                             ));
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.view_diff,
-                            key_event,
-                        ) =>
+                        _ if (key_event.code == KeyCode::Char('D')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.view_diff,
+                                key_event,
+                            )) =>
                         {
                             app.diff_loading = true;
                             let tx = tx.clone();
                             let mr_iid = mr_iid;
-                            let mr_iid_str = mr_iid.to_string();
                             let client = app.gitlab_client.clone();
                             let project_context = app.project_context.clone();
                             tokio::spawn(async move {
-                                let is_github = client
-                                    .as_ref()
-                                    .is_some_and(|client| client.kind().is_github());
-
-                                let program = if is_github { "gh" } else { "glab" };
-                                let (entity, sub) = if is_github {
-                                    ("pr", "diff")
-                                } else {
-                                    ("mr", "diff")
+                                let Some(client) = client else {
+                                    let _ = tx.send(Event::DiffFetchFailed(
+                                        "No backend client available to fetch diff".to_string(),
+                                    ));
+                                    return;
                                 };
-                                let cmd_args =
-                                    vec![entity.to_string(), sub.to_string(), mr_iid_str.clone()];
-                                let status_msg =
-                                    format!("Fetching Diff: {} {}", program, cmd_args.join(" "));
-                                let _ = tx.send(Event::CommandStarted(status_msg));
 
-                                let mut cmd = tokio::process::Command::new(program);
-                                cmd.args(&cmd_args);
-
-                                let diff_res = cmd.output().await;
-
-                                let comments = if let Some(ref c) = client {
-                                    crate::domain::mr::list_mr_notes(c, &project_context, mr_iid)
-                                        .await
-                                        .unwrap_or_default()
-                                } else {
-                                    vec![]
-                                };
+                                let (diff_res, comments_res) = tokio::join!(
+                                    client.get_mr_diff(&project_context, mr_iid),
+                                    client.list_mr_notes(&project_context, mr_iid)
+                                );
 
                                 match diff_res {
-                                    Ok(output) => {
-                                        if output.status.success() {
-                                            let raw_diff = String::from_utf8_lossy(&output.stdout)
-                                                .into_owned();
-                                            let _ = tx.send(Event::DiffFetched {
-                                                mr_iid,
-                                                raw_diff,
-                                                comments,
-                                            });
-                                        } else {
-                                            let err_msg = String::from_utf8_lossy(&output.stderr);
-                                            let _ = tx.send(Event::DiffFetchFailed(format!(
-                                                "Failed to fetch diff: {}",
-                                                err_msg
-                                            )));
-                                        }
+                                    Ok(raw_diff) => {
+                                        let comments = comments_res.unwrap_or_default();
+                                        let _ = tx.send(Event::DiffFetched {
+                                            mr_iid,
+                                            raw_diff,
+                                            comments,
+                                        });
                                     }
-                                    Err(_) => {
-                                        let _ = tx.send(Event::DiffFetchFailed(
-                                            "Failed to execute CLI tool to fetch diff".to_string(),
-                                        ));
+                                    Err(err) => {
+                                        let _ = tx.send(Event::DiffFetchFailed(format!(
+                                            "Failed to fetch diff: {}",
+                                            err
+                                        )));
                                     }
                                 }
                             });
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.mrs.view_related_pipelines,
-                            key_event,
-                        ) =>
+                        _ if (key_event.code == KeyCode::Char('P')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.view_related_pipelines,
+                                key_event,
+                            )) =>
                         {
                             let pipe_id = mr.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
                                 app.pipelines
@@ -793,10 +771,11 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.pipelines.open_workflow,
-                            key_event,
-                        ) =>
+                        _ if (key_event.code == KeyCode::Char('W')
+                            || keybinding_matches(
+                                &app.config.keybindings.pipelines.open_workflow,
+                                key_event,
+                            )) =>
                         {
                             if !app.is_github() {
                                 app.show_error(

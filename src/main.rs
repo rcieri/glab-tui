@@ -1477,57 +1477,22 @@ async fn main() -> Result<()> {
                                 let project_context = app.project_context.clone();
                                 let tx = events.sender();
                                 let mr_iid = diff_view.mr_iid;
-                                let mr_iid_str = mr_iid.to_string();
                                 tokio::spawn(async move {
-                                    let is_github = client
-                                        .as_ref()
-                                        .is_some_and(|client| client.kind().is_github());
-
-                                    let program = if is_github { "gh" } else { "glab" };
-                                    let (entity, sub) = if is_github {
-                                        ("pr", "diff")
-                                    } else {
-                                        ("mr", "diff")
+                                    let Some(client) = client else {
+                                        return;
                                     };
-                                    let cmd_args = vec![
-                                        entity.to_string(),
-                                        sub.to_string(),
-                                        mr_iid_str.clone(),
-                                    ];
-                                    let status_msg = format!(
-                                        "Fetching Diff: {} {}",
-                                        program,
-                                        cmd_args.join(" ")
+                                    let (diff_res, comments_res) = tokio::join!(
+                                        client.get_mr_diff(&project_context, mr_iid),
+                                        client.list_mr_notes(&project_context, mr_iid)
                                     );
-                                    let _ = tx.send(Event::CommandStarted(status_msg));
 
-                                    let mut cmd = tokio::process::Command::new(program);
-                                    cmd.args(&cmd_args);
-
-                                    let diff_res = cmd.output().await;
-
-                                    let comments = if let Some(ref c) = client {
-                                        crate::domain::mr::list_mr_notes(
-                                            c,
-                                            &project_context,
+                                    if let Ok(raw_diff) = diff_res {
+                                        let comments = comments_res.unwrap_or_default();
+                                        let _ = tx.send(Event::DiffFetched {
                                             mr_iid,
-                                        )
-                                        .await
-                                        .unwrap_or_default()
-                                    } else {
-                                        vec![]
-                                    };
-
-                                    if let Ok(output) = diff_res {
-                                        if output.status.success() {
-                                            let raw_diff = String::from_utf8_lossy(&output.stdout)
-                                                .into_owned();
-                                            let _ = tx.send(Event::DiffFetched {
-                                                mr_iid,
-                                                raw_diff,
-                                                comments,
-                                            });
-                                        }
+                                            raw_diff,
+                                            comments,
+                                        });
                                     }
                                 });
                             }
@@ -4435,9 +4400,7 @@ async fn main() -> Result<()> {
                                     && (menu.fields[menu.selected_idx].kind
                                         == crate::app::FieldType::Section
                                         || menu.fields[menu.selected_idx].kind
-                                            == crate::app::FieldType::ReadOnly
-                                        || menu.fields[menu.selected_idx].label == "Description"
-                                        || menu.fields[menu.selected_idx].label == "Release Notes")
+                                            == crate::app::FieldType::ReadOnly)
                                     && menu.selected_idx > 0
                                 {
                                     menu.selected_idx -= 1;

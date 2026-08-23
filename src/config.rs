@@ -1880,6 +1880,37 @@ page_size = 250
     }
 
     #[test]
+    fn test_preset_falls_back_to_bundled_when_user_theme_is_invalid() {
+        let _guard = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let themes_dir = temp_dir.path().join("glab-tui").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        std::fs::write(
+            themes_dir.join("default.toml"),
+            "bg = \"\"\ninactive_bg = \"\"\n",
+        )
+        .unwrap();
+
+        let old_xdg = std::env::var("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+        let preset = Theme::preset("default");
+        if let Ok(old) = old_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+
+        let theme = preset.expect("invalid user override must fall back to bundled theme");
+        assert_eq!(theme, Theme::default());
+    }
+
+    #[test]
     fn test_all_theme_presets_includes_all_bundled() {
         let presets = all_theme_presets();
         for (name, _) in BUNDLED_THEMES {

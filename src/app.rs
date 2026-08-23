@@ -2998,6 +2998,30 @@ impl App {
         self.edit_menu = Some(menu);
     }
 
+    /// Ids and titles of the current bulk selection, sorted by iid. Built from
+    /// the full item collections — not the filtered views — so the list shown
+    /// before a bulk update matches the set the update actually applies to,
+    /// even when a search or column filter hides selected rows.
+    pub fn bulk_selection_summary(&self) -> Vec<(u64, String)> {
+        let mut rows: Vec<(u64, String)> = if !self.selected_issues.is_empty() {
+            self.issues
+                .items
+                .iter()
+                .filter(|i| self.selected_issues.contains(&i.iid))
+                .map(|i| (i.iid, i.title.clone()))
+                .collect()
+        } else {
+            self.mrs
+                .items
+                .iter()
+                .filter(|m| self.selected_mrs.contains(&m.iid))
+                .map(|m| (m.iid, m.title.clone()))
+                .collect()
+        };
+        rows.sort_unstable_by_key(|(iid, _)| *iid);
+        rows
+    }
+
     /// Single entry point for surfacing a runtime error. Sets the transient
     /// error toast (`error_message`) and marks the failed terminal command so
     /// both UI surfaces stay in sync.
@@ -5490,6 +5514,78 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bulk_selection_summary_lists_full_selection_sorted_by_iid() {
+        let mut app = App::default();
+        let mk_issue = |iid: u64, title: &str| crate::domain::issues::Issue {
+            iid,
+            title: title.to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        app.issues.items = vec![
+            mk_issue(3, "Third"),
+            mk_issue(1, "First"),
+            mk_issue(2, "Second"),
+        ];
+        app.selected_issues.extend([3, 1, 2]);
+
+        let summary = app.bulk_selection_summary();
+        assert_eq!(
+            summary,
+            vec![
+                (1, "First".to_string()),
+                (2, "Second".to_string()),
+                (3, "Third".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn bulk_selection_summary_includes_rows_hidden_by_filters() {
+        let mut app = App::default();
+        let mk_issue = |iid: u64| crate::domain::issues::Issue {
+            iid,
+            title: format!("Issue {iid}"),
+            state: if iid == 1 { "opened" } else { "closed" }.to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+        };
+        app.issues.items = vec![mk_issue(1), mk_issue(2)];
+        app.selected_issues.extend([1, 2]);
+        // A State column filter that hides issue 2 from the table must not
+        // shrink the summary — bulk submit applies to the full selection.
+        app.column_filters.entry(Tab::Issues).or_default().insert(
+            "State".to_string(),
+            ["OPEN".to_string()].into_iter().collect(),
+        );
+        assert_eq!(app.filtered_issues().len(), 1);
+
+        assert_eq!(
+            app.bulk_selection_summary(),
+            vec![(1, "Issue 1".to_string()), (2, "Issue 2".to_string())]
+        );
+    }
 
     #[test]
     fn test_date_picker_navigation() {

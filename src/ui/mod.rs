@@ -34,10 +34,20 @@ pub(crate) fn render_edit_menu_if_active(f: &mut Frame, app: &mut App, detail_re
     };
     let label_colors = app.label_colors.clone();
 
+    let is_bulk_edit = matches!(
+        menu.entity_kind,
+        crate::app::EditEntityKind::BulkEditIssues | crate::app::EditEntityKind::BulkEditMrs
+    );
+    let content = if is_bulk_edit {
+        crate::app::InspectorContent::Custom(bulk_selection_lines(app))
+    } else {
+        crate::app::InspectorContent::Markdown(menu.get_description_value())
+    };
+
     let doc = crate::app::EntityDocument {
         title: menu.title.clone(),
         fields: menu.fields.clone(),
-        content: crate::app::InspectorContent::Markdown(menu.get_description_value()),
+        content,
     };
 
     inspector::render_entity_inspector(
@@ -50,6 +60,27 @@ pub(crate) fn render_edit_menu_if_active(f: &mut Frame, app: &mut App, detail_re
 
     app.edit_menu = Some(menu);
     true
+}
+
+/// Descriptor-pane lines for a bulk-edit menu: one entry per selected entity,
+/// `#iid` accented and the title in normal text, so the user can confirm the
+/// exact mutation set before submitting.
+fn bulk_selection_lines(app: &App) -> Vec<Line<'static>> {
+    let theme = THEME.read().unwrap();
+    app.bulk_selection_summary()
+        .into_iter()
+        .map(|(iid, title)| {
+            Line::from(vec![
+                Span::styled(
+                    format!("#{iid} "),
+                    Style::default()
+                        .fg(theme.purple)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(title, Style::default().fg(theme.text_normal)),
+            ])
+        })
+        .collect()
 }
 
 /// Render a vim/helix-style mode indicator in the right side of the top banner.

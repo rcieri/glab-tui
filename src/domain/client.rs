@@ -170,6 +170,20 @@ impl GitlabClient {
         self.backend.rebase_mr(project, iid).await
     }
 
+    pub async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
+        self.backend.get_mr_diff(project, iid).await
+    }
+
+    pub async fn list_mr_notes(
+        &self,
+        project: &str,
+        mr_iid: u64,
+    ) -> Result<Vec<crate::domain::mr::DiscussionNote>> {
+        self.backend
+            .list_mr_notes(project, mr_iid, self.page_size)
+            .await
+    }
+
     pub async fn list_mr_state(
         &self,
         project: &str,

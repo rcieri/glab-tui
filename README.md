@@ -21,6 +21,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ## Table of Contents
 
 - [Features](#features)
+- [Demos](#demos)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
   - [Package Manager](#package-manager)
@@ -87,9 +88,34 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 
 ---
 
+## Demos
+
+### Overview & Navigation
+Tab navigation across Issues, Merge Requests, Pipelines, Runners, and Releases with interactive detail scrolling and built-in help.
+
 ![Overview](assets/demo-overview.gif)
+
+### Code Review & Diff View
+Review MR/PR diffs in unified or side-by-side view, navigate files, mark files as reviewed, and leave comments.
+
+![Diff View](assets/demo-diff.gif)
+
+### Fullscreen Preview & Inspector
+Inspect markdown descriptions, discussion threads, and metadata with zoomable single-column inspector views.
+
+![Fullscreen Preview](assets/demo-preview.gif)
+
+### Fuzzy Search & Column Configuration
+Live fuzzy search across all visible columns, configure visible columns, group rows, and apply value-based column filters.
+
 ![Search & Configure](assets/demo-search.gif)
-![Navigation & Selection](assets/demo-selection.gif)
+
+### Field Editing & Selectors
+Inline entity editing with searchable multi-select overlays for labels, assignees, reviewers, and milestones.
+
+![Field Editing & Selectors](assets/demo-selection.gif)
+
+---
 
 ## Prerequisites
 

@@ -73,13 +73,21 @@ pub async fn handle_active_tab_key(
             _ if keybinding_matches(&app.config.keybindings.issues.edit_entity, key_event) => {
                 if app.selected_issues.len() > 1 {
                     let count = app.selected_issues.len();
+                    let mut fields = vec![crate::app::Field::section("Selected Items")];
+                    for issue in app.filtered_issues() {
+                        if app.selected_issues.contains(&issue.iid) {
+                            fields.push(crate::app::Field::read_only(
+                                &format!("#{}", issue.iid),
+                                issue.title.clone(),
+                            ));
+                        }
+                    }
+                    fields.push(crate::app::Field::multi_select("Assignees", String::new()));
+                    fields.push(crate::app::Field::multi_select("Milestone", String::new()));
+                    fields.push(crate::app::Field::multi_select("Labels", String::new()));
                     app.open_edit_menu(crate::app::EditMenu {
                         title: format!("Bulk Edit {} Issues", count),
-                        fields: vec![
-                            crate::app::Field::multi_select("Assignees", String::new()),
-                            crate::app::Field::multi_select("Milestone", String::new()),
-                            crate::app::Field::multi_select("Labels", String::new()),
-                        ],
+                        fields,
                         selected_idx: 0,
                         entity_iid: 0,
                         entity_kind: crate::app::EditEntityKind::BulkEditIssues,
@@ -326,13 +334,21 @@ pub async fn handle_active_tab_key(
                 if app.selected_mrs.len() > 1 {
                     let count = app.selected_mrs.len();
                     let pr_suffix = if app.is_github() { "PR" } else { "MR" };
+                    let mut fields = vec![crate::app::Field::section("Selected Items")];
+                    for mr in app.filtered_mrs() {
+                        if app.selected_mrs.contains(&mr.iid) {
+                            fields.push(crate::app::Field::read_only(
+                                &format!("#{}", mr.iid),
+                                mr.title.clone(),
+                            ));
+                        }
+                    }
+                    fields.push(crate::app::Field::multi_select("Assignees", String::new()));
+                    fields.push(crate::app::Field::multi_select("Milestone", String::new()));
+                    fields.push(crate::app::Field::multi_select("Labels", String::new()));
                     app.open_edit_menu(crate::app::EditMenu {
                         title: format!("Bulk Edit {} {}s", count, pr_suffix),
-                        fields: vec![
-                            crate::app::Field::multi_select("Assignees", String::new()),
-                            crate::app::Field::multi_select("Milestone", String::new()),
-                            crate::app::Field::multi_select("Labels", String::new()),
-                        ],
+                        fields,
                         selected_idx: 0,
                         entity_iid: 0,
                         entity_kind: crate::app::EditEntityKind::BulkEditMrs,

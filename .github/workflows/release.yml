@@ -140,9 +140,15 @@ jobs:
 
       - name: Generate checksums (macOS / Windows)
         if: runner.os != 'Linux'
+        shell: bash
         env:
           ASSET_NAME: ${{ matrix.other_asset }}
-        run: sha256sum "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
+          else
+            shasum -a 256 "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
+          fi
 
       - name: Upload binaries to Release (Linux)
         if: runner.os == 'Linux'

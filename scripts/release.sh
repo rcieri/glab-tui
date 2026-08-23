@@ -644,12 +644,13 @@ merge_and_tag() {
 wait_for_release() {
   ensure_version
 
-  local total i current elapsed missing
+  local total i current="" elapsed=0 seen=0
+  local -a missing=()
   total=$((RELEASE_WAIT_MIN * 3)) # one check every 20s
   note "Waiting for release $NEW_TAG assets (timeout ${RELEASE_WAIT_MIN}m)..."
   for i in $(seq 1 "$total"); do
-    current=$(gh release view "$NEW_TAG" --repo "$REPO" --json assets \
-      --jq '[.assets[].name] | join("\n")' 2>/dev/null || echo "")
+    current="$(gh release view "$NEW_TAG" --repo "$REPO" --json assets \
+      --jq '[.assets[].name] | join("\n")' 2>/dev/null || true)"
     if [[ -n "$current" ]]; then
       missing=()
       for asset in "${REQUIRED_ASSETS_STATIC[@]}"; do
@@ -666,8 +667,11 @@ wait_for_release() {
     [[ $i -eq $total ]] && die "timed out waiting for release assets for $NEW_TAG (missing: ${missing[*]:-none})"
     if [[ -t 1 ]]; then
       elapsed=$((i * 20 / 60))
-      local seen="${#current[@]}"
-      [[ -z "$current" ]] && seen=0 || seen=$(echo "$current" | wc -l)
+      if [[ -n "$current" ]]; then
+        seen="$(printf '%s\n' "$current" | wc -l)"
+      else
+        seen=0
+      fi
       progress_bar "$seen" "${#REQUIRED_ASSETS_STATIC[@]}" "assets ($elapsed min elapsed)"
     fi
     sleep 20

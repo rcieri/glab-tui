@@ -1243,129 +1243,123 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         // ── Issues ──
         Shortcut {
             category: "Issues",
-            key: d(format!("{}", app.config.keybindings.issues.create_issue)),
+            key: d(app.config.keybindings.issues.create_issue.clone()),
             action: "Create new Issue",
         },
         Shortcut {
             category: "Issues",
-            key: d(format!("{}", app.config.keybindings.issues.select_issue)),
+            key: d(app.config.keybindings.issues.select_issue.clone()),
             action: "Toggle issue selection (bulk edit with e)",
         },
         Shortcut {
             category: "Issues",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.issues.selection_toggle
-            )),
+            key: d(app.config.keybindings.issues.selection_toggle.clone()),
             action: "Toggle select mode (paint selection while navigating)",
         },
         Shortcut {
             category: "Issues",
-            key: d(format!("{}", app.config.keybindings.issues.edit_entity)),
+            key: d(app.config.keybindings.issues.edit_entity.clone()),
             action: "Open parameter edit menu",
         },
         Shortcut {
             category: "Issues",
-            key: d(format!("{}", app.config.keybindings.issues.close_entity)),
+            key: d(app.config.keybindings.issues.close_entity.clone()),
             action: "Close selected Issue",
         },
         Shortcut {
             category: "Issues",
-            key: d(format!("{}", app.config.keybindings.issues.reopen_entity)),
+            key: d(app.config.keybindings.issues.reopen_entity.clone()),
             action: "Reopen selected Issue",
         },
         Shortcut {
             category: "Issues",
-            key: d(format!("{}", app.config.keybindings.issues.delete_entity)),
+            key: d(app.config.keybindings.issues.delete_entity.clone()),
             action: "Delete selected Issue",
         },
         Shortcut {
             category: "Issues",
-            key: s("o"),
+            key: d(app.config.keybindings.issues.open_in_browser.clone()),
             action: "Open selected Issue in browser",
         },
         Shortcut {
             category: "Issues",
-            key: d(format!("{}", app.config.keybindings.issues.create_mr)),
+            key: d(app.config.keybindings.issues.create_mr.clone()),
             action: "Create Merge Request from selected Issue",
         },
         // ── Merge Requests ──
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.create_mr)),
+            key: d(app.config.keybindings.mrs.create_mr.clone()),
             action: "Create new Merge Request",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.select_mr)),
+            key: d(app.config.keybindings.mrs.select_mr.clone()),
             action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.selection_toggle)),
+            key: d(app.config.keybindings.mrs.selection_toggle.clone()),
             action: "Toggle select mode (paint selection while navigating)",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.edit_entity)),
+            key: d(app.config.keybindings.mrs.edit_entity.clone()),
             action: "Open parameter edit menu",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.approve_mr)),
+            key: d(app.config.keybindings.mrs.approve_mr.clone()),
             action: "Approve selected MR",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.revoke_mr)),
+            key: d(app.config.keybindings.mrs.revoke_mr.clone()),
             action: "Revoke your approval (GitLab only)",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.rebase_mr)),
+            key: d(app.config.keybindings.mrs.rebase_mr.clone()),
             action: "Rebase source branch onto target",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.merge_mr)),
+            key: d(app.config.keybindings.mrs.merge_mr.clone()),
             action: "Merge selected MR (configure squash/delete)",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.toggle_draft)),
+            key: d(app.config.keybindings.mrs.toggle_draft.clone()),
             action: "Toggle Draft / Ready status",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.view_diff)),
+            key: d(app.config.keybindings.mrs.view_diff.clone()),
             action: "View Merge Request diff changes",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.mrs.view_related_pipelines
-            )),
+            key: d(app.config.keybindings.mrs.view_related_pipelines.clone()),
             action: "View related pipelines for selected MR",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.close_entity)),
+            key: d(app.config.keybindings.mrs.close_entity.clone()),
             action: "Close selected MR",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.reopen_entity)),
+            key: d(app.config.keybindings.mrs.reopen_entity.clone()),
             action: "Reopen selected MR",
         },
         Shortcut {
             category: "Merge Requests",
-            key: d(format!("{}", app.config.keybindings.mrs.delete_entity)),
+            key: d(app.config.keybindings.mrs.delete_entity.clone()),
             action: "Delete selected MR",
         },
         Shortcut {
             category: "Merge Requests",
-            key: s("o"),
+            key: d(app.config.keybindings.mrs.open_in_browser.clone()),
             action: "Open selected MR in browser",
         },
         // ── Pipelines ──
@@ -1376,26 +1370,28 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Pipelines",
-            key: s("n"),
+            key: d(app.config.keybindings.pipelines.run_new.clone()),
             action: "Create pipeline with interactive form",
         },
         Shortcut {
             category: "Pipelines",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.pipelines.trigger_pipeline
-            )),
+            key: d(app.config.keybindings.pipelines.trigger_pipeline.clone()),
             action: "Trigger new pipeline from MR",
         },
         Shortcut {
             category: "Pipelines",
-            key: d(format!("{}", app.config.keybindings.pipelines.retry)),
+            key: d(app.config.keybindings.pipelines.retry.clone()),
             action: "Retry selected pipeline(s)",
         },
         Shortcut {
             category: "Pipelines",
-            key: d(format!("{}", app.config.keybindings.pipelines.cancel)),
+            key: d(app.config.keybindings.pipelines.cancel.clone()),
             action: "Cancel pipeline execution",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.open_workflow.clone()),
+            action: "Open pipeline workflow in browser",
         },
         Shortcut {
             category: "Pipelines",
@@ -1404,13 +1400,13 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Pipelines",
-            key: s("o"),
+            key: d(app.config.keybindings.pipelines.open_in_browser.clone()),
             action: "Open pipeline in browser",
         },
         // ── Jobs ──
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.view_trace)),
+            key: d(app.config.keybindings.jobs.view_trace.clone()),
             action: "View job trace (toggle zoom)",
         },
         Shortcut {
@@ -1420,53 +1416,63 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.enter_pipeline)),
+            key: d(app.config.keybindings.jobs.enter_pipeline.clone()),
             action: "Switch to pipeline selector",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.retry)),
+            key: d(app.config.keybindings.jobs.retry.clone()),
             action: "Retry selected job(s)",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.start_job)),
+            key: d(app.config.keybindings.jobs.start_job.clone()),
             action: "Start manual job (GitLab only)",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.cancel)),
+            key: d(app.config.keybindings.jobs.cancel.clone()),
             action: "Cancel selected job(s)",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.select_job)),
+            key: d(app.config.keybindings.jobs.select_job.clone()),
             action: "Check / uncheck job for bulk retry/cancel",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.select_stage)),
+            key: d(app.config.keybindings.jobs.select_stage.clone()),
             action: "Select all jobs in stage",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.download_artifact)),
+            key: d(app.config.keybindings.jobs.download_artifact.clone()),
             action: "Download job artifact",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.view_trace_editor)),
+            key: d(app.config.keybindings.jobs.view_trace_editor.clone()),
             action: "Open job trace in external $EDITOR",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.open_in_browser)),
+            key: d(app.config.keybindings.jobs.open_in_browser.clone()),
             action: "Open selected job in browser",
         },
         Shortcut {
             category: "Jobs",
-            key: d(format!("{}", app.config.keybindings.jobs.toggle_trace_wrap)),
+            key: d(app.config.keybindings.jobs.toggle_trace_wrap.clone()),
             action: "Toggle trace word wrap / clipped view",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.trace_search.clone()),
+            action: "Search within job trace",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.toggle_trace_follow.clone()),
+            action: "Toggle trace auto-follow mode",
         },
         Shortcut {
             category: "Jobs",
@@ -1476,50 +1482,32 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         // ── Milestones ──
         Shortcut {
             category: "Milestones",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.milestones.create_milestone
-            )),
+            key: d(app.config.keybindings.milestones.create_milestone.clone()),
             action: "Create new milestone",
         },
         Shortcut {
             category: "Milestones",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.milestones.edit_milestone
-            )),
+            key: d(app.config.keybindings.milestones.edit_milestone.clone()),
             action: "Edit selected milestone",
         },
         Shortcut {
             category: "Milestones",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.milestones.close_milestone
-            )),
+            key: d(app.config.keybindings.milestones.close_milestone.clone()),
             action: "Close selected milestone",
         },
         Shortcut {
             category: "Milestones",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.milestones.reopen_milestone
-            )),
+            key: d(app.config.keybindings.milestones.reopen_milestone.clone()),
             action: "Reopen selected milestone",
         },
         Shortcut {
             category: "Milestones",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.milestones.delete_milestone
-            )),
+            key: d(app.config.keybindings.milestones.delete_milestone.clone()),
             action: "Delete selected milestone",
         },
         Shortcut {
             category: "Milestones",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.milestones.open_in_browser
-            )),
+            key: d(app.config.keybindings.milestones.open_in_browser.clone()),
             action: "Open milestone in browser",
         },
         // ── Runners ──
@@ -1533,10 +1521,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Runners",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.runners.edit_description
-            )),
+            key: d(app.config.keybindings.runners.edit_description.clone()),
             action: "Edit runner description text",
         },
         // ── Releases ──
@@ -1547,42 +1532,33 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Releases",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.releases.create_release
-            )),
+            key: d(app.config.keybindings.releases.create_release.clone()),
             action: "Create new release tag & changelog",
         },
         Shortcut {
             category: "Releases",
-            key: d(format!("{}", app.config.keybindings.releases.edit_release)),
+            key: d(app.config.keybindings.releases.edit_release.clone()),
             action: "Edit selected release",
         },
         Shortcut {
             category: "Releases",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.releases.delete_release
-            )),
+            key: d(app.config.keybindings.releases.delete_release.clone()),
             action: "Delete selected release",
         },
         Shortcut {
             category: "Releases",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.releases.open_in_browser
-            )),
+            key: d(app.config.keybindings.releases.open_in_browser.clone()),
             action: "Open release in browser",
         },
         // ── TODOs ──
         Shortcut {
             category: "TODOs",
-            key: d(format!("{}", app.config.keybindings.todos.mark_as_read)),
+            key: d(app.config.keybindings.todos.mark_as_read.clone()),
             action: "Open todo target & mark read",
         },
         Shortcut {
             category: "TODOs",
-            key: d(format!("{}", app.config.keybindings.todos.open_in_browser)),
+            key: d(app.config.keybindings.todos.open_in_browser.clone()),
             action: "Open todo in browser",
         },
         // ── Terminal ──
@@ -1593,27 +1569,24 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Terminal",
-            key: d(format!("{}", app.config.keybindings.terminal.toggle_wrap)),
+            key: d(app.config.keybindings.terminal.toggle_wrap.clone()),
             action: "Toggle terminal line wrapping",
         },
         // ── Branches ──
         Shortcut {
             category: "Branches",
-            key: d(format!("{}", app.config.keybindings.branches.create_branch)),
+            key: d(app.config.keybindings.branches.create_branch.clone()),
             action: "Create new branch",
         },
         Shortcut {
             category: "Branches",
-            key: d(format!("{}", app.config.keybindings.branches.delete_branch)),
+            key: d(app.config.keybindings.branches.delete_branch.clone()),
             action: "Delete selected branch",
         },
         // ── Environments ──
         Shortcut {
             category: "Environments",
-            key: d(format!(
-                "{}",
-                app.config.keybindings.environments.view_deployments
-            )),
+            key: d(app.config.keybindings.environments.view_deployments.clone()),
             action: "View deployments list for environment",
         },
         // ── Diff View ──
@@ -1714,7 +1687,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Diff View",
-            key: s("? / F1"),
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
             action: "Show this help modal",
         },
         // ── Inspector / Editor ──
@@ -1745,7 +1718,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Inspector / Editor",
-            key: s("? / F1"),
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
             action: "Show this help modal",
         },
         // ── Selector / Filter ──
@@ -1776,7 +1749,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Selector / Filter",
-            key: s("? / F1"),
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
             action: "Show this help modal",
         },
         // ── Column Config ──
@@ -1797,7 +1770,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Column Config",
-            key: s("s"),
+            key: d(app.config.keybindings.global.save_view.clone()),
             action: "Save layout to config",
         },
         Shortcut {
@@ -1807,7 +1780,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Column Config",
-            key: s("? / F1"),
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
             action: "Show this help modal",
         },
         // ── Date Picker ──
@@ -1833,7 +1806,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Date Picker",
-            key: s("? / F1"),
+            key: d(format!("{} / F1", app.config.keybindings.global.help)),
             action: "Show this help modal",
         },
     ];

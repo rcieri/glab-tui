@@ -113,10 +113,11 @@ pub(crate) fn render_entity_inspector(
     // mode-driven inputs to the shared layout below.
     let (has_content, selected_idx, editing, cursor_pos, skip_description) = match &mode {
         InspectorMode::Interactive { menu } => (
-            menu.fields.iter().any(|f| {
-                (f.label == "Description" || f.label == "Release Notes")
-                    && f.kind == FieldType::Text
-            }),
+            matches!(&doc.content, InspectorContent::Custom(lines) if !lines.is_empty())
+                || menu.fields.iter().any(|f| {
+                    (f.label == "Description" || f.label == "Release Notes")
+                        && f.kind == FieldType::Text
+                }),
             Some(menu.selected_idx),
             menu.editing,
             menu.cursor_pos,
@@ -274,6 +275,12 @@ fn render_content_pane(
 
     match mode {
         InspectorMode::Interactive { menu } => {
+            // Bulk-edit menus carry a Custom item list instead of a Description
+            // document; render it verbatim rather than through markdown.
+            let custom_lines = match &doc.content {
+                InspectorContent::Custom(lines) => Some(lines.clone()),
+                _ => None,
+            };
             // Description pane is driven by the document content (the helper
             // builds the doc from the menu), keyed off the Description field.
             let is_desc_selected = menu.selected_idx < doc.fields.len()
@@ -359,6 +366,8 @@ fn render_content_pane(
                     }
                     lines
                 }
+            } else if let Some(lines) = custom_lines {
+                lines
             } else if desc_value.is_empty() {
                 vec![Line::from(Span::styled(
                     "Empty — press Enter to edit, Ctrl+E for editor",
@@ -1160,10 +1169,62 @@ pub(crate) fn render_inspector_content(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{EntityDocument, Field, InspectorContent};
+    use crate::app::{EditEntityKind, EditMenu, EntityDocument, Field, InspectorContent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use std::collections::HashMap;
+
+    #[test]
+    fn interactive_content_pane_renders_custom_lines() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let doc = EntityDocument {
+            title: "Bulk Edit 2 Issues".to_string(),
+            fields: vec![Field::multi_select("Labels", String::new())],
+            content: InspectorContent::Custom(vec![
+                ratatui::text::Line::from("#12 Fix login flow"),
+                ratatui::text::Line::from("#34 Update docs"),
+            ]),
+        };
+        let label_colors = HashMap::new();
+        let mut menu = EditMenu {
+            title: doc.title.clone(),
+            fields: vec![Field::multi_select("Labels", String::new())],
+            selected_idx: 0,
+            entity_iid: 0,
+            entity_kind: EditEntityKind::BulkEditIssues,
+            state: Default::default(),
+            workflow_inputs: vec![],
+            cursor_pos: 0,
+            editing: false,
+            desc_scroll: 0,
+        };
+
+        terminal
+            .draw(|f| {
+                render_entity_inspector(
+                    f,
+                    &doc,
+                    f.area(),
+                    InspectorMode::Interactive { menu: &mut menu },
+                    &label_colors,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("#12 Fix login flow"), "{rendered}");
+        assert!(rendered.contains("#34 Update docs"), "{rendered}");
+    }
 
     #[test]
     fn test_build_field_list_items_read_only() {

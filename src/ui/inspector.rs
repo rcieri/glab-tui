@@ -296,7 +296,7 @@ fn render_content_pane(
 
             let desc_lines = if is_desc_selected && menu.editing {
                 let cursor_style = Style::default()
-                    .fg(theme.bg)
+                    .fg(theme.highlight_bg)
                     .bg(theme.text_normal)
                     .add_modifier(Modifier::SLOW_BLINK);
                 let block_cursor_style = Style::default()
@@ -594,7 +594,7 @@ pub(crate) fn build_field_list_items(
                         Modifier::empty()
                     });
                 let cursor_style = Style::default()
-                    .fg(theme.bg)
+                    .fg(theme.highlight_bg)
                     .bg(theme.text_normal)
                     .add_modifier(Modifier::SLOW_BLINK);
 

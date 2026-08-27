@@ -455,7 +455,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             }
             let style = if is_active {
                 Style::default()
-                    .fg(t.bg)
+                    .fg(t.highlight_bg)
                     .bg(t.border_focused)
                     .add_modifier(Modifier::BOLD)
             } else if checked {
@@ -495,7 +495,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             }
             let style = if is_active {
                 Style::default()
-                    .fg(t.bg)
+                    .fg(t.highlight_bg)
                     .bg(t.border_focused)
                     .add_modifier(Modifier::BOLD)
             } else if is_selected {
@@ -534,7 +534,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             }
             let style = if is_active {
                 Style::default()
-                    .fg(t.bg)
+                    .fg(t.highlight_bg)
                     .bg(t.border_focused)
                     .add_modifier(Modifier::BOLD)
             } else if is_selected {
@@ -557,12 +557,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         };
         let page_size_style = if app.editing_page_size {
             Style::default()
-                .fg(t.bg)
+                .fg(t.highlight_bg)
                 .bg(t.green)
                 .add_modifier(Modifier::BOLD)
         } else if is_page_size_active {
             Style::default()
-                .fg(t.bg)
+                .fg(t.highlight_bg)
                 .bg(t.border_focused)
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -601,7 +601,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let theme_value = format!("[ {} ]", current_theme_name);
         let theme_style = if is_theme_active {
             Style::default()
-                .fg(t.bg)
+                .fg(t.highlight_bg)
                 .bg(t.border_focused)
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -642,7 +642,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let save_button_text = format!("{:pad$}{}", "", save_label, pad = save_left_pad);
         let save_button_style = if is_save_selected {
             Style::default()
-                .fg(t.bg)
+                .fg(t.highlight_bg)
                 .bg(t.border_focused)
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -729,7 +729,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     };
                     let style = if is_active {
                         Style::default()
-                            .fg(THEME.read().unwrap().bg)
+                            .fg(THEME.read().unwrap().highlight_bg)
                             .bg(THEME.read().unwrap().border_focused)
                             .add_modifier(Modifier::BOLD)
                     } else {
@@ -1033,7 +1033,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 .highlight_style(
                     Style::default()
                         .bg(theme.border_focused)
-                        .fg(theme.bg)
+                        .fg(theme.highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 );
 

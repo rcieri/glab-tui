@@ -272,6 +272,13 @@ pub enum SaveMenu {
 }
 
 pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
+    let s = s.trim();
+    // An empty color string maps to Color::Reset, which lets the terminal's
+    // own (possibly transparent) background show through instead of painting
+    // an opaque color.
+    if s.is_empty() {
+        return Some(Color::Reset);
+    }
     let s = s.trim_start_matches('#');
     if s.len() == 6 {
         let r = u8::from_str_radix(&s[0..2], 16).ok()?;
@@ -285,6 +292,7 @@ pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
 
 fn color_to_hex(c: Color) -> String {
     match c {
+        Color::Reset => String::new(),
         Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
         _ => String::new(),
     }
@@ -1742,6 +1750,34 @@ pub fn set_theme_preset(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_color_string_maps_to_reset() {
+        assert_eq!(hex_to_color(""), Some(Color::Reset));
+        assert_eq!(hex_to_color("   "), Some(Color::Reset));
+        assert_eq!(hex_to_color("\t\n"), Some(Color::Reset));
+    }
+
+    #[test]
+    fn reset_color_serializes_to_empty_string() {
+        assert_eq!(color_to_hex(Color::Reset), "");
+    }
+
+    #[test]
+    fn empty_color_round_trips_through_hex() {
+        let parsed = hex_to_color("").expect("empty string must parse");
+        assert_eq!(parsed, Color::Reset);
+        assert_eq!(color_to_hex(parsed), "");
+        assert_eq!(hex_to_color(&color_to_hex(parsed)), Some(Color::Reset));
+    }
+
+    #[test]
+    fn default_theme_uses_transparent_background() {
+        let theme = Theme::default();
+        assert_eq!(theme.bg, Color::Reset);
+        assert_eq!(theme.inactive_bg, Color::Reset);
+        assert_eq!(theme.diff_gutter_bg, Color::Reset);
+    }
 
     #[test]
     fn api_per_page_clamped_bounds_to_gitlab_range() {

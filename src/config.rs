@@ -1772,11 +1772,11 @@ mod tests {
     }
 
     #[test]
-    fn default_theme_uses_transparent_background() {
+    fn default_theme_uses_solid_background() {
         let theme = Theme::default();
-        assert_eq!(theme.bg, Color::Reset);
-        assert_eq!(theme.inactive_bg, Color::Reset);
-        assert_eq!(theme.diff_gutter_bg, Color::Reset);
+        assert_eq!(theme.bg, Color::Rgb(0, 0, 0));
+        assert_eq!(theme.inactive_bg, Color::Rgb(0, 0, 0));
+        assert_eq!(theme.diff_gutter_bg, Color::Rgb(0, 0, 0));
     }
 
     #[test]

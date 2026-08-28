@@ -510,11 +510,13 @@ fn themes_dir() -> PathBuf {
 fn ensure_themes() {
     let dir = themes_dir();
     let _ = std::fs::create_dir_all(&dir);
+    // Always overwrite bundled themes so users receive fixes and new tokens
+    // (e.g. diff_gutter_bg) on upgrade without deleting the themes dir.
+    // User-created themes use filenames not present in BUNDLED_THEMES and are
+    // never touched here.
     for (name, toml_str) in BUNDLED_THEMES {
         let theme_path = dir.join(format!("{}.toml", name));
-        if !theme_path.exists() {
-            let _ = std::fs::write(&theme_path, toml_str);
-        }
+        let _ = std::fs::write(&theme_path, toml_str);
     }
 }
 

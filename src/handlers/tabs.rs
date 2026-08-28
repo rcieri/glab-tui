@@ -56,6 +56,7 @@ pub async fn handle_active_tab_key(
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Issue".to_string(),
                     fields,
+                    initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
                     entity_iid: 0,
                     entity_kind: crate::app::EditEntityKind::CreateIssue,
@@ -80,6 +81,10 @@ pub async fn handle_active_tab_key(
                             crate::app::Field::multi_select("Milestone", String::new()),
                             crate::app::Field::multi_select("Labels", String::new()),
                         ],
+                        // Bulk-edit forms start empty; `open_edit_menu` will snapshot all
+                        // blank values as the baseline. The `IssueUpdate::is_empty()` guard
+                        // in the dispatcher handles the true no-op case (nothing filled in).
+                        initial_fields: std::collections::HashMap::new(),
                         selected_idx: 0,
                         entity_iid: 0,
                         entity_kind: crate::app::EditEntityKind::BulkEditIssues,
@@ -105,6 +110,7 @@ pub async fn handle_active_tab_key(
                         app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Edit Issue #{}", issue.iid),
                             fields: doc.fields,
+                            initial_fields: std::collections::HashMap::new(),
                             selected_idx: 0,
                             entity_iid: issue.iid,
                             entity_kind: crate::app::EditEntityKind::EditIssue,
@@ -252,6 +258,7 @@ pub async fn handle_active_tab_key(
                         app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Create {} from #{}", pr_suffix, issue.iid),
                             fields,
+                            initial_fields: std::collections::HashMap::new(),
                             selected_idx: 0,
                             entity_iid: issue.iid,
                             entity_kind: crate::app::EditEntityKind::CreateMr,
@@ -293,6 +300,7 @@ pub async fn handle_active_tab_key(
                 app.open_edit_menu(crate::app::EditMenu {
                     title: format!("Create {}", pr_suffix),
                     fields,
+                    initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
                     entity_iid: 0,
                     entity_kind: crate::app::EditEntityKind::CreateMr,
@@ -333,6 +341,10 @@ pub async fn handle_active_tab_key(
                             crate::app::Field::multi_select("Milestone", String::new()),
                             crate::app::Field::multi_select("Labels", String::new()),
                         ],
+                        // Bulk-edit forms start empty; `open_edit_menu` will snapshot all
+                        // blank values as the baseline. The `MrUpdate::is_empty()` guard
+                        // in the dispatcher handles the true no-op case (nothing filled in).
+                        initial_fields: std::collections::HashMap::new(),
                         selected_idx: 0,
                         entity_iid: 0,
                         entity_kind: crate::app::EditEntityKind::BulkEditMrs,
@@ -366,6 +378,7 @@ pub async fn handle_active_tab_key(
                         app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Edit {} #{}", pr_suffix, mr.iid),
                             fields: doc.fields,
+                            initial_fields: std::collections::HashMap::new(),
                             selected_idx: 0,
                             entity_iid: mr.iid,
                             entity_kind: crate::app::EditEntityKind::EditMr,
@@ -664,6 +677,7 @@ pub async fn handle_active_tab_key(
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Run Pipeline".to_string(),
                     fields,
+                    initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
                     entity_iid: 0,
                     entity_kind: crate::app::EditEntityKind::CreatePipeline,
@@ -733,7 +747,11 @@ pub async fn handle_active_tab_key(
                                     }
                                     app.selected_pipelines.clear();
                                     tokio::spawn(async move {
-                                        for p_id in &pipe_ids {
+                                        for (i, p_id) in pipe_ids.iter().enumerate() {
+                                            if i > 0 {
+                                                crate::backend::rate_limit::pace_bulk_operation()
+                                                    .await;
+                                            }
                                             let _ = client_clone
                                                 .retry_pipeline(&project_context, *p_id)
                                                 .await;
@@ -950,7 +968,11 @@ pub async fn handle_active_tab_key(
                                     }
                                     app.selected_jobs.clear();
                                     tokio::spawn(async move {
-                                        for j_id in &job_ids {
+                                        for (i, j_id) in job_ids.iter().enumerate() {
+                                            if i > 0 {
+                                                crate::backend::rate_limit::pace_bulk_operation()
+                                                    .await;
+                                            }
                                             let _ = client_clone
                                                 .retry_job(&project_context, *j_id)
                                                 .await;
@@ -1327,6 +1349,7 @@ pub async fn handle_active_tab_key(
                         crate::app::Field::section("Release Notes"),
                         crate::app::Field::text("Release Notes", String::new()),
                     ],
+                    initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
                     entity_iid: 0,
                     entity_kind: crate::app::EditEntityKind::CreateRelease,
@@ -1498,6 +1521,7 @@ pub async fn handle_active_tab_key(
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Milestone".to_string(),
                     fields,
+                    initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
                     entity_iid: 0,
                     entity_kind: crate::app::EditEntityKind::CreateMilestone,
@@ -1539,6 +1563,7 @@ pub async fn handle_active_tab_key(
                         app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Edit Milestone %{}", m.iid),
                             fields: doc.fields,
+                            initial_fields: std::collections::HashMap::new(),
                             selected_idx: 0,
                             entity_iid: m.iid,
                             entity_kind: crate::app::EditEntityKind::EditMilestone,
@@ -1643,6 +1668,7 @@ pub async fn handle_active_tab_key(
                         app.open_edit_menu(crate::app::EditMenu {
                             title: "Create Branch".to_string(),
                             fields,
+                            initial_fields: std::collections::HashMap::new(),
                             selected_idx: 0,
                             entity_iid: 0,
                             entity_kind: crate::app::EditEntityKind::CreateBranch,
@@ -1948,6 +1974,7 @@ pub async fn handle_active_tab_key(
                                         app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit Issue #{}", issue.iid),
                                             fields: doc.fields,
+                                            initial_fields: std::collections::HashMap::new(),
                                             selected_idx: 0,
                                             entity_iid: issue.iid,
                                             entity_kind: crate::app::EditEntityKind::EditIssue,
@@ -1987,6 +2014,7 @@ pub async fn handle_active_tab_key(
                                         app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit {} #{}", pr_suffix, mr.iid),
                                             fields: doc.fields,
+                                            initial_fields: std::collections::HashMap::new(),
                                             selected_idx: 0,
                                             entity_iid: mr.iid,
                                             entity_kind: crate::app::EditEntityKind::EditMr,
@@ -2027,6 +2055,7 @@ pub async fn handle_active_tab_key(
                                         app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit Milestone %{}", m.iid),
                                             fields: doc.fields,
+                                            initial_fields: std::collections::HashMap::new(),
                                             selected_idx: 0,
                                             entity_iid: m.iid,
                                             entity_kind: crate::app::EditEntityKind::EditMilestone,
@@ -2056,6 +2085,7 @@ pub async fn handle_active_tab_key(
                                         app.open_edit_menu(crate::app::EditMenu {
                                             title: format!("Edit Release {}", release.tag_name),
                                             fields: doc.fields,
+                                            initial_fields: std::collections::HashMap::new(),
                                             selected_idx: 0,
                                             entity_iid: 0,
                                             entity_kind: crate::app::EditEntityKind::EditRelease,

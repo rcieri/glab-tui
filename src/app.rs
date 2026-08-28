@@ -520,6 +520,7 @@ impl EditEntityKind {
 pub struct EditMenu {
     pub title: String,
     pub fields: Vec<Field>,
+    pub initial_fields: std::collections::HashMap<String, String>,
     pub selected_idx: usize,
     pub entity_iid: u64,
     pub entity_kind: EditEntityKind,
@@ -2993,7 +2994,14 @@ impl App {
     /// can restore it. Use this helper instead of assigning to
     /// `edit_menu` directly so the prev-details-zoomed bookkeeping is
     /// consistent across all entry points (double-Enter, `e`, etc.).
-    pub fn open_edit_menu(&mut self, menu: EditMenu) {
+    pub fn open_edit_menu(&mut self, mut menu: EditMenu) {
+        if menu.initial_fields.is_empty() {
+            menu.initial_fields = menu
+                .fields
+                .iter()
+                .map(|f| (f.label.clone(), f.value.clone()))
+                .collect();
+        }
         self.prev_details_zoomed = self.details_zoomed;
         self.edit_menu = Some(menu);
     }

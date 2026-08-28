@@ -93,20 +93,20 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
         if menu.entity_kind.is_create() {
             // CREATE — distinct palette so the user knows they're filling
             // out a new entity, not editing an existing one.
-            (" CREATE ", theme.green, theme.bg)
+            (" CREATE ", theme.green, theme.highlight_bg)
         } else {
             // EDIT — reuse the GROUPED badge palette (blue).
-            (" EDIT ", theme.blue, theme.bg)
+            (" EDIT ", theme.blue, theme.highlight_bg)
         }
     } else if app.select_mode {
         // SELECT — distinct palette (purple) for yazi-style select mode.
-        (" SELECT ", theme.purple, theme.bg)
+        (" SELECT ", theme.purple, theme.highlight_bg)
     } else if app.details_zoomed {
         // PREVIEW — reuse the SEARCHING badge palette (yellow).
-        (" PREVIEW ", theme.yellow, theme.bg)
+        (" PREVIEW ", theme.yellow, theme.highlight_bg)
     } else {
         // NORMAL — reuse the GLAB-TUI header palette (border_focused).
-        (" NORMAL ", theme.border_focused, theme.bg)
+        (" NORMAL ", theme.border_focused, theme.highlight_bg)
     };
 
     let line = Line::from(vec![Span::styled(
@@ -272,7 +272,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} GLAB-TUI ", header_icon),
             Style::default()
                 .bg(THEME.read().unwrap().border_focused)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -291,7 +291,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} GROUPED: {} ", icons.label_filtered, group_col),
             Style::default()
                 .bg(THEME.read().unwrap().blue)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ));
         if app.is_typing_search || !app.search_query.is_empty() {
@@ -303,7 +303,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} SEARCHING ", icons.label_searching),
             Style::default()
                 .bg(THEME.read().unwrap().yellow)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ));
         title_spans.push(Span::styled(
@@ -315,7 +315,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} FILTERED ", icons.label_filtered),
             Style::default()
                 .bg(THEME.read().unwrap().yellow)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ));
         title_spans.push(Span::styled(
@@ -430,7 +430,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 ListItem::new(title).style(
                     Style::default()
                         .bg(THEME.read().unwrap().border_focused)
-                        .fg(THEME.read().unwrap().bg)
+                        .fg(THEME.read().unwrap().highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
@@ -701,7 +701,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     format!(" {} SEARCHING ", &ICONS.read().unwrap().label_searching),
                     Style::default()
                         .bg(THEME.read().unwrap().yellow)
-                        .fg(THEME.read().unwrap().bg)
+                        .fg(THEME.read().unwrap().highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 ));
                 title_spans.push(Span::styled(
@@ -722,7 +722,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     format!(" {} FILTERED ", &ICONS.read().unwrap().label_filtered),
                     Style::default()
                         .bg(THEME.read().unwrap().yellow)
-                        .fg(THEME.read().unwrap().bg)
+                        .fg(THEME.read().unwrap().highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 ));
                 title_spans.push(Span::styled(
@@ -887,7 +887,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         if diff_view.focus_on_files {
                             Style::default()
                                 .bg(THEME.read().unwrap().highlight_bg)
-                                .fg(THEME.read().unwrap().bg)
+                                .fg(THEME.read().unwrap().highlight_bg)
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default()

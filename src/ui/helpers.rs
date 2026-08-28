@@ -438,7 +438,7 @@ fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
             padded_key,
             Style::default()
                 .bg(THEME.read().unwrap().border_focused)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(

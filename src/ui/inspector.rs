@@ -1174,6 +1174,7 @@ mod tests {
         let mut menu = EditMenu {
             title: doc.title.clone(),
             fields: vec![Field::multi_select("Labels", String::new())],
+            initial_fields: HashMap::new(),
             selected_idx: 0,
             entity_iid: 0,
             entity_kind: EditEntityKind::BulkEditIssues,

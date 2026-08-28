@@ -409,7 +409,10 @@ fn run_submit_action(
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let mut failures = Vec::new();
-                for mr_iid in iids {
+                for (i, mr_iid) in iids.into_iter().enumerate() {
+                    if i > 0 {
+                        crate::backend::rate_limit::pace_bulk_operation().await;
+                    }
                     match client
                         .merge_mr(
                             &project_path,
@@ -739,6 +742,7 @@ mod tests {
             entity_kind: EditEntityKind::EditIssue,
             title: "Edit Issue".to_string(),
             fields: vec![],
+            initial_fields: std::collections::HashMap::new(),
             selected_idx: 0,
             editing: false,
             cursor_pos: 0,

@@ -466,7 +466,7 @@ pub(crate) fn build_field_list_items(
         .map(|f| f.label.len())
         .max()
         .unwrap_or(6)
-        .clamp(6, 12);
+        .clamp(6, 22);
 
     fields
         .iter()

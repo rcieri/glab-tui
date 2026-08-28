@@ -742,6 +742,7 @@ mod tests {
             entity_kind: EditEntityKind::EditIssue,
             title: "Edit Issue".to_string(),
             fields: vec![],
+            initial_fields: std::collections::HashMap::new(),
             selected_idx: 0,
             editing: false,
             cursor_pos: 0,

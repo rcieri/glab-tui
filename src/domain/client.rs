@@ -1,4 +1,4 @@
-use crate::backend::{Backend, BackendKind};
+use crate::backend::{Backend, BackendKind, IssueUpdate, MrUpdate};
 use crate::config::Config;
 use anyhow::{Context, Result};
 
@@ -328,6 +328,12 @@ impl GitlabClient {
     }
 
     // ── Field updates ──
+    pub async fn update_issue(&self, project: &str, iid: u64, update: &IssueUpdate) -> Result<()> {
+        self.backend.update_issue(project, iid, update).await
+    }
+    pub async fn update_mr(&self, project: &str, iid: u64, update: &MrUpdate) -> Result<()> {
+        self.backend.update_mr(project, iid, update).await
+    }
     pub async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
         self.backend.update_issue_title(project, iid, title).await
     }

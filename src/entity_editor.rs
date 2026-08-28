@@ -1210,6 +1210,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Issue #{}", issue.iid),
                 fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
                 selected_idx,
                 entity_iid: issue.iid,
                 entity_kind: crate::app::EditEntityKind::EditIssue,
@@ -1248,6 +1249,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit {} #{}", mr_label, mr.iid),
                 fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
                 selected_idx,
                 entity_iid: mr.iid,
                 entity_kind: crate::app::EditEntityKind::EditMr,
@@ -1286,6 +1288,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Milestone %{}", milestone.iid),
                 fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
                 selected_idx,
                 entity_iid: milestone.iid,
                 entity_kind: crate::app::EditEntityKind::EditMilestone,
@@ -1312,6 +1315,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Release {}", release.tag_name),
                 fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
                 selected_idx,
                 entity_iid,
                 entity_kind: crate::app::EditEntityKind::EditRelease,

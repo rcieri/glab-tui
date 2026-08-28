@@ -756,171 +756,65 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--title",
-                title,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_description(
+    async fn update_issue(
         &self,
         project: &str,
         iid: u64,
-        description: &str,
+        update: &super::IssueUpdate,
     ) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "-d",
-                description,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_labels(
-        &self,
-        project: &str,
-        iid: u64,
-        add_labels: &[String],
-        remove_labels: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "issue".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for label in add_labels {
-            args.push("--label".into());
-            args.push(label.clone());
+        if update.is_empty() {
+            return Ok(());
         }
-        for label in remove_labels {
-            args.push("--unlabel".into());
-            args.push(label.clone());
+        let iid_str = iid.to_string();
+        let mut args: Vec<String> = vec!["issue".into(), "update".into(), iid_str];
+        if !project.is_empty() {
+            args.extend(["-R".into(), project.into()]);
         }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if let Some(ref title) = update.title {
+            args.extend(["--title".into(), title.clone()]);
+        }
+        if let Some(ref desc) = update.description {
+            args.extend(["-d".into(), desc.clone()]);
+        }
+        for label in &update.add_labels {
+            args.extend(["--label".into(), label.clone()]);
+        }
+        for label in &update.remove_labels {
+            args.extend(["--unlabel".into(), label.clone()]);
+        }
+        for a in &update.add_assignees {
+            args.extend(["--assignee".into(), a.clone()]);
+        }
+        for a in &update.remove_assignees {
+            args.extend(["--unassign".into(), a.clone()]);
+        }
+        if let Some(ref milestone) = update.milestone {
+            let val = if milestone == "--" || milestone.is_empty() {
+                "0"
+            } else {
+                milestone.as_str()
+            };
+            args.extend(["--milestone".into(), val.to_string()]);
+        }
+        if let Some(ref due_date) = update.due_date {
+            if !due_date.is_empty() && due_date != "YYYY-MM-DD" {
+                args.extend(["--due-date".into(), due_date.clone()]);
+            }
+        }
+        if let Some(ref weight) = update.weight {
+            if !weight.is_empty() {
+                args.extend(["--weight".into(), weight.clone()]);
+            }
+        }
+        if let Some(confidential) = update.confidential {
+            if confidential {
+                args.push("--confidential".into());
+            } else {
+                args.push("--public".into());
+            }
+        }
+        let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_glab(&args_refs, "UPDATING ISSUE").await?;
-        Ok(())
-    }
-
-    async fn update_issue_assignees(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "issue".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for a in add {
-            args.push("--assignee".into());
-            args.push(a.clone());
-        }
-        for a in remove {
-            args.push("--unassign".into());
-            args.push(a.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "UPDATING ISSUE").await?;
-        Ok(())
-    }
-
-    async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "--" || milestone.is_empty() {
-            "0"
-        } else {
-            milestone
-        };
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--milestone",
-                val,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--due-date",
-                due_date,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_weight(&self, project: &str, iid: u64, weight: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--weight",
-                weight,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_confidential(
-        &self,
-        project: &str,
-        iid: u64,
-        confidential: bool,
-    ) -> Result<()> {
-        let flag = if confidential {
-            "--confidential"
-        } else {
-            "--public"
-        };
-        self.run_glab(
-            &["issue", "update", &iid.to_string(), flag, "-R", project],
-            "UPDATING ISSUE",
-        )
-        .await?;
         Ok(())
     }
 
@@ -1474,162 +1368,59 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "--title",
-                title,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_mr_description(
-        &self,
-        project: &str,
-        iid: u64,
-        description: &str,
-    ) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "-d",
-                description,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_mr_labels(
-        &self,
-        project: &str,
-        iid: u64,
-        add_labels: &[String],
-        remove_labels: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "mr".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for label in add_labels {
-            args.push("--label".into());
-            args.push(label.clone());
+    async fn update_mr(&self, project: &str, iid: u64, update: &super::MrUpdate) -> Result<()> {
+        if update.is_empty() {
+            return Ok(());
         }
-        for label in remove_labels {
-            args.push("--unlabel".into());
-            args.push(label.clone());
+        let iid_str = iid.to_string();
+        let mut args: Vec<String> = vec!["mr".into(), "update".into(), iid_str];
+        if !project.is_empty() {
+            args.extend(["-R".into(), project.into()]);
         }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if let Some(ref title) = update.title {
+            args.extend(["--title".into(), title.clone()]);
+        }
+        if let Some(ref desc) = update.description {
+            args.extend(["-d".into(), desc.clone()]);
+        }
+        for label in &update.add_labels {
+            args.extend(["--label".into(), label.clone()]);
+        }
+        for label in &update.remove_labels {
+            args.extend(["--unlabel".into(), label.clone()]);
+        }
+        for a in &update.add_assignees {
+            args.extend(["--assignee".into(), a.clone()]);
+        }
+        for a in &update.remove_assignees {
+            args.extend(["--unassign".into(), a.clone()]);
+        }
+        for r in &update.add_reviewers {
+            args.extend(["--reviewer".into(), r.clone()]);
+        }
+        for r in &update.remove_reviewers {
+            args.extend(["--unreviewer".into(), r.clone()]);
+        }
+        if let Some(ref milestone) = update.milestone {
+            let val = if milestone == "--" || milestone.is_empty() {
+                "0"
+            } else {
+                milestone.as_str()
+            };
+            args.extend(["--milestone".into(), val.to_string()]);
+        }
+        if let Some(ref target_branch) = update.target_branch {
+            args.extend(["--target-branch".into(), target_branch.clone()]);
+        }
+        if let Some(draft) = update.draft {
+            if draft {
+                args.push("--draft".into());
+            } else {
+                args.push("--ready".into());
+            }
+        }
+        let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_glab(&args_refs, "UPDATING MR").await?;
-        Ok(())
-    }
-
-    async fn update_mr_assignees(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "mr".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for a in add {
-            args.push("--assignee".into());
-            args.push(a.clone());
-        }
-        for a in remove {
-            args.push("--unassign".into());
-            args.push(a.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "UPDATING MR").await?;
-        Ok(())
-    }
-
-    async fn update_mr_reviewers(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "mr".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for r in add {
-            args.push("--reviewer".into());
-            args.push(r.clone());
-        }
-        for r in remove {
-            args.push("--unreviewer".into());
-            args.push(r.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "UPDATING MR").await?;
-        Ok(())
-    }
-
-    async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "--" || milestone.is_empty() {
-            "0"
-        } else {
-            milestone
-        };
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "--milestone",
-                val,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "--target-branch",
-                branch,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
         Ok(())
     }
 

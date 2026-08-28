@@ -556,11 +556,9 @@ impl Backend for GhBackend {
                 args.extend(["--milestone".into(), milestone.clone()]);
             }
         }
-        if let Some(ref due_date) = update.due_date {
-            if !due_date.is_empty() && due_date != "YYYY-MM-DD" {
-                args.extend(["--due-date".into(), due_date.clone()]);
-            }
-        }
+        // Note: GitHub issues do not support due dates at the REST API level
+        // (`gh issue edit` has no `--due-date` flag). The `due_date` field in
+        // `IssueUpdate` is GitLab-specific and is intentionally ignored here.
         let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_gh(&args_refs, "UPDATING ISSUE").await?;
         Ok(())
@@ -1157,6 +1155,13 @@ impl Backend for GhBackend {
         if let Some(ref target_branch) = update.target_branch {
             args.extend(["--base".into(), target_branch.clone()]);
         }
+        if let Some(draft) = update.draft {
+            if draft {
+                args.push("--draft".into());
+            } else {
+                args.push("--ready-for-review".into());
+            }
+        }
         let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_gh(&args_refs, "UPDATING PR").await?;
         Ok(())
@@ -1172,6 +1177,9 @@ impl Backend for GhBackend {
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<Pipeline>> {
+        // The Actions API caps `per_page` at 100. For repos with heavy workflow
+        // activity this means older runs may be invisible in the Pipelines tab.
+        // TODO: add multi-page support by following `Link: <...>; rel="next"` headers.
         let per_page = (page_size * 10).clamp(1, 100);
         let endpoint = format!("repos/{project}/actions/runs?per_page={per_page}");
         let raw = self.run_gh(&["api", &endpoint], "Fetching Actions").await?;

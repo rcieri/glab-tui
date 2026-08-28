@@ -4,6 +4,10 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{Duration, Instant};
 
 /// Maximum concurrent CLI subprocesses allowed in flight across the entire application.
+///
+/// This limit is shared across both `GhBackend` and `GlabBackend`. A large concurrent
+/// GitLab paginated fetch can temporarily occupy all slots; at the default `api_per_page = 100`
+/// this is typically a single request per tab, so starvation is rare in practice.
 pub const MAX_CONCURRENT_REQUESTS: usize = 8;
 
 /// Minimum delay between starting consecutive requests to prevent secondary / abuse rate limits.
@@ -33,6 +37,11 @@ impl ApiRateLimiter {
     }
 
     /// Acquire a concurrency permit and enforce minimum inter-request burst delay.
+    ///
+    /// This is **start-time pacing**: the delay is measured between when requests are
+    /// *issued*, not when they *complete*. Up to `MAX_CONCURRENT_REQUESTS` subprocesses
+    /// may be in flight simultaneously once they have each passed through this gate,
+    /// which prevents burst issuance while allowing legitimate concurrent activity.
     pub async fn pace_request(&self) -> tokio::sync::SemaphorePermit<'_> {
         let permit = self.semaphore.acquire().await.expect("semaphore closed");
         let mut last = self.last_request_time.lock().await;
@@ -68,11 +77,21 @@ pub fn is_rate_limit_error(msg: &str) -> bool {
 }
 
 fn calculate_jitter(attempt: u32) -> Duration {
+    // Mix the current thread ID into the jitter so concurrent tasks retrying after
+    // the same 429 window don't all produce the same delay (which would cause a
+    // thundering-herd on the next attempt). `ThreadId::as_u64` is nightly-only,
+    // so we derive a stable hash from its Debug representation instead.
+    let thread_hash: u32 = format!("{:?}", std::thread::current().id())
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(42);
-    let jitter_ms = (nanos.wrapping_add(attempt * 7919) % 100) as u64;
+    let mixed = nanos
+        .wrapping_add(thread_hash)
+        .wrapping_add(attempt.wrapping_mul(7919));
+    let jitter_ms = (mixed % 200) as u64;
     Duration::from_millis(jitter_ms)
 }
 

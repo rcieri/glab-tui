@@ -81,6 +81,9 @@ pub async fn handle_active_tab_key(
                             crate::app::Field::multi_select("Milestone", String::new()),
                             crate::app::Field::multi_select("Labels", String::new()),
                         ],
+                        // Bulk-edit forms start empty; `open_edit_menu` will snapshot all
+                        // blank values as the baseline. The `IssueUpdate::is_empty()` guard
+                        // in the dispatcher handles the true no-op case (nothing filled in).
                         initial_fields: std::collections::HashMap::new(),
                         selected_idx: 0,
                         entity_iid: 0,
@@ -338,6 +341,9 @@ pub async fn handle_active_tab_key(
                             crate::app::Field::multi_select("Milestone", String::new()),
                             crate::app::Field::multi_select("Labels", String::new()),
                         ],
+                        // Bulk-edit forms start empty; `open_edit_menu` will snapshot all
+                        // blank values as the baseline. The `MrUpdate::is_empty()` guard
+                        // in the dispatcher handles the true no-op case (nothing filled in).
                         initial_fields: std::collections::HashMap::new(),
                         selected_idx: 0,
                         entity_iid: 0,

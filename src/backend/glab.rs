@@ -14,9 +14,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::process::Command;
-use tokio::sync::Semaphore;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinSet;
 
@@ -239,14 +237,25 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
     Ok(out)
 }
 
-/// Maximum `glab` subprocesses in flight for one paged fetch.
-const MAX_CONCURRENT_REQUESTS: usize = 8;
-
 /// Run one `glab` invocation and log it to the terminal pane.
 ///
 /// Free-standing rather than a method so its future is `'static` and can be
 /// spawned: `tx` is the only state a command needs from `GlabBackend`.
 async fn run_glab_command(
+    tx: Option<UnboundedSender<Event>>,
+    args: Vec<String>,
+    desc: String,
+) -> Result<String> {
+    super::rate_limit::execute_with_retry(|| {
+        let tx = tx.clone();
+        let args = args.clone();
+        let desc = desc.clone();
+        async move { run_glab_command_inner(tx, args, desc).await }
+    })
+    .await
+}
+
+async fn run_glab_command_inner(
     tx: Option<UnboundedSender<Event>>,
     args: Vec<String>,
     desc: String,
@@ -297,19 +306,12 @@ async fn run_glab_concurrent(
     desc: &str,
 ) -> Vec<(usize, Result<String>)> {
     let total = requests.len();
-    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
     let mut tasks = JoinSet::new();
 
     for (index, args) in requests.into_iter().enumerate() {
         let tx = tx.clone();
         let desc = desc.to_string();
-        let permits = Arc::clone(&permits);
-        tasks.spawn(async move {
-            // Held until the request finishes, so the permit — not the number
-            // of spawned tasks — bounds the subprocesses in flight.
-            let _permit = permits.acquire_owned().await;
-            (index, run_glab_command(tx, args, desc).await)
-        });
+        tasks.spawn(async move { (index, run_glab_command(tx, args, desc).await) });
     }
 
     let mut slots: Vec<Option<Result<String>>> = (0..total).map(|_| None).collect();
@@ -2643,82 +2645,105 @@ impl Backend for GlabBackend {
         body: Option<&str>,
         desc: &str,
     ) -> Result<String> {
-        let mut cmd_args: Vec<String> = vec!["api".into()];
-        if method != "GET" {
-            cmd_args.push("-X".into());
-            cmd_args.push(method.into());
-        }
-        cmd_args.push(endpoint.into());
-        let cmd_str = format!("glab {}", cmd_args.join(" "));
-        let label = desc.to_uppercase();
+        let tx = self.tx.clone();
+        let endpoint = endpoint.to_string();
+        let method = method.to_string();
+        let body = body.map(ToString::to_string);
+        let desc = desc.to_string();
+        super::rate_limit::execute_with_retry(|| {
+            let tx = tx.clone();
+            let endpoint = endpoint.clone();
+            let method = method.clone();
+            let body = body.clone();
+            let desc = desc.clone();
+            async move { run_glab_raw_api(tx, &endpoint, &method, body.as_deref(), &desc).await }
+        })
+        .await
+    }
+}
 
-        let mut cmd = Command::new("glab");
-        cmd.arg("api");
-        if method != "GET" {
-            cmd.arg("-X");
-            cmd.arg(method);
-        }
-        if let Some(b) = body {
-            if !b.is_empty() {
-                cmd.arg("--input");
-                cmd.arg("-");
-                cmd.stdin(std::process::Stdio::piped());
-            }
-        }
-        cmd.arg(endpoint);
+async fn run_glab_raw_api(
+    tx: Option<UnboundedSender<Event>>,
+    endpoint: &str,
+    method: &str,
+    body: Option<&str>,
+    desc: &str,
+) -> Result<String> {
+    let mut cmd_args: Vec<String> = vec!["api".into()];
+    if method != "GET" {
+        cmd_args.push("-X".into());
+        cmd_args.push(method.into());
+    }
+    cmd_args.push(endpoint.into());
+    let cmd_str = format!("glab {}", cmd_args.join(" "));
+    let label = desc.to_uppercase();
 
-        let output = if let Some(b) = body {
-            if !b.is_empty() {
-                let mut child = cmd.spawn().context("Failed to spawn glab api command")?;
-                use tokio::io::AsyncWriteExt;
-                if let Some(mut stdin) = child.stdin.take() {
-                    stdin.write_all(b.as_bytes()).await?;
-                    stdin.flush().await?;
-                }
-                child.wait_with_output().await
-            } else {
-                cmd.output().await
+    let mut cmd = Command::new("glab");
+    cmd.arg("api");
+    if method != "GET" {
+        cmd.arg("-X");
+        cmd.arg(method);
+    }
+    if let Some(b) = body {
+        if !b.is_empty() {
+            cmd.arg("--input");
+            cmd.arg("-");
+            cmd.stdin(std::process::Stdio::piped());
+        }
+    }
+    cmd.arg(endpoint);
+
+    let output = if let Some(b) = body {
+        if !b.is_empty() {
+            let mut child = cmd.spawn().context("Failed to spawn glab api command")?;
+            use tokio::io::AsyncWriteExt;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(b.as_bytes()).await?;
+                stdin.flush().await?;
             }
+            child.wait_with_output().await
         } else {
             cmd.output().await
-        };
+        }
+    } else {
+        cmd.output().await
+    };
 
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let s = String::from_utf8(out.stdout)?;
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: format!("{}: {}", label, cmd_str),
-                            status: "Success".to_string(),
-                        });
-                    }
-                    Ok(s)
-                } else {
-                    let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: format!("{}: {}", label, cmd_str),
-                            status: format!("Failed: {}", err_msg),
-                        });
-                    }
-                    anyhow::bail!("glab api failed: {}", err_msg)
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let s = String::from_utf8(out.stdout)?;
+                if let Some(ref tx) = tx {
+                    let _ = tx.send(Event::TerminalCommandLogged {
+                        timestamp,
+                        command: format!("{}: {}", label, cmd_str),
+                        status: "Success".to_string(),
+                    });
                 }
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                if let Some(ref tx) = self.tx {
+                Ok(s)
+            } else {
+                let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
                         command: format!("{}: {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }
-                Err(e.into())
+                anyhow::bail!("glab api failed: {}", err_msg)
             }
+        }
+        Err(e) => {
+            let err_msg = format!("{}", e);
+            if let Some(ref tx) = tx {
+                let _ = tx.send(Event::TerminalCommandLogged {
+                    timestamp,
+                    command: format!("{}: {}", label, cmd_str),
+                    status: format!("Failed: {}", err_msg),
+                });
+            }
+            Err(e.into())
         }
     }
 }

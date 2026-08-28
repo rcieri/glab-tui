@@ -733,7 +733,11 @@ pub async fn handle_active_tab_key(
                                     }
                                     app.selected_pipelines.clear();
                                     tokio::spawn(async move {
-                                        for p_id in &pipe_ids {
+                                        for (i, p_id) in pipe_ids.iter().enumerate() {
+                                            if i > 0 {
+                                                crate::backend::rate_limit::pace_bulk_operation()
+                                                    .await;
+                                            }
                                             let _ = client_clone
                                                 .retry_pipeline(&project_context, *p_id)
                                                 .await;
@@ -950,7 +954,11 @@ pub async fn handle_active_tab_key(
                                     }
                                     app.selected_jobs.clear();
                                     tokio::spawn(async move {
-                                        for j_id in &job_ids {
+                                        for (i, j_id) in job_ids.iter().enumerate() {
+                                            if i > 0 {
+                                                crate::backend::rate_limit::pace_bulk_operation()
+                                                    .await;
+                                            }
                                             let _ = client_clone
                                                 .retry_job(&project_context, *j_id)
                                                 .await;

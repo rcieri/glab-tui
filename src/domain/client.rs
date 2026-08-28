@@ -514,7 +514,10 @@ impl GitlabClient {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        for &iid in iids {
+        for (i, &iid) in iids.iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
             self.backend
                 .update_issue_labels(project, iid, &add, &[])
                 .await?;
@@ -536,7 +539,10 @@ impl GitlabClient {
             .map(|s| s.trim().trim_start_matches('@').to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        for &iid in iids {
+        for (i, &iid) in iids.iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
             self.backend
                 .update_issue_assignees(project, iid, &add, &[])
                 .await?;
@@ -559,7 +565,10 @@ impl GitlabClient {
         } else {
             trimmed
         };
-        for &iid in iids {
+        for (i, &iid) in iids.iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
             self.backend
                 .update_issue_milestone(project, iid, target)
                 .await?;
@@ -581,7 +590,10 @@ impl GitlabClient {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        for &iid in iids {
+        for (i, &iid) in iids.iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
             self.backend
                 .update_mr_labels(project, iid, &add, &[])
                 .await?;
@@ -603,7 +615,10 @@ impl GitlabClient {
             .map(|s| s.trim().trim_start_matches('@').to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        for &iid in iids {
+        for (i, &iid) in iids.iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
             self.backend
                 .update_mr_assignees(project, iid, &add, &[])
                 .await?;
@@ -626,7 +641,10 @@ impl GitlabClient {
         } else {
             trimmed
         };
-        for &iid in iids {
+        for (i, &iid) in iids.iter().enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
             self.backend
                 .update_mr_milestone(project, iid, target)
                 .await?;

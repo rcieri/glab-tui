@@ -1,5 +1,6 @@
 pub mod gh;
 pub mod glab;
+pub mod rate_limit;
 
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};

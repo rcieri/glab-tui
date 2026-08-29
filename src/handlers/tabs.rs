@@ -151,6 +151,11 @@ pub async fn handle_active_tab_key(
                     }
                 }
             }
+            _ if keybinding_matches(&app.config.keybindings.issues.copy_reference, key_event) => {
+                if let Err(error) = app.copy_selected_issue_reference() {
+                    app.show_error(format!("Failed to copy issue reference: {error}"));
+                }
+            }
             _ if keybinding_matches(&app.config.keybindings.issues.open_in_browser, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {

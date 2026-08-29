@@ -30,6 +30,90 @@ fn normalize_labels(s: &str) -> String {
     s.replace(", ", ",")
 }
 
+#[derive(Deserialize)]
+struct GhIssueJson {
+    number: u64,
+    title: String,
+    state: String,
+    url: String,
+    #[serde(default)]
+    labels: Vec<serde_json::Value>,
+    author: Option<GhIssueLogin>,
+    body: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(rename = "updatedAt")]
+    updated_at: String,
+    #[serde(rename = "closedAt")]
+    closed_at: Option<String>,
+    milestone: Option<GhIssueMilestone>,
+    #[serde(default)]
+    assignees: Vec<GhIssueLogin>,
+}
+
+#[derive(Deserialize)]
+struct GhIssueLogin {
+    login: String,
+}
+
+#[derive(Deserialize)]
+struct GhIssueMilestone {
+    title: String,
+}
+
+fn issue_from_gh_json(issue: GhIssueJson) -> Issue {
+    let state = if issue.state == "OPEN" {
+        "opened"
+    } else {
+        "closed"
+    }
+    .to_string();
+    let labels = issue
+        .labels
+        .iter()
+        .filter_map(|value| value.get("name")?.as_str().map(String::from))
+        .collect();
+
+    Issue {
+        iid: issue.number,
+        title: issue.title,
+        state,
+        labels,
+        updated_at: issue.updated_at,
+        created_at: Some(issue.created_at),
+        closed_at: issue.closed_at,
+        author: crate::domain::issues::Author {
+            username: issue.author.map(|author| author.login).unwrap_or_default(),
+        },
+        milestone: issue
+            .milestone
+            .map(|milestone| crate::domain::issues::Milestone {
+                title: milestone.title,
+            }),
+        assignees: issue
+            .assignees
+            .into_iter()
+            .map(|assignee| crate::domain::issues::Assignee {
+                username: assignee.login,
+            })
+            .collect(),
+        description: issue.body,
+        due_date: None,
+        web_url: issue.url,
+    }
+}
+
+fn parse_gh_issue(raw: &str) -> Result<Issue> {
+    Ok(issue_from_gh_json(serde_json::from_str(raw)?))
+}
+
+fn parse_gh_issues(raw: &str) -> Result<Vec<Issue>> {
+    Ok(serde_json::from_str::<Vec<GhIssueJson>>(raw)?
+        .into_iter()
+        .map(issue_from_gh_json)
+        .collect())
+}
+
 /// `None` for anything that is not a usable login, so an unknown user can
 /// never be mistaken for a known one. Never returns `Some("")`.
 fn parse_gh_login(raw: &str) -> Option<String> {
@@ -273,7 +357,7 @@ impl Backend for GhBackend {
                     "issue",
                     "list",
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url",
                     "-R",
                     project,
                     "--state",
@@ -285,77 +369,7 @@ impl Backend for GhBackend {
             )
             .await?;
 
-        #[derive(Deserialize)]
-        struct GhIssue {
-            number: u64,
-            title: String,
-            state: String,
-            #[serde(default)]
-            labels: Vec<serde_json::Value>,
-            author: Option<GhLogin>,
-            body: Option<String>,
-            #[serde(rename = "createdAt")]
-            #[allow(dead_code)]
-            created_at: String,
-            #[serde(rename = "updatedAt")]
-            updated_at: String,
-            #[serde(rename = "closedAt")]
-            closed_at: Option<String>,
-            milestone: Option<GhMs>,
-            #[serde(default)]
-            assignees: Vec<GhLogin>,
-        }
-        #[derive(Deserialize)]
-        struct GhLogin {
-            login: String,
-        }
-        #[derive(Deserialize)]
-        struct GhMs {
-            title: String,
-        }
-
-        let gh_issues: Vec<GhIssue> = serde_json::from_str(&raw)?;
-        Ok(gh_issues
-            .into_iter()
-            .map(|gi| {
-                let state = if gi.state == "OPEN" {
-                    "opened"
-                } else {
-                    "closed"
-                }
-                .to_string();
-                let labels: Vec<String> = gi
-                    .labels
-                    .iter()
-                    .filter_map(|v| v.get("name")?.as_str().map(String::from))
-                    .collect();
-                let author = crate::domain::issues::Author {
-                    username: gi.author.map(|a| a.login).unwrap_or_default(),
-                };
-                let milestone = gi
-                    .milestone
-                    .map(|m| crate::domain::issues::Milestone { title: m.title });
-                let assignees: Vec<crate::domain::issues::Assignee> = gi
-                    .assignees
-                    .into_iter()
-                    .map(|a| crate::domain::issues::Assignee { username: a.login })
-                    .collect();
-                Issue {
-                    iid: gi.number,
-                    title: gi.title,
-                    state,
-                    labels,
-                    updated_at: gi.updated_at,
-                    created_at: Some(gi.created_at),
-                    closed_at: gi.closed_at,
-                    author,
-                    milestone,
-                    assignees,
-                    description: gi.body,
-                    due_date: None,
-                }
-            })
-            .collect())
+        parse_gh_issues(&raw)
     }
 
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue> {
@@ -366,78 +380,14 @@ impl Backend for GhBackend {
                     "view",
                     &iid.to_string(),
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url",
                     "-R",
                     project,
                 ],
                 "Fetching Issue",
             )
             .await?;
-        #[derive(Deserialize)]
-        struct GhIssue {
-            number: u64,
-            title: String,
-            state: String,
-            #[serde(default)]
-            labels: Vec<serde_json::Value>,
-            author: Option<GhLogin>,
-            body: Option<String>,
-            #[serde(rename = "createdAt")]
-            #[allow(dead_code)]
-            created_at: String,
-            #[serde(rename = "updatedAt")]
-            updated_at: String,
-            #[serde(rename = "closedAt")]
-            closed_at: Option<String>,
-            milestone: Option<GhMs>,
-            #[serde(default)]
-            assignees: Vec<GhLogin>,
-        }
-        #[derive(Deserialize)]
-        struct GhLogin {
-            login: String,
-        }
-        #[derive(Deserialize)]
-        struct GhMs {
-            title: String,
-        }
-        let gi: GhIssue = serde_json::from_str(&raw)?;
-        let state = if gi.state == "OPEN" {
-            "opened"
-        } else {
-            "closed"
-        }
-        .to_string();
-        let labels: Vec<String> = gi
-            .labels
-            .iter()
-            .filter_map(|v| v.get("name")?.as_str().map(String::from))
-            .collect();
-        let author = crate::domain::issues::Author {
-            username: gi.author.map(|a| a.login).unwrap_or_default(),
-        };
-        let milestone = gi
-            .milestone
-            .map(|m| crate::domain::issues::Milestone { title: m.title });
-        let assignees: Vec<crate::domain::issues::Assignee> = gi
-            .assignees
-            .into_iter()
-            .map(|a| crate::domain::issues::Assignee { username: a.login })
-            .collect();
-        Ok(Issue {
-            iid: gi.number,
-            title: gi.title,
-            state,
-            labels,
-            updated_at: gi.updated_at,
-            created_at: Some(gi.created_at),
-            closed_at: gi.closed_at,
-            author,
-            milestone,
-            assignees,
-            description: gi.body,
-            due_date: None,
-        })
+        parse_gh_issue(&raw)
     }
 
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()> {
@@ -1603,7 +1553,7 @@ impl Backend for GhBackend {
                     "issue",
                     "list",
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url",
                     "-R",
                     project,
                     "--milestone",
@@ -1616,76 +1566,7 @@ impl Backend for GhBackend {
                 "Fetching Milestone Issues",
             )
             .await?;
-        #[derive(Deserialize)]
-        struct GhIssue {
-            number: u64,
-            title: String,
-            state: String,
-            #[serde(default)]
-            labels: Vec<serde_json::Value>,
-            author: Option<GhLogin>,
-            body: Option<String>,
-            #[serde(rename = "createdAt")]
-            #[allow(dead_code)]
-            created_at: String,
-            #[serde(rename = "updatedAt")]
-            updated_at: String,
-            #[serde(rename = "closedAt")]
-            closed_at: Option<String>,
-            milestone: Option<GhMs>,
-            #[serde(default)]
-            assignees: Vec<GhLogin>,
-        }
-        #[derive(Deserialize)]
-        struct GhLogin {
-            login: String,
-        }
-        #[derive(Deserialize)]
-        struct GhMs {
-            title: String,
-        }
-        let gh_issues: Vec<GhIssue> = serde_json::from_str(&raw)?;
-        Ok(gh_issues
-            .into_iter()
-            .map(|gi| {
-                let state = if gi.state == "OPEN" {
-                    "opened"
-                } else {
-                    "closed"
-                }
-                .to_string();
-                let labels: Vec<String> = gi
-                    .labels
-                    .iter()
-                    .filter_map(|v| v.get("name")?.as_str().map(String::from))
-                    .collect();
-                let author = crate::domain::issues::Author {
-                    username: gi.author.map(|a| a.login).unwrap_or_default(),
-                };
-                let milestone = gi
-                    .milestone
-                    .map(|m| crate::domain::issues::Milestone { title: m.title });
-                let assignees: Vec<crate::domain::issues::Assignee> = gi
-                    .assignees
-                    .into_iter()
-                    .map(|a| crate::domain::issues::Assignee { username: a.login })
-                    .collect();
-                Issue {
-                    iid: gi.number,
-                    title: gi.title,
-                    state,
-                    labels,
-                    updated_at: gi.updated_at,
-                    created_at: Some(gi.created_at),
-                    closed_at: gi.closed_at,
-                    author,
-                    milestone,
-                    assignees,
-                    description: gi.body,
-                    due_date: None,
-                }
-            })
-            .collect())
+        parse_gh_issues(&raw)
     }
 
     async fn create_milestone(
@@ -2363,6 +2244,57 @@ mod tests {
         assert_eq!(normalize_labels("bug, feature"), "bug,feature");
         assert_eq!(normalize_labels("bug,feature"), "bug,feature");
         assert_eq!(normalize_labels("bug"), "bug");
+    }
+
+    #[test]
+    fn github_issue_json_produces_a_copyable_reference() {
+        let raw = r#"{
+            "number": 42,
+            "title": "Fix parser",
+            "state": "OPEN",
+            "labels": [{"name": "bug"}],
+            "author": {"login": "octocat"},
+            "body": "Details",
+            "createdAt": "2026-08-29T10:00:00Z",
+            "updatedAt": "2026-08-29T11:00:00Z",
+            "closedAt": null,
+            "milestone": null,
+            "assignees": [],
+            "url": "https://github.com/acme/project/issues/42"
+        }"#;
+
+        let issue = parse_gh_issue(raw).unwrap();
+
+        assert_eq!(
+            issue.markdown_reference(),
+            "[#42: Fix parser](https://github.com/acme/project/issues/42)"
+        );
+    }
+
+    #[test]
+    fn github_issue_list_json_keeps_each_copyable_url() {
+        let raw = r#"[{
+            "number": 42,
+            "title": "Fix parser",
+            "state": "OPEN",
+            "labels": [],
+            "author": {"login": "octocat"},
+            "body": null,
+            "createdAt": "2026-08-29T10:00:00Z",
+            "updatedAt": "2026-08-29T11:00:00Z",
+            "closedAt": null,
+            "milestone": null,
+            "assignees": [],
+            "url": "https://github.com/acme/project/issues/42"
+        }]"#;
+
+        let issues = parse_gh_issues(raw).unwrap();
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0].markdown_reference(),
+            "[#42: Fix parser](https://github.com/acme/project/issues/42)"
+        );
     }
 
     #[test]

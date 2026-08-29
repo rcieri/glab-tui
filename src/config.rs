@@ -691,6 +691,8 @@ pub struct KeybindingIssues {
     pub create_mr: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_copy_reference")]
+    pub copy_reference: String,
     #[serde(default)]
     pub selection_toggle: String,
 }
@@ -892,6 +894,7 @@ keybind_defaults! {
     def_create_issue = "n",
     def_select_issue = "Space",
     def_create_mr_issue = "m",
+    def_copy_reference = "y",
     def_edit_entity = "e",
     def_close_entity = "c",
     def_reopen_entity = "r",
@@ -973,6 +976,7 @@ impl Default for KeybindingIssues {
             select_issue: def_select_issue(),
             create_mr: def_create_mr_issue(),
             open_in_browser: def_open_in_browser(),
+            copy_reference: def_copy_reference(),
             selection_toggle: def_selection_toggle(),
         }
     }
@@ -1876,6 +1880,11 @@ page_size = 250
         assert_eq!(github.backend, Some(crate::backend::BackendKind::GitHub));
         let gitlab: Config = toml::from_str("backend = \"gitlab\"").expect("parse config");
         assert_eq!(gitlab.backend, Some(crate::backend::BackendKind::GitLab));
+    }
+
+    #[test]
+    fn copy_issue_reference_defaults_to_y() {
+        assert_eq!(Config::default().keybindings.issues.copy_reference, "y");
     }
 
     #[test]

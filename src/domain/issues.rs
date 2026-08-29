@@ -34,6 +34,19 @@ pub struct Issue {
     pub description: Option<String>,
     #[serde(default)]
     pub due_date: Option<String>,
+    #[serde(default)]
+    pub web_url: String,
+}
+
+impl Issue {
+    pub fn markdown_reference(&self) -> String {
+        let title = self
+            .title
+            .replace('\\', "\\\\")
+            .replace('[', "\\[")
+            .replace(']', "\\]");
+        format!("[#{}: {}]({})", self.iid, title, self.web_url)
+    }
 }
 
 pub async fn list_issues(
@@ -60,6 +73,48 @@ pub async fn get_issue(client: &GitlabClient, project_path: &str, iid: u64) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_reference_is_a_markdown_link_with_id_and_title() {
+        let issue: Issue = serde_json::from_str(
+            r#"{
+                "iid": 42,
+                "title": "Fix parser",
+                "state": "opened",
+                "labels": [],
+                "updated_at": "2026-07-03T00:00:00Z",
+                "author": { "username": "testuser" },
+                "web_url": "https://github.com/acme/project/issues/42"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            issue.markdown_reference(),
+            "[#42: Fix parser](https://github.com/acme/project/issues/42)"
+        );
+    }
+
+    #[test]
+    fn issue_reference_escapes_markdown_link_text() {
+        let issue: Issue = serde_json::from_str(
+            r#"{
+                "iid": 42,
+                "title": "Fix [parser] \\ paths",
+                "state": "opened",
+                "labels": [],
+                "updated_at": "2026-07-03T00:00:00Z",
+                "author": { "username": "testuser" },
+                "web_url": "https://github.com/acme/project/issues/42"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            issue.markdown_reference(),
+            r"[#42: Fix \[parser\] \\ paths](https://github.com/acme/project/issues/42)"
+        );
+    }
 
     #[test]
     fn test_deserialize_issue_due_date() {

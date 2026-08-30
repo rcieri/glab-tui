@@ -1951,23 +1951,29 @@ pub fn render(f: &mut Frame, app: &mut App) {
             if at.elapsed() > std::time::Duration::from_secs(5) {
                 app.error_message = None;
                 app.error_message_at = None;
+                app.error_has_cli_detail = false;
             }
         }
     }
     if let Some(ref msg) = app.error_message {
         let theme = THEME.read().unwrap();
         let icons = ICONS.read().unwrap();
+        let show_hint = app.error_has_cli_detail;
 
         // First content line: "  <icon> <msg>  "
         let label = format!("  {} {}  ", icons.status_failed, msg);
         let hint = "  Full details in the terminal log below  ";
 
-        // Box width: widest of the two content lines, capped to terminal width
-        let content_w = label.chars().count().max(hint.chars().count()) as u16;
+        // Box width: content line width (plus hint width when shown), capped to terminal width
+        let content_w = if show_hint {
+            label.chars().count().max(hint.chars().count()) as u16
+        } else {
+            label.chars().count() as u16
+        };
         let inner_w = content_w.min(size.width.saturating_sub(4));
         let box_w = inner_w + 2;
-        // 4 rows: top border + error line + hint line + bottom border
-        let box_h = 4u16;
+        // 4 rows when hint is shown, 3 rows otherwise
+        let box_h = if show_hint { 4u16 } else { 3u16 };
         let box_x = size.x + (size.width.saturating_sub(box_w)) / 2;
         let box_y = size.height.saturating_sub(box_h + 1);
         let toast_area = Rect::new(box_x, box_y, box_w, box_h);
@@ -1988,29 +1994,39 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let inner = block.inner(toast_area);
         f.render_widget(block, toast_area);
 
-        // Split inner into two rows: error message + hint
-        use ratatui::layout::Layout;
-        let rows = Layout::default()
-            .direction(ratatui::layout::Direction::Vertical)
-            .constraints([
-                ratatui::layout::Constraint::Length(1),
-                ratatui::layout::Constraint::Length(1),
-            ])
-            .split(inner);
+        if show_hint {
+            // Split inner into two rows: error message + hint
+            use ratatui::layout::Layout;
+            let rows = Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Length(1),
+                    ratatui::layout::Constraint::Length(1),
+                ])
+                .split(inner);
 
-        // Row 0 — error message (truncated, bold red)
-        let display = truncate(&label, rows[0].width as usize);
-        let toast = Paragraph::new(display.as_str())
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(theme.red).add_modifier(Modifier::BOLD))
-            .wrap(Wrap { trim: false });
-        f.render_widget(toast, rows[0]);
+            // Row 0 — error message (truncated, bold red)
+            let display = truncate(&label, rows[0].width as usize);
+            let toast = Paragraph::new(display.as_str())
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(theme.red).add_modifier(Modifier::BOLD))
+                .wrap(Wrap { trim: false });
+            f.render_widget(toast, rows[0]);
 
-        // Row 1 — muted hint pointing to the terminal log
-        let hint_display = truncate(hint, rows[1].width as usize);
-        let hint_widget = Paragraph::new(hint_display.as_str())
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(theme.text_muted));
-        f.render_widget(hint_widget, rows[1]);
+            // Row 1 — muted hint pointing to the terminal log
+            let hint_display = truncate(hint, rows[1].width as usize);
+            let hint_widget = Paragraph::new(hint_display.as_str())
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(theme.text_muted));
+            f.render_widget(hint_widget, rows[1]);
+        } else {
+            // No hint — single content row, truncated to inner width
+            let display = truncate(&label, inner.width as usize);
+            let toast = Paragraph::new(display.as_str())
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(theme.red).add_modifier(Modifier::BOLD))
+                .wrap(Wrap { trim: false });
+            f.render_widget(toast, inner);
+        }
     }
 }

@@ -1499,6 +1499,8 @@ async fn main() -> Result<()> {
                         }
                         Err(err) => {
                             app.show_error(err);
+                            // CLI failure: full stderr is in the terminal log.
+                            app.error_has_cli_detail = true;
                         }
                     }
                 }

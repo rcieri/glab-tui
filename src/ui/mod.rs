@@ -1958,13 +1958,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let theme = THEME.read().unwrap();
         let icons = ICONS.read().unwrap();
 
-        // Inner content: "  <icon> <msg>  "
+        // First content line: "  <icon> <msg>  "
         let label = format!("  {} {}  ", icons.status_failed, msg);
-        // Box width: content + 2 border chars, capped to terminal width
-        let inner_w = (label.chars().count() as u16).min(size.width.saturating_sub(4));
+        let hint = "  Full details in the terminal log below  ";
+
+        // Box width: widest of the two content lines, capped to terminal width
+        let content_w = label.chars().count().max(hint.chars().count()) as u16;
+        let inner_w = content_w.min(size.width.saturating_sub(4));
         let box_w = inner_w + 2;
-        // Anchor near the bottom but above the last row so the border is never clipped
-        let box_h = 3u16;
+        // 4 rows: top border + error line + hint line + bottom border
+        let box_h = 4u16;
         let box_x = size.x + (size.width.saturating_sub(box_w)) / 2;
         let box_y = size.height.saturating_sub(box_h + 1);
         let toast_area = Rect::new(box_x, box_y, box_w, box_h);
@@ -1985,12 +1988,29 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let inner = block.inner(toast_area);
         f.render_widget(block, toast_area);
 
-        // Truncate label to inner width so it never overflows the border
-        let display = truncate(&label, inner.width as usize);
+        // Split inner into two rows: error message + hint
+        use ratatui::layout::Layout;
+        let rows = Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Length(1),
+            ])
+            .split(inner);
+
+        // Row 0 — error message (truncated, bold red)
+        let display = truncate(&label, rows[0].width as usize);
         let toast = Paragraph::new(display.as_str())
             .alignment(Alignment::Center)
             .style(Style::default().fg(theme.red).add_modifier(Modifier::BOLD))
             .wrap(Wrap { trim: false });
-        f.render_widget(toast, inner);
+        f.render_widget(toast, rows[0]);
+
+        // Row 1 — muted hint pointing to the terminal log
+        let hint_display = truncate(hint, rows[1].width as usize);
+        let hint_widget = Paragraph::new(hint_display.as_str())
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(theme.text_muted));
+        f.render_widget(hint_widget, rows[1]);
     }
 }

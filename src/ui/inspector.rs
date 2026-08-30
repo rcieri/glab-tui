@@ -113,9 +113,11 @@ pub(crate) fn render_entity_inspector(
     // mode-driven inputs to the shared layout below.
     let (has_content, selected_idx, editing, cursor_pos, skip_description) = match &mode {
         InspectorMode::Interactive { menu } => (
-            menu.fields
-                .iter()
-                .any(|f| f.label == "Description" && f.kind == FieldType::Text),
+            matches!(&doc.content, InspectorContent::Custom(lines) if !lines.is_empty())
+                || menu.fields.iter().any(|f| {
+                    (f.label == "Description" || f.label == "Release Notes")
+                        && f.kind == FieldType::Text
+                }),
             Some(menu.selected_idx),
             menu.editing,
             menu.cursor_pos,
@@ -138,11 +140,27 @@ pub(crate) fn render_entity_inspector(
 
     let has_fields = !doc.fields.is_empty();
 
-    if has_content && has_fields && inner.width >= 70 {
-        // Two panes: fields on the left, content on the right.
+    if has_content && has_fields {
+        // Single column: metadata fields on top, full-width markdown below.
+        // Replaces the old side-by-side duplex (and the narrow stacked)
+        // layouts — the description now owns the full width beneath the
+        // metadata, which is always visible.
+        let field_count = doc
+            .fields
+            .iter()
+            .filter(|f| {
+                !(f.kind == FieldType::Section
+                    && (f.label.to_uppercase() == "DESCRIPTION"
+                        || f.label.to_uppercase() == "RELEASE NOTES"))
+            })
+            .count() as u16;
+        let field_height = (field_count + 1)
+            .min(main_area.height.saturating_sub(4))
+            .max(3);
+
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(field_height), Constraint::Min(3)])
             .split(main_area);
 
         render_fields_list(
@@ -158,11 +176,11 @@ pub(crate) fn render_entity_inspector(
             is_interactive,
             &theme,
         );
-        render_content_pane(f, &mut mode, doc, chunks[1], Borders::LEFT);
-    } else if has_content && !has_fields {
+        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP);
+    } else if has_content {
         // Only content.
         render_content_pane(f, &mut mode, doc, main_area, Borders::NONE);
-    } else if !has_content {
+    } else {
         // Only fields.
         render_fields_list(
             f,
@@ -177,35 +195,6 @@ pub(crate) fn render_entity_inspector(
             is_interactive,
             &theme,
         );
-    } else {
-        // Narrow terminal: stack fields above content.
-        let field_count = doc
-            .fields
-            .iter()
-            .filter(|f| !(f.kind == FieldType::Section && f.label.to_uppercase() == "DESCRIPTION"))
-            .count() as u16;
-        let split_height = (field_count + 1).min(inner.height.saturating_sub(4)).max(3);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(split_height), Constraint::Min(3)])
-            .split(main_area);
-
-        render_fields_list(
-            f,
-            &mut mode,
-            &doc.fields,
-            selected_idx,
-            editing,
-            cursor_pos,
-            chunks[0],
-            label_colors,
-            skip_description,
-            is_interactive,
-            &theme,
-        );
-
-        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP);
     }
 
     // Submit/save footer (edit mode only).
@@ -269,10 +258,17 @@ fn render_content_pane(
 
     match mode {
         InspectorMode::Interactive { menu } => {
+            // Bulk-edit menus carry a Custom item list instead of a Description
+            // document; render it verbatim rather than through markdown.
+            let custom_lines = match &doc.content {
+                InspectorContent::Custom(lines) => Some(lines.clone()),
+                _ => None,
+            };
             // Description pane is driven by the document content (the helper
             // builds the doc from the menu), keyed off the Description field.
             let is_desc_selected = menu.selected_idx < doc.fields.len()
-                && doc.fields[menu.selected_idx].label == "Description"
+                && (doc.fields[menu.selected_idx].label == "Description"
+                    || doc.fields[menu.selected_idx].label == "Release Notes")
                 && doc.fields[menu.selected_idx].kind == FieldType::Text;
             let desc_value = match &doc.content {
                 InspectorContent::Markdown(m) => m.clone(),
@@ -300,7 +296,7 @@ fn render_content_pane(
 
             let desc_lines = if is_desc_selected && menu.editing {
                 let cursor_style = Style::default()
-                    .fg(theme.bg)
+                    .fg(theme.highlight_bg)
                     .bg(theme.text_normal)
                     .add_modifier(Modifier::SLOW_BLINK);
                 let block_cursor_style = Style::default()
@@ -353,6 +349,8 @@ fn render_content_pane(
                     }
                     lines
                 }
+            } else if let Some(lines) = custom_lines {
+                lines
             } else if desc_value.is_empty() {
                 vec![Line::from(Span::styled(
                     "Empty — press Enter to edit, Ctrl+E for editor",
@@ -383,6 +381,13 @@ fn render_content_pane(
 }
 
 /// Render the submit/save button footer for the editable form.
+///
+/// This footer is the gating point for all mutating API calls while the
+/// edit menu is open. The Enter handler in `main.rs` only dispatches the
+/// create/edit API call when `selected_idx` lands on this button
+/// (`fields.len() + 1`); field edits update local state via
+/// `apply_field_text_change` and are held until the user explicitly
+/// navigates here and presses Enter.
 fn render_submit_footer(
     f: &mut Frame,
     mode: &mut InspectorMode<'_>,
@@ -417,15 +422,16 @@ fn render_submit_footer(
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.border));
     f.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(
-            btn_text,
-            Style::default()
-                .fg(submit_fg)
-                .bg(submit_bg)
-                .add_modifier(Modifier::BOLD),
-        )]))
-        .block(submit_block)
-        .alignment(Alignment::Center),
+        Paragraph::new(btn_text)
+            .style(Style::default().fg(submit_fg).bg(submit_bg).add_modifier(
+                if is_submit_selected {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                },
+            ))
+            .alignment(Alignment::Center)
+            .block(submit_block),
         area,
     );
 }
@@ -449,7 +455,10 @@ pub(crate) fn build_field_list_items(
             if f.kind == FieldType::Section {
                 return false;
             }
-            if skip_description && f.kind == FieldType::Text && f.label == "Description" {
+            if skip_description
+                && f.kind == FieldType::Text
+                && (f.label == "Description" || f.label == "Release Notes")
+            {
                 return false;
             }
             true
@@ -457,15 +466,18 @@ pub(crate) fn build_field_list_items(
         .map(|f| f.label.len())
         .max()
         .unwrap_or(6)
-        .clamp(6, 12);
+        .clamp(6, 22);
 
     fields
         .iter()
         .enumerate()
         .filter(|(_, f)| {
             if skip_description {
-                !(f.kind == FieldType::Section && f.label.to_uppercase() == "DESCRIPTION")
-                    && !(f.kind == FieldType::Text && f.label == "Description")
+                !(f.kind == FieldType::Section
+                    && (f.label.to_uppercase() == "DESCRIPTION"
+                        || f.label.to_uppercase() == "RELEASE NOTES"))
+                    && !(f.kind == FieldType::Text
+                        && (f.label == "Description" || f.label == "Release Notes"))
             } else {
                 true
             }
@@ -582,7 +594,7 @@ pub(crate) fn build_field_list_items(
                         Modifier::empty()
                     });
                 let cursor_style = Style::default()
-                    .fg(theme.bg)
+                    .fg(theme.highlight_bg)
                     .bg(theme.text_normal)
                     .add_modifier(Modifier::SLOW_BLINK);
 
@@ -1140,10 +1152,63 @@ pub(crate) fn render_inspector_content(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{EntityDocument, Field, InspectorContent};
+    use crate::app::{EditEntityKind, EditMenu, EntityDocument, Field, InspectorContent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use std::collections::HashMap;
+
+    #[test]
+    fn interactive_content_pane_renders_custom_lines() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let doc = EntityDocument {
+            title: "Bulk Edit 2 Issues".to_string(),
+            fields: vec![Field::multi_select("Labels", String::new())],
+            content: InspectorContent::Custom(vec![
+                ratatui::text::Line::from("#12 Fix login flow"),
+                ratatui::text::Line::from("#34 Update docs"),
+            ]),
+        };
+        let label_colors = HashMap::new();
+        let mut menu = EditMenu {
+            title: doc.title.clone(),
+            fields: vec![Field::multi_select("Labels", String::new())],
+            initial_fields: HashMap::new(),
+            selected_idx: 0,
+            entity_iid: 0,
+            entity_kind: EditEntityKind::BulkEditIssues,
+            state: Default::default(),
+            workflow_inputs: vec![],
+            cursor_pos: 0,
+            editing: false,
+            desc_scroll: 0,
+        };
+
+        terminal
+            .draw(|f| {
+                render_entity_inspector(
+                    f,
+                    &doc,
+                    f.area(),
+                    InspectorMode::Interactive { menu: &mut menu },
+                    &label_colors,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("#12 Fix login flow"), "{rendered}");
+        assert!(rendered.contains("#34 Update docs"), "{rendered}");
+    }
 
     #[test]
     fn test_build_field_list_items_read_only() {

@@ -1656,11 +1656,6 @@ pub(crate) fn render_tab_jobs(
                 String::new()
             };
 
-            let help_text = if app.job_trace_wrap {
-                " Esc: Back | Enter: Zoom | j/k: Scroll | /: Search | f: Follow | w: No-wrap "
-            } else {
-                " Esc: Back | Enter: Zoom | j/k: Scroll | /: Search | f: Follow | w: Wrap "
-            };
             let search_suffix = if app.job_trace_search_query.is_empty() {
                 String::new()
             } else {
@@ -1682,13 +1677,6 @@ pub(crate) fn render_tab_jobs(
                     Style::default()
                         .fg(theme.text_muted)
                         .add_modifier(Modifier::BOLD),
-                )
-                .title_bottom(
-                    ratatui::text::Line::from(vec![Span::styled(
-                        help_text,
-                        Style::default().fg(theme.text_muted),
-                    )])
-                    .alignment(Alignment::Right),
                 )
                 .border_style(Style::default().fg(theme.border));
 
@@ -2149,7 +2137,7 @@ pub(crate) fn render_tab_releases(
                     Alignment::Left,
                 ));
             }
-            if app.is_column_visible(Tab::Releases, "Description") {
+            if app.is_column_visible(Tab::Releases, "Release Notes") {
                 let desc = r.description.as_deref().unwrap_or("");
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(desc, 80),
@@ -2191,8 +2179,8 @@ pub(crate) fn render_tab_releases(
             header_cells.push(Cell::from("Assets"));
             widths.push(Constraint::Length(12));
         }
-        if app.is_column_visible(Tab::Releases, "Description") {
-            header_cells.push(Cell::from("Description"));
+        if app.is_column_visible(Tab::Releases, "Release Notes") {
+            header_cells.push(Cell::from("Release Notes"));
             widths.push(Constraint::Fill(1));
         }
 

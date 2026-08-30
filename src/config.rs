@@ -146,6 +146,7 @@ pub struct Icons {
     pub label_select: String,
     pub action_delete: String,
     pub action_close: String,
+    pub action_reopen: String,
     pub action_merge: String,
     pub action_edit: String,
     pub action_create: String,
@@ -249,6 +250,7 @@ impl Icons {
             label_select: "\u{f44b}".to_string(),
             action_delete: "\u{f48e}".to_string(),
             action_close: "\u{f468}".to_string(),
+            action_reopen: "\u{f449}".to_string(), // some open/refresh icon
             action_merge: "\u{f419}".to_string(),
             action_edit: "\u{f448}".to_string(),
             action_create: "\u{f501}".to_string(),
@@ -270,6 +272,13 @@ pub enum SaveMenu {
 }
 
 pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
+    let s = s.trim();
+    // An empty color string maps to Color::Reset, which lets the terminal's
+    // own (possibly transparent) background show through instead of painting
+    // an opaque color.
+    if s.is_empty() {
+        return Some(Color::Reset);
+    }
     let s = s.trim_start_matches('#');
     if s.len() == 6 {
         let r = u8::from_str_radix(&s[0..2], 16).ok()?;
@@ -283,6 +292,7 @@ pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
 
 fn color_to_hex(c: Color) -> String {
     match c {
+        Color::Reset => String::new(),
         Color::Rgb(r, g, b) => format!("#{:02x}{:02x}{:02x}", r, g, b),
         _ => String::new(),
     }
@@ -500,11 +510,13 @@ fn themes_dir() -> PathBuf {
 fn ensure_themes() {
     let dir = themes_dir();
     let _ = std::fs::create_dir_all(&dir);
+    // Always overwrite bundled themes so users receive fixes and new tokens
+    // (e.g. diff_gutter_bg) on upgrade without deleting the themes dir.
+    // User-created themes use filenames not present in BUNDLED_THEMES and are
+    // never touched here.
     for (name, toml_str) in BUNDLED_THEMES {
         let theme_path = dir.join(format!("{}.toml", name));
-        if !theme_path.exists() {
-            let _ = std::fs::write(&theme_path, toml_str);
-        }
+        let _ = std::fs::write(&theme_path, toml_str);
     }
 }
 
@@ -528,7 +540,9 @@ impl Theme {
         if theme_path.exists() {
             if let Ok(contents) = std::fs::read_to_string(&theme_path) {
                 if let Ok(tf) = toml::from_str::<ThemeToml>(&contents) {
-                    return tf.to_theme();
+                    if let Some(theme) = tf.to_theme() {
+                        return Some(theme);
+                    }
                 }
             }
         }
@@ -1740,6 +1754,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_color_string_maps_to_reset() {
+        assert_eq!(hex_to_color(""), Some(Color::Reset));
+        assert_eq!(hex_to_color("   "), Some(Color::Reset));
+        assert_eq!(hex_to_color("\t\n"), Some(Color::Reset));
+    }
+
+    #[test]
+    fn reset_color_serializes_to_empty_string() {
+        assert_eq!(color_to_hex(Color::Reset), "");
+    }
+
+    #[test]
+    fn empty_color_round_trips_through_hex() {
+        let parsed = hex_to_color("").expect("empty string must parse");
+        assert_eq!(parsed, Color::Reset);
+        assert_eq!(color_to_hex(parsed), "");
+        assert_eq!(hex_to_color(&color_to_hex(parsed)), Some(Color::Reset));
+    }
+
+    #[test]
+    fn default_theme_uses_solid_background() {
+        let theme = Theme::default();
+        assert_eq!(theme.bg, Color::Rgb(0, 0, 0));
+        assert_eq!(theme.inactive_bg, Color::Rgb(0, 0, 0));
+        assert_eq!(theme.diff_gutter_bg, Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
     fn api_per_page_clamped_bounds_to_gitlab_range() {
         let mut cfg = Config::default();
 
@@ -1873,6 +1915,37 @@ page_size = 250
                 "Bundled theme '{name}' failed to parse into valid Theme"
             );
         }
+    }
+
+    #[test]
+    fn test_preset_falls_back_to_bundled_when_user_theme_is_invalid() {
+        let _guard = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let themes_dir = temp_dir.path().join("glab-tui").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        std::fs::write(
+            themes_dir.join("default.toml"),
+            "bg = \"\"\ninactive_bg = \"\"\n",
+        )
+        .unwrap();
+
+        let old_xdg = std::env::var("XDG_CONFIG_HOME");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+        let preset = Theme::preset("default");
+        if let Ok(old) = old_xdg {
+            unsafe {
+                std::env::set_var("XDG_CONFIG_HOME", old);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+
+        let theme = preset.expect("invalid user override must fall back to bundled theme");
+        assert_eq!(theme, Theme::default());
     }
 
     #[test]

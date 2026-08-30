@@ -16,30 +16,46 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # GNU builds — Ubuntu LTS baselines (oldest first so the fallback chain
+          # in install.sh / Homebrew formula works newest→oldest).
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            linux_variant: ubuntu-22.04
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            linux_variant: ubuntu-24.04
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: glab-tui
-            asset_name: glab-tui-linux-amd64.tar.gz
+            linux_variant: ubuntu-latest
 
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            linux_variant: ubuntu-22.04
+          - os: ubuntu-24.04
+            target: aarch64-unknown-linux-gnu
+            linux_variant: ubuntu-24.04
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            artifact_name: glab-tui
-            asset_name: glab-tui-linux-arm64.tar.gz
+            linux_variant: ubuntu-latest
 
+          # musl builds — fully static, host Ubuntu version irrelevant.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            linux_variant: musl
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-musl
+            linux_variant: musl
+
+          # Non-Linux (unchanged).
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: glab-tui
-            asset_name: glab-tui-macos-amd64.tar.gz
-
+            other_asset: glab-tui-macos-amd64.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: glab-tui
-            asset_name: glab-tui-macos-arm64.tar.gz
-
+            other_asset: glab-tui-macos-arm64.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: glab-tui.exe
-            asset_name: glab-tui-windows-amd64.zip
+            other_asset: glab-tui-windows-amd64.zip
 
     steps:
       - name: Checkout code
@@ -52,39 +68,106 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        if: startsWith(matrix.target, 'aarch64-unknown-linux')
         run: |
           sudo apt-get update -y
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Install musl tools (Linux x86_64 musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y musl-tools
+
+      - name: Compute Linux asset name
+        id: linux-asset
+        if: runner.os == 'Linux'
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64-*)  arch=amd64 ;;
+            aarch64-*) arch=arm64 ;;
+          esac
+          variant="${{ matrix.linux_variant }}"
+          if [ "$variant" = "ubuntu-latest" ]; then
+            . /etc/os-release
+            if [ -z "${VERSION_ID:-}" ]; then
+              echo "::error::Could not detect VERSION_ID on ${{ matrix.os }}"
+              exit 1
+            fi
+            variant="ubuntu-${VERSION_ID}"
+          fi
+          asset_name="glab-tui-linux-${arch}-${variant}.tar.gz"
+          echo "asset_name=${asset_name}" >> "$GITHUB_OUTPUT"
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package binary (Linux / macOS)
-        if: runner.os != 'Windows'
+      - name: Package binary (Linux)
+        if: runner.os == 'Linux'
+        env:
+          ASSET_NAME: ${{ steps.linux-asset.outputs.asset_name }}
         run: |
-          tar -czf ${{ matrix.asset_name }} \
+          tar -czf "${ASSET_NAME}" \
             -C target/${{ matrix.target }}/release \
-            ${{ matrix.artifact_name }}
+            glab-tui
+
+      - name: Package binary (macOS)
+        if: runner.os == 'macOS'
+        env:
+          ASSET_NAME: ${{ matrix.other_asset }}
+        run: |
+          tar -czf "${ASSET_NAME}" \
+            -C target/${{ matrix.target }}/release \
+            glab-tui
 
       - name: Package binary (Windows)
         if: runner.os == 'Windows'
+        env:
+          ASSET_NAME: ${{ matrix.other_asset }}
         shell: pwsh
         run: |
           Compress-Archive `
-            -Path target\${{ matrix.target }}\release\${{ matrix.artifact_name }} `
-            -DestinationPath ${{ matrix.asset_name }}
+            -Path target\${{ matrix.target }}\release\glab-tui.exe `
+            -DestinationPath $env:ASSET_NAME
 
-      - name: Generate checksums
-        run: sha256sum ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256
+      - name: Generate checksums (Linux)
+        if: runner.os == 'Linux'
+        env:
+          ASSET_NAME: ${{ steps.linux-asset.outputs.asset_name }}
+        run: sha256sum "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
 
-      - name: Upload binaries to Release
+      - name: Generate checksums (macOS / Windows)
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          ASSET_NAME: ${{ matrix.other_asset }}
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
+          else
+            shasum -a 256 "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
+          fi
+
+      - name: Upload binaries to Release (Linux)
+        if: runner.os == 'Linux'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
-            ${{ matrix.asset_name }}
-            ${{ matrix.asset_name }}.sha256
+            ${{ steps.linux-asset.outputs.asset_name }}
+            ${{ steps.linux-asset.outputs.asset_name }}.sha256
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload binaries to Release (macOS / Windows)
+        if: runner.os != 'Linux'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: |
+            ${{ matrix.other_asset }}
+            ${{ matrix.other_asset }}.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

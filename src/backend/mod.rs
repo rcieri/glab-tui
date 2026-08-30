@@ -1,5 +1,6 @@
 pub mod gh;
 pub mod glab;
+pub mod rate_limit;
 
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
@@ -51,6 +52,66 @@ impl BackendKind {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IssueUpdate {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub add_labels: Vec<String>,
+    pub remove_labels: Vec<String>,
+    pub add_assignees: Vec<String>,
+    pub remove_assignees: Vec<String>,
+    pub milestone: Option<String>,
+    pub due_date: Option<String>,
+    pub weight: Option<String>,
+    pub confidential: Option<bool>,
+}
+
+impl IssueUpdate {
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.description.is_none()
+            && self.add_labels.is_empty()
+            && self.remove_labels.is_empty()
+            && self.add_assignees.is_empty()
+            && self.remove_assignees.is_empty()
+            && self.milestone.is_none()
+            && self.due_date.is_none()
+            && self.weight.is_none()
+            && self.confidential.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MrUpdate {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub add_labels: Vec<String>,
+    pub remove_labels: Vec<String>,
+    pub add_assignees: Vec<String>,
+    pub remove_assignees: Vec<String>,
+    pub add_reviewers: Vec<String>,
+    pub remove_reviewers: Vec<String>,
+    pub milestone: Option<String>,
+    pub target_branch: Option<String>,
+    pub draft: Option<bool>,
+}
+
+impl MrUpdate {
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.description.is_none()
+            && self.add_labels.is_empty()
+            && self.remove_labels.is_empty()
+            && self.add_assignees.is_empty()
+            && self.remove_assignees.is_empty()
+            && self.add_reviewers.is_empty()
+            && self.remove_reviewers.is_empty()
+            && self.milestone.is_none()
+            && self.target_branch.is_none()
+            && self.draft.is_none()
+    }
+}
+
 #[async_trait]
 pub trait Backend: Send + Sync {
     fn kind(&self) -> BackendKind;
@@ -92,36 +153,119 @@ pub trait Backend: Send + Sync {
         due_date: &str,
         weight: &str,
     ) -> Result<()>;
-    async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()>;
+    async fn update_issue(&self, project: &str, iid: u64, update: &IssueUpdate) -> Result<()>;
+    async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                title: Some(title.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
     async fn update_issue_description(
         &self,
         project: &str,
         iid: u64,
         description: &str,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                description: Some(description.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
     async fn update_issue_labels(
         &self,
         project: &str,
         iid: u64,
         add_labels: &[String],
         remove_labels: &[String],
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                add_labels: add_labels.to_vec(),
+                remove_labels: remove_labels.to_vec(),
+                ..Default::default()
+            },
+        )
+        .await
+    }
     async fn update_issue_assignees(
         &self,
         project: &str,
         iid: u64,
         add: &[String],
         remove: &[String],
-    ) -> Result<()>;
-    async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()>;
-    async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()>;
-    async fn update_issue_weight(&self, project: &str, iid: u64, weight: &str) -> Result<()>;
+    ) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                add_assignees: add.to_vec(),
+                remove_assignees: remove.to_vec(),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                milestone: Some(milestone.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                due_date: Some(due_date.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn update_issue_weight(&self, project: &str, iid: u64, weight: &str) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                weight: Some(weight.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
     async fn update_issue_confidential(
         &self,
         project: &str,
         iid: u64,
         confidential: bool,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.update_issue(
+            project,
+            iid,
+            &IssueUpdate {
+                confidential: Some(confidential),
+                ..Default::default()
+            },
+        )
+        .await
+    }
 
     // ── Merge Requests ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
@@ -164,6 +308,7 @@ pub trait Backend: Send + Sync {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
     async fn create_mr(
@@ -188,32 +333,110 @@ pub trait Backend: Send + Sync {
         line: Option<u64>,
         old_line: Option<u64>,
     ) -> Result<()>;
-    async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()>;
-    async fn update_mr_description(&self, project: &str, iid: u64, description: &str)
-    -> Result<()>;
+    async fn update_mr(&self, project: &str, iid: u64, update: &MrUpdate) -> Result<()>;
+    async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
+        self.update_mr(
+            project,
+            iid,
+            &MrUpdate {
+                title: Some(title.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn update_mr_description(
+        &self,
+        project: &str,
+        iid: u64,
+        description: &str,
+    ) -> Result<()> {
+        self.update_mr(
+            project,
+            iid,
+            &MrUpdate {
+                description: Some(description.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
     async fn update_mr_labels(
         &self,
         project: &str,
         iid: u64,
         add_labels: &[String],
         remove_labels: &[String],
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.update_mr(
+            project,
+            iid,
+            &MrUpdate {
+                add_labels: add_labels.to_vec(),
+                remove_labels: remove_labels.to_vec(),
+                ..Default::default()
+            },
+        )
+        .await
+    }
     async fn update_mr_assignees(
         &self,
         project: &str,
         iid: u64,
         add: &[String],
         remove: &[String],
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.update_mr(
+            project,
+            iid,
+            &MrUpdate {
+                add_assignees: add.to_vec(),
+                remove_assignees: remove.to_vec(),
+                ..Default::default()
+            },
+        )
+        .await
+    }
     async fn update_mr_reviewers(
         &self,
         project: &str,
         iid: u64,
         add: &[String],
         remove: &[String],
-    ) -> Result<()>;
-    async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()>;
-    async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()>;
+    ) -> Result<()> {
+        self.update_mr(
+            project,
+            iid,
+            &MrUpdate {
+                add_reviewers: add.to_vec(),
+                remove_reviewers: remove.to_vec(),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
+        self.update_mr(
+            project,
+            iid,
+            &MrUpdate {
+                milestone: Some(milestone.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
+        self.update_mr(
+            project,
+            iid,
+            &MrUpdate {
+                target_branch: Some(branch.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+    }
 
     // ── Browser ──
     async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()>;

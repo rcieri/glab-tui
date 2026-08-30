@@ -6,9 +6,9 @@ set -euo pipefail
 # Usage: scripts/release.sh [patch|minor|major]
 #
 # With no argument, you are prompted to pick the release increment (patch is
-# the default). You are also prompted to pick the opencode model used for the
-# regenerated docs and release notes (the `opencode models` printout piped
-# through fzf; set OPENCODE_MODEL to skip the prompt). Walks the whole
+# the default). You are also prompted to pick the AI tool (agy or opencode)
+# and model used for the regenerated docs and release notes (set AI_TOOL,
+# AGY_MODEL, or OPENCODE_MODEL to skip prompts). Walks the whole
 # release: bumps the crate version, regenerates docs and demo GIFs locally
 # (where `gh` is authenticated), opens a prepare PR, waits for you to review
 # it, squash-merges it, tags and pushes the version, waits for the CI release
@@ -26,15 +26,28 @@ cd "$ROOT"
 REPO="rcieri/glab-tui"
 INCREMENT="${1:-}"
 RELEASE_WAIT_MIN="${RELEASE_WAIT_MIN:-45}"
+AI_TOOL_FROM_ENV="${AI_TOOL:-}"
+AI_TOOL="${AI_TOOL:-}"
 OPENCODE_MODEL_FROM_ENV="${OPENCODE_MODEL:-}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
-REQUIRED_ASSETS=(
-  glab-tui-linux-amd64.tar.gz
-  glab-tui-linux-arm64.tar.gz
+AGY_MODEL_FROM_ENV="${AGY_MODEL:-}"
+AGY_MODEL="${AGY_MODEL:-gemini-3.7-flash-high}"
+REQUIRED_ASSETS_STATIC=(
+  glab-tui-linux-amd64-ubuntu-22.04.tar.gz
+  glab-tui-linux-amd64-ubuntu-24.04.tar.gz
+  glab-tui-linux-arm64-ubuntu-22.04.tar.gz
+  glab-tui-linux-arm64-ubuntu-24.04.tar.gz
+  glab-tui-linux-amd64-musl.tar.gz
+  glab-tui-linux-arm64-musl.tar.gz
   glab-tui-macos-amd64.tar.gz
   glab-tui-macos-arm64.tar.gz
   glab-tui-windows-amd64.zip
 )
+
+# The ubuntu-latest runner builds produce ubuntu-<VERSION_ID> assets whose
+# version is unknown at release-script-run time (could be 26.04, 28.04, …).
+# We require at least one such asset per arch in addition to REQUIRED_ASSETS_STATIC.
+REQUIRED_ASSETS_DYNAMIC_GLOB='glab-tui-linux-{amd64,arm64}-ubuntu-*'
 
 # ---------------------------------------------------------------------------
 # colors & output helpers (auto-disabled when not a TTY or NO_COLOR is set)
@@ -122,16 +135,25 @@ progress_bar() {
     "$C_YELLOW" "$bar" "$C_RESET" "$pct" "$C_DIM" "$*" "$C_RESET"
 }
 
-run_opencode() {
-  note "opencode ($OPENCODE_MODEL), output logged to $TMP_DIR/spinner.log"
-  if ! spinner "opencode ($OPENCODE_MODEL)" \
-      opencode run --auto --model "$OPENCODE_MODEL" "$1"; then
-    die "opencode failed (log: $TMP_DIR/spinner.log)"
+run_ai() {
+  local prompt="$1"
+  if [[ "$AI_TOOL" == "agy" ]]; then
+    note "agy ($AGY_MODEL), output logged to $TMP_DIR/spinner.log"
+    if ! spinner "agy ($AGY_MODEL)" \
+        agy --dangerously-skip-permissions --model "$AGY_MODEL" -p="$prompt"; then
+      die "agy failed (log: $TMP_DIR/spinner.log)"
+    fi
+  else
+    note "opencode ($OPENCODE_MODEL), output logged to $TMP_DIR/spinner.log"
+    if ! spinner "opencode ($OPENCODE_MODEL)" \
+        opencode run --auto --model "$OPENCODE_MODEL" "$prompt"; then
+      die "opencode failed (log: $TMP_DIR/spinner.log)"
+    fi
   fi
 }
 
 # ---------------------------------------------------------------------------
-# opencode model selection (fzf over the `opencode models` printout)
+# AI tool and model selection
 # ---------------------------------------------------------------------------
 PICK_RESULT=''
 
@@ -144,7 +166,7 @@ pick() {
   local chosen="" i choice
   if command -v fzf >/dev/null 2>&1; then
     chosen="$(printf '%s\n' "${lines[@]}" |
-      fzf --prompt="$prompt> " --query="$default" --delimiter=$'\t' --with-nth=2 \
+      fzf --prompt="$prompt> " --delimiter=$'\t' --with-nth=2 \
           --exit-0 --height=40% --border --layout=reverse 2>/dev/null || true)"
   else
     printf '\n%sChoose %s%s (default: %s)\n' "$C_BOLD" "$prompt" "$C_RESET" "$default"
@@ -166,25 +188,105 @@ pick() {
   fi
 }
 
-select_opencode_model() {
-  local all_models selected current
-  local -a model_lines=()
+select_ai_tool() {
+  if [[ -n "${AI_TOOL:-}" ]]; then
+    return 0
+  fi
 
-  all_models="$(opencode models)"
-  [[ -n "$all_models" ]] || die "'opencode models' returned no models"
-  current="${OPENCODE_MODEL:-opencode/big-pickle}"
+  local has_agy=0 has_opencode=0
+  command -v agy >/dev/null 2>&1 && has_agy=1 || true
+  command -v opencode >/dev/null 2>&1 && has_opencode=1 || true
 
-  note "Select the opencode model used to regenerate docs and release notes"
-  while read -r id; do
-    model_lines+=("$id"$'\t'"$id")
-  done <<< "$all_models"
-  pick "model" "$current" "${model_lines[@]}"
-  selected="$PICK_RESULT"
+  if (( has_agy == 0 && has_opencode == 0 )); then
+    die "missing required AI tool: install agy (Google Antigravity) or opencode"
+  fi
 
-  OPENCODE_MODEL="$selected"
-  grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
-    die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
-  ok "opencode model: $OPENCODE_MODEL"
+  if (( has_agy == 1 && has_opencode == 0 )); then
+    AI_TOOL="agy"
+    ok "Using agy (opencode not installed)"
+    return 0
+  fi
+
+  if (( has_agy == 0 && has_opencode == 1 )); then
+    AI_TOOL="opencode"
+    ok "Using opencode (agy not installed)"
+    return 0
+  fi
+
+  local -a tool_lines=(
+    "agy"$'\t'"agy        (Google Antigravity CLI)"
+    "opencode"$'\t'"opencode   (OpenCode CLI)"
+  )
+  note "Select the AI engine used to regenerate docs and release notes"
+  pick "AI tool" "agy" "${tool_lines[@]}"
+  AI_TOOL="$PICK_RESULT"
+  ok "Selected AI tool: $AI_TOOL"
+}
+
+AI_MODEL_CONFIGURED=0
+select_ai_model() {
+  if (( AI_MODEL_CONFIGURED == 1 )); then
+    return 0
+  fi
+  select_ai_tool
+
+  if [[ "$AI_TOOL" == "agy" ]]; then
+    if [[ -n "$AGY_MODEL_FROM_ENV" ]]; then
+      AGY_MODEL="$AGY_MODEL_FROM_ENV"
+      AI_MODEL_CONFIGURED=1
+      ok "using AGY_MODEL from environment: $AGY_MODEL"
+      return 0
+    fi
+
+    local raw_models selected current
+    local -a model_lines=()
+    raw_models="$(agy models 2>/dev/null || true)"
+    [[ -n "$raw_models" ]] || die "'agy models' returned no models"
+    current="${AGY_MODEL:-gemini-3.7-flash-high}"
+
+    note "Select the agy model used to regenerate docs and release notes"
+    while IFS=$'\t' read -r id desc; do
+      [[ -n "$id" ]] || continue
+      if [[ -n "$desc" && "$desc" != "$id" ]]; then
+        model_lines+=("$id"$'\t'"$id ($desc)")
+      else
+        model_lines+=("$id"$'\t'"$id")
+      fi
+    done <<< "$raw_models"
+
+    pick "model" "$current" "${model_lines[@]}"
+    selected="$PICK_RESULT"
+    AGY_MODEL="$selected"
+    AI_MODEL_CONFIGURED=1
+    ok "agy model: $AGY_MODEL"
+  else
+    if [[ -n "$OPENCODE_MODEL_FROM_ENV" ]]; then
+      OPENCODE_MODEL="$OPENCODE_MODEL_FROM_ENV"
+      AI_MODEL_CONFIGURED=1
+      ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
+      return 0
+    fi
+
+    local all_models selected current
+    local -a model_lines=()
+    all_models="$(opencode models 2>/dev/null || true)"
+    [[ -n "$all_models" ]] || die "'opencode models' returned no models"
+    current="${OPENCODE_MODEL:-opencode/big-pickle}"
+
+    note "Select the opencode model used to regenerate docs and release notes"
+    while read -r id; do
+      [[ -n "$id" ]] || continue
+      model_lines+=("$id"$'\t'"$id")
+    done <<< "$all_models"
+
+    pick "model" "$current" "${model_lines[@]}"
+    selected="$PICK_RESULT"
+    OPENCODE_MODEL="$selected"
+    grep -qxF "$OPENCODE_MODEL" <<< "$all_models" || \
+      die "'$OPENCODE_MODEL' is not listed by 'opencode models'"
+    AI_MODEL_CONFIGURED=1
+    ok "opencode model: $OPENCODE_MODEL"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -204,12 +306,12 @@ START_PHASE=$PHASE_PREFLIGHT   # default: run everything
 select_start_phase() {
   local -a phase_lines=(
     "$PHASE_PREFLIGHT"$'\t'"0 · From the beginning  (preflight → prepare → GIFs → review → CI → post-release → publish)"
-    "$PHASE_PREPARE"$'\t'"1 · Prepare docs & PR    (version bump, opencode docs, create PR — skips preflight)"
+    "$PHASE_PREPARE"$'\t'"1 · Prepare docs & PR    (version bump, AI docs, create PR — skips preflight)"
     "$PHASE_GIFS"$'\t'"2 · Generate GIFs only   (re-run generate-demos.sh, push, rebuild PR if needed)"
     "$PHASE_REVIEW"$'\t'"3 · Review & merge       (squash-merge an existing PR and tag)"
     "$PHASE_WAIT_CI"$'\t'"4 · Wait for CI build    (poll release assets for an already-tagged version)"
-    "$PHASE_POST_RELEASE"$'\t'"5 · Post-release         (release notes, Homebrew formula, Scoop manifest)"
-    "$PHASE_PUBLISH"$'\t'"6 · Publish              (Docker image → GHCR + crate → crates.io)"
+    "$PHASE_POST_RELEASE"$'\t'"5 · Post-release         (release notes, Homebrew formula, Scoop manifest — Homebrew/Scoop skipped for nightly)"
+    "$PHASE_PUBLISH"$'\t'"6 · Publish              (Docker image → GHCR + crate → crates.io — crates.io skipped for nightly)"
   )
 
   note "Where would you like to start?"
@@ -222,22 +324,46 @@ select_start_phase() {
 # State bootstrap helpers — prompt for values that skipped phases would set
 # ---------------------------------------------------------------------------
 
+# True when the current build targets a nightly tag (ends in `-nightly` or
+# the `INCREMENT=nightly` CLI arg / menu pick was used). Nightlies skip the
+# Cargo.toml bump, the prepare PR, Homebrew/Scoop syncs, and crates.io
+# publish; they still get release notes and a `:nightly` Docker image.
+is_nightly() {
+  [[ "${INCREMENT:-}" == "nightly" ]] || [[ "${NEW_TAG:-}" == *-nightly* ]]
+}
+
 # Ensure NEW_TAG / VERSION are set; fetch from git tags or prompt.
 ensure_version() {
   if [[ -n "${NEW_TAG:-}" ]]; then return; fi
 
   git fetch --tags --prune 2>/dev/null || true
+
+  # For nightly invocations, auto-detect the most recent nightly tag so the
+  # user doesn't have to paste it.
+  if [[ "${INCREMENT:-}" == "nightly" ]]; then
+    local latest_nightly
+    latest_nightly="$(git tag --list 'v*-nightly*' --sort=-v:refname 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$latest_nightly" ]]; then
+      NEW_TAG="$latest_nightly"
+      VERSION="${NEW_TAG#v}"
+      ok "Auto-detected nightly tag: $NEW_TAG"
+      return 0
+    fi
+  fi
+
   local latest_tag
   latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
 
-  printf '\n%sEnter the release tag%s (e.g. v1.2.3)' "$C_BOLD" "$C_RESET"
+  printf '\n%sEnter the release tag%s (e.g. v1.2.3 or v1.2.3-nightly[.YYYYMMDD])' "$C_BOLD" "$C_RESET"
   if [[ -n "$latest_tag" ]]; then
     printf ' [latest tag: %s]' "$latest_tag"
   fi
   printf ': '
   read -r NEW_TAG
+  NEW_TAG="${NEW_TAG:-$latest_tag}"
   [[ -n "$NEW_TAG" ]] || die "version tag is required"
-  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || die "tag must match vX.Y.Z (got '$NEW_TAG')"
+  [[ "$NEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-nightly([-.]?[A-Za-z0-9]+)*)?$ ]] || \
+    die "tag must match vX.Y.Z or vX.Y.Z[-nightly][-.suffix] (got '$NEW_TAG')"
   VERSION="${NEW_TAG#v}"
   ok "Version: $NEW_TAG"
 }
@@ -246,7 +372,8 @@ ensure_version() {
 ensure_branch() {
   if [[ -n "${BRANCH:-}" ]]; then return; fi
   ensure_version
-  BRANCH="opencode-release/$NEW_TAG"
+  local prefix="${AI_TOOL:-release}"
+  BRANCH="${prefix}-release/$NEW_TAG"
 }
 
 # Ensure PR_NUMBER is set; look it up or prompt.
@@ -257,6 +384,14 @@ ensure_pr_number() {
   PR_NUMBER="$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
   if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
     PR_NUMBER="$(gh pr list --repo "$REPO" --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+  fi
+  if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+    for candidate_branch in "agy-release/$NEW_TAG" "opencode-release/$NEW_TAG" "release/$NEW_TAG"; do
+      PR_NUMBER="$(gh pr list --repo "$REPO" --head "$candidate_branch" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+      [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]] && break
+      PR_NUMBER="$(gh pr list --repo "$REPO" --head "$candidate_branch" --state merged --json number --jq '.[0].number' 2>/dev/null || true)"
+      [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]] && break
+    done
   fi
 
   if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
@@ -273,7 +408,12 @@ ensure_pr_number() {
 preflight() {
   [[ -t 0 ]] || die "release.sh is interactive; run it in a terminal"
   require gh "see https://cli.github.com"
-  require opencode "install from https://opencode.ai"
+  if [[ -n "$AI_TOOL" ]]; then
+    require "$AI_TOOL"
+  else
+    command -v agy >/dev/null 2>&1 || command -v opencode >/dev/null 2>&1 || \
+      die "missing required AI tool: install agy (Google Antigravity) or opencode"
+  fi
   require cargo "install Rust via https://rustup.rs"
   require jq "apt install jq / brew install jq"
   require vhs "go install github.com/charmbracelet/vhs@latest"
@@ -300,7 +440,7 @@ preflight() {
 next_version() {
   git fetch --tags --prune
   local latest_tag version base_major base_minor base_patch
-  local major_v minor_v patch_v
+  local major_v minor_v patch_v date_suffix nightly_v
   latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
   version="${latest_tag#v}"
   IFS='.' read -r base_major base_minor base_patch <<< "$version"
@@ -308,30 +448,40 @@ next_version() {
   major_v="$((base_major + 1)).0.0"
   minor_v="$base_major.$((base_minor + 1)).0"
   patch_v="$base_major.$base_minor.$((base_patch + 1))"
+  date_suffix="$(date -u +%Y%m%d)"
+  nightly_v="${patch_v}-nightly.${date_suffix}"
 
   if [[ -z "$INCREMENT" ]]; then
     printf '\n%sCurrent version:%s %s\n' "$C_BOLD" "$C_RESET" "$latest_tag"
-    printf '  %s1)%s patch  -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
-    printf '  %s2)%s minor  -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
-    printf '  %s3)%s major  -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
-    read -r -p "Select release increment [1/2/3] (default patch): " choice
+    printf '  %s1)%s patch              -> v%s\n' "$C_BOLD" "$C_RESET" "$patch_v"
+    printf '  %s2)%s minor              -> v%s\n' "$C_BOLD" "$C_RESET" "$minor_v"
+    printf '  %s3)%s major              -> v%s\n' "$C_BOLD" "$C_RESET" "$major_v"
+    printf '  %s4)%s nightly (bare)     -> v%s-nightly\n' "$C_BOLD" "$C_RESET" "$patch_v"
+    printf '  %s5)%s nightly (dated)    -> v%s  (pre-release, skip publish)\n' "$C_BOLD" "$C_RESET" "$nightly_v"
+    read -r -p "Select release increment [1/2/3/4/5] (default patch): " choice
     case "${choice:-1}" in
-      1|patch) VERSION="$patch_v" ;;
-      2|minor) VERSION="$minor_v" ;;
-      3|major) VERSION="$major_v" ;;
+      1|patch)   VERSION="$patch_v" ;;
+      2|minor)   VERSION="$minor_v" ;;
+      3|major)   VERSION="$major_v" ;;
+      4|nightly) INCREMENT="nightly"; VERSION="${patch_v}-nightly" ;;
+      5|nightly-dated)
+                   INCREMENT="nightly"; VERSION="$nightly_v" ;;
       *) die "invalid selection '$choice'" ;;
     esac
   else
     case "$INCREMENT" in
-      major) VERSION="$major_v" ;;
-      minor) VERSION="$minor_v" ;;
-      patch) VERSION="$patch_v" ;;
-      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major)" ;;
+      major)         VERSION="$major_v" ;;
+      minor)         VERSION="$minor_v" ;;
+      patch)         VERSION="$patch_v" ;;
+      nightly)       VERSION="${patch_v}-nightly" ;;
+      nightly-dated) VERSION="$nightly_v" ;;
+      *) die "invalid version increment '$INCREMENT' (expected patch|minor|major|nightly|nightly-dated)" ;;
     esac
   fi
 
   NEW_TAG="v$VERSION"
-  BRANCH="opencode-release/$NEW_TAG"
+  local prefix="${AI_TOOL:-release}"
+  BRANCH="${prefix}-release/$NEW_TAG"
   note "Next version: $NEW_TAG"
 }
 
@@ -349,6 +499,19 @@ bump_cargo_version() {
 prepare() {
   ensure_version   # no-op if next_version() already ran
 
+  if is_nightly; then
+    note "Nightly release — skipping docs regeneration and PR creation"
+    if [[ "${BUMP_CARGO_FOR_NIGHTLY:-}" == "1" ]]; then
+      bump_cargo_version
+      note "Bumped Cargo.toml to ${VERSION} (BUMP_CARGO_FOR_NIGHTLY=1) — commit this before tagging so the binary's --version stamp matches the tag"
+    else
+      note "Cargo.toml NOT bumped — the binary will report the previous stable version."
+      note "Set BUMP_CARGO_FOR_NIGHTLY=1 to bump Cargo.toml to ${VERSION} for the binary's --version stamp."
+    fi
+    note "(nightly tag $NEW_TAG should already be pushed to origin; CI will build the assets)"
+    return 0
+  fi
+
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git checkout "$BRANCH"
   elif git ls-remote --exit-code --quiet origin "refs/heads/$BRANCH" 2>/dev/null; then
@@ -360,7 +523,7 @@ prepare() {
   bump_cargo_version
   spinner "Building release binary" cargo build --release
 
-  note "Regenerating CHANGELOG.md / AGENTS.md / README.md via opencode..."
+  note "Regenerating CHANGELOG.md / AGENTS.md / README.md via ${AI_TOOL}..."
   PROMPT="We are prepping a new repository release. The upcoming version tag is going to be: $NEW_TAG.
 
 Your task is to analyze the git commits, merged pull requests, and codebase changes since the last version tag, and update the following three files directly in the workspace:
@@ -371,7 +534,7 @@ Your task is to analyze the git commits, merged pull requests, and codebase chan
 
 The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSION; do not modify those files. Save and write these file modifications directly back into the working directory."
 
-  run_opencode "$PROMPT"
+  run_ai "$PROMPT"
   ok "CHANGELOG.md / AGENTS.md / README.md regenerated"
 }
 
@@ -380,6 +543,11 @@ The crate version in Cargo.toml and Cargo.lock has already been bumped to $VERSI
 # ---------------------------------------------------------------------------
 generate_gifs() {
   ensure_branch
+
+  if is_nightly; then
+    note "Nightly release — skipping GIF generation and PR creation"
+    return 0
+  fi
 
   # Make sure there is a built binary on PATH.
   if [[ ! -x "$ROOT/target/release/glab-tui" ]]; then
@@ -419,6 +587,10 @@ Review, then this script will merge and cut the release.")"
 # Phase 3: wait for review, then merge and tag
 # ---------------------------------------------------------------------------
 review_gate() {
+  if is_nightly; then
+    note "Nightly release — no PR to review (nightly tag is pushed manually)"
+    return 0
+  fi
   ensure_pr_number
   PR_URL="https://github.com/$REPO/pull/$PR_NUMBER"
   note "Pause for review — PR: $PR_URL"
@@ -427,6 +599,16 @@ review_gate() {
 
 merge_and_tag() {
   ensure_version
+
+  if is_nightly; then
+    note "Nightly release — tag $NEW_TAG should already be pushed to origin"
+    # Verify the tag exists locally; bail out if not so the user knows.
+    if ! git rev-parse --verify --quiet "refs/tags/$NEW_TAG" >/dev/null; then
+      die "nightly tag $NEW_TAG not found locally — push it first (e.g. 'git push origin $NEW_TAG')"
+    fi
+    return 0
+  fi
+
   ensure_pr_number
 
   note "Merging PR #$PR_NUMBER (squash, auto-merge when checks pass)..."
@@ -462,20 +644,35 @@ merge_and_tag() {
 wait_for_release() {
   ensure_version
 
-  local total i current elapsed
+  local total i current="" elapsed=0 seen=0
+  local -a missing=()
   total=$((RELEASE_WAIT_MIN * 3)) # one check every 20s
   note "Waiting for release $NEW_TAG assets (timeout ${RELEASE_WAIT_MIN}m)..."
   for i in $(seq 1 "$total"); do
-    current="$(gh release view "$NEW_TAG" --repo "$REPO" --json assets --jq '[.assets[].name] | length' 2>/dev/null || echo 0)"
-    if [[ "$current" -ge "${#REQUIRED_ASSETS[@]}" ]]; then
-      [[ -t 1 ]] && printf '\r\e[2K'
-      ok "All ${#REQUIRED_ASSETS[@]} release assets present"
-      return 0
+    current="$(gh release view "$NEW_TAG" --repo "$REPO" --json assets \
+      --jq '[.assets[].name] | join("\n")' 2>/dev/null || true)"
+    if [[ -n "$current" ]]; then
+      missing=()
+      for asset in "${REQUIRED_ASSETS_STATIC[@]}"; do
+        if ! grep -qxF "$asset" <<< "$current"; then
+          missing+=("$asset")
+        fi
+      done
+      if [[ "${#missing[@]}" -eq 0 ]]; then
+        [[ -t 1 ]] && printf '\r\e[2K'
+        ok "All release assets present ($(echo "$current" | wc -l) total)"
+        return 0
+      fi
     fi
-    [[ $i -eq $total ]] && die "timed out waiting for release assets for $NEW_TAG"
+    [[ $i -eq $total ]] && die "timed out waiting for release assets for $NEW_TAG (missing: ${missing[*]:-none})"
     if [[ -t 1 ]]; then
       elapsed=$((i * 20 / 60))
-      progress_bar "$current" "${#REQUIRED_ASSETS[@]}" "assets ($elapsed min elapsed)"
+      if [[ -n "$current" ]]; then
+        seen="$(printf '%s\n' "$current" | wc -l)"
+      else
+        seen=0
+      fi
+      progress_bar "$seen" "${#REQUIRED_ASSETS_STATIC[@]}" "assets ($elapsed min elapsed)"
     fi
     sleep 20
   done
@@ -485,35 +682,146 @@ wait_for_release() {
 # Phase 5: post-release (notes, Homebrew, Scoop)
 # ---------------------------------------------------------------------------
 update_homebrew() {
-  local arch file sha macos_amd64 macos_arm64 linux_amd64 linux_arm64
+  local macos_amd64 macos_arm64
+
   spinner "Cloning rcieri/homebrew-glab-tui" gh repo clone rcieri/homebrew-glab-tui "$TMP_DIR/homebrew-glab-tui"
   cd "$TMP_DIR/homebrew-glab-tui"
 
-  for arch in macos-amd64 macos-arm64 linux-amd64 linux-arm64; do
-    file="$TMP_DIR/glab-tui-${arch}.tar.gz"
-    spinner "Fetching glab-tui-${arch}.tar.gz" \
-      curl -sL "https://github.com/$REPO/releases/download/$NEW_TAG/glab-tui-${arch}.tar.gz" -o "$file"
-    sha="$(sha256sum "$file" | cut -d' ' -f1)"
-    case "$arch" in
-      macos-amd64) macos_amd64=$sha ;;
-      macos-arm64) macos_arm64=$sha ;;
-      linux-amd64) linux_amd64=$sha ;;
-      linux-arm64) linux_arm64=$sha ;;
-    esac
-  done
+  fetch_sha() {
+    local name="$1"
+    spinner "Fetching ${name}" \
+      curl -sL "https://github.com/$REPO/releases/download/${NEW_TAG}/${name}" -o "$TMP_DIR/${name}"
+    sha256sum "$TMP_DIR/${name}" | cut -d' ' -f1
+  }
 
-  sed -i "s|/download/v[0-9.]*/glab-tui-|/download/${NEW_TAG}/glab-tui-|g" Formula/glab-tui.rb
-  sed -i "/glab-tui-macos-amd64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${macos_amd64}\"/}" Formula/glab-tui.rb
-  sed -i "/glab-tui-macos-arm64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${macos_arm64}\"/}" Formula/glab-tui.rb
-  sed -i "/glab-tui-linux-amd64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${linux_amd64}\"/}" Formula/glab-tui.rb
-  sed -i "/glab-tui-linux-arm64/,/sha256/{s/sha256 \"[a-f0-9]*\"/sha256 \"${linux_arm64}\"/}" Formula/glab-tui.rb
+  macos_amd64=$(fetch_sha glab-tui-macos-amd64.tar.gz)
+  macos_arm64=$(fetch_sha glab-tui-macos-arm64.tar.gz)
+
+  # Discover all Linux assets actually present in the release (the ubuntu-latest
+  # runner's asset name carries a VERSION_ID we don't know up front).
+  local assets_json
+  assets_json=$(gh release view "$NEW_TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
+
+  declare -A linux_amd64_shas=()
+  declare -A linux_arm64_shas=()
+  local variant
+  while IFS= read -r name; do
+    [[ "$name" =~ ^glab-tui-linux-(amd64|arm64)-(.+)\.tar\.gz$ ]] || continue
+    local arch="${BASH_REMATCH[1]}" variant="${BASH_REMATCH[2]}"
+    local sha
+    sha=$(fetch_sha "$name")
+    if [[ "$arch" == "amd64" ]]; then
+      linux_amd64_shas["$variant"]="$sha"
+    else
+      linux_arm64_shas["$variant"]="$sha"
+    fi
+  done <<< "$assets_json"
+
+  if [[ "${#linux_amd64_shas[@]}" -eq 0 ]] || [[ "${#linux_arm64_shas[@]}" -eq 0 ]]; then
+    die "no Linux assets found in release $NEW_TAG — did the build matrix finish?"
+  fi
+
+  # Render a Ruby hash literal from the bash assoc array (sorted by key).
+  render_ruby_hash() {
+    local -n arr=$1
+    local indent="${2:-    }" k v first=1
+    printf '%s{\n' "$indent"
+    while IFS=$'\t' read -r k v; do
+      [[ -z "$k" ]] && continue
+      if (( first )); then first=0; else printf ',\n'; fi
+      printf '%s  "%s" => "%s"' "$indent" "$k" "$v"
+    done < <(for k in "${!arr[@]}"; do printf '%s\t%s\n' "$k" "${arr[$k]}"; done | sort)
+    printf '\n%s}.freeze\n' "$indent"
+  }
+
+  local linux_amd64_hash
+  linux_amd64_hash=$(render_ruby_hash linux_amd64_shas "    ")
+  local linux_arm64_hash
+  linux_arm64_hash=$(render_ruby_hash linux_arm64_shas "    ")
+
+  cat > "$TMP_DIR/glab-tui.rb" <<EOF
+class GlabTui < Formula
+  desc "Terminal user interface for GitLab and GitHub"
+  homepage "https://github.com/rcieri/glab-tui"
+  license "MIT"
+
+  depends_on "gh"
+  depends_on "glab" => :recommended
+
+  # Discovered at release time: variant (ubuntu-XX.YY or "musl") -> sha256.
+$(printf '%s' "$linux_amd64_hash" | sed 's/^/  /')
+$(printf '%s' "$linux_arm64_hash" | sed 's/^/  /')
+
+  # Pick the best-matching variant for the local Ubuntu version. Non-Ubuntu
+  # Linux distros fall back to the oldest Ubuntu LTS asset (broadest glibc
+  # compatibility). If no Ubuntu version asset is available for the current
+  # release, fall through to whichever LTS asset is newest.
+  def self.linux_variant(sha_map)
+    return nil if sha_map.nil? || sha_map.empty?
+    v = OS::Version.from_symbol(:ubuntu)
+    candidates = []
+    if v
+      candidates << "ubuntu-\#{v}"
+      # Walk down through known LTS baselines (newest first) inserted at
+      # the front of the candidate list.
+      %w[24.04 22.04].each { |baseline| candidates << "ubuntu-\#{baseline}" unless "ubuntu-\#{v}" == "ubuntu-\#{baseline}" }
+    else
+      candidates = %w[ubuntu-24.04 ubuntu-22.04]
+    end
+    candidates << "musl"
+    candidates.uniq.each do |c|
+      return c if sha_map.key?(c)
+    end
+    sha_map.keys.first
+  end
+
+  on_macos do
+    on_intel do
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-macos-amd64.tar.gz"
+      sha256 "${macos_amd64}"
+    end
+    on_arm do
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-macos-arm64.tar.gz"
+      sha256 "${macos_arm64}"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      amd64_variant = linux_variant(LINUX_AMD64_SHAS)
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-amd64-\#{amd64_variant}.tar.gz"
+      sha256 LINUX_AMD64_SHAS.fetch(amd64_variant)
+    end
+    on_arm do
+      arm64_variant = linux_variant(LINUX_ARM64_SHAS)
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-arm64-\#{arm64_variant}.tar.gz"
+      sha256 LINUX_ARM64_SHAS.fetch(arm64_variant)
+    end
+  end
+
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
+  def install
+    bin.install "glab-tui"
+  end
+
+  test do
+    system "\#{bin}/glab-tui", "--help"
+  end
+end
+EOF
+
+  mv "$TMP_DIR/glab-tui.rb" Formula/glab-tui.rb
 
   git add Formula/glab-tui.rb
   if git diff --cached --quiet; then
     note "Homebrew formula already up to date"
   else
-    git -c user.name="opencode-release[bot]" \
-        -c user.email="opencode-release[bot]@users.noreply.github.com" \
+    git -c user.name="${AI_TOOL:-release}-release[bot]" \
+        -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
         commit -m "Update to ${NEW_TAG}" >/dev/null
     spinner "Pushing Homebrew formula" git push
     ok "Homebrew formula updated and pushed"
@@ -540,8 +848,8 @@ update_scoop() {
   if git diff --cached --quiet; then
     note "Scoop manifest already up to date"
   else
-    git -c user.name="opencode-release[bot]" \
-        -c user.email="opencode-release[bot]@users.noreply.github.com" \
+    git -c user.name="${AI_TOOL:-release}-release[bot]" \
+        -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
         commit -m "Update to ${NEW_TAG}" >/dev/null
     spinner "Pushing Scoop manifest" git push
     ok "Scoop manifest updated and pushed"
@@ -551,12 +859,13 @@ update_scoop() {
 
 post_release() {
   ensure_version
+  select_ai_model
 
   local prev_tag prompt
   prev_tag="$(git describe --tags --abbrev=0 "${NEW_TAG}^" 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || true)"
   [[ -n "$prev_tag" ]] || die "could not determine the previous tag before $NEW_TAG"
 
-  note "Generating RELEASE_NOTES.md via opencode..."
+  note "Generating RELEASE_NOTES.md via ${AI_TOOL}..."
   prompt="Read CHANGELOG.md and extract the section for version $NEW_TAG.
 
 Also read the existing release notes for the previous tag $prev_tag (use \`gh release view $prev_tag --json body --jq .body\`) to match their formatting style.
@@ -571,12 +880,17 @@ Write the file RELEASE_NOTES.md matching the same format:
 
 Use the content from CHANGELOG.md for the current version as the source material."
 
-  run_opencode "$prompt"
+  run_ai "$prompt"
   [[ -f RELEASE_NOTES.md ]] || die "RELEASE_NOTES.md was not generated"
   ok "RELEASE_NOTES.md generated"
 
   note "Updating release $NEW_TAG body..."
   spinner "Updating release $NEW_TAG body" gh release edit "$NEW_TAG" --repo "$REPO" --notes-file RELEASE_NOTES.md
+
+  if is_nightly; then
+    note "Skipping Homebrew/Scoop manifest updates for nightly $NEW_TAG"
+    return 0
+  fi
 
   update_homebrew
   update_scoop
@@ -587,6 +901,12 @@ Use the content from CHANGELOG.md for the current version as the source material
 # ---------------------------------------------------------------------------
 publish() {
   ensure_version
+
+  if is_nightly; then
+    note "Skipping Docker push and crates.io publish for nightly $NEW_TAG"
+    note "(pre-release versions are rejected by crates.io, and nightly Docker images are intentionally not pushed)"
+    return 0
+  fi
 
   local package_version tag_version user
   package_version="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.packages[0].version')"
@@ -630,26 +950,13 @@ main() {
   if [[ "$START_PHASE" -le "$PHASE_PREPARE" ]]; then
     phase 2 "Prepare"
     next_version
-    if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
-      select_opencode_model
-    else
-      ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
-    fi
+    select_ai_model
     prepare
   fi
 
   # ── Phase 2: Generate GIFs ────────────────────────────────────────────────
   if [[ "$START_PHASE" -le "$PHASE_GIFS" ]]; then
     phase 3 "Generate GIFs"
-    # If jumping directly to this phase, hydrate required state.
-    if [[ "$START_PHASE" -ge "$PHASE_GIFS" ]]; then
-      ensure_version
-      if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
-        select_opencode_model
-      else
-        ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
-      fi
-    fi
     generate_gifs
   fi
 
@@ -663,32 +970,18 @@ main() {
   # ── Phase 4: Wait for CI build ────────────────────────────────────────────
   if [[ "$START_PHASE" -le "$PHASE_WAIT_CI" ]]; then
     phase 5 "Wait for CI build"
-    if [[ "$START_PHASE" -ge "$PHASE_WAIT_CI" ]]; then
-      ensure_version
-    fi
     wait_for_release
   fi
 
   # ── Phase 5: Post-release (notes, Homebrew, Scoop) ───────────────────────
   if [[ "$START_PHASE" -le "$PHASE_POST_RELEASE" ]]; then
     phase 6 "Post-release"
-    if [[ "$START_PHASE" -ge "$PHASE_POST_RELEASE" ]]; then
-      ensure_version
-      if [[ -z "$OPENCODE_MODEL_FROM_ENV" ]]; then
-        select_opencode_model
-      else
-        ok "using OPENCODE_MODEL from environment: $OPENCODE_MODEL"
-      fi
-    fi
     post_release
   fi
 
   # ── Phase 6: Publish (Docker + crate) ────────────────────────────────────
   if [[ "$START_PHASE" -le "$PHASE_PUBLISH" ]]; then
     phase 7 "Publish"
-    if [[ "$START_PHASE" -ge "$PHASE_PUBLISH" ]]; then
-      ensure_version
-    fi
     publish
   fi
 

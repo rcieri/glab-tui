@@ -20,6 +20,8 @@ mkdir -p "$ROOT/.glab-tui"
 generate "$ROOT/assets/demo-overview.tape"  "default"
 generate "$ROOT/assets/demo-search.tape"    "rose-pine-dawn"
 generate "$ROOT/assets/demo-selection.tape" "gruvbox"
+generate "$ROOT/assets/demo-preview.tape"   "nord"
+generate "$ROOT/assets/demo-diff.tape"      "catppuccin-mocha"
 
 echo "=== All demos generated ==="
 ls -lh "$ROOT/assets/"*.gif

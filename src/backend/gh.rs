@@ -14,11 +14,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::process::Command;
-use tokio::sync::Semaphore;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::task::JoinSet;
 
 fn strip_ats(s: &str) -> String {
     if s.is_empty() {
@@ -43,11 +40,6 @@ fn parse_gh_login(raw: &str) -> Option<String> {
         Some(login.to_string())
     }
 }
-
-/// Cap the number of concurrent per-run metadata requests when enriching
-/// pipelines. The Pipelines tab can list hundreds of runs; without a bound
-/// each list refresh would spawn a subprocess per row.
-const MAX_GH_METADATA_CONCURRENCY: usize = 8;
 
 fn deserialize_needs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
@@ -193,37 +185,57 @@ impl GhBackend {
     }
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
-        let label = desc.to_uppercase();
-        let cmd_str = format!("gh {}", args.join(" "));
-
-        let output = Command::new("gh")
-            .args(args)
-            .output()
-            .await
-            .with_context(|| format!("Failed to execute: gh {}", args.join(" ")))?;
-
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        if output.status.success() {
-            let s = String::from_utf8(output.stdout)?;
-            if let Some(ref tx) = self.tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: "Success".to_string(),
-                });
+        let tx = self.tx.clone();
+        let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let desc = desc.to_string();
+        super::rate_limit::execute_with_retry(|| {
+            let tx = tx.clone();
+            let args = args.clone();
+            let desc = desc.clone();
+            async move {
+                let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+                run_gh_command(tx, &args_refs, &desc).await
             }
-            Ok(s)
-        } else {
-            let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if let Some(ref tx) = self.tx {
-                let _ = tx.send(Event::TerminalCommandLogged {
-                    timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", err_msg),
-                });
-            }
-            anyhow::bail!("gh command failed: {}", err_msg)
+        })
+        .await
+    }
+}
+
+async fn run_gh_command(
+    tx: Option<UnboundedSender<Event>>,
+    args: &[&str],
+    desc: &str,
+) -> Result<String> {
+    let label = desc.to_uppercase();
+    let cmd_str = format!("gh {}", args.join(" "));
+
+    let output = Command::new("gh")
+        .args(args)
+        .output()
+        .await
+        .with_context(|| format!("Failed to execute: gh {}", args.join(" ")))?;
+
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    if output.status.success() {
+        let s = String::from_utf8(output.stdout)?;
+        if let Some(ref tx) = tx {
+            let _ = tx.send(Event::TerminalCommandLogged {
+                timestamp,
+                command: format!("{}: {}", label, cmd_str),
+                status: "Success".to_string(),
+            });
         }
+        Ok(s)
+    } else {
+        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if let Some(ref tx) = tx {
+            let _ = tx.send(Event::TerminalCommandLogged {
+                timestamp,
+                command: format!("{}: {}", label, cmd_str),
+                status: format!("Failed: {}", err_msg),
+            });
+        }
+        anyhow::bail!("gh command failed: {}", err_msg)
     }
 }
 
@@ -517,165 +529,51 @@ impl Backend for GhBackend {
 
     // ── Issue Field Updates ──
 
-    async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        self.run_gh(
-            &[
-                "issue",
-                "edit",
-                &iid.to_string(),
-                "--title",
-                title,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_description(
+    async fn update_issue(
         &self,
         project: &str,
         iid: u64,
-        description: &str,
+        update: &super::IssueUpdate,
     ) -> Result<()> {
-        self.run_gh(
-            &[
-                "issue",
-                "edit",
-                &iid.to_string(),
-                "--body",
-                description,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_labels(
-        &self,
-        project: &str,
-        iid: u64,
-        add_labels: &[String],
-        remove_labels: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "issue".into(),
-            "edit".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for label in add_labels {
-            args.push("--add-label".into());
-            args.push(label.clone());
+        if update.is_empty() {
+            return Ok(());
         }
-        for label in remove_labels {
-            args.push("--remove-label".into());
-            args.push(label.clone());
+        let iid_str = iid.to_string();
+        let mut args: Vec<String> = vec!["issue".into(), "edit".into(), iid_str];
+        if !project.is_empty() {
+            args.extend(["-R".into(), project.into()]);
         }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if let Some(ref title) = update.title {
+            args.extend(["--title".into(), title.clone()]);
+        }
+        if let Some(ref desc) = update.description {
+            args.extend(["--body".into(), desc.clone()]);
+        }
+        for label in &update.add_labels {
+            args.extend(["--add-label".into(), label.clone()]);
+        }
+        for label in &update.remove_labels {
+            args.extend(["--remove-label".into(), label.clone()]);
+        }
+        for a in &update.add_assignees {
+            args.extend(["--add-assignee".into(), a.clone()]);
+        }
+        for a in &update.remove_assignees {
+            args.extend(["--remove-assignee".into(), a.clone()]);
+        }
+        if let Some(ref milestone) = update.milestone {
+            if milestone == "--" || milestone.is_empty() {
+                args.push("--remove-milestone".into());
+            } else {
+                args.extend(["--milestone".into(), milestone.clone()]);
+            }
+        }
+        // Note: GitHub issues do not support due dates at the REST API level
+        // (`gh issue edit` has no `--due-date` flag). The `due_date` field in
+        // `IssueUpdate` is GitLab-specific and is intentionally ignored here.
+        let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_gh(&args_refs, "UPDATING ISSUE").await?;
         Ok(())
-    }
-
-    async fn update_issue_assignees(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "issue".into(),
-            "edit".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for a in add {
-            args.push("--add-assignee".into());
-            args.push(a.clone());
-        }
-        for a in remove {
-            args.push("--remove-assignee".into());
-            args.push(a.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_gh(&args_refs, "UPDATING ISSUE").await?;
-        Ok(())
-    }
-
-    async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let args: Vec<String> = if milestone == "--" || milestone.is_empty() {
-            vec![
-                "issue".to_string(),
-                "edit".to_string(),
-                iid.to_string(),
-                "--remove-milestone".to_string(),
-                "-R".to_string(),
-                project.to_string(),
-            ]
-        } else {
-            vec![
-                "issue".to_string(),
-                "edit".to_string(),
-                iid.to_string(),
-                "--milestone".to_string(),
-                milestone.to_string(),
-                "-R".to_string(),
-                project.to_string(),
-            ]
-        };
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_gh(&args_refs, "UPDATING ISSUE").await?;
-        Ok(())
-    }
-
-    async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()> {
-        self.run_gh(
-            &[
-                "issue",
-                "edit",
-                &iid.to_string(),
-                "--due-date",
-                due_date,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_weight(&self, _project: &str, _iid: u64, _weight: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn update_issue_confidential(
-        &self,
-        project: &str,
-        iid: u64,
-        confidential: bool,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn list_group_mrs(
-        &self,
-        _group: &str,
-        _show_closed: bool,
-        _page_size: usize,
-        _per_request: usize,
-    ) -> Result<Vec<MergeRequest>> {
-        Err(anyhow::anyhow!(
-            "Group/org-level browsing is not supported on GitHub"
-        ))
     }
 
     // ── Merge Requests ──
@@ -831,6 +729,18 @@ impl Backend for GhBackend {
                 }
             })
             .collect())
+    }
+
+    async fn list_group_mrs(
+        &self,
+        _group: &str,
+        _show_closed: bool,
+        _page_size: usize,
+        _per_request: usize,
+    ) -> Result<Vec<MergeRequest>> {
+        Err(anyhow::anyhow!(
+            "Group/org-level browsing is not supported on GitHub"
+        ))
     }
 
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
@@ -1090,6 +1000,7 @@ impl Backend for GhBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "pr".into(),
@@ -1109,6 +1020,8 @@ impl Backend for GhBackend {
         if delete_branch {
             args.push("--delete-branch".into());
         }
+        // auto_merge is explicitly ignored for GitHub backend
+        let _ = auto_merge;
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "MERGING PR").await?;
         Ok(())
@@ -1223,150 +1136,79 @@ impl Backend for GhBackend {
 
     // ── PR Field Updates ──
 
-    async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        self.run_gh(
-            &[
-                "pr",
-                "edit",
-                &iid.to_string(),
-                "--title",
-                title,
-                "-R",
-                project,
-            ],
-            "UPDATING PR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_mr_description(
-        &self,
-        project: &str,
-        iid: u64,
-        description: &str,
-    ) -> Result<()> {
-        self.run_gh(
-            &[
-                "pr",
-                "edit",
-                &iid.to_string(),
-                "--body",
-                description,
-                "-R",
-                project,
-            ],
-            "UPDATING PR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_mr_labels(
-        &self,
-        project: &str,
-        iid: u64,
-        add_labels: &[String],
-        remove_labels: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "pr".into(),
-            "edit".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for label in add_labels {
-            args.push("--add-label".into());
-            args.push(label.clone());
+    async fn update_mr(&self, project: &str, iid: u64, update: &super::MrUpdate) -> Result<()> {
+        if update.is_empty() {
+            return Ok(());
         }
-        for label in remove_labels {
-            args.push("--remove-label".into());
-            args.push(label.clone());
+        let iid_str = iid.to_string();
+        let mut args: Vec<String> = vec!["pr".into(), "edit".into(), iid_str];
+        if !project.is_empty() {
+            args.extend(["-R".into(), project.into()]);
         }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if let Some(ref title) = update.title {
+            args.extend(["--title".into(), title.clone()]);
+        }
+        if let Some(ref desc) = update.description {
+            args.extend(["--body".into(), desc.clone()]);
+        }
+        for label in &update.add_labels {
+            args.extend(["--add-label".into(), label.clone()]);
+        }
+        for label in &update.remove_labels {
+            args.extend(["--remove-label".into(), label.clone()]);
+        }
+        for a in &update.add_assignees {
+            args.extend(["--add-assignee".into(), a.clone()]);
+        }
+        for a in &update.remove_assignees {
+            args.extend(["--remove-assignee".into(), a.clone()]);
+        }
+        for r in &update.add_reviewers {
+            args.extend(["--add-reviewer".into(), r.clone()]);
+        }
+        for r in &update.remove_reviewers {
+            args.extend(["--remove-reviewer".into(), r.clone()]);
+        }
+        if let Some(ref milestone) = update.milestone {
+            if milestone == "--" || milestone.is_empty() {
+                args.push("--remove-milestone".into());
+            } else {
+                args.extend(["--milestone".into(), milestone.clone()]);
+            }
+        }
+        if let Some(ref target_branch) = update.target_branch {
+            args.extend(["--base".into(), target_branch.clone()]);
+        }
+        if let Some(draft) = update.draft {
+            if draft {
+                args.push("--draft".into());
+            } else {
+                args.push("--ready-for-review".into());
+            }
+        }
+        let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_gh(&args_refs, "UPDATING PR").await?;
         Ok(())
     }
 
-    async fn update_mr_assignees(
+    // ── Pipelines ──
+
+    /// `_per_request` is unused in the GitHub backend — `gh api repos/{owner}/{repo}/actions/runs`
+    /// uses `per_page` for pagination.
+    async fn list_pipelines(
         &self,
         project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "pr".into(),
-            "edit".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for a in add {
-            args.push("--add-assignee".into());
-            args.push(a.clone());
-        }
-        for a in remove {
-            args.push("--remove-assignee".into());
-            args.push(a.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_gh(&args_refs, "UPDATING PR").await?;
-        Ok(())
-    }
+        page_size: usize,
+        _per_request: usize,
+    ) -> Result<Vec<Pipeline>> {
+        // The Actions API caps `per_page` at 100. For repos with heavy workflow
+        // activity this means older runs may be invisible in the Pipelines tab.
+        // TODO: add multi-page support by following `Link: <...>; rel="next"` headers.
+        let per_page = (page_size * 10).clamp(1, 100);
+        let endpoint = format!("repos/{project}/actions/runs?per_page={per_page}");
+        let raw = self.run_gh(&["api", &endpoint], "Fetching Actions").await?;
 
-    async fn update_mr_reviewers(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "pr".into(),
-            "edit".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for r in add {
-            args.push("--add-reviewer".into());
-            args.push(r.clone());
-        }
-        for r in remove {
-            args.push("--remove-reviewer".into());
-            args.push(r.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_gh(&args_refs, "UPDATING PR").await?;
-        Ok(())
-    }
-
-    async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let args: Vec<String> = if milestone == "--" || milestone.is_empty() {
-            vec![
-                "pr".to_string(),
-                "edit".to_string(),
-                iid.to_string(),
-                "--remove-milestone".to_string(),
-                "-R".to_string(),
-                project.to_string(),
-            ]
-        } else {
-            vec![
-                "pr".to_string(),
-                "edit".to_string(),
-                iid.to_string(),
-                "--milestone".to_string(),
-                milestone.to_string(),
-                "-R".to_string(),
-                project.to_string(),
-            ]
-        };
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_gh(&args_refs, "UPDATING PR").await?;
-        Ok(())
+        parse_github_actions_runs(&raw)
     }
 
     async fn list_group_pipelines(
@@ -1378,116 +1220,6 @@ impl Backend for GhBackend {
         Err(anyhow::anyhow!(
             "Group/org-level browsing is not supported on GitHub"
         ))
-    }
-
-    async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
-        self.run_gh(
-            &[
-                "pr",
-                "edit",
-                &iid.to_string(),
-                "--base",
-                branch,
-                "-R",
-                project,
-            ],
-            "UPDATING PR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    // ── Pipelines ──
-
-    /// `_per_request` is unused in the GitHub backend — `gh run list` uses
-    /// `--limit` for the total item count, not per-page pagination.
-    async fn list_pipelines(
-        &self,
-        project: &str,
-        page_size: usize,
-        _per_request: usize,
-    ) -> Result<Vec<Pipeline>> {
-        let total = page_size * 10;
-        let raw = self
-            .run_gh(
-                &[
-                    "run",
-                    "list",
-                    "--json",
-                    "databaseId,status,conclusion,headBranch,createdAt,startedAt,updatedAt,workflowName,displayTitle,headSha,event",
-                    "-R",
-                    project,
-                    "--limit",
-                    &total.to_string(),
-                ],
-                "Fetching Actions",
-            )
-            .await?;
-
-        #[derive(Deserialize)]
-        struct GhRun {
-            #[serde(rename = "databaseId")]
-            database_id: u64,
-            status: String,
-            conclusion: Option<String>,
-            #[serde(rename = "headBranch")]
-            head_branch: String,
-            #[serde(rename = "updatedAt")]
-            updated_at: String,
-            #[serde(rename = "createdAt")]
-            created_at: Option<String>,
-            #[serde(rename = "startedAt")]
-            started_at: Option<String>,
-            #[serde(rename = "workflowName")]
-            workflow_name: Option<String>,
-            #[serde(rename = "displayTitle")]
-            display_title: Option<String>,
-            #[serde(rename = "headSha")]
-            head_sha: Option<String>,
-            event: Option<String>,
-        }
-
-        let runs: Vec<GhRun> = serde_json::from_str(&raw)?;
-        let mut pipelines: Vec<Pipeline> = runs
-            .into_iter()
-            .map(|r| {
-                let status = match r.status.as_str() {
-                    "completed" | "COMPLETED" => match r.conclusion.as_deref() {
-                        Some("success") | Some("SUCCESS") => "success",
-                        Some("failure") | Some("FAILURE") => "failed",
-                        Some("cancelled") | Some("CANCELLED") | Some("canceled")
-                        | Some("CANCELED") => "canceled",
-                        Some("skipped") | Some("SKIPPED") => "skipped",
-                        _ => "failed",
-                    },
-                    "in_progress" | "IN_PROGRESS" => "running",
-                    "queued" | "QUEUED" | "waiting" | "WAITING" => "pending",
-                    _ => "pending",
-                }
-                .to_string();
-                let duration = r
-                    .started_at
-                    .as_deref()
-                    .and_then(|started| chrono_duration(started, &r.updated_at));
-                Pipeline {
-                    id: r.database_id,
-                    status,
-                    r#ref: r.head_branch,
-                    updated_at: r.updated_at,
-                    name: r.workflow_name.unwrap_or_default(),
-                    display_title: r.display_title.unwrap_or_default(),
-                    event: r.event.as_deref().unwrap_or_default().to_string(),
-                    head_sha: r.head_sha.unwrap_or_default(),
-                    actor_login: String::new(),
-                    duration_seconds: duration,
-                    created_at: r.created_at,
-                    source: r.event,
-                }
-            })
-            .collect();
-
-        enrich_pipeline_actors(project, &mut pipelines).await;
-        Ok(pipelines)
     }
 
     async fn list_pipeline_jobs(
@@ -1734,14 +1466,8 @@ impl Backend for GhBackend {
         let raw = self
             .run_gh(
                 &[
-                    "release",
-                    "list",
-                    "--json",
-                    "name,tagName,publishedAt,isDraft,isPrerelease,createdAt",
-                    "-R",
-                    project,
-                    "--limit",
-                    &page_size.to_string(),
+                    "api",
+                    &format!("repos/{}/releases?per_page={}", project, page_size),
                 ],
                 "Fetching Releases",
             )
@@ -1750,13 +1476,15 @@ impl Backend for GhBackend {
         #[derive(Deserialize)]
         struct GhRel {
             name: Option<String>,
-            #[serde(rename = "tagName")]
             tag_name: String,
-            #[serde(rename = "publishedAt")]
             published_at: Option<String>,
-            #[serde(rename = "createdAt")]
-            #[allow(dead_code)]
             created_at: Option<String>,
+            body: Option<String>,
+            author: Option<GhAuthor>,
+        }
+        #[derive(Deserialize)]
+        struct GhAuthor {
+            login: String,
         }
 
         let rels: Vec<GhRel> = serde_json::from_str(&raw)?;
@@ -1769,9 +1497,14 @@ impl Backend for GhBackend {
                     .published_at
                     .as_deref()
                     .map(|s| s.chars().take(10).collect::<String>())
-                    .unwrap_or_default(),
-                description: None,
-                author_name: None,
+                    .unwrap_or_else(|| {
+                        r.created_at
+                            .as_deref()
+                            .map(|s| s.chars().take(10).collect::<String>())
+                            .unwrap_or_default()
+                    }),
+                description: r.body,
+                author_name: r.author.map(|a| a.login),
                 commit_id: None,
                 commit_title: None,
                 assets_link: None,
@@ -2441,82 +2174,105 @@ impl Backend for GhBackend {
         body: Option<&str>,
         desc: &str,
     ) -> Result<String> {
-        let mut cmd_args: Vec<String> = vec!["api".into()];
-        if method != "GET" {
-            cmd_args.push("-X".into());
-            cmd_args.push(method.into());
-        }
-        cmd_args.push(endpoint.into());
-        let cmd_str = format!("gh {}", cmd_args.join(" "));
-        let label = desc.to_uppercase();
+        let tx = self.tx.clone();
+        let endpoint = endpoint.to_string();
+        let method = method.to_string();
+        let body = body.map(ToString::to_string);
+        let desc = desc.to_string();
+        super::rate_limit::execute_with_retry(|| {
+            let tx = tx.clone();
+            let endpoint = endpoint.clone();
+            let method = method.clone();
+            let body = body.clone();
+            let desc = desc.clone();
+            async move { run_gh_raw_api(tx, &endpoint, &method, body.as_deref(), &desc).await }
+        })
+        .await
+    }
+}
 
-        let mut cmd = Command::new("gh");
-        cmd.arg("api");
-        if method != "GET" {
-            cmd.arg("-X");
-            cmd.arg(method);
-        }
-        if let Some(b) = body {
-            if !b.is_empty() {
-                cmd.arg("--input");
-                cmd.arg("-");
-                cmd.stdin(std::process::Stdio::piped());
-            }
-        }
-        cmd.arg(endpoint);
+async fn run_gh_raw_api(
+    tx: Option<UnboundedSender<Event>>,
+    endpoint: &str,
+    method: &str,
+    body: Option<&str>,
+    desc: &str,
+) -> Result<String> {
+    let mut cmd_args: Vec<String> = vec!["api".into()];
+    if method != "GET" {
+        cmd_args.push("-X".into());
+        cmd_args.push(method.into());
+    }
+    cmd_args.push(endpoint.into());
+    let cmd_str = format!("gh {}", cmd_args.join(" "));
+    let label = desc.to_uppercase();
 
-        let output = if let Some(b) = body {
-            if !b.is_empty() {
-                let mut child = cmd.spawn().context("Failed to spawn gh api command")?;
-                use tokio::io::AsyncWriteExt;
-                if let Some(mut stdin) = child.stdin.take() {
-                    stdin.write_all(b.as_bytes()).await?;
-                    stdin.flush().await?;
-                }
-                child.wait_with_output().await
-            } else {
-                cmd.output().await
+    let mut cmd = Command::new("gh");
+    cmd.arg("api");
+    if method != "GET" {
+        cmd.arg("-X");
+        cmd.arg(method);
+    }
+    if let Some(b) = body {
+        if !b.is_empty() {
+            cmd.arg("--input");
+            cmd.arg("-");
+            cmd.stdin(std::process::Stdio::piped());
+        }
+    }
+    cmd.arg(endpoint);
+
+    let output = if let Some(b) = body {
+        if !b.is_empty() {
+            let mut child = cmd.spawn().context("Failed to spawn gh api command")?;
+            use tokio::io::AsyncWriteExt;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(b.as_bytes()).await?;
+                stdin.flush().await?;
             }
+            child.wait_with_output().await
         } else {
             cmd.output().await
-        };
+        }
+    } else {
+        cmd.output().await
+    };
 
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let s = String::from_utf8(out.stdout)?;
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: format!("{}: {}", label, cmd_str),
-                            status: "Success".to_string(),
-                        });
-                    }
-                    Ok(s)
-                } else {
-                    let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: format!("{}: {}", label, cmd_str),
-                            status: format!("Failed: {}", err_msg),
-                        });
-                    }
-                    anyhow::bail!("gh api failed: {}", err_msg)
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let s = String::from_utf8(out.stdout)?;
+                if let Some(ref tx) = tx {
+                    let _ = tx.send(Event::TerminalCommandLogged {
+                        timestamp,
+                        command: format!("{}: {}", label, cmd_str),
+                        status: "Success".to_string(),
+                    });
                 }
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                if let Some(ref tx) = self.tx {
+                Ok(s)
+            } else {
+                let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
                         command: format!("{}: {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }
-                Err(e.into())
+                anyhow::bail!("gh api failed: {}", err_msg)
             }
+        }
+        Err(e) => {
+            let err_msg = format!("{}", e);
+            if let Some(ref tx) = tx {
+                let _ = tx.send(Event::TerminalCommandLogged {
+                    timestamp,
+                    command: format!("{}: {}", label, cmd_str),
+                    status: format!("Failed: {}", err_msg),
+                });
+            }
+            Err(e.into())
         }
     }
 }
@@ -2532,65 +2288,95 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
     Some(diff.num_seconds() as u64)
 }
 
-/// Fetch the actor login for a single GitHub Actions run.
-///
-/// `gh run list` does not expose the actor, so this hits
-/// `GET repos/{}/actions/runs/{id}` and reads `actor.login`. Returns `None` on
-/// any failure rather than propagating — an unknown actor must never block the
-/// pipelines list.
-async fn fetch_actor_login(project: &str, run_id: u64) -> Option<String> {
-    let raw = Command::new("gh")
-        .args([
-            "api",
-            "-H",
-            "Accept: application/vnd.github+json",
-            &format!("repos/{project}/actions/runs/{run_id}"),
-        ])
-        .output()
-        .await
-        .ok()?;
-    if !raw.status.success() {
-        return None;
-    }
-    let body: serde_json::Value = serde_json::from_slice(&raw.stdout).ok()?;
-    body.get("actor")
-        .and_then(|a| a.get("login"))
-        .and_then(|l| l.as_str())
-        .map(|s| s.to_string())
-}
-
-/// Populate `actor_login` for each pipeline.
-///
-/// `gh run list` does not expose the actor login, so the bulk listing leaves
-/// every row blank. Each run needs its own fetch, but a Pipelines tab can
-/// easily hold hundreds of runs, so a `Semaphore` caps the in-flight
-/// subprocesses at `MAX_GH_METADATA_CONCURRENCY`. Failures are non-fatal: a
-/// missing actor just stays empty, which the column renders as `—`.
-async fn enrich_pipeline_actors(project: &str, pipelines: &mut [Pipeline]) {
-    let permits = Arc::new(Semaphore::new(MAX_GH_METADATA_CONCURRENCY));
-    let mut tasks: JoinSet<(u64, Option<String>)> = JoinSet::new();
-
-    for p in pipelines.iter() {
-        if !p.actor_login.is_empty() {
-            continue;
-        }
-        let id = p.id;
-        let project = project.to_string();
-        let permits = Arc::clone(&permits);
-        tasks.spawn(async move {
-            let _permit = permits.acquire_owned().await.ok();
-            let login = fetch_actor_login(&project, id).await;
-            (id, login)
-        });
+/// Parse the JSON response from `gh api repos/{owner}/{repo}/actions/runs`.
+pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
+    #[derive(Deserialize)]
+    struct GhRunsResponse {
+        #[serde(default)]
+        workflow_runs: Vec<GhRun>,
     }
 
-    while let Some(joined) = tasks.join_next().await {
-        let Ok((id, login)) = joined else { continue };
-        let Some(login) = login else { continue };
-        if let Some(p) = pipelines.iter_mut().find(|p| p.id == id) {
-            p.actor_login = login;
-        }
+    #[derive(Deserialize)]
+    struct GhRun {
+        id: u64,
+        status: String,
+        conclusion: Option<String>,
+        #[serde(default)]
+        head_branch: Option<String>,
+        #[serde(default)]
+        updated_at: String,
+        #[serde(default)]
+        created_at: Option<String>,
+        #[serde(default)]
+        run_started_at: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        display_title: Option<String>,
+        #[serde(default)]
+        head_sha: Option<String>,
+        #[serde(default)]
+        event: Option<String>,
+        #[serde(default)]
+        actor: Option<GhActor>,
+        #[serde(default)]
+        triggering_actor: Option<GhActor>,
     }
+
+    #[derive(Deserialize)]
+    struct GhActor {
+        #[serde(default)]
+        login: Option<String>,
+    }
+
+    let res: GhRunsResponse = serde_json::from_str(raw)?;
+    let pipelines: Vec<Pipeline> =
+        res.workflow_runs
+            .into_iter()
+            .map(|r| {
+                let status = match r.status.as_str() {
+                    "completed" | "COMPLETED" => match r.conclusion.as_deref() {
+                        Some("success") | Some("SUCCESS") => "success",
+                        Some("failure") | Some("FAILURE") | Some("timed_out")
+                        | Some("TIMED_OUT") => "failed",
+                        Some("cancelled") | Some("CANCELLED") | Some("canceled")
+                        | Some("CANCELED") => "canceled",
+                        Some("skipped") | Some("SKIPPED") => "skipped",
+                        _ => "failed",
+                    },
+                    "in_progress" | "IN_PROGRESS" => "running",
+                    "queued" | "QUEUED" | "waiting" | "WAITING" | "requested" | "REQUESTED"
+                    | "pending" | "PENDING" => "pending",
+                    _ => "pending",
+                }
+                .to_string();
+                let duration = r
+                    .run_started_at
+                    .as_deref()
+                    .and_then(|started| chrono_duration(started, &r.updated_at));
+                let actor_login = r
+                    .triggering_actor
+                    .and_then(|a| a.login)
+                    .or_else(|| r.actor.and_then(|a| a.login))
+                    .unwrap_or_default();
+                Pipeline {
+                    id: r.id,
+                    status,
+                    r#ref: r.head_branch.unwrap_or_default(),
+                    updated_at: r.updated_at,
+                    name: r.name.unwrap_or_default(),
+                    display_title: r.display_title.unwrap_or_default(),
+                    event: r.event.as_deref().unwrap_or_default().to_string(),
+                    head_sha: r.head_sha.unwrap_or_default(),
+                    actor_login,
+                    duration_seconds: duration,
+                    created_at: r.created_at,
+                    source: r.event,
+                }
+            })
+            .collect();
+
+    Ok(pipelines)
 }
 
 #[cfg(test)]
@@ -2934,5 +2720,42 @@ mod tests {
             &["someone.else".to_string()],
         );
         assert!(!approval.unwrap().you_approved);
+    }
+
+    #[test]
+    fn test_parse_github_actions_runs_with_actors() {
+        let json = r#"{
+            "total_count": 1,
+            "workflow_runs": [
+                {
+                    "id": 12345,
+                    "name": "CI",
+                    "display_title": "Fix bug",
+                    "head_branch": "main",
+                    "head_sha": "abcdef123456",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "event": "push",
+                    "created_at": "2026-08-27T10:00:00Z",
+                    "updated_at": "2026-08-27T10:02:00Z",
+                    "run_started_at": "2026-08-27T10:00:00Z",
+                    "actor": { "login": "committer" },
+                    "triggering_actor": { "login": "triggerer" }
+                }
+            ]
+        }"#;
+
+        let pipelines = parse_github_actions_runs(json).unwrap();
+        assert_eq!(pipelines.len(), 1);
+        let p = &pipelines[0];
+        assert_eq!(p.id, 12345);
+        assert_eq!(p.status, "success");
+        assert_eq!(p.name, "CI");
+        assert_eq!(p.display_title, "Fix bug");
+        assert_eq!(p.r#ref, "main");
+        assert_eq!(p.head_sha, "abcdef123456");
+        assert_eq!(p.event, "push");
+        assert_eq!(p.actor_login, "triggerer");
+        assert_eq!(p.duration_seconds, Some(120));
     }
 }

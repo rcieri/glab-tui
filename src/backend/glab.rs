@@ -14,9 +14,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::process::Command;
-use tokio::sync::Semaphore;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinSet;
 
@@ -239,14 +237,25 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
     Ok(out)
 }
 
-/// Maximum `glab` subprocesses in flight for one paged fetch.
-const MAX_CONCURRENT_REQUESTS: usize = 8;
-
 /// Run one `glab` invocation and log it to the terminal pane.
 ///
 /// Free-standing rather than a method so its future is `'static` and can be
 /// spawned: `tx` is the only state a command needs from `GlabBackend`.
 async fn run_glab_command(
+    tx: Option<UnboundedSender<Event>>,
+    args: Vec<String>,
+    desc: String,
+) -> Result<String> {
+    super::rate_limit::execute_with_retry(|| {
+        let tx = tx.clone();
+        let args = args.clone();
+        let desc = desc.clone();
+        async move { run_glab_command_inner(tx, args, desc).await }
+    })
+    .await
+}
+
+async fn run_glab_command_inner(
     tx: Option<UnboundedSender<Event>>,
     args: Vec<String>,
     desc: String,
@@ -297,19 +306,12 @@ async fn run_glab_concurrent(
     desc: &str,
 ) -> Vec<(usize, Result<String>)> {
     let total = requests.len();
-    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
     let mut tasks = JoinSet::new();
 
     for (index, args) in requests.into_iter().enumerate() {
         let tx = tx.clone();
         let desc = desc.to_string();
-        let permits = Arc::clone(&permits);
-        tasks.spawn(async move {
-            // Held until the request finishes, so the permit — not the number
-            // of spawned tasks — bounds the subprocesses in flight.
-            let _permit = permits.acquire_owned().await;
-            (index, run_glab_command(tx, args, desc).await)
-        });
+        tasks.spawn(async move { (index, run_glab_command(tx, args, desc).await) });
     }
 
     let mut slots: Vec<Option<Result<String>>> = (0..total).map(|_| None).collect();
@@ -451,6 +453,7 @@ impl GlabBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Vec<String> {
         let mut args = vec![
             "mr".into(),
@@ -466,7 +469,19 @@ impl GlabBackend {
             args.push("--remove-source-branch".into());
         }
         if let Some(s) = strategy {
-            args.push(format!("--{}", s));
+            match s {
+                "rebase" => args.push("--rebase".into()),
+                // "merge" and "squash" are the default behaviors — squash
+                // is set via the `squash` flag above, and plain merge is
+                // implicit when no flag is passed.
+                "merge" | "squash" => {}
+                other => debug_assert!(false, "unknown merge strategy: {other}"),
+            }
+        }
+        if auto_merge {
+            args.push("--auto-merge=true".into());
+        } else {
+            args.push("--auto-merge=false".into());
         }
         args.push("--yes".into());
         args
@@ -590,6 +605,29 @@ impl Backend for GlabBackend {
             }));
         }
         Ok(all)
+    }
+
+    async fn list_group_issues(
+        &self,
+        group: &str,
+        show_closed: bool,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Issue>> {
+        let state = if show_closed { "all" } else { "opened" };
+        let out = self
+            .run_glab(
+                &[
+                    "api",
+                    &format!(
+                        "groups/{}/issues?state={}&per_page={}",
+                        group, state, per_request
+                    ),
+                ],
+                "FETCHING GROUP ISSUES",
+            )
+            .await?;
+        Ok(serde_json::from_str(&out)?)
     }
 
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue> {
@@ -741,171 +779,65 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--title",
-                title,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_description(
+    async fn update_issue(
         &self,
         project: &str,
         iid: u64,
-        description: &str,
+        update: &super::IssueUpdate,
     ) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "-d",
-                description,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_labels(
-        &self,
-        project: &str,
-        iid: u64,
-        add_labels: &[String],
-        remove_labels: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "issue".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for label in add_labels {
-            args.push("--label".into());
-            args.push(label.clone());
+        if update.is_empty() {
+            return Ok(());
         }
-        for label in remove_labels {
-            args.push("--unlabel".into());
-            args.push(label.clone());
+        let iid_str = iid.to_string();
+        let mut args: Vec<String> = vec!["issue".into(), "update".into(), iid_str];
+        if !project.is_empty() {
+            args.extend(["-R".into(), project.into()]);
         }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if let Some(ref title) = update.title {
+            args.extend(["--title".into(), title.clone()]);
+        }
+        if let Some(ref desc) = update.description {
+            args.extend(["-d".into(), desc.clone()]);
+        }
+        for label in &update.add_labels {
+            args.extend(["--label".into(), label.clone()]);
+        }
+        for label in &update.remove_labels {
+            args.extend(["--unlabel".into(), label.clone()]);
+        }
+        for a in &update.add_assignees {
+            args.extend(["--assignee".into(), a.clone()]);
+        }
+        for a in &update.remove_assignees {
+            args.extend(["--unassign".into(), a.clone()]);
+        }
+        if let Some(ref milestone) = update.milestone {
+            let val = if milestone == "--" || milestone.is_empty() {
+                "0"
+            } else {
+                milestone.as_str()
+            };
+            args.extend(["--milestone".into(), val.to_string()]);
+        }
+        if let Some(ref due_date) = update.due_date {
+            if !due_date.is_empty() && due_date != "YYYY-MM-DD" {
+                args.extend(["--due-date".into(), due_date.clone()]);
+            }
+        }
+        if let Some(ref weight) = update.weight {
+            if !weight.is_empty() {
+                args.extend(["--weight".into(), weight.clone()]);
+            }
+        }
+        if let Some(confidential) = update.confidential {
+            if confidential {
+                args.push("--confidential".into());
+            } else {
+                args.push("--public".into());
+            }
+        }
+        let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_glab(&args_refs, "UPDATING ISSUE").await?;
-        Ok(())
-    }
-
-    async fn update_issue_assignees(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "issue".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for a in add {
-            args.push("--assignee".into());
-            args.push(a.clone());
-        }
-        for a in remove {
-            args.push("--unassign".into());
-            args.push(a.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "UPDATING ISSUE").await?;
-        Ok(())
-    }
-
-    async fn update_issue_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "--" || milestone.is_empty() {
-            "0"
-        } else {
-            milestone
-        };
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--milestone",
-                val,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_due_date(&self, project: &str, iid: u64, due_date: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--due-date",
-                due_date,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_weight(&self, project: &str, iid: u64, weight: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "issue",
-                "update",
-                &iid.to_string(),
-                "--weight",
-                weight,
-                "-R",
-                project,
-            ],
-            "UPDATING ISSUE",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_issue_confidential(
-        &self,
-        project: &str,
-        iid: u64,
-        confidential: bool,
-    ) -> Result<()> {
-        let flag = if confidential {
-            "--confidential"
-        } else {
-            "--public"
-        };
-        self.run_glab(
-            &["issue", "update", &iid.to_string(), flag, "-R", project],
-            "UPDATING ISSUE",
-        )
-        .await?;
         Ok(())
     }
 
@@ -1370,8 +1302,9 @@ impl Backend for GlabBackend {
         squash: bool,
         delete_branch: bool,
         strategy: Option<&str>,
+        auto_merge: bool,
     ) -> Result<()> {
-        let args = Self::merge_args(project, iid, squash, delete_branch, strategy);
+        let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "MERGING MR").await?;
         Ok(())
@@ -1481,180 +1414,59 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "--title",
-                title,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_mr_description(
-        &self,
-        project: &str,
-        iid: u64,
-        description: &str,
-    ) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "-d",
-                description,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn update_mr_labels(
-        &self,
-        project: &str,
-        iid: u64,
-        add_labels: &[String],
-        remove_labels: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "mr".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for label in add_labels {
-            args.push("--label".into());
-            args.push(label.clone());
+    async fn update_mr(&self, project: &str, iid: u64, update: &super::MrUpdate) -> Result<()> {
+        if update.is_empty() {
+            return Ok(());
         }
-        for label in remove_labels {
-            args.push("--unlabel".into());
-            args.push(label.clone());
+        let iid_str = iid.to_string();
+        let mut args: Vec<String> = vec!["mr".into(), "update".into(), iid_str];
+        if !project.is_empty() {
+            args.extend(["-R".into(), project.into()]);
         }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if let Some(ref title) = update.title {
+            args.extend(["--title".into(), title.clone()]);
+        }
+        if let Some(ref desc) = update.description {
+            args.extend(["-d".into(), desc.clone()]);
+        }
+        for label in &update.add_labels {
+            args.extend(["--label".into(), label.clone()]);
+        }
+        for label in &update.remove_labels {
+            args.extend(["--unlabel".into(), label.clone()]);
+        }
+        for a in &update.add_assignees {
+            args.extend(["--assignee".into(), a.clone()]);
+        }
+        for a in &update.remove_assignees {
+            args.extend(["--unassign".into(), a.clone()]);
+        }
+        for r in &update.add_reviewers {
+            args.extend(["--reviewer".into(), r.clone()]);
+        }
+        for r in &update.remove_reviewers {
+            args.extend(["--unreviewer".into(), r.clone()]);
+        }
+        if let Some(ref milestone) = update.milestone {
+            let val = if milestone == "--" || milestone.is_empty() {
+                "0"
+            } else {
+                milestone.as_str()
+            };
+            args.extend(["--milestone".into(), val.to_string()]);
+        }
+        if let Some(ref target_branch) = update.target_branch {
+            args.extend(["--target-branch".into(), target_branch.clone()]);
+        }
+        if let Some(draft) = update.draft {
+            if draft {
+                args.push("--draft".into());
+            } else {
+                args.push("--ready".into());
+            }
+        }
+        let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_glab(&args_refs, "UPDATING MR").await?;
-        Ok(())
-    }
-
-    async fn update_mr_assignees(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "mr".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for a in add {
-            args.push("--assignee".into());
-            args.push(a.clone());
-        }
-        for a in remove {
-            args.push("--unassign".into());
-            args.push(a.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "UPDATING MR").await?;
-        Ok(())
-    }
-
-    async fn update_mr_reviewers(
-        &self,
-        project: &str,
-        iid: u64,
-        add: &[String],
-        remove: &[String],
-    ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "mr".into(),
-            "update".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        for r in add {
-            args.push("--reviewer".into());
-            args.push(r.clone());
-        }
-        for r in remove {
-            args.push("--unreviewer".into());
-            args.push(r.clone());
-        }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "UPDATING MR").await?;
-        Ok(())
-    }
-
-    async fn update_mr_milestone(&self, project: &str, iid: u64, milestone: &str) -> Result<()> {
-        let val = if milestone == "--" || milestone.is_empty() {
-            "0"
-        } else {
-            milestone
-        };
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "--milestone",
-                val,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn list_group_pipelines(
-        &self,
-        group: &str,
-        _page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<Pipeline>> {
-        let out = self
-            .run_glab(
-                &[
-                    "api",
-                    &format!("groups/{}/pipelines?per_page={}", group, per_request),
-                ],
-                "FETCHING GROUP PIPELINES",
-            )
-            .await?;
-        Ok(serde_json::from_str(&out)?)
-    }
-
-    async fn update_mr_target_branch(&self, project: &str, iid: u64, branch: &str) -> Result<()> {
-        self.run_glab(
-            &[
-                "mr",
-                "update",
-                &iid.to_string(),
-                "--target-branch",
-                branch,
-                "-R",
-                project,
-            ],
-            "UPDATING MR",
-        )
-        .await?;
         Ok(())
     }
 
@@ -1730,6 +1542,24 @@ impl Backend for GlabBackend {
             }));
         }
         Ok(all)
+    }
+
+    async fn list_group_pipelines(
+        &self,
+        group: &str,
+        _page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<Pipeline>> {
+        let out = self
+            .run_glab(
+                &[
+                    "api",
+                    &format!("groups/{}/pipelines?per_page={}", group, per_request),
+                ],
+                "FETCHING GROUP PIPELINES",
+            )
+            .await?;
+        Ok(serde_json::from_str(&out)?)
     }
 
     async fn list_pipeline_jobs(
@@ -2036,7 +1866,7 @@ impl Backend for GlabBackend {
         self.run_glab(
             &[
                 "release",
-                "update",
+                "create",
                 tag_name,
                 "-R",
                 project,
@@ -2386,29 +2216,6 @@ impl Backend for GlabBackend {
         Ok(list)
     }
 
-    async fn list_group_issues(
-        &self,
-        group: &str,
-        show_closed: bool,
-        page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<Issue>> {
-        let state = if show_closed { "all" } else { "opened" };
-        let out = self
-            .run_glab(
-                &[
-                    "api",
-                    &format!(
-                        "groups/{}/issues?state={}&per_page={}",
-                        group, state, per_request
-                    ),
-                ],
-                "FETCHING GROUP ISSUES",
-            )
-            .await?;
-        Ok(serde_json::from_str(&out)?)
-    }
-
     async fn mark_notification_as_read(&self, id: &str) -> Result<()> {
         self.run_glab(&["todo", "done", id], "Marking Todo Done")
             .await?;
@@ -2693,82 +2500,105 @@ impl Backend for GlabBackend {
         body: Option<&str>,
         desc: &str,
     ) -> Result<String> {
-        let mut cmd_args: Vec<String> = vec!["api".into()];
-        if method != "GET" {
-            cmd_args.push("-X".into());
-            cmd_args.push(method.into());
-        }
-        cmd_args.push(endpoint.into());
-        let cmd_str = format!("glab {}", cmd_args.join(" "));
-        let label = desc.to_uppercase();
+        let tx = self.tx.clone();
+        let endpoint = endpoint.to_string();
+        let method = method.to_string();
+        let body = body.map(ToString::to_string);
+        let desc = desc.to_string();
+        super::rate_limit::execute_with_retry(|| {
+            let tx = tx.clone();
+            let endpoint = endpoint.clone();
+            let method = method.clone();
+            let body = body.clone();
+            let desc = desc.clone();
+            async move { run_glab_raw_api(tx, &endpoint, &method, body.as_deref(), &desc).await }
+        })
+        .await
+    }
+}
 
-        let mut cmd = Command::new("glab");
-        cmd.arg("api");
-        if method != "GET" {
-            cmd.arg("-X");
-            cmd.arg(method);
-        }
-        if let Some(b) = body {
-            if !b.is_empty() {
-                cmd.arg("--input");
-                cmd.arg("-");
-                cmd.stdin(std::process::Stdio::piped());
-            }
-        }
-        cmd.arg(endpoint);
+async fn run_glab_raw_api(
+    tx: Option<UnboundedSender<Event>>,
+    endpoint: &str,
+    method: &str,
+    body: Option<&str>,
+    desc: &str,
+) -> Result<String> {
+    let mut cmd_args: Vec<String> = vec!["api".into()];
+    if method != "GET" {
+        cmd_args.push("-X".into());
+        cmd_args.push(method.into());
+    }
+    cmd_args.push(endpoint.into());
+    let cmd_str = format!("glab {}", cmd_args.join(" "));
+    let label = desc.to_uppercase();
 
-        let output = if let Some(b) = body {
-            if !b.is_empty() {
-                let mut child = cmd.spawn().context("Failed to spawn glab api command")?;
-                use tokio::io::AsyncWriteExt;
-                if let Some(mut stdin) = child.stdin.take() {
-                    stdin.write_all(b.as_bytes()).await?;
-                    stdin.flush().await?;
-                }
-                child.wait_with_output().await
-            } else {
-                cmd.output().await
+    let mut cmd = Command::new("glab");
+    cmd.arg("api");
+    if method != "GET" {
+        cmd.arg("-X");
+        cmd.arg(method);
+    }
+    if let Some(b) = body {
+        if !b.is_empty() {
+            cmd.arg("--input");
+            cmd.arg("-");
+            cmd.stdin(std::process::Stdio::piped());
+        }
+    }
+    cmd.arg(endpoint);
+
+    let output = if let Some(b) = body {
+        if !b.is_empty() {
+            let mut child = cmd.spawn().context("Failed to spawn glab api command")?;
+            use tokio::io::AsyncWriteExt;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(b.as_bytes()).await?;
+                stdin.flush().await?;
             }
+            child.wait_with_output().await
         } else {
             cmd.output().await
-        };
+        }
+    } else {
+        cmd.output().await
+    };
 
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let s = String::from_utf8(out.stdout)?;
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: format!("{}: {}", label, cmd_str),
-                            status: "Success".to_string(),
-                        });
-                    }
-                    Ok(s)
-                } else {
-                    let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                    if let Some(ref tx) = self.tx {
-                        let _ = tx.send(Event::TerminalCommandLogged {
-                            timestamp,
-                            command: format!("{}: {}", label, cmd_str),
-                            status: format!("Failed: {}", err_msg),
-                        });
-                    }
-                    anyhow::bail!("glab api failed: {}", err_msg)
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let s = String::from_utf8(out.stdout)?;
+                if let Some(ref tx) = tx {
+                    let _ = tx.send(Event::TerminalCommandLogged {
+                        timestamp,
+                        command: format!("{}: {}", label, cmd_str),
+                        status: "Success".to_string(),
+                    });
                 }
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                if let Some(ref tx) = self.tx {
+                Ok(s)
+            } else {
+                let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
                         command: format!("{}: {}", label, cmd_str),
                         status: format!("Failed: {}", err_msg),
                     });
                 }
-                Err(e.into())
+                anyhow::bail!("glab api failed: {}", err_msg)
             }
+        }
+        Err(e) => {
+            let err_msg = format!("{}", e);
+            if let Some(ref tx) = tx {
+                let _ = tx.send(Event::TerminalCommandLogged {
+                    timestamp,
+                    command: format!("{}: {}", label, cmd_str),
+                    status: format!("Failed: {}", err_msg),
+                });
+            }
+            Err(e.into())
         }
     }
 }
@@ -2779,7 +2609,7 @@ mod tests {
 
     #[test]
     fn merge_args_skip_confirmation_prompt() {
-        let args = GlabBackend::merge_args("group/project", 42, true, true, None);
+        let args = GlabBackend::merge_args("group/project", 42, true, true, None, false);
 
         assert_eq!(
             args,
@@ -2791,9 +2621,25 @@ mod tests {
                 "group/project",
                 "--squash",
                 "--remove-source-branch",
+                "--auto-merge=false",
                 "--yes",
             ]
         );
+    }
+
+    #[test]
+    fn merge_args_rebase_strategy_adds_rebase_flag() {
+        let args =
+            GlabBackend::merge_args("group/project", 42, false, false, Some("rebase"), false);
+        assert!(args.contains(&"--rebase".to_string()));
+        assert!(!args.contains(&"--squash".to_string()));
+    }
+
+    #[test]
+    fn merge_args_merge_strategy_is_default() {
+        let args = GlabBackend::merge_args("group/project", 42, false, false, Some("merge"), false);
+        assert!(!args.contains(&"--rebase".to_string()));
+        assert!(!args.contains(&"--squash".to_string()));
     }
 
     // ── iid batching (GraphQL 100-node connection cap) ──

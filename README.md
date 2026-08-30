@@ -21,6 +21,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ## Table of Contents
 
 - [Features](#features)
+- [Demos](#demos)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
   - [Package Manager](#package-manager)
@@ -54,20 +55,22 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
-- **Bulk editing** — select multiple issues or merge requests with `Space`, then press `e` to apply labels, assignees, or milestone across all selected items at once
-- **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description)
-- **Merge Requests / Pull Requests** — list, filter, create MRs from issues, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
+- **Bulk editing & Visual Select Mode** — select multiple issues or merge requests with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
+- **Single-Column Inspector** — unified fullscreen details preview and inline editing with full-width markdown description on top and stacked metadata fields below
+- **Interactive Submit Dialogs** — explicit Submit/Cancel confirmations with configurable options (squash, delete source branch, auto-merge) for mutating actions
+- **Issues** — list, filter, create, and edit issues (title, labels, assignees, milestone, due date, weight, confidentiality, description) with in-menu template selection
+- **Merge Requests / Pull Requests** — list, filter, create MRs from issues with auto-linking, approve, merge, view diffs in terminal with code reviews, and edit MR/PR metadata
 - **MR/PR review state at a glance** — color-coded **Approval** (`APPROVED`, `AWAITING`, `REVIEW REQ`, …), **Mergeable** (`CONFLICT`, `REBASE`, `CLEAN`), and **Workflow** (Returned / Review req / Yours / Approved / By others / Inactive) columns; rebase with `R`, revoke your approval with `A` (GitLab)
-- **Code Reviews** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, and atomic review submission
-- **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with syntax highlighting
+- **Code Reviews & Diff View** — draft inline comments, multi-line selections, code suggestions with syntax highlighting, mark files as reviewed (`m`/`M`), and atomic review submission
+- **Side-by-Side Diff** — toggle between unified and side-by-side diff layouts with theme-aware syntax highlighting and tab-stop expansion
 - **Pipelines / Actions** — inspect pipelines and their jobs, retry/cancel pipelines/actions and individual jobs, stream build traces; trigger pipelines with `workflow_dispatch` input prompts
-- **Runners** — list runners with structured details panel; pause/resume, edit descriptions, and monitor live performance/queue metrics
-- **Releases** — browse project releases and view details in the terminal
+- **Runners** — list runners with structured details panel; pause/resume, edit descriptions, and monitor live runner status
+- **Releases** — browse, create, and edit project releases directly in the terminal
 - **Todos / Notifications** — tab with badges, relative timestamps, fuzzy search, and an Updated column
 - **Milestones** — progress bar column, inline editing, and milestone issue caching
 - **Branches** — browse branches with default/protected markers; create and delete branches inline
 - **Environments & Deployments** — browse environments and their deployment status, drilling into deployment history with `Enter`
-- **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status
+- **Terminal** — live log of every `glab`/`gh` command the TUI executes, with success/failure status and unified error toasts
 - **Real label colors** — the Labels column renders each label with its actual color from the API (`glab label list` / `gh label list`), falling back to the theme palette for light GitHub-style background-fill colors; toggle with `fetch_label_colors` in `config.toml`
 - **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
 - **Value-based Column Filtering** — press `Enter` on any column inside the configure popup to filter rows by that column's values (e.g. Issues → `State` → `opened`); multi-select supports multiple values per column
@@ -80,14 +83,39 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
-- **Themes** — 16 built-in color themes; fully customizable via `config.toml` or custom `.toml` files
+- **Themes** — 18 built-in color themes (including `oled` and `github-dark-hc`); fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---
 
+## Demos
+
+### Overview & Navigation
+Tab navigation across Issues, Merge Requests, Pipelines, Runners, and Releases with interactive detail scrolling and built-in help.
+
 ![Overview](assets/demo-overview.gif)
+
+### Code Review & Diff View
+Review MR/PR diffs in unified or side-by-side view, navigate files, mark files as reviewed, and leave comments.
+
+![Diff View](assets/demo-diff.gif)
+
+### Fullscreen Preview & Inspector
+Inspect markdown descriptions, discussion threads, and metadata with zoomable single-column inspector views.
+
+![Fullscreen Preview](assets/demo-preview.gif)
+
+### Fuzzy Search & Column Configuration
+Live fuzzy search across all visible columns, configure visible columns, group rows, and apply value-based column filters.
+
 ![Search & Configure](assets/demo-search.gif)
-![Navigation & Selection](assets/demo-selection.gif)
+
+### Field Editing & Selectors
+Inline entity editing with searchable multi-select overlays for labels, assignees, reviewers, and milestones.
+
+![Field Editing & Selectors](assets/demo-selection.gif)
+
+---
 
 ## Prerequisites
 
@@ -408,6 +436,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `d` | Delete selected issue (with confirmation) | `delete_entity` |
 | `o` | Open selected issue in browser | — |
 | `Space` | Select issue for bulk editing | `select_issue` |
+| `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 
@@ -438,9 +467,10 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `A` | Revoke your approval *(GitLab only)* | `revoke_mr` |
 | `R` | Rebase source branch onto target | `rebase_mr` |
 | `m` | Merge selected MR (squash + remove source branch) | `merge_mr` |
-| `v` | View diff of selected MR in terminal | `view_diff` |
+| `D` | View diff of selected MR in terminal | `view_diff` |
 | `P` | View related pipelines from MR detail | `view_related_pipelines` |
 | `Space` | Select MR for bulk editing | `select_mr` |
+| `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
 | `o` | Open selected MR in browser | — |
 | `s` | Toggle Draft / Ready status | `toggle_draft` |
 | `c` | Close selected MR | `close_entity` |
@@ -466,7 +496,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 
 ### Diff View
 
-Press `v` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
+Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **file tree** and the **diff pane**.
 
 > Diff View keys are **fixed** and not remappable in `config.toml`.
 
@@ -661,13 +691,14 @@ Searchable multi-select popups are used for choosing labels, assignees, reviewer
 | [`serde_json`](https://crates.io/crates/serde_json) | 1.0 | Parsing JSON responses from `glab api` |
 | [`toml`](https://crates.io/crates/toml) | 1.1 | Parsing `config.toml` and theme files |
 | [`anyhow`](https://crates.io/crates/anyhow) | 1.0 | Ergonomic error handling |
-| [`async-trait`](https://crates.io/crates/async-trait) | 0.1 | Async trait support for Backend trait |
+| [`async-trait`](https://crates.io/crates/async-trait) | 0.1.92 | Async trait support for Backend trait |
 | [`clap`](https://crates.io/crates/clap) | 4 (derive) | CLI argument parsing for subcommands |
 | [`serde_yaml`](https://crates.io/crates/serde_yaml) | 0.9 | YAML output for `doctor` diagnostics |
 | [`chrono`](https://crates.io/crates/chrono) | 0.4 | Timestamp formatting ("2 hours ago") |
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
 | [`syntect`](https://crates.io/crates/syntect) | 5 | Syntax highlighting in diff and preview panes |
+| [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) | 0.13.0 | CommonMark and GFM markdown renderer for details panes |
 
 All API calls are made by shelling out to `gh api` or `glab api` (depending on the repository host; you only need the CLI matching the service you use) — no personal access token or direct HTTP client is required inside the binary.
 
@@ -710,17 +741,19 @@ src/
 │   └── overlays.rs  # Overlay keybinding handlers
 ├── ui/              # Ratatui render functions
 │   ├── mod.rs       # Re-exports
+│   ├── inspector.rs # Unified entity inspector (preview/edit single-column layout)
 │   ├── tabs.rs      # Tab-specific render functions
-│   ├── overlays.rs  # Overlay render functions
-│   ├── helpers.rs   # Shared UI helpers
+│   ├── overlays.rs  # Overlay render functions (SubmitDialog, selectors, date picker)
+│   ├── helpers.rs   # Shared UI helpers (badge styling, fuzzy cells)
 │   ├── diff.rs      # Diff view render functions
-└── modal.rs     # Unified modal component
+│   └── modal.rs     # Unified modal component
 └── utils/
     ├── mod.rs
     ├── cache.rs     # Offline caching
-    ├── format.rs    # Time formatting, markdown, truncation
+    ├── format.rs    # Time formatting, tab expansion, text wrapping
+    ├── markdown.rs  # CommonMark and GFM Markdown rendering
     ├── ui.rs        # StatefulTable generic helper
-    └── update.rs    # GitHub releases self-updater
+    └── update.rs    # GitHub releases self-updater with multi-target Linux selection
 ```
 
 ---
@@ -743,7 +776,7 @@ Unit tests live in several modules:
 Releases are prepared and distributed from a maintainer's machine; CI only builds the cross-platform release binaries.
 
 ```sh
-scripts/release.sh [patch|minor|major]   # default: patch
+scripts/release.sh [patch|minor|major|nightly]   # default: patch
 ```
 
 `scripts/release.sh` walks the whole release in one pass: it bumps the crate version, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` and the demo GIFs via a headless `opencode run`, opens a `chore: prepare release vX.Y.Z` PR, pauses for you to review it, squash-merges it, tags and pushes the version, waits for the CI release build, then writes the release notes and pushes the Homebrew formula, Scoop manifest, Docker image, and crate.

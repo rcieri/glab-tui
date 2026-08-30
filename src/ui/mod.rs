@@ -34,10 +34,20 @@ pub(crate) fn render_edit_menu_if_active(f: &mut Frame, app: &mut App, detail_re
     };
     let label_colors = app.label_colors.clone();
 
+    let is_bulk_edit = matches!(
+        menu.entity_kind,
+        crate::app::EditEntityKind::BulkEditIssues | crate::app::EditEntityKind::BulkEditMrs
+    );
+    let content = if is_bulk_edit {
+        crate::app::InspectorContent::Custom(bulk_selection_lines(app))
+    } else {
+        crate::app::InspectorContent::Markdown(menu.get_description_value())
+    };
+
     let doc = crate::app::EntityDocument {
         title: menu.title.clone(),
         fields: menu.fields.clone(),
-        content: crate::app::InspectorContent::Markdown(menu.get_description_value()),
+        content,
     };
 
     inspector::render_entity_inspector(
@@ -52,6 +62,27 @@ pub(crate) fn render_edit_menu_if_active(f: &mut Frame, app: &mut App, detail_re
     true
 }
 
+/// Descriptor-pane lines for a bulk-edit menu: one entry per selected entity,
+/// `#iid` accented and the title in normal text, so the user can confirm the
+/// exact mutation set before submitting.
+fn bulk_selection_lines(app: &App) -> Vec<Line<'static>> {
+    let theme = THEME.read().unwrap();
+    app.bulk_selection_summary()
+        .into_iter()
+        .map(|(iid, title)| {
+            Line::from(vec![
+                Span::styled(
+                    format!("#{iid} "),
+                    Style::default()
+                        .fg(theme.purple)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(title, Style::default().fg(theme.text_normal)),
+            ])
+        })
+        .collect()
+}
+
 /// Render a vim/helix-style mode indicator in the right side of the top banner.
 /// Shows `[NORMAL]` / `[PREVIEW]` / `[EDIT]` / `[CREATE]` with a colored
 /// background.
@@ -62,20 +93,20 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
         if menu.entity_kind.is_create() {
             // CREATE — distinct palette so the user knows they're filling
             // out a new entity, not editing an existing one.
-            (" CREATE ", theme.green, theme.bg)
+            (" CREATE ", theme.green, theme.highlight_bg)
         } else {
             // EDIT — reuse the GROUPED badge palette (blue).
-            (" EDIT ", theme.blue, theme.bg)
+            (" EDIT ", theme.blue, theme.highlight_bg)
         }
     } else if app.select_mode {
         // SELECT — distinct palette (purple) for yazi-style select mode.
-        (" SELECT ", theme.purple, theme.bg)
+        (" SELECT ", theme.purple, theme.highlight_bg)
     } else if app.details_zoomed {
         // PREVIEW — reuse the SEARCHING badge palette (yellow).
-        (" PREVIEW ", theme.yellow, theme.bg)
+        (" PREVIEW ", theme.yellow, theme.highlight_bg)
     } else {
         // NORMAL — reuse the GLAB-TUI header palette (border_focused).
-        (" NORMAL ", theme.border_focused, theme.bg)
+        (" NORMAL ", theme.border_focused, theme.highlight_bg)
     };
 
     let line = Line::from(vec![Span::styled(
@@ -241,7 +272,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} GLAB-TUI ", header_icon),
             Style::default()
                 .bg(THEME.read().unwrap().border_focused)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -260,7 +291,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} GROUPED: {} ", icons.label_filtered, group_col),
             Style::default()
                 .bg(THEME.read().unwrap().blue)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ));
         if app.is_typing_search || !app.search_query.is_empty() {
@@ -272,7 +303,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} SEARCHING ", icons.label_searching),
             Style::default()
                 .bg(THEME.read().unwrap().yellow)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ));
         title_spans.push(Span::styled(
@@ -284,7 +315,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} FILTERED ", icons.label_filtered),
             Style::default()
                 .bg(THEME.read().unwrap().yellow)
-                .fg(THEME.read().unwrap().bg)
+                .fg(THEME.read().unwrap().highlight_bg)
                 .add_modifier(Modifier::BOLD),
         ));
         title_spans.push(Span::styled(
@@ -399,7 +430,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 ListItem::new(title).style(
                     Style::default()
                         .bg(THEME.read().unwrap().border_focused)
-                        .fg(THEME.read().unwrap().bg)
+                        .fg(THEME.read().unwrap().highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
@@ -670,7 +701,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     format!(" {} SEARCHING ", &ICONS.read().unwrap().label_searching),
                     Style::default()
                         .bg(THEME.read().unwrap().yellow)
-                        .fg(THEME.read().unwrap().bg)
+                        .fg(THEME.read().unwrap().highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 ));
                 title_spans.push(Span::styled(
@@ -691,7 +722,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     format!(" {} FILTERED ", &ICONS.read().unwrap().label_filtered),
                     Style::default()
                         .bg(THEME.read().unwrap().yellow)
-                        .fg(THEME.read().unwrap().bg)
+                        .fg(THEME.read().unwrap().highlight_bg)
                         .add_modifier(Modifier::BOLD),
                 ));
                 title_spans.push(Span::styled(
@@ -708,17 +739,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
             let inner_area = outer_block.inner(area);
 
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(
-                    [
-                        Constraint::Min(0),    // Main content split
-                        Constraint::Length(1), // Help / controls footer
-                    ]
-                    .as_ref(),
-                )
-                .split(inner_area);
-
             let main_chunks = {
                 let file_tree_constraint = if diff_view.file_tree_visible {
                     Constraint::Percentage(25)
@@ -728,7 +748,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([file_tree_constraint, Constraint::Percentage(100)].as_ref())
-                    .split(chunks[0])
+                    .split(inner_area)
             };
 
             // 1. Render Files list on the left (only if visible)
@@ -867,7 +887,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         if diff_view.focus_on_files {
                             Style::default()
                                 .bg(THEME.read().unwrap().highlight_bg)
-                                .fg(THEME.read().unwrap().bg)
+                                .fg(THEME.read().unwrap().highlight_bg)
                                 .add_modifier(Modifier::BOLD)
                         } else {
                             Style::default()
@@ -1876,17 +1896,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
             }
 
-            let footer_p = Paragraph::new(" Esc/q: Exit • d: Toggle Diff Layout • Enter/Space: Select File / Toggle Zoom • h/l: Collapse/Expand Dir • j/k/↑/↓: Navigate • J/K: Scroll 10 • [/]: Prev/Next Hunk • z/Z: Collapse/Expand All • m: Mark Reviewed • M: Hide Reviewed • v: Select Lines • c: Comment • e: Suggest Code • a: Comment Actions • r: Submit Review • / or f: Search • Ctrl+n/Ctrl+N: Next/Prev Match ")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(THEME.read().unwrap().text_muted).add_modifier(Modifier::ITALIC))
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
             clear_area(f, area);
             f.render_widget(outer_block, area);
             if file_tree_visible {
                 f.render_widget(files_list, main_chunks[0]);
             }
-            f.render_widget(footer_p, chunks[1]);
 
             if updated_diff_view.side_by_side {
                 let diff_inner = diff_block.inner(main_chunks[1]);

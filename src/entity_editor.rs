@@ -459,7 +459,7 @@ pub fn build_release_document(
 ) -> crate::app::EntityDocument {
     let mut fields = vec![
         crate::app::Field::read_only("Tag", release.tag_name.clone()),
-        crate::app::Field::text("Name", release.name.clone()),
+        crate::app::Field::text("Release Name", release.name.clone()),
     ];
     if let Some(author) = &release.author_name {
         fields.push(crate::app::Field::read_only(
@@ -720,6 +720,15 @@ pub fn apply_field_text_change(
                 "tag" => tag = value.clone(),
                 "description" => description = value.clone(),
                 _ => {}
+            }
+
+            if let Some(item) = app.releases.items.get_mut(iid as usize) {
+                if field_type == "title" || field_type == "release_name" {
+                    item.name = value.clone();
+                }
+                if field_type == "description" {
+                    item.description = Some(value.clone());
+                }
             }
 
             let Some(client) = app.gitlab_client.clone() else {
@@ -1201,6 +1210,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Issue #{}", issue.iid),
                 fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
                 selected_idx,
                 entity_iid: issue.iid,
                 entity_kind: crate::app::EditEntityKind::EditIssue,
@@ -1239,6 +1249,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit {} #{}", mr_label, mr.iid),
                 fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
                 selected_idx,
                 entity_iid: mr.iid,
                 entity_kind: crate::app::EditEntityKind::EditMr,
@@ -1277,9 +1288,37 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Milestone %{}", milestone.iid),
                 fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
                 selected_idx,
                 entity_iid: milestone.iid,
                 entity_kind: crate::app::EditEntityKind::EditMilestone,
+                state: {
+                    let mut s = ratatui::widgets::ListState::default();
+                    s.select(Some(selected_idx));
+                    s
+                },
+                workflow_inputs: vec![],
+                cursor_pos: 0,
+                editing: false,
+                desc_scroll: 0,
+            });
+        }
+    } else if entity_type == "release" {
+        if let Some(release) = app.releases.items.get(entity_iid as usize).cloned() {
+            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+            let mut doc = build_release_document(&release);
+            doc.fields.push(crate::app::Field::text(
+                "Release Notes",
+                release.description.clone().unwrap_or_default(),
+            ));
+
+            app.open_edit_menu(crate::app::EditMenu {
+                title: format!("Edit Release {}", release.tag_name),
+                fields: doc.fields,
+                initial_fields: std::collections::HashMap::new(),
+                selected_idx,
+                entity_iid,
+                entity_kind: crate::app::EditEntityKind::EditRelease,
                 state: {
                     let mut s = ratatui::widgets::ListState::default();
                     s.select(Some(selected_idx));

@@ -480,9 +480,13 @@ impl GlabBackend {
         }
         if auto_merge {
             args.push("--auto-merge=true".into());
-        } else {
-            args.push("--auto-merge=false".into());
         }
+        // When auto_merge is false we intentionally omit the flag and let
+        // `glab` decide: it defaults to --auto-merge when a pipeline is
+        // running, and merges immediately when the pipeline is absent/done.
+        // Passing --auto-merge=false forces an immediate merge attempt which
+        // causes glab to exhaust its internal retry loop ("All attempts fail")
+        // whenever a pipeline is still in progress (#372).
         args.push("--yes".into());
         args
     }
@@ -2557,10 +2561,30 @@ mod tests {
                 "group/project",
                 "--squash",
                 "--remove-source-branch",
-                "--auto-merge=false",
+                // No --auto-merge flag when auto_merge=false; glab decides based on
+                // pipeline state, avoiding "All attempts fail" for in-progress pipelines.
                 "--yes",
             ]
         );
+        // Explicitly verify --auto-merge=false is never injected.
+        assert!(!args.contains(&"--auto-merge=false".to_string()));
+    }
+
+    #[test]
+    fn merge_args_auto_merge_true_adds_flag() {
+        let args = GlabBackend::merge_args("group/project", 42, false, false, None, true);
+        assert!(args.contains(&"--auto-merge=true".to_string()));
+        assert!(!args.contains(&"--auto-merge=false".to_string()));
+    }
+
+    #[test]
+    fn merge_args_auto_merge_false_omits_flag() {
+        // When the user does not check "Auto-merge", we must not pass
+        // --auto-merge=false because that forces glab to attempt an immediate
+        // merge even when a pipeline is still running, causing it to exhaust
+        // its internal retry loop with "All attempts fail" (#372).
+        let args = GlabBackend::merge_args("group/project", 42, false, false, None, false);
+        assert!(!args.iter().any(|a| a.starts_with("--auto-merge")));
     }
 
     #[test]

@@ -2790,6 +2790,11 @@ pub struct App {
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
     pub error_message_at: Option<std::time::Instant>,
+    /// True when the current error toast originated from a real glab/gh CLI
+    /// failure (stderr is captured in the terminal log).  False for guard
+    /// rejections that never ran a CLI command.  Controls the hint line shown
+    /// in the toast.
+    pub error_has_cli_detail: bool,
     pub runners: StatefulTable<crate::domain::runners::Runner>,
     pub releases: StatefulTable<crate::domain::releases::Release>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
@@ -2900,6 +2905,7 @@ impl Default for App {
             job_trace: None,
             error_message: None,
             error_message_at: None,
+            error_has_cli_detail: false,
             runners: StatefulTable::with_items(vec![]),
             releases: StatefulTable::with_items(vec![]),
             pipeline_jobs: std::collections::HashMap::new(),

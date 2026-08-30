@@ -389,7 +389,15 @@ fn run_submit_action(
                     .await;
                 let _ = tx2.send(Event::CommandCompleted(
                     crate::app::Tab::MergeRequests,
-                    result.map_err(|e| e.to_string()),
+                    result.map_err(|e| {
+                        // Strip the verbose glab prefix so the toast stays readable.
+                        e.to_string()
+                            .trim_start_matches("glab command failed: ")
+                            .lines()
+                            .next()
+                            .unwrap_or("merge failed")
+                            .to_string()
+                    }),
                 ));
             });
         }
@@ -407,8 +415,9 @@ fn run_submit_action(
             };
             let project_path = app.project_context.clone();
             let tx2 = tx.clone();
+            let total = iids.len();
             tokio::spawn(async move {
-                let mut failures = Vec::new();
+                let mut failures: Vec<(u64, String)> = Vec::new();
                 for (i, mr_iid) in iids.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
@@ -425,7 +434,7 @@ fn run_submit_action(
                         .await
                     {
                         Ok(_) => {}
-                        Err(e) => failures.push(format!("#{mr_iid}: {e}")),
+                        Err(e) => failures.push((mr_iid, e.to_string())),
                     }
                 }
                 let _ = tx2.send(Event::CommandCompleted(
@@ -433,7 +442,26 @@ fn run_submit_action(
                     if failures.is_empty() {
                         Ok(())
                     } else {
-                        Err(failures.join(", "))
+                        let succeeded = total - failures.len();
+                        // Build a concise summary: "2/5 merged. Failed: #12: ..., #34: ..."
+                        // Truncate individual error messages so the toast stays readable.
+                        let detail: Vec<String> = failures
+                            .iter()
+                            .map(|(iid, err)| {
+                                // Trim the verbose glab prefix from error strings.
+                                let trimmed = err
+                                    .trim_start_matches("glab command failed: ")
+                                    .lines()
+                                    .next()
+                                    .unwrap_or(err.as_str());
+                                format!("#{iid}: {trimmed}")
+                            })
+                            .collect();
+                        Err(format!(
+                            "{succeeded}/{total} merged. {} failed: {}",
+                            failures.len(),
+                            detail.join(", ")
+                        ))
                     },
                 ));
             });

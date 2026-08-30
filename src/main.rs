@@ -1045,6 +1045,7 @@ async fn main() -> Result<()> {
                             }
                             Err(e) => {
                                 app.show_error(e);
+                                app.error_has_cli_detail = true;
                             }
                         }
                     }
@@ -1371,6 +1372,7 @@ async fn main() -> Result<()> {
                         app.status_message = Some("Offline / Connection failed".to_string());
                     } else {
                         app.show_error(err_msg);
+                        app.error_has_cli_detail = true;
                     }
                 }
                 Event::DiffFetched {
@@ -1400,6 +1402,7 @@ async fn main() -> Result<()> {
                 Event::DiffFetchFailed(err_msg) => {
                     app.diff_loading = false;
                     app.show_error(err_msg);
+                    app.error_has_cli_detail = true;
                 }
                 Event::TerminalCommandLogged {
                     timestamp,
@@ -1499,6 +1502,8 @@ async fn main() -> Result<()> {
                         }
                         Err(err) => {
                             app.show_error(err);
+                            // CLI failure: full stderr is in the terminal log.
+                            app.error_has_cli_detail = true;
                         }
                     }
                 }

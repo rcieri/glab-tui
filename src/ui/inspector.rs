@@ -732,69 +732,83 @@ pub(crate) fn build_field_list_items(
                     FieldType::Text | FieldType::ReadOnly => {
                         if label == "Progress" && val.contains('[') && val.contains(']') {
                             if let (Some(open_b), Some(close_b)) = (val.find('['), val.find(']')) {
-                                let before_b = &val[..open_b];
-                                let bar_inner = &val[open_b + 1..close_b];
-                                let after_b = &val[close_b + 1..];
-
-                                let filled_count = bar_inner.chars().filter(|&c| c == '█').count();
-                                let total_count = bar_inner.chars().count();
-                                let pct = if total_count > 0 {
-                                    (filled_count as f32 / total_count as f32) * 100.0
-                                } else {
-                                    0.0
-                                };
-                                let bar_color = if pct <= 33.0 {
-                                    theme.red
-                                } else if pct <= 66.0 {
-                                    theme.yellow
-                                } else {
-                                    theme.green
-                                };
-
-                                let mut spans = Vec::new();
-                                if !before_b.is_empty() {
-                                    spans.push(Span::styled(
-                                        format!(" {}", before_b),
+                                if open_b >= close_b {
+                                    // A `]` before a `[` (or the two coinciding)
+                                    // means this isn't actually a progress bar in
+                                    // the expected `[####    ]` shape; slicing on
+                                    // these indices would panic. Fall back to
+                                    // showing the raw value, the same as the
+                                    // non-bracket case below.
+                                    val_spans.push(Span::styled(
+                                        format!(" {}", truncated),
                                         Style::default().fg(theme.text_normal).bg(item_bg),
                                     ));
-                                }
-                                spans.push(Span::styled(
-                                    " [",
-                                    Style::default().fg(theme.border).bg(item_bg),
-                                ));
-                                let filled_str: String =
-                                    bar_inner.chars().filter(|&c| c == '█').collect();
-                                let empty_str: String =
-                                    bar_inner.chars().filter(|&c| c != '█').collect();
-                                if !filled_str.is_empty() {
+                                } else {
+                                    let before_b = &val[..open_b];
+                                    let bar_inner = &val[open_b + 1..close_b];
+                                    let after_b = &val[close_b + 1..];
+
+                                    let filled_count =
+                                        bar_inner.chars().filter(|&c| c == '█').count();
+                                    let total_count = bar_inner.chars().count();
+                                    let pct = if total_count > 0 {
+                                        (filled_count as f32 / total_count as f32) * 100.0
+                                    } else {
+                                        0.0
+                                    };
+                                    let bar_color = if pct <= 33.0 {
+                                        theme.red
+                                    } else if pct <= 66.0 {
+                                        theme.yellow
+                                    } else {
+                                        theme.green
+                                    };
+
+                                    let mut spans = Vec::new();
+                                    if !before_b.is_empty() {
+                                        spans.push(Span::styled(
+                                            format!(" {}", before_b),
+                                            Style::default().fg(theme.text_normal).bg(item_bg),
+                                        ));
+                                    }
                                     spans.push(Span::styled(
-                                        filled_str,
-                                        Style::default()
-                                            .fg(bar_color)
-                                            .bg(item_bg)
-                                            .add_modifier(Modifier::BOLD),
+                                        " [",
+                                        Style::default().fg(theme.border).bg(item_bg),
                                     ));
-                                }
-                                if !empty_str.is_empty() {
+                                    let filled_str: String =
+                                        bar_inner.chars().filter(|&c| c == '█').collect();
+                                    let empty_str: String =
+                                        bar_inner.chars().filter(|&c| c != '█').collect();
+                                    if !filled_str.is_empty() {
+                                        spans.push(Span::styled(
+                                            filled_str,
+                                            Style::default()
+                                                .fg(bar_color)
+                                                .bg(item_bg)
+                                                .add_modifier(Modifier::BOLD),
+                                        ));
+                                    }
+                                    if !empty_str.is_empty() {
+                                        spans.push(Span::styled(
+                                            empty_str,
+                                            Style::default().fg(theme.text_muted).bg(item_bg),
+                                        ));
+                                    }
                                     spans.push(Span::styled(
-                                        empty_str,
-                                        Style::default().fg(theme.text_muted).bg(item_bg),
+                                        "]",
+                                        Style::default().fg(theme.border).bg(item_bg),
                                     ));
+                                    if !after_b.is_empty() {
+                                        spans.push(Span::styled(
+                                            after_b.to_string(),
+                                            Style::default()
+                                                .fg(theme.text_normal)
+                                                .bg(item_bg)
+                                                .add_modifier(Modifier::BOLD),
+                                        ));
+                                    }
+                                    val_spans = spans;
                                 }
-                                spans.push(Span::styled(
-                                    "]",
-                                    Style::default().fg(theme.border).bg(item_bg),
-                                ));
-                                if !after_b.is_empty() {
-                                    spans.push(Span::styled(
-                                        after_b.to_string(),
-                                        Style::default()
-                                            .fg(theme.text_normal)
-                                            .bg(item_bg)
-                                            .add_modifier(Modifier::BOLD),
-                                    ));
-                                }
-                                val_spans = spans;
                             }
                         } else {
                             let (val_fg, badge_bg, is_bold, formatted_val) = if (label
@@ -1252,6 +1266,47 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_render_entity_inspector_progress_bracket_out_of_order_does_not_panic() {
+        // Regression test: a "Progress" value with `]` before `[` (e.g. "] [")
+        // used to panic slicing `&val[open_b + 1..close_b]` with open_b > close_b.
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let doc = EntityDocument {
+            title: "Milestone".to_string(),
+            fields: vec![Field::read_only("Progress", "] [".to_string())],
+            content: InspectorContent::Empty(""),
+        };
+        let label_colors = HashMap::new();
+
+        terminal
+            .draw(|f| {
+                render_entity_inspector(
+                    f,
+                    &doc,
+                    f.area(),
+                    InspectorMode::ReadOnly {
+                        scroll: 0,
+                        title_suffix: "",
+                    },
+                    &label_colors,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("] ["), "{rendered}");
     }
 
     #[test]

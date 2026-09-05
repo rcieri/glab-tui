@@ -102,7 +102,7 @@ pub(crate) fn render_tab_issues(
             let mut cells = Vec::new();
             if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
                 cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(&i.project_path, 20),
+                    &truncate(&i.project_path, 35),
                     &app.search_query,
                     is_selected,
                     is_checked,
@@ -230,7 +230,7 @@ pub(crate) fn render_tab_issues(
 
         if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
             header_cells.push(Cell::from("Project"));
-            widths.push(col_w(content_area.width, 20));
+            widths.push(col_w(content_area.width, 30));
         }
 
         if app.is_column_visible(Tab::Issues, "ID") {
@@ -463,7 +463,7 @@ pub(crate) fn render_tab_merge_requests(
             let mut cells = Vec::new();
             if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
                 cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(&m.project_path, 20),
+                    &truncate(&m.project_path, 35),
                     &app.search_query,
                     is_selected,
                     is_checked,
@@ -841,7 +841,7 @@ pub(crate) fn render_tab_merge_requests(
 
         if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
             header_cells.push(Cell::from("Project"));
-            widths.push(col_w(content_area.width, 20));
+            widths.push(col_w(content_area.width, 30));
         }
 
         if app.is_column_visible(Tab::MergeRequests, "ID") {
@@ -1097,7 +1097,7 @@ pub(crate) fn render_tab_pipelines(
             let mut row_cells = Vec::new();
             if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &truncate(&p.project_path, 20),
+                    &truncate(&p.project_path, 35),
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,
@@ -1230,7 +1230,7 @@ pub(crate) fn render_tab_pipelines(
 
         if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
             header_cells.push(Cell::from("Project"));
-            widths.push(col_w(content_area.width, 20));
+            widths.push(col_w(content_area.width, 30));
         }
 
         if app.is_column_visible(Tab::Pipelines, "ID") {

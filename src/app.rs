@@ -4980,9 +4980,14 @@ impl App {
                 let vals = get_values(item, col);
                 if is_text {
                     vals.iter().any(|v| {
-                        selected
-                            .iter()
-                            .any(|s| v.to_lowercase().contains(&s.to_lowercase()))
+                        selected.contains(v)
+                            || selected.iter().any(|s| {
+                                let norm_v = v.to_lowercase();
+                                let norm_s = s.to_lowercase();
+                                norm_v == norm_s
+                                    || norm_v.contains(&norm_s)
+                                    || norm_s.contains(&norm_v)
+                            })
                     })
                 } else {
                     vals.iter().any(|v| {

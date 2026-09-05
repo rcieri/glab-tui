@@ -575,7 +575,11 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
         || (key_event.code == KeyCode::Char('S')
             && key_event
                 .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL));
+                .contains(crossterm::event::KeyModifiers::CONTROL))
+        || crate::keybinding::keybinding_matches(
+            &app.config.keybindings.global.switch_repo,
+            key_event,
+        );
 
     if is_switch_repo
         && app.text_input.is_none()

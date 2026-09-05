@@ -1278,6 +1278,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Issues",
+            key: d(app.config.keybindings.issues.copy_reference.clone()),
+            action: "Copy selected Issue as Markdown link",
+        },
+        Shortcut {
+            category: "Issues",
             key: d(app.config.keybindings.issues.open_in_browser.clone()),
             action: "Open selected Issue in browser",
         },

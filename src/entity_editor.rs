@@ -1625,6 +1625,7 @@ mod tests {
             assignees: vec![],
             description: None,
             due_date: None,
+            web_url: String::new(),
         };
         app.issues.items = vec![issue];
 

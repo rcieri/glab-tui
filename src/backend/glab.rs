@@ -31,6 +31,14 @@ fn normalize_labels(s: &str) -> String {
     s.replace(", ", ",")
 }
 
+fn parse_glab_issue(raw: &str) -> Result<Issue> {
+    Ok(serde_json::from_str(raw)?)
+}
+
+fn parse_glab_issues(raw: &str) -> Result<Vec<Issue>> {
+    Ok(serde_json::from_str(raw)?)
+}
+
 /// Number of `--per-page per_request` calls needed to cover a `page_size` item budget.
 fn page_count(page_size: usize, per_request: usize) -> usize {
     page_size.div_ceil(per_request.max(1)).max(1)
@@ -480,9 +488,13 @@ impl GlabBackend {
         }
         if auto_merge {
             args.push("--auto-merge=true".into());
-        } else {
-            args.push("--auto-merge=false".into());
         }
+        // When auto_merge is false we intentionally omit the flag and let
+        // `glab` decide: it defaults to --auto-merge when a pipeline is
+        // running, and merges immediately when the pipeline is absent/done.
+        // Passing --auto-merge=false forces an immediate merge attempt which
+        // causes glab to exhaust its internal retry loop ("All attempts fail")
+        // whenever a pipeline is still in progress (#372).
         args.push("--yes".into());
         args
     }
@@ -543,66 +555,7 @@ impl Backend for GlabBackend {
 
         let mut all: Vec<Issue> = Vec::new();
         for raw in responses {
-            #[derive(Deserialize)]
-            struct GiIssue {
-                iid: u64,
-                title: String,
-                state: String,
-                #[serde(default)]
-                labels: Vec<String>,
-                updated_at: String,
-                #[serde(default)]
-                created_at: Option<String>,
-                #[serde(default)]
-                closed_at: Option<String>,
-                author: GiAuthor,
-                milestone: Option<GiMilestone>,
-                #[serde(default)]
-                assignees: Vec<GiAssignee>,
-                #[serde(default)]
-                description: Option<String>,
-                #[serde(default)]
-                due_date: Option<String>,
-            }
-            #[derive(Deserialize)]
-            struct GiAuthor {
-                username: String,
-            }
-            #[derive(Deserialize)]
-            struct GiMilestone {
-                title: String,
-            }
-            #[derive(Deserialize)]
-            struct GiAssignee {
-                username: String,
-            }
-            let issues: Vec<GiIssue> = serde_json::from_str(&raw).unwrap_or_default();
-            all.extend(issues.into_iter().map(|i| {
-                Issue {
-                    iid: i.iid,
-                    title: i.title,
-                    state: i.state,
-                    labels: i.labels,
-                    updated_at: i.updated_at,
-                    created_at: i.created_at,
-                    closed_at: i.closed_at,
-                    author: crate::domain::issues::Author {
-                        username: i.author.username,
-                    },
-                    milestone: i
-                        .milestone
-                        .map(|m| crate::domain::issues::Milestone { title: m.title }),
-                    assignees: i
-                        .assignees
-                        .into_iter()
-                        .map(|a| crate::domain::issues::Assignee {
-                            username: a.username,
-                        })
-                        .collect(),
-                    description: i.description,
-                    due_date: i.due_date,
-                }
-            }));
+            all.extend(parse_glab_issues(&raw).unwrap_or_default());
         }
         Ok(all)
     }
@@ -645,64 +598,7 @@ impl Backend for GlabBackend {
                 "Fetching Issue",
             )
             .await?;
-        #[derive(Deserialize)]
-        struct GiIssue {
-            iid: u64,
-            title: String,
-            state: String,
-            #[serde(default)]
-            labels: Vec<String>,
-            updated_at: String,
-            #[serde(default)]
-            created_at: Option<String>,
-            #[serde(default)]
-            closed_at: Option<String>,
-            author: GiAuthor,
-            milestone: Option<GiMilestone>,
-            #[serde(default)]
-            assignees: Vec<GiAssignee>,
-            #[serde(default)]
-            description: Option<String>,
-            #[serde(default)]
-            due_date: Option<String>,
-        }
-        #[derive(Deserialize)]
-        struct GiAuthor {
-            username: String,
-        }
-        #[derive(Deserialize)]
-        struct GiMilestone {
-            title: String,
-        }
-        #[derive(Deserialize)]
-        struct GiAssignee {
-            username: String,
-        }
-        let i: GiIssue = serde_json::from_str(&raw)?;
-        Ok(Issue {
-            iid: i.iid,
-            title: i.title,
-            state: i.state,
-            labels: i.labels,
-            updated_at: i.updated_at,
-            created_at: i.created_at,
-            closed_at: i.closed_at,
-            author: crate::domain::issues::Author {
-                username: i.author.username,
-            },
-            milestone: i
-                .milestone
-                .map(|m| crate::domain::issues::Milestone { title: m.title }),
-            assignees: i
-                .assignees
-                .into_iter()
-                .map(|a| crate::domain::issues::Assignee {
-                    username: a.username,
-                })
-                .collect(),
-            description: i.description,
-            due_date: i.due_date,
-        })
+        parse_glab_issue(&raw)
     }
 
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()> {
@@ -1969,67 +1865,7 @@ impl Backend for GlabBackend {
                 "Fetching Milestone Issues",
             )
             .await?;
-        #[derive(Deserialize)]
-        struct GiIssue {
-            iid: u64,
-            title: String,
-            state: String,
-            #[serde(default)]
-            labels: Vec<String>,
-            updated_at: String,
-            #[serde(default)]
-            created_at: Option<String>,
-            #[serde(default)]
-            closed_at: Option<String>,
-            author: GiAuthor,
-            milestone: Option<GiMilestone>,
-            #[serde(default)]
-            assignees: Vec<GiAssignee>,
-            #[serde(default)]
-            description: Option<String>,
-            #[serde(default)]
-            due_date: Option<String>,
-        }
-        #[derive(Deserialize)]
-        struct GiAuthor {
-            username: String,
-        }
-        #[derive(Deserialize)]
-        struct GiMilestone {
-            title: String,
-        }
-        #[derive(Deserialize)]
-        struct GiAssignee {
-            username: String,
-        }
-        let issues: Vec<GiIssue> = serde_json::from_str(&raw)?;
-        Ok(issues
-            .into_iter()
-            .map(|i| Issue {
-                iid: i.iid,
-                title: i.title,
-                state: i.state,
-                labels: i.labels,
-                updated_at: i.updated_at,
-                created_at: i.created_at,
-                closed_at: i.closed_at,
-                author: crate::domain::issues::Author {
-                    username: i.author.username,
-                },
-                milestone: i
-                    .milestone
-                    .map(|m| crate::domain::issues::Milestone { title: m.title }),
-                assignees: i
-                    .assignees
-                    .into_iter()
-                    .map(|a| crate::domain::issues::Assignee {
-                        username: a.username,
-                    })
-                    .collect(),
-                description: i.description,
-                due_date: i.due_date,
-            })
-            .collect())
+        parse_glab_issues(&raw)
     }
 
     async fn create_milestone(
@@ -2608,6 +2444,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gitlab_issue_json_produces_a_copyable_reference() {
+        let raw = r#"{
+            "iid": 42,
+            "title": "Fix parser",
+            "state": "opened",
+            "labels": ["bug"],
+            "updated_at": "2026-08-29T11:00:00Z",
+            "created_at": "2026-08-29T10:00:00Z",
+            "closed_at": null,
+            "author": {"username": "octocat"},
+            "milestone": null,
+            "assignees": [],
+            "description": "Details",
+            "due_date": null,
+            "web_url": "https://gitlab.com/acme/project/-/issues/42"
+        }"#;
+
+        let issue = parse_glab_issue(raw).unwrap();
+
+        assert_eq!(
+            issue.markdown_reference(),
+            "[#42: Fix parser](https://gitlab.com/acme/project/-/issues/42)"
+        );
+    }
+
+    #[test]
+    fn gitlab_issue_list_json_keeps_each_copyable_url() {
+        let raw = r#"[{
+            "iid": 42,
+            "title": "Fix parser",
+            "state": "opened",
+            "labels": [],
+            "updated_at": "2026-08-29T11:00:00Z",
+            "created_at": "2026-08-29T10:00:00Z",
+            "closed_at": null,
+            "author": {"username": "octocat"},
+            "milestone": null,
+            "assignees": [],
+            "description": null,
+            "due_date": null,
+            "web_url": "https://gitlab.com/acme/project/-/issues/42"
+        }]"#;
+
+        let issues = parse_glab_issues(raw).unwrap();
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0].markdown_reference(),
+            "[#42: Fix parser](https://gitlab.com/acme/project/-/issues/42)"
+        );
+    }
+
+    #[test]
     fn merge_args_skip_confirmation_prompt() {
         let args = GlabBackend::merge_args("group/project", 42, true, true, None, false);
 
@@ -2621,10 +2510,30 @@ mod tests {
                 "group/project",
                 "--squash",
                 "--remove-source-branch",
-                "--auto-merge=false",
+                // No --auto-merge flag when auto_merge=false; glab decides based on
+                // pipeline state, avoiding "All attempts fail" for in-progress pipelines.
                 "--yes",
             ]
         );
+        // Explicitly verify --auto-merge=false is never injected.
+        assert!(!args.contains(&"--auto-merge=false".to_string()));
+    }
+
+    #[test]
+    fn merge_args_auto_merge_true_adds_flag() {
+        let args = GlabBackend::merge_args("group/project", 42, false, false, None, true);
+        assert!(args.contains(&"--auto-merge=true".to_string()));
+        assert!(!args.contains(&"--auto-merge=false".to_string()));
+    }
+
+    #[test]
+    fn merge_args_auto_merge_false_omits_flag() {
+        // When the user does not check "Auto-merge", we must not pass
+        // --auto-merge=false because that forces glab to attempt an immediate
+        // merge even when a pipeline is still running, causing it to exhaust
+        // its internal retry loop with "All attempts fail" (#372).
+        let args = GlabBackend::merge_args("group/project", 42, false, false, None, false);
+        assert!(!args.iter().any(|a| a.starts_with("--auto-merge")));
     }
 
     #[test]

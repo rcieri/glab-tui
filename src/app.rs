@@ -25,6 +25,28 @@ static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 /// key press).
 static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
 
+trait ClipboardWriter {
+    fn set_text(&mut self, text: String) -> anyhow::Result<()>;
+}
+
+#[derive(Default)]
+struct SystemClipboard {
+    inner: Option<arboard::Clipboard>,
+}
+
+impl ClipboardWriter for SystemClipboard {
+    fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+        if self.inner.is_none() {
+            self.inner = Some(arboard::Clipboard::new()?);
+        }
+        self.inner
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Clipboard is unavailable"))?
+            .set_text(text)?;
+        Ok(())
+    }
+}
+
 fn file_extension(file_path: &str) -> Option<&str> {
     let file_name = file_path.rsplit(|c| c == '/' || c == '\\').next()?;
     let ext = file_name.rsplit('.').next()?;
@@ -2790,6 +2812,11 @@ pub struct App {
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
     pub error_message_at: Option<std::time::Instant>,
+    /// True when the current error toast originated from a real glab/gh CLI
+    /// failure (stderr is captured in the terminal log).  False for guard
+    /// rejections that never ran a CLI command.  Controls the hint line shown
+    /// in the toast.
+    pub error_has_cli_detail: bool,
     pub runners: StatefulTable<crate::domain::runners::Runner>,
     pub releases: StatefulTable<crate::domain::releases::Release>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
@@ -2836,6 +2863,7 @@ pub struct App {
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
     pub status_message: Option<String>,
+    clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
     pub enabled_columns: std::collections::HashMap<Tab, std::collections::HashSet<String>>,
@@ -2900,6 +2928,7 @@ impl Default for App {
             job_trace: None,
             error_message: None,
             error_message_at: None,
+            error_has_cli_detail: false,
             runners: StatefulTable::with_items(vec![]),
             releases: StatefulTable::with_items(vec![]),
             pipeline_jobs: std::collections::HashMap::new(),
@@ -2939,6 +2968,7 @@ impl Default for App {
             diff_loading: false,
             todos: StatefulTable::with_items(vec![]),
             status_message: None,
+            clipboard: Box::new(SystemClipboard::default()),
             refreshed_tabs: std::collections::HashSet::new(),
             tx: None,
             enabled_columns: {
@@ -3004,6 +3034,23 @@ impl App {
         }
         self.prev_details_zoomed = self.details_zoomed;
         self.edit_menu = Some(menu);
+    }
+
+    pub fn selected_issue_reference(&self) -> Option<String> {
+        self.issues
+            .state
+            .selected()
+            .and_then(|index| self.filtered_issues().get(index).copied())
+            .filter(|issue| !issue.web_url.is_empty())
+            .map(crate::domain::issues::Issue::markdown_reference)
+    }
+
+    pub fn copy_selected_issue_reference(&mut self) -> anyhow::Result<()> {
+        let reference = self
+            .selected_issue_reference()
+            .ok_or_else(|| anyhow::anyhow!("Issue URL unavailable; refresh the Issues tab"))?;
+        self.clipboard.set_text(reference)?;
+        Ok(())
     }
 
     /// Ids and titles of the current bulk selection, sorted by iid. Built from
@@ -5524,6 +5571,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn selected_issue_reference_uses_the_highlighted_issue() {
+        let mut app = App::default();
+        app.issues.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 42,
+                    "title": "Fix parser",
+                    "state": "opened",
+                    "labels": [],
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "octocat"},
+                    "web_url": "https://github.com/acme/project/issues/42"
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.issues.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_issue_reference().as_deref(),
+            Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
+        );
+    }
+
+    #[test]
+    fn copy_selected_issue_reference_preserves_existing_status() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        app.issues.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 42,
+                    "title": "Fix parser",
+                    "state": "opened",
+                    "labels": [],
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "octocat"},
+                    "web_url": "https://github.com/acme/project/issues/42"
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.issues.state.select(Some(0));
+        app.status_message = Some("Loaded from offline cache".to_string());
+
+        app.copy_selected_issue_reference().unwrap();
+
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
+        );
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Loaded from offline cache")
+        );
+    }
+
+    #[test]
+    fn selected_issue_reference_is_unavailable_without_a_url() {
+        let mut app = App::default();
+        app.issues.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 42,
+                    "title": "Cached issue",
+                    "state": "opened",
+                    "labels": [],
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "octocat"}
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.issues.state.select(Some(0));
+
+        assert_eq!(app.selected_issue_reference(), None);
+    }
+
+    #[test]
     fn bulk_selection_summary_lists_full_selection_sorted_by_iid() {
         let mut app = App::default();
         let mk_issue = |iid: u64, title: &str| crate::domain::issues::Issue {
@@ -5541,6 +5677,7 @@ mod tests {
             assignees: vec![],
             description: None,
             due_date: None,
+            web_url: String::new(),
         };
         app.issues.items = vec![
             mk_issue(3, "Third"),
@@ -5578,6 +5715,7 @@ mod tests {
             assignees: vec![],
             description: None,
             due_date: None,
+            web_url: String::new(),
         };
         app.issues.items = vec![mk_issue(1), mk_issue(2)];
         app.selected_issues.extend([1, 2]);
@@ -7254,6 +7392,7 @@ index 123456..789012 100644
             assignees: vec![],
             description: None,
             due_date: None,
+            web_url: String::new(),
         };
         let i_closed = crate::domain::issues::Issue {
             iid: 2,
@@ -7270,6 +7409,7 @@ index 123456..789012 100644
             assignees: vec![],
             description: None,
             due_date: None,
+            web_url: String::new(),
         };
         app.issues.items = vec![i_open, i_closed];
 

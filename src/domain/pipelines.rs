@@ -26,6 +26,8 @@ pub struct Pipeline {
     pub source: Option<String>,
     #[serde(default)]
     pub project_path: String,
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
 impl Pipeline {

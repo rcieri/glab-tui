@@ -335,10 +335,14 @@ impl Tab {
         }
     }
 
-    pub fn columns(&self, kind: BackendKind) -> Vec<&'static str> {
+    pub fn columns(&self, kind: BackendKind, is_group: bool) -> Vec<&'static str> {
         match self {
             Tab::Issues => {
-                let mut cols = vec!["ID", "State", "Title", "Assignees", "Labels", "Milestone"];
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend(["ID", "State", "Title", "Assignees", "Labels", "Milestone"]);
                 if !kind.is_github() {
                     cols.push("Due Date");
                 }
@@ -346,7 +350,11 @@ impl Tab {
                 cols
             }
             Tab::MergeRequests => {
-                let mut cols = vec![
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend([
                     "ID",
                     "State",
                     "Status",
@@ -357,7 +365,7 @@ impl Tab {
                     "Reviewers",
                     "Workflow",
                     "Labels",
-                ];
+                ]);
                 if kind.is_github() {
                     cols.push("Action");
                 } else {
@@ -368,7 +376,11 @@ impl Tab {
                 cols
             }
             Tab::Pipelines => {
-                let mut cols = vec!["ID", "Status", "Ref"];
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend(["ID", "Status", "Ref"]);
                 if kind.is_github() {
                     cols.push("Name");
                     cols.push("Event");
@@ -411,32 +423,48 @@ impl Tab {
         }
     }
 
-    pub fn default_columns(&self, kind: BackendKind) -> Vec<&'static str> {
+    pub fn default_columns(&self, kind: BackendKind, is_group: bool) -> Vec<&'static str> {
         match self {
             Tab::Issues => {
-                let mut cols = vec!["ID", "State", "Title", "Labels"];
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend(["ID", "State", "Title", "Labels"]);
                 if !kind.is_github() {
                     cols.push("Due Date");
                 }
                 cols
             }
-            Tab::MergeRequests => vec![
-                "ID",
-                "State",
-                "Status",
-                "Mergeable",
-                "Approval",
-                "Title",
-                "Labels",
-            ],
-            Tab::Pipelines => {
-                if kind.is_github() {
-                    vec!["Name", "Status", "Event", "Ref", "Created", "Duration"]
-                } else {
-                    vec![
-                        "ID", "Status", "Stages", "Ref", "Source", "Created", "Duration",
-                    ]
+            Tab::MergeRequests => {
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
                 }
+                cols.extend([
+                    "ID",
+                    "State",
+                    "Status",
+                    "Mergeable",
+                    "Approval",
+                    "Title",
+                    "Labels",
+                ]);
+                cols
+            }
+            Tab::Pipelines => {
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                if kind.is_github() {
+                    cols.extend(["Name", "Status", "Event", "Ref", "Created", "Duration"]);
+                } else {
+                    cols.extend([
+                        "ID", "Status", "Stages", "Ref", "Source", "Created", "Duration",
+                    ]);
+                }
+                cols
             }
             Tab::Jobs => {
                 if kind.is_github() {
@@ -2979,7 +3007,7 @@ impl Default for App {
                 let mut ec = std::collections::HashMap::new();
                 for tab in Tab::ALL {
                     let set: std::collections::HashSet<String> = tab
-                        .default_columns(BackendKind::GitLab)
+                        .default_columns(BackendKind::GitLab, false)
                         .iter()
                         .map(|s| s.to_string())
                         .collect();
@@ -3061,9 +3089,45 @@ impl App {
         )
     }
 
+    pub fn reset_on_scope_change(&mut self) {
+        if self.scope.is_group() {
+            for tab in [Tab::Issues, Tab::MergeRequests, Tab::Pipelines] {
+                self.enabled_columns
+                    .entry(tab)
+                    .or_default()
+                    .insert("Project".to_string());
+            }
+        }
+        self.selector = None;
+        self.text_input = None;
+        self.edit_menu = None;
+        self.submit_dialog = None;
+        self.status_message = None;
+        self.selected_issues.clear();
+        self.selected_mrs.clear();
+        self.select_mode = false;
+        self.loaded_tabs.clear();
+        self.loading_tabs.clear();
+        self.refreshed_tabs.clear();
+        self.pipeline_jobs.clear();
+        self.fetching_pipelines.clear();
+        self.selected_milestone_issues = None;
+        self.selected_milestone_iid = None;
+        self.issues.state.select(Some(0));
+        self.mrs.state.select(Some(0));
+        self.pipelines.state.select(Some(0));
+        self.runners.state.select(Some(0));
+        self.releases.state.select(Some(0));
+        self.todos.state.select(Some(0));
+        self.milestones.state.select(Some(0));
+        self.branches.state.select(Some(0));
+        self.environments.state.select(Some(0));
+    }
+
     pub fn drill_into(&mut self, repo: String) {
         let old = std::mem::replace(&mut self.scope, crate::scope::Scope::Repository(repo));
         self.prev_scope = Some(old);
+        self.reset_on_scope_change();
     }
 
     pub fn selected_issue_reference(&self) -> Option<String> {
@@ -3180,6 +3244,9 @@ impl App {
     }
 
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
+        if col == "Project" && tab != Tab::Todos && !self.scope.is_group() {
+            return false;
+        }
         if self.is_github() {
             if tab == Tab::Issues && col == "Due Date" {
                 return false;
@@ -3433,6 +3500,9 @@ impl App {
                         matches = true;
                     }
                 };
+                if enabled_cols.contains("Project") && !item.project_path.is_empty() {
+                    check_match(&item.project_path);
+                }
                 if enabled_cols.contains("ID") {
                     check_match(&format!("#{}", item.iid));
                     check_match(&item.iid.to_string());
@@ -3485,6 +3555,7 @@ impl App {
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
                 let val_a = match col.as_str() {
+                    "Project" => a.project_path.clone(),
                     "State" => a.state.clone(),
                     "Author" => a.author.username.clone(),
                     "Labels" => a.labels.first().cloned().unwrap_or_default(),
@@ -3503,6 +3574,7 @@ impl App {
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
+                    "Project" => b.project_path.clone(),
                     "State" => b.state.clone(),
                     "Author" => b.author.username.clone(),
                     "Labels" => b.labels.first().cloned().unwrap_or_default(),
@@ -3543,6 +3615,13 @@ impl App {
         );
         Self::apply_column_filters(&mut list, &self.column_filters, Tab::Issues, |item, col| {
             match col {
+                "Project" => {
+                    if item.project_path.is_empty() {
+                        vec![]
+                    } else {
+                        vec![item.project_path.clone()]
+                    }
+                }
                 "Labels" => item.labels.clone(),
                 "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
                 "Author" => vec![item.author.username.clone()],
@@ -3587,6 +3666,9 @@ impl App {
                 }
             };
 
+            if enabled_cols.contains("Project") && !item.project_path.is_empty() {
+                check_match(&item.project_path);
+            }
             if enabled_cols.contains("ID") {
                 check_match(&format!("!{}", item.iid));
                 check_match(&item.iid.to_string());
@@ -3721,6 +3803,13 @@ impl App {
     /// leaving values that matched but could never be selected.
     fn mr_filter_values(m: &crate::domain::mr::MergeRequest, col: &str) -> Vec<String> {
         match col {
+            "Project" => {
+                if m.project_path.is_empty() {
+                    vec![]
+                } else {
+                    vec![m.project_path.clone()]
+                }
+            }
             "Labels" => m.labels.clone(),
             "Assignees" => m.assignees.iter().map(|a| a.username.clone()).collect(),
             "Reviewers" => m.reviewers.iter().map(|r| r.username.clone()).collect(),
@@ -3846,6 +3935,9 @@ impl App {
                 }
             };
 
+            if enabled_cols.contains("Project") && !item.project_path.is_empty() {
+                check_match(&item.project_path);
+            }
             if enabled_cols.contains("ID") {
                 check_match(&format!("#{}", item.id()));
                 check_match(&item.id().to_string());
@@ -4713,6 +4805,13 @@ impl App {
         col: &str,
     ) -> Vec<String> {
         match col {
+            "Project" => {
+                if item.project_path.is_empty() {
+                    vec![]
+                } else {
+                    vec![item.project_path.clone()]
+                }
+            }
             "ID" => vec![item.id().to_string()],
             "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
             "Ref" => {
@@ -4837,6 +4936,11 @@ impl App {
             Tab::Issues => {
                 for item in &self.issues.items {
                     match col {
+                        "Project" => {
+                            if !item.project_path.is_empty() {
+                                values.insert(item.project_path.clone());
+                            }
+                        }
                         "ID" => {
                             values.insert(item.iid.to_string());
                         }
@@ -5945,6 +6049,7 @@ mod tests {
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -5967,6 +6072,7 @@ mod tests {
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: None,
         };
 
         let mr_ready = MergeRequest {
@@ -5989,11 +6095,12 @@ mod tests {
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
         let enabled_cols: std::collections::HashSet<String> = Tab::MergeRequests
-            .columns(BackendKind::GitLab)
+            .columns(BackendKind::GitLab, false)
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -7098,6 +7205,7 @@ index 123456..789012 100644
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: None,
         }
     }
 
@@ -7200,7 +7308,7 @@ index 123456..789012 100644
     #[test]
     fn mr_columns_include_both_state_columns_on_both_hosts() {
         for kind in [BackendKind::GitLab, BackendKind::GitHub] {
-            let cols = Tab::MergeRequests.columns(kind);
+            let cols = Tab::MergeRequests.columns(kind, false);
             assert!(cols.contains(&"Approval"), "missing Approval for {kind:?}");
             assert!(
                 cols.contains(&"Mergeable"),
@@ -7212,7 +7320,7 @@ index 123456..789012 100644
     #[test]
     fn mr_default_columns_show_both_state_columns() {
         // Default-on, else the feature hides behind Tab -> configure.
-        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab, false);
         assert!(cols.contains(&"Approval"));
         assert!(cols.contains(&"Mergeable"));
     }
@@ -7220,7 +7328,7 @@ index 123456..789012 100644
     #[test]
     fn mr_default_columns_keep_pre_existing_defaults() {
         // Adding columns must not remove any.
-        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab, false);
         for expected in ["ID", "State", "Status", "Title", "Labels"] {
             assert!(cols.contains(&expected), "lost default column {expected}");
         }
@@ -7351,6 +7459,7 @@ index 123456..789012 100644
             created_at: None,
             source: None,
             project_path: String::new(),
+            web_url: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -7366,6 +7475,7 @@ index 123456..789012 100644
             created_at: None,
             source: None,
             project_path: String::new(),
+            web_url: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -7476,14 +7586,16 @@ index 123456..789012 100644
     fn workflow_column_is_offered_but_not_default() {
         for kind in [BackendKind::GitLab, BackendKind::GitHub] {
             assert!(
-                Tab::MergeRequests.columns(kind).contains(&"Workflow"),
+                Tab::MergeRequests
+                    .columns(kind, false)
+                    .contains(&"Workflow"),
                 "Workflow must be offered for {kind:?}"
             );
         }
         // Default-off: eight default columns collapse Title at 80 cols.
         assert!(
             !Tab::MergeRequests
-                .default_columns(BackendKind::GitLab)
+                .default_columns(BackendKind::GitLab, false)
                 .contains(&"Workflow")
         );
     }
@@ -7556,6 +7668,7 @@ index 123456..789012 100644
                 created_at: Some("2026-01-01T00:00:00Z".to_string()),
                 source: Some("push".to_string()),
                 project_path: String::new(),
+                web_url: None,
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -7571,6 +7684,7 @@ index 123456..789012 100644
                 created_at: Some("2026-01-02T00:00:00Z".to_string()),
                 source: Some("schedule".to_string()),
                 project_path: String::new(),
+                web_url: None,
             },
         ];
         app.column_filters
@@ -7679,6 +7793,7 @@ index 123456..789012 100644
             created_at: None,
             source: Some("merge_request_event".to_string()),
             project_path: String::new(),
+            web_url: None,
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();
@@ -7716,5 +7831,57 @@ index 123456..789012 100644
                     .collect(),
             );
         assert_eq!(app.filtered_pipelines().len(), 1);
+    }
+
+    #[test]
+    fn project_column_only_available_in_group_mode() {
+        let kind = BackendKind::GitLab;
+        // Repository scope (is_group = false)
+        assert!(!Tab::Issues.columns(kind, false).contains(&"Project"));
+        assert!(!Tab::MergeRequests.columns(kind, false).contains(&"Project"));
+        assert!(!Tab::Pipelines.columns(kind, false).contains(&"Project"));
+
+        assert!(
+            !Tab::Issues
+                .default_columns(kind, false)
+                .contains(&"Project")
+        );
+        assert!(
+            !Tab::MergeRequests
+                .default_columns(kind, false)
+                .contains(&"Project")
+        );
+        assert!(
+            !Tab::Pipelines
+                .default_columns(kind, false)
+                .contains(&"Project")
+        );
+
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("group/repo".to_string());
+        assert!(!app.is_column_visible(Tab::Issues, "Project"));
+        assert!(!app.is_column_visible(Tab::MergeRequests, "Project"));
+
+        // Group scope (is_group = true)
+        assert!(Tab::Issues.columns(kind, true).contains(&"Project"));
+        assert!(Tab::MergeRequests.columns(kind, true).contains(&"Project"));
+        assert!(Tab::Pipelines.columns(kind, true).contains(&"Project"));
+
+        assert!(Tab::Issues.default_columns(kind, true).contains(&"Project"));
+        assert!(
+            Tab::MergeRequests
+                .default_columns(kind, true)
+                .contains(&"Project")
+        );
+        assert!(
+            Tab::Pipelines
+                .default_columns(kind, true)
+                .contains(&"Project")
+        );
+
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+        assert!(app.is_column_visible(Tab::Issues, "Project"));
+        assert!(app.is_column_visible(Tab::MergeRequests, "Project"));
     }
 }

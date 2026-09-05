@@ -62,6 +62,7 @@ mod tests {
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: None,
         }
     }
 

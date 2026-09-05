@@ -553,7 +553,13 @@ impl Backend for GlabBackend {
 
                 let mut all: Vec<Issue> = Vec::new();
                 for raw in responses {
-                    all.extend(parse_glab_issues(&raw).unwrap_or_default());
+                    let mut issues = parse_glab_issues(&raw).unwrap_or_default();
+                    for issue in &mut issues {
+                        if issue.project_path.is_empty() {
+                            issue.project_path = project.to_string();
+                        }
+                    }
+                    all.extend(issues);
                 }
                 Ok(all)
             }
@@ -571,7 +577,15 @@ impl Backend for GlabBackend {
                         "FETCHING GROUP ISSUES",
                     )
                     .await?;
-                Ok(serde_json::from_str(&out)?)
+                let mut issues: Vec<Issue> = serde_json::from_str(&out)?;
+                for issue in &mut issues {
+                    if issue.project_path.is_empty() {
+                        issue.project_path =
+                            crate::git_helpers::parse_project_path_from_web_url(&issue.web_url)
+                                .unwrap_or_else(|| group.clone());
+                    }
+                }
+                Ok(issues)
             }
         }
     }
@@ -792,6 +806,8 @@ impl Backend for GlabBackend {
                         head_pipeline: Option<GiPipeline>,
                         #[serde(default)]
                         blocking_discussions_resolved: Option<bool>,
+                        #[serde(default)]
+                        web_url: Option<String>,
                     }
                     #[derive(Deserialize)]
                     struct GiAuthor {
@@ -816,6 +832,8 @@ impl Backend for GlabBackend {
                         #[serde(rename = "ref")]
                         pipe_ref: String,
                         updated_at: String,
+                        #[serde(default)]
+                        web_url: Option<String>,
                     }
                     let mrs: Vec<GiMr> = serde_json::from_str(&raw).unwrap_or_default();
                     all.extend(mrs.into_iter().map(|m| {
@@ -863,14 +881,21 @@ impl Backend for GlabBackend {
                                 created_at: None,
                                 source: None,
                                 project_path: String::new(),
+                                web_url: p.web_url,
                             }),
                             blocking_discussions_resolved: m.blocking_discussions_resolved,
                             approval: None,
                             mergeability: None,
                             workflow: None,
                             project_path: String::new(),
+                            web_url: m.web_url,
                         }
                     }));
+                }
+                for mr in &mut all {
+                    if mr.project_path.is_empty() {
+                        mr.project_path = project.to_string();
+                    }
                 }
                 Ok(all)
             }
@@ -888,7 +913,17 @@ impl Backend for GlabBackend {
                         "FETCHING GROUP MERGE REQUESTS",
                     )
                     .await?;
-                Ok(serde_json::from_str(&out)?)
+                let mut mrs: Vec<MergeRequest> = serde_json::from_str(&out)?;
+                for mr in &mut mrs {
+                    if mr.project_path.is_empty() {
+                        mr.project_path = mr
+                            .web_url
+                            .as_deref()
+                            .and_then(crate::git_helpers::parse_project_path_from_web_url)
+                            .unwrap_or_else(|| group.clone());
+                    }
+                }
+                Ok(mrs)
             }
         }
     }
@@ -932,6 +967,8 @@ impl Backend for GlabBackend {
             head_pipeline: Option<GiPipeline>,
             #[serde(default)]
             blocking_discussions_resolved: Option<bool>,
+            #[serde(default)]
+            web_url: Option<String>,
         }
         #[derive(Deserialize)]
         struct GiAuthor {
@@ -956,6 +993,8 @@ impl Backend for GlabBackend {
             #[serde(rename = "ref")]
             pipe_ref: String,
             updated_at: String,
+            #[serde(default)]
+            web_url: Option<String>,
         }
         let m: GiMr = serde_json::from_str(&raw)?;
         Ok(MergeRequest {
@@ -1002,12 +1041,14 @@ impl Backend for GlabBackend {
                 created_at: None,
                 source: None,
                 project_path: String::new(),
+                web_url: p.web_url,
             }),
             blocking_discussions_resolved: m.blocking_discussions_resolved,
             approval: None,
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: m.web_url,
         })
     }
 
@@ -1397,6 +1438,8 @@ impl Backend for GlabBackend {
                     source: Option<String>,
                     sha: Option<String>,
                     user: Option<GiUser>,
+                    #[serde(default)]
+                    web_url: Option<String>,
                 }
 
                 let mut all: Vec<Pipeline> = Vec::new();
@@ -1419,7 +1462,8 @@ impl Backend for GlabBackend {
                             duration_seconds: p.duration.map(|d| d.max(0.0) as u64),
                             created_at: p.created_at,
                             source: p.source,
-                            project_path: String::new(),
+                            project_path: project.to_string(),
+                            web_url: p.web_url,
                         }
                     }));
                 }
@@ -1435,7 +1479,17 @@ impl Backend for GlabBackend {
                         "FETCHING GROUP PIPELINES",
                     )
                     .await?;
-                Ok(serde_json::from_str(&out)?)
+                let mut pipelines: Vec<Pipeline> = serde_json::from_str(&out)?;
+                for pipe in &mut pipelines {
+                    if pipe.project_path.is_empty() {
+                        pipe.project_path = pipe
+                            .web_url
+                            .as_deref()
+                            .and_then(crate::git_helpers::parse_project_path_from_web_url)
+                            .unwrap_or_else(|| group.clone());
+                    }
+                }
+                Ok(pipelines)
             }
         }
     }

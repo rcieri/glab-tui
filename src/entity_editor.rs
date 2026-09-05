@@ -1654,6 +1654,7 @@ mod tests {
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: None,
         };
         app.mrs.items = vec![mr];
 

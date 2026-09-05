@@ -114,7 +114,7 @@ pub(crate) fn render_tab_issues(
                 )
             };
             let mut cells = Vec::new();
-            if app.scope.is_group() {
+            if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&i.project_path, 20),
                     &app.search_query,
@@ -242,7 +242,7 @@ pub(crate) fn render_tab_issues(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
-        if app.scope.is_group() {
+        if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
             header_cells.push(Cell::from("Project"));
             widths.push(col_w(content_area.width, 20));
         }
@@ -497,7 +497,7 @@ pub(crate) fn render_tab_merge_requests(
             );
 
             let mut cells = Vec::new();
-            if app.scope.is_group() {
+            if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&m.project_path, 20),
                     &app.search_query,
@@ -875,7 +875,7 @@ pub(crate) fn render_tab_merge_requests(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
-        if app.scope.is_group() {
+        if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
             header_cells.push(Cell::from("Project"));
             widths.push(col_w(content_area.width, 20));
         }
@@ -1131,7 +1131,7 @@ pub(crate) fn render_tab_pipelines(
                 bg_color
             };
             let mut row_cells = Vec::new();
-            if app.scope.is_group() {
+            if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&p.project_path, 20),
                     &app.search_query,
@@ -1264,7 +1264,7 @@ pub(crate) fn render_tab_pipelines(
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
 
-        if app.scope.is_group() {
+        if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
             header_cells.push(Cell::from("Project"));
             widths.push(col_w(content_area.width, 20));
         }
@@ -2633,7 +2633,7 @@ pub(crate) fn render_tab_milestones(
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
-        let cols = Tab::Milestones.columns(app.kind());
+        let cols = Tab::Milestones.columns(app.kind(), app.scope.is_group());
         for col in &cols {
             if app.is_column_visible(Tab::Milestones, col) {
                 header_cells.push(Cell::from(*col));
@@ -2961,7 +2961,7 @@ pub(crate) fn render_tab_branches(
             Row::new(cells).style(row_style).height(1)
         });
 
-        let cols = Tab::Branches.columns(app.kind());
+        let cols = Tab::Branches.columns(app.kind(), app.scope.is_group());
         let widths: Vec<Constraint> = cols
             .iter()
             .filter(|c| app.is_column_visible(Tab::Branches, c))
@@ -3133,7 +3133,7 @@ pub(crate) fn render_tab_environments(
             Row::new(cells).style(row_style).height(1)
         });
 
-        let cols = Tab::Environments.columns(app.kind());
+        let cols = Tab::Environments.columns(app.kind(), app.scope.is_group());
         let widths: Vec<Constraint> = cols
             .iter()
             .filter(|c| app.is_column_visible(Tab::Environments, c))

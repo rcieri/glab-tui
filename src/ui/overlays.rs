@@ -403,7 +403,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let tab = app.active_tab;
         let kind = app.kind();
         let is_github = kind.is_github();
-        let cols = tab.columns(kind);
+        let cols = tab.columns(kind, app.scope.is_group());
         let active_idx = app.column_checklist_idx;
 
         let group_cols: Vec<&str> = cols.iter().copied().collect();

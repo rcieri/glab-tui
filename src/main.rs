@@ -493,7 +493,7 @@ fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16
 fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
     let tab = app.active_tab;
     let kind = app.kind();
-    let cols = tab.columns(kind);
+    let cols = tab.columns(kind, app.scope.is_group());
     let group_cols: Vec<&str> = cols.iter().copied().collect();
     let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
 
@@ -2798,6 +2798,7 @@ async fn main() -> Result<()> {
                                                 app.scope = crate::scope::Scope::Group(
                                                     group_name.to_string(),
                                                 );
+                                                app.reset_on_scope_change();
                                                 crate::utils::cache::add_recent_group(&group_name);
                                                 if let Ok(mut client) =
                                                     domain::client::GitlabClient::new(&app.config)
@@ -2812,9 +2813,6 @@ async fn main() -> Result<()> {
                                                 } else {
                                                     app.gitlab_client = None;
                                                 }
-                                                app.loaded_tabs.clear();
-                                                app.loading_tabs.clear();
-                                                app.refreshed_tabs.clear();
                                                 let cache = crate::utils::cache::load_cache(
                                                     app.scope.as_str(),
                                                 );
@@ -2865,6 +2863,7 @@ async fn main() -> Result<()> {
                                                             context,
                                                         );
                                                     }
+                                                    app.reset_on_scope_change();
                                                     if let Ok(mut client) =
                                                         domain::client::GitlabClient::new(
                                                             &app.config,
@@ -7439,7 +7438,7 @@ async fn main() -> Result<()> {
                         }
 
                         let kind = app.kind();
-                        let cols = app.active_tab.columns(kind);
+                        let cols = app.active_tab.columns(kind, app.scope.is_group());
                         let group_cols: Vec<&str> = cols.iter().copied().collect();
                         let cols_end = cols.len();
                         let group_end = cols_end + group_cols.len();
@@ -7788,6 +7787,21 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
+                    if key_event.code == KeyCode::Esc
+                        && !app.focus_column_checklist
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && app.submit_dialog.is_none()
+                        && app.prev_scope.is_some()
+                    {
+                        if let Some(prev) = app.prev_scope.take() {
+                            app.scope = prev;
+                            app.reset_on_scope_change();
+                        }
+                    }
+
+                    let old_scope = app.scope.clone();
                     handlers::tabs::handle_active_tab_key(
                         &mut app,
                         &key_event,
@@ -7795,6 +7809,48 @@ async fn main() -> Result<()> {
                         events.sender(),
                     )
                     .await;
+
+                    if app.scope != old_scope {
+                        if let Ok(mut client) = domain::client::GitlabClient::new(&app.config).await
+                        {
+                            client.page_size = app.config.page_size;
+                            client.api_per_page = app.config.api_per_page_clamped();
+                            client.tx = Some(events.sender());
+                            client.backend.set_tx(events.sender());
+                            app.gitlab_client = Some(client.clone());
+                        } else {
+                            app.gitlab_client = None;
+                        }
+
+                        let cache = crate::utils::cache::load_cache(app.scope.as_str());
+                        app.project_cache = cache.clone();
+                        app.issues.items = cache.issues;
+                        app.mrs.items = cache.mrs;
+                        crate::fetch::derive_workflow(&mut app.mrs.items);
+                        app.pipelines.items = cache.pipelines;
+                        app.runners.items = cache.runners;
+                        app.releases.items = cache.releases;
+                        app.todos.items = cache.todos;
+                        app.milestones.items = cache.milestones;
+                        app.pipeline_jobs = cache.pipeline_jobs;
+                        app.branches.items = cache.branches;
+                        app.environments.items = cache.environments;
+                        app.milestone_issues_cache = cache.milestone_issues;
+                        app.cached_labels = cache.labels;
+                        app.cached_members = cache.members;
+
+                        if let Some(client) = app.gitlab_client.clone() {
+                            let tx = events.sender();
+                            app.start_loading_tab(app.active_tab);
+                            spawn_refresh_active_tab(
+                                &client,
+                                &app.scope,
+                                app.active_tab,
+                                tx.clone(),
+                            );
+                            spawn_fetch_repo_attributes(&client.muted(), app.scope.as_str(), tx);
+                        }
+                    }
                 }
                 _ => {}
             }

@@ -373,7 +373,13 @@ impl Backend for GhBackend {
                     )
                     .await?;
 
-                parse_gh_issues(&raw)
+                let mut issues = parse_gh_issues(&raw)?;
+                for issue in &mut issues {
+                    if issue.project_path.is_empty() {
+                        issue.project_path = project.to_string();
+                    }
+                }
+                Ok(issues)
             }
             Scope::Group(org) => {
                 let per_page = (page_size * 10).clamp(1, 100);
@@ -683,6 +689,8 @@ impl Backend for GhBackend {
                     merge_state_status: Option<String>,
                     #[serde(rename = "reviewRequests", default)]
                     review_requests: Vec<serde_json::Value>,
+                    #[serde(default)]
+                    url: Option<String>,
                 }
                 #[derive(Deserialize)]
                 struct GhLogin {
@@ -764,7 +772,8 @@ impl Backend for GhBackend {
                             approval,
                             mergeability,
                             workflow: None,
-                            project_path: String::new(),
+                            project_path: project.to_string(),
+                            web_url: gp.url,
                         }
                     })
                     .collect())
@@ -871,6 +880,7 @@ impl Backend for GhBackend {
                             mergeability: None,
                             workflow: None,
                             project_path,
+                            web_url: item.html_url.clone(),
                         }
                     })
                     .collect();
@@ -917,6 +927,8 @@ impl Backend for GhBackend {
             #[serde(default)]
             assignees: Vec<GhLogin>,
             milestone: Option<GhMs>,
+            #[serde(default)]
+            url: Option<String>,
         }
         #[derive(Deserialize)]
         struct GhLogin {
@@ -971,6 +983,7 @@ impl Backend for GhBackend {
             mergeability: None,
             workflow: None,
             project_path: String::new(),
+            web_url: gp.url,
         })
     }
 
@@ -1344,7 +1357,13 @@ impl Backend for GhBackend {
                 let endpoint = format!("repos/{project}/actions/runs?per_page={per_page}");
                 let raw = self.run_gh(&["api", &endpoint], "Fetching Actions").await?;
 
-                parse_github_actions_runs(&raw)
+                let mut runs = parse_github_actions_runs(&raw)?;
+                for run in &mut runs {
+                    if run.project_path.is_empty() {
+                        run.project_path = project.to_string();
+                    }
+                }
+                Ok(runs)
             }
             Scope::Group(org) => {
                 let repos_raw = match self
@@ -2474,6 +2493,8 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
         actor: Option<GhActor>,
         #[serde(default)]
         triggering_actor: Option<GhActor>,
+        #[serde(default)]
+        html_url: Option<String>,
     }
 
     #[derive(Deserialize)]
@@ -2526,6 +2547,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     created_at: r.created_at,
                     source: r.event,
                     project_path: String::new(),
+                    web_url: r.html_url,
                 }
             })
             .collect();

@@ -61,6 +61,8 @@ pub struct MergeRequest {
     pub workflow: Option<crate::domain::mr_state::WorkflowStatus>,
     #[serde(default)]
     pub project_path: String,
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

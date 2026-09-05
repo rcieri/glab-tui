@@ -284,6 +284,7 @@ next_tab = "l"
 [keybindings.issues]
 create_issue = "n"
 edit_entity = "e"
+copy_reference = "y"
 # ...
 
 # Persist default column visibility / grouping / filters per pane
@@ -434,7 +435,8 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `c` | Close selected issue | `close_entity` |
 | `r` | Reopen selected issue | `reopen_entity` |
 | `d` | Delete selected issue (with confirmation) | `delete_entity` |
-| `o` | Open selected issue in browser | — |
+| `y` | Copy selected issue as `[#42: Title](URL)` | `copy_reference` |
+| `o` | Open selected issue in browser | `open_in_browser` |
 | `Space` | Select issue for bulk editing | `select_issue` |
 | `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
 | `J` | Scroll description panel down | `scroll_down` |

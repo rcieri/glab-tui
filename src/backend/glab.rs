@@ -501,6 +501,15 @@ impl GlabBackend {
     }
 }
 
+/// Serde shape returned by the GitLab `/closed_by` endpoint.
+/// Shared between the production parser and its tests.
+#[derive(Deserialize)]
+struct GiClosedBy {
+    iid: u64,
+    title: String,
+    state: String,
+}
+
 #[async_trait]
 impl Backend for GlabBackend {
     fn kind(&self) -> super::BackendKind {
@@ -657,12 +666,6 @@ impl Backend for GlabBackend {
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Related MRs")
             .await?;
-        #[derive(Deserialize)]
-        struct GiClosedBy {
-            iid: u64,
-            title: String,
-            state: String,
-        }
         let items: Vec<GiClosedBy> = serde_json::from_str(&raw)?;
         Ok(items
             .into_iter()
@@ -2688,12 +2691,6 @@ mod tests {
             { "iid": 1471, "title": "wire up webhooks", "state": "opened" },
             { "iid": 1502, "title": "fix closing flow",   "state": "merged" }
         ]"#;
-        #[derive(Deserialize)]
-        struct GiClosedBy {
-            iid: u64,
-            title: String,
-            state: String,
-        }
         let parsed: Vec<GiClosedBy> = serde_json::from_str(raw).unwrap();
         let refs: Vec<RelatedMrRef> = parsed
             .into_iter()
@@ -2723,12 +2720,6 @@ mod tests {
     #[test]
     fn parse_empty_closed_by_returns_empty_vec() {
         let raw = "[]";
-        #[derive(Deserialize)]
-        struct GiClosedBy {
-            iid: u64,
-            title: String,
-            state: String,
-        }
         let parsed: Vec<GiClosedBy> = serde_json::from_str(raw).unwrap();
         let refs: Vec<RelatedMrRef> = parsed
             .into_iter()

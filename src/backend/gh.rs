@@ -331,6 +331,8 @@ async fn run_gh_command(
 /// line continuations — a raw string would emit literal backslashes and the
 /// query would fail to parse server-side.
 fn related_prs_graphql_query(owner: &str, repo: &str, issue_number: u64, first: usize) -> String {
+    let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
+    let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
         "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ issue(number:{n}) {{ \
          closedByPullRequestsReferences(first:{first}) {{ \
@@ -340,6 +342,41 @@ fn related_prs_graphql_query(owner: &str, repo: &str, issue_number: u64, first: 
         n = issue_number,
         first = first,
     )
+}
+
+/// Serde shape returned by the `closedByPullRequestsReferences` GraphQL field.
+/// Shared between the production parser and its tests so both stay in sync.
+mod related_prs_types {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhResponse {
+        pub(super) data: Option<GhData>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhData {
+        pub(super) repository: Option<GhRepo>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhRepo {
+        pub(super) issue: Option<GhIssue>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhIssue {
+        #[serde(default, rename = "closedByPullRequestsReferences")]
+        pub(super) closed_by_pull_requests_references: GhConn,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhConn {
+        #[serde(default)]
+        pub(super) nodes: Vec<GhPrRef>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhPrRef {
+        pub(super) number: u64,
+        pub(super) title: String,
+        pub(super) state: String,
+    }
 }
 
 #[async_trait]
@@ -567,34 +604,7 @@ impl Backend for GhBackend {
                 "Fetching Related PRs",
             )
             .await?;
-        #[derive(Deserialize)]
-        struct GhResponse {
-            data: Option<GhData>,
-        }
-        #[derive(Deserialize)]
-        struct GhData {
-            repository: Option<GhRepo>,
-        }
-        #[derive(Deserialize)]
-        struct GhRepo {
-            issue: Option<GhIssue>,
-        }
-        #[derive(Deserialize)]
-        struct GhIssue {
-            #[serde(default, rename = "closedByPullRequestsReferences")]
-            closed_by_pull_requests_references: GhConn,
-        }
-        #[derive(Deserialize, Default)]
-        struct GhConn {
-            #[serde(default)]
-            nodes: Vec<GhPrRef>,
-        }
-        #[derive(Deserialize)]
-        struct GhPrRef {
-            number: u64,
-            title: String,
-            state: String,
-        }
+        use related_prs_types::*;
         let resp: GhResponse = serde_json::from_str(&raw)?;
         let refs = resp
             .data
@@ -2726,34 +2736,7 @@ mod tests {
                 }
             }
         }"#;
-        #[derive(Deserialize)]
-        struct GhResponse {
-            data: Option<GhData>,
-        }
-        #[derive(Deserialize)]
-        struct GhData {
-            repository: Option<GhRepo>,
-        }
-        #[derive(Deserialize)]
-        struct GhRepo {
-            issue: Option<GhIssue>,
-        }
-        #[derive(Deserialize)]
-        struct GhIssue {
-            #[serde(default, rename = "closedByPullRequestsReferences")]
-            closed_by_pull_requests_references: GhConn,
-        }
-        #[derive(Deserialize, Default)]
-        struct GhConn {
-            #[serde(default)]
-            nodes: Vec<GhPrRef>,
-        }
-        #[derive(Deserialize)]
-        struct GhPrRef {
-            number: u64,
-            title: String,
-            state: String,
-        }
+        use super::related_prs_types::*;
         let resp: GhResponse = serde_json::from_str(raw).unwrap();
         let refs: Vec<RelatedMrRef> = resp
             .data
@@ -2788,34 +2771,7 @@ mod tests {
     #[test]
     fn parse_issue_with_no_closing_prs_returns_empty() {
         let raw = r#"{ "data": { "repository": { "issue": { "closedByPullRequestsReferences": { "nodes": [] } } } } }"#;
-        #[derive(Deserialize)]
-        struct GhResponse {
-            data: Option<GhData>,
-        }
-        #[derive(Deserialize)]
-        struct GhData {
-            repository: Option<GhRepo>,
-        }
-        #[derive(Deserialize)]
-        struct GhRepo {
-            issue: Option<GhIssue>,
-        }
-        #[derive(Deserialize)]
-        struct GhIssue {
-            #[serde(default, rename = "closedByPullRequestsReferences")]
-            closed_by_pull_requests_references: GhConn,
-        }
-        #[derive(Deserialize, Default)]
-        struct GhConn {
-            #[serde(default)]
-            nodes: Vec<GhPrRef>,
-        }
-        #[derive(Deserialize)]
-        struct GhPrRef {
-            number: u64,
-            title: String,
-            state: String,
-        }
+        use super::related_prs_types::*;
         let resp: GhResponse = serde_json::from_str(raw).unwrap();
         let refs: Vec<RelatedMrRef> = resp
             .data
@@ -2852,6 +2808,17 @@ mod tests {
             query.matches('}').count(),
             "query braces must balance: {query}"
         );
+    }
+
+    #[test]
+    fn related_prs_query_escapes_quotes_in_owner_and_repo() {
+        let query = related_prs_graphql_query("org\"inj", "repo\"inj", 1, 10);
+        assert!(
+            !query.contains("org\"inj"),
+            "unescaped double-quote must not appear: {query}"
+        );
+        assert!(query.contains("org\\\"inj"));
+        assert!(query.contains("repo\\\"inj"));
     }
 
     #[test]

@@ -705,12 +705,12 @@ pub struct KeybindingIssues {
     pub create_mr: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
-    #[serde(default = "def_copy_reference")]
-    pub copy_reference: String,
     #[serde(default)]
     pub selection_toggle: String,
     #[serde(default = "def_drill_into_scope")]
     pub drill_into_scope: String,
+    #[serde(default = "def_jump_related_mrs")]
+    pub jump_related_mrs: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -927,6 +927,7 @@ keybind_defaults! {
     def_toggle_draft = "s",
     def_view_diff = "D",
     def_view_related_pipelines = "P",
+    def_jump_related_mrs = "M",
     def_trigger_pipeline = "p",
     def_retry = "r",
     def_cancel = "d",
@@ -1002,6 +1003,7 @@ impl Default for KeybindingIssues {
             copy_reference: def_copy_reference(),
             selection_toggle: def_selection_toggle(),
             drill_into_scope: def_drill_into_scope(),
+            jump_related_mrs: def_jump_related_mrs(),
         }
     }
 }
@@ -1340,6 +1342,7 @@ close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
 selection_toggle = "v"
+jump_related_mrs = "M"
 
 [keybindings.mrs]
 create_mr = "n"

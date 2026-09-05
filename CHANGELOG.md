@@ -2,27 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.9.1] - 2026-09-07
-
-### Features
-- **GitLab group-level backend foundation** — Added `Scope` enum (`Repository` / `Group`), `-g`/`--group` CLI flag, and `list_group_issues` / `list_group_mrs` / `list_group_pipelines` backend methods that hit `GET /groups/{id}/issues`, `/merge_requests`, `/pipelines` via `glab api` (aggregating across all projects in the group with `%2F`-encoded paths). Group context can be inferred from a remote URL (`git_helpers::parse_group`, web URLs via `parse_project_path_from_web_url`), the `--group` flag, or `config.group`. Recent groups are cached in `recent_groups.json`. GitHub has no org-level listing equivalent, so group-backed GitHub listings return `Err` (#330).
-- **Copy issue as Markdown reference** — New `copy_reference` keybinding (default `y`) on the Issues tab copies the selected issue as `[#<iid>: Title](web_url)`, escaping `[`, `]`, and backslashes in the title (#387).
-- **Batch entity edits into a single API call** — Issue/MR/milestone/release updates and bulk edits now build a complete `IssueUpdate`/`MrUpdate` field set and apply changes in one backend call instead of one subprocess per field (#384).
-
-### Bug Fixes
-- **Automatic API rate-limit handling & throttle-less command backpressure** — Added `ApiRateLimiter` (`src/backend/rate_limit.rs`) that bounds concurrency, enforces a minimum inter-request burst delay, and retries HTTP 429 / GraphQL `rate_limit` / abuse-detection errors with exponential backoff and jitter. Bulk operations (bulk edit, bulk merge, bulk retry) are paced individually to avoid tripping secondary limits. GitHub workflow runs are now fetched via the bulk `actions/runs` endpoint (actor/triggering-actor logins embedded), eliminating 1+N subprocess calls per tab refresh (#348, #382).
-- **`glab mr merge` no longer forces `--auto-merge=false`** — Omitted `--auto-merge` entirely unless the user explicitly checks "Auto-merge" in the confirm dialog, letting `glab` use its own heuristic (enable auto-merge when a pipeline is in progress, merge immediately otherwise) instead of exhausting its internal retry loop and surfacing "All attempts fail". Bulk-merge errors now emit a concise `N/M merged. K failed: #iid: <first-line>` summary instead of a wall of raw stderr (#372, #407).
-- **Milestone progress bracket-guard panic** — Guarded the `[`/`]` slice in milestone progress rendering against out-of-order brackets (e.g. `] [`), which previously panicked with an inverted byte range; now falls back to showing the raw value (#390, #408).
-- **Inspector field name truncation** — Field labels in the entity inspector are no longer truncated prematurely when the edit/create form is narrower than the descriptor pane (#383, #385).
-- **Bundled themes auto-update on startup** — `ensure_themes()` now always overwrites bundled theme files so users receive new semantic tokens (e.g. `diff_gutter_bg`) and theme fixes on upgrade without deleting their themes directory; user-created themes are never touched (#373, #386).
-- **Distinct selection vs. cursor-row highlight** — `checked_bg` (yazi-style visual selection bar) now differs from `highlight_bg` (cursor row) across bundled themes — 7 themes had identical values, making the selection indicator invisible (#373, #386).
-- **Transparent terminal background support** — An empty color string in theme TOMLs now maps to `Color::Reset`, letting the terminal's own (possibly transparent) background show through instead of a solid fill. Knockout/active text (header badges, mode indicator, active nav tab, edit cursor, save/column selectors) switched from the now-transparent `bg` to the dark `highlight_bg` token, restoring readable dark-on-accent rendering (#376).
-- **Release script & CI hardening** — Fixed unbound variables and off-by-one asset-count math in `release.sh` `wait_for_release` under `set -u`; added `--phase` resume; fixed workflow job IDs and musl ARM64 cross-compilation linker in `release.yml`; macOS/Windows checksum generation uses `bash` and falls back from `sha256sum` to `shasum` (935b757, 3ff8250, 8db6bae).
-
-### Maintenance
-- **`glab` / `gh` exhaustive CLI reference** — AGENTS.md now documents every `glab` and `gh` subcommand and option from the installed CLIs (`glab` v1.114.0 / `gh` v2.98.0) (6f4f52d).
-- **Demo GIF cleanup & simplified generation** — README demos reorganized with all recordings added; `assets/generate-demos.sh` simplified (179 → 15 lines) and recordings regenerated (457bdc0, 2e76616).
-- **Bumps** — `softprops/action-gh-release` 3.0.2 → 3.0.3 (#417); `toml` in the patch-updates group (#418).
+- **Jump to related MRs/PRs from the Issue preview** — Added a backend-aware "Related Merge Requests" / "Related Pull Requests" row to the issue preview. The closing relationship is fetched eagerly (`glab api projects/.../issues/<iid>/closed_by` on GitLab, `gh api graphql` over `closedByPullRequestsReferences` on GitHub). Press `M` (`keybindings.issues.jump_related_mrs`) to jump straight to the single MR/PR, or pick from a selector list when there are several — even when the target is currently filtered out of the MR/PR table (#409).
 
 ## [0.9.0] - 2026-08-23
 

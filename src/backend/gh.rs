@@ -1,7 +1,7 @@
 use super::Backend;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
-use crate::domain::issues::Issue;
+use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
@@ -100,6 +100,7 @@ fn issue_from_gh_json(issue: GhIssueJson) -> Issue {
         description: issue.body,
         due_date: None,
         web_url: issue.url,
+        related_mrs: None,
     }
 }
 
@@ -323,6 +324,59 @@ async fn run_gh_command(
     }
 }
 
+/// Build the GraphQL query that finds the PRs which close (or closed) an issue.
+/// The template is a regular string so the `\`-newline continuations are real
+/// line continuations — a raw string would emit literal backslashes and the
+/// query would fail to parse server-side.
+fn related_prs_graphql_query(owner: &str, repo: &str, issue_number: u64, first: usize) -> String {
+    let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
+    let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ issue(number:{n}) {{ \
+         closedByPullRequestsReferences(first:{first}) {{ \
+         nodes {{ number title state }} }} }} }} }}",
+        owner = owner,
+        repo = repo,
+        n = issue_number,
+        first = first,
+    )
+}
+
+/// Serde shape returned by the `closedByPullRequestsReferences` GraphQL field.
+/// Shared between the production parser and its tests so both stay in sync.
+mod related_prs_types {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhResponse {
+        pub(super) data: Option<GhData>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhData {
+        pub(super) repository: Option<GhRepo>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhRepo {
+        pub(super) issue: Option<GhIssue>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhIssue {
+        #[serde(default, rename = "closedByPullRequestsReferences")]
+        pub(super) closed_by_pull_requests_references: GhConn,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhConn {
+        #[serde(default)]
+        pub(super) nodes: Vec<GhPrRef>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhPrRef {
+        pub(super) number: u64,
+        pub(super) title: String,
+        pub(super) state: String,
+    }
+}
+
 #[async_trait]
 impl Backend for GhBackend {
     fn kind(&self) -> super::BackendKind {
@@ -415,6 +469,45 @@ impl Backend for GhBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn list_issue_related_mrs(
+        &self,
+        project: &str,
+        issue_iid: u64,
+        page_size: usize,
+    ) -> Result<Vec<RelatedMrRef>> {
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        // `gh issue view --json closedByPullRequestsReferences` only exposes
+        // `id`/`number`/`repository`/`url` per PR — no title or state — because
+        // the CLI surfaces the raw GraphQL nodes. Pull the same relationship
+        // via a single GraphQL call so we get `title` and `state` in one round
+        // trip, capped to the requested page size.
+        let first = page_size.min(100).max(1);
+        let query = related_prs_graphql_query(owner, repo, issue_iid, first);
+        let raw = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching Related PRs",
+            )
+            .await?;
+        use related_prs_types::*;
+        let resp: GhResponse = serde_json::from_str(&raw)?;
+        let refs = resp
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.issue)
+            .map(|i| i.closed_by_pull_requests_references.nodes)
+            .unwrap_or_default();
+        Ok(refs
+            .into_iter()
+            .map(|p| RelatedMrRef {
+                iid: p.number,
+                title: p.title,
+                state: p.state.to_lowercase(),
+            })
+            .collect())
     }
 
     async fn create_issue(
@@ -2228,6 +2321,112 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_closed_by_pull_requests_references() {
+        // The implementation queries `gh api graphql` rather than `gh issue view`,
+        // because the latter only exposes the bare GraphQL nodes (no title/state).
+        // Verify the parser strips the `data.repository.issue.…nodes` envelope
+        // and lowercases the PR state to match the GitLab shape consumed by
+        // the rest of the app.
+        let raw = r#"{
+            "data": {
+                "repository": {
+                    "issue": {
+                        "closedByPullRequestsReferences": {
+                            "nodes": [
+                                { "number": 408, "title": "fix: guard bracket slice", "state": "MERGED" },
+                                { "number": 407, "title": "fix(merge): stop --auto-merge=false", "state": "OPEN" }
+                            ]
+                        }
+                    }
+                }
+            }
+        }"#;
+        use super::related_prs_types::*;
+        let resp: GhResponse = serde_json::from_str(raw).unwrap();
+        let refs: Vec<RelatedMrRef> = resp
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.issue)
+            .map(|i| i.closed_by_pull_requests_references.nodes)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| RelatedMrRef {
+                iid: p.number,
+                title: p.title,
+                state: p.state.to_lowercase(),
+            })
+            .collect();
+        assert_eq!(
+            refs,
+            vec![
+                RelatedMrRef {
+                    iid: 408,
+                    title: "fix: guard bracket slice".into(),
+                    state: "merged".into(),
+                },
+                RelatedMrRef {
+                    iid: 407,
+                    title: "fix(merge): stop --auto-merge=false".into(),
+                    state: "open".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_issue_with_no_closing_prs_returns_empty() {
+        let raw = r#"{ "data": { "repository": { "issue": { "closedByPullRequestsReferences": { "nodes": [] } } } } }"#;
+        use super::related_prs_types::*;
+        let resp: GhResponse = serde_json::from_str(raw).unwrap();
+        let refs: Vec<RelatedMrRef> = resp
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.issue)
+            .map(|i| i.closed_by_pull_requests_references.nodes)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| RelatedMrRef {
+                iid: p.number,
+                title: p.title,
+                state: p.state.to_lowercase(),
+            })
+            .collect();
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn related_prs_query_has_no_literal_backslashes() {
+        // Regression: the template once used a raw string with `\`-newline
+        // continuations, which emitted literal backslashes into the GraphQL
+        // query and made every GitHub fetch fail server-side.
+        let query = related_prs_graphql_query("rcieri", "glab-tui", 409, 100);
+        assert!(
+            !query.contains('\\'),
+            "query must not contain backslashes: {query}"
+        );
+        assert!(query.starts_with("{ repository(owner:\"rcieri\",name:\"glab-tui\") {"));
+        assert!(query.contains("issue(number:409)"));
+        assert!(query.contains("closedByPullRequestsReferences(first:100)"));
+        assert!(query.contains("nodes { number title state }"));
+        assert_eq!(
+            query.matches('{').count(),
+            query.matches('}').count(),
+            "query braces must balance: {query}"
+        );
+    }
+
+    #[test]
+    fn related_prs_query_escapes_quotes_in_owner_and_repo() {
+        let query = related_prs_graphql_query("org\"inj", "repo\"inj", 1, 10);
+        assert!(
+            !query.contains("org\"inj"),
+            "unescaped double-quote must not appear: {query}"
+        );
+        assert!(query.contains("org\\\"inj"));
+        assert!(query.contains("repo\\\"inj"));
+    }
 
     #[test]
     fn test_strip_ats() {

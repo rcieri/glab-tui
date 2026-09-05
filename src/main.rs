@@ -236,6 +236,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                             s.field_type != "comment_action_select"
                                 && s.field_type != "review_submit_status"
                                 && s.field_type != "merge_options"
+                                && s.field_type != "related_mrs"
                         });
                         let sr = if has_search { 3 } else { 0 };
                         handle_selector_mouse(app, inner, row, col, sr, 1);
@@ -1057,6 +1058,7 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.issues.items = issues;
                     app.update_filter_selection();
+                    crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
                     app.project_cache.issues = app.issues.items.clone();
                     crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }
@@ -1066,6 +1068,11 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::MergeRequests);
                     app.status_message = None;
                     app.mrs.items = mrs;
+                    if let Some(target_iid) = app.pending_mr_select.take() {
+                        if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == target_iid) {
+                            app.mrs.state.select(Some(idx));
+                        }
+                    }
                     app.update_filter_selection();
                     app.project_cache.mrs = app.mrs.items.clone();
                     crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
@@ -1353,6 +1360,22 @@ async fn main() -> Result<()> {
                     app.deployments.state.select(Some(0));
                     app.status_message = None;
                     app.update_filter_selection();
+                }
+                Event::RelatedMrsFetched { issue_iid, result } => {
+                    app.fetching_related_mrs.remove(&issue_iid);
+                    let new_state = match result {
+                        Ok(items) => {
+                            if items.is_empty() {
+                                crate::domain::issues::RelatedMrsState::Empty
+                            } else {
+                                crate::domain::issues::RelatedMrsState::Items(items)
+                            }
+                        }
+                        Err(e) => crate::domain::issues::RelatedMrsState::Failed(e),
+                    };
+                    if let Some(issue) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid) {
+                        issue.related_mrs = Some(new_state);
+                    }
                 }
                 Event::FetchFailed(tab, err_msg) => {
                     app.complete_loading_tab(tab, &format!("Failed: {}", err_msg));
@@ -2617,7 +2640,8 @@ async fn main() -> Result<()> {
                                 KeyCode::Char('f') | KeyCode::Char('/') | KeyCode::Char('i') => {
                                     let has_filter = selector.field_type != "comment_action_select"
                                         && selector.field_type != "review_submit_status"
-                                        && selector.field_type != "merge_options";
+                                        && selector.field_type != "merge_options"
+                                        && selector.field_type != "related_mrs";
                                     if has_filter {
                                         selector.is_filtering = true;
                                     }
@@ -3349,6 +3373,43 @@ async fn main() -> Result<()> {
                                                 app.mrs.items.remove(pos);
                                             }
                                             app.update_filter_selection();
+                                        }
+                                        continue;
+                                    }
+
+                                    if field_type == "related_mrs" {
+                                        // Pick the iid from the formatted item
+                                        // ("!{iid} [{STATE}] {title}"). Falls
+                                        // back to the cursor's index when the
+                                        // fuzzy filter has reordered entries.
+                                        let filtered_items = selector.get_filtered_items();
+                                        let picked =
+                                            selector.selected_items.iter().next().cloned().or_else(
+                                                || filtered_items.get(selector.cursor_idx).cloned(),
+                                            );
+                                        app.selector = None;
+                                        if let Some(item) = picked {
+                                            if let Some(iid_str) = item
+                                                .strip_prefix('!')
+                                                .and_then(|s| s.split_whitespace().next())
+                                            {
+                                                if let Ok(mr_iid) = iid_str.parse::<u64>() {
+                                                    if let Some(client) = app.gitlab_client.clone()
+                                                    {
+                                                        crate::handlers::tabs::jump_to_mr_tab_from_selector(
+                                                            &mut app,
+                                                            mr_iid,
+                                                            events.sender(),
+                                                            &client,
+                                                        );
+                                                    }
+                                                    continue;
+                                                }
+                                            }
+                                            app.show_error(
+                                                "Could not parse the selected MR/PR iid"
+                                                    .to_string(),
+                                            );
                                         }
                                         continue;
                                     }

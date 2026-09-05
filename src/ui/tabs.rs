@@ -289,7 +289,11 @@ pub(crate) fn render_tab_issues(
         if let Some(selected) = selected_issue_idx {
             if let Some(issue) = filtered_issues.get(selected) {
                 let is_github = app.is_github();
-                let doc = crate::entity_editor::build_issue_document(issue, is_github);
+                let doc = crate::entity_editor::build_issue_document(
+                    issue,
+                    is_github,
+                    app.fetching_related_mrs.contains(&issue.iid),
+                );
                 super::inspector::render_entity_inspector(
                     f,
                     &doc,

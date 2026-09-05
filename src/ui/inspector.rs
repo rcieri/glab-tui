@@ -810,6 +810,92 @@ pub(crate) fn build_field_list_items(
                                     val_spans = spans;
                                 }
                             }
+                        } else if (label == "Related Merge Requests"
+                            || label == "Related Pull Requests")
+                            && (val.contains("[OPEN]")
+                                || val.contains("[CLOSED]")
+                                || val.contains("[MERGED]"))
+                        {
+                            // Render each !iid [STATE] title as a colored span.
+                            for (idx, item) in val.split(", ").enumerate() {
+                                if idx > 0 {
+                                    val_spans.push(Span::styled(
+                                        ", ",
+                                        Style::default().fg(theme.text_muted).bg(item_bg),
+                                    ));
+                                }
+                                if let (Some(excl), Some(open), Some(close)) =
+                                    (item.find('!'), item.find('['), item.find(']'))
+                                    && close > open
+                                {
+                                    let iid = &item[excl + 1..open];
+                                    let state = &item[open + 1..close];
+                                    let title = &item[close + 1..];
+                                    let (state_fg, state_bg, state_icon) =
+                                        match state.to_uppercase().as_str() {
+                                            "OPEN" => (
+                                                theme.green,
+                                                if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.green_bg
+                                                },
+                                                icons.state_open.as_str(),
+                                            ),
+                                            "CLOSED" => (
+                                                theme.red,
+                                                if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.red_bg
+                                                },
+                                                icons.state_closed.as_str(),
+                                            ),
+                                            "MERGED" => (
+                                                theme.purple,
+                                                if is_selected {
+                                                    theme.highlight_bg
+                                                } else {
+                                                    theme.purple_bg
+                                                },
+                                                icons.state_merged.as_str(),
+                                            ),
+                                            _ => (theme.text_muted, item_bg, ""),
+                                        };
+                                    val_spans.push(Span::styled(
+                                        format!(" {} ", iid),
+                                        Style::default()
+                                            .fg(theme.text_normal)
+                                            .bg(item_bg)
+                                            .add_modifier(Modifier::BOLD),
+                                    ));
+                                    val_spans.push(Span::styled(
+                                        format!(" {} {} ", state_icon, state),
+                                        Style::default()
+                                            .fg(state_fg)
+                                            .bg(state_bg)
+                                            .add_modifier(Modifier::BOLD),
+                                    ));
+                                    val_spans.push(Span::styled(
+                                        format!(
+                                            " {} ",
+                                            if title.chars().count() > 40 {
+                                                let truncated: String =
+                                                    title.chars().take(39).collect();
+                                                format!("{}…", truncated)
+                                            } else {
+                                                title.to_string()
+                                            }
+                                        ),
+                                        Style::default().fg(theme.text_normal).bg(item_bg),
+                                    ));
+                                } else {
+                                    val_spans.push(Span::styled(
+                                        format!(" {}", item),
+                                        Style::default().fg(theme.text_normal).bg(item_bg),
+                                    ));
+                                }
+                            }
                         } else {
                             let (val_fg, badge_bg, is_bold, formatted_val) = if (label
                                 == "Approval"

@@ -14,6 +14,7 @@ mod fetch;
 mod git_helpers;
 pub mod handlers;
 mod keybinding;
+pub mod scope;
 mod templates;
 mod ui;
 pub mod utils;

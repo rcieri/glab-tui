@@ -12,6 +12,7 @@ use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::runners::Runner;
 use crate::event::Event;
+use crate::scope::Scope;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -121,24 +122,17 @@ pub trait Backend: Send + Sync {
 
     // ── Issues ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
-    /// items each HTTP call asks for.
+    /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
+    /// in the group/org.
     async fn list_issues(
         &self,
-        project: &str,
-        show_closed: bool,
-        page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<Issue>>;
-    /// List issues across all projects in a GitLab group (GitLab-only).
-    /// Returns `Err` on backends that do not support group-level listing.
-    async fn list_group_issues(
-        &self,
-        group: &str,
+        scope: &Scope,
         show_closed: bool,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>>;
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue>;
+
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_issue(&self, project: &str, iid: u64) -> Result<()>;
@@ -269,23 +263,17 @@ pub trait Backend: Send + Sync {
 
     // ── Merge Requests ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
-    /// items each HTTP call asks for.
+    /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
+    /// in the group/org.
     async fn list_mrs(
         &self,
-        project: &str,
-        show_closed: bool,
-        page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<MergeRequest>>;
-    /// List merge requests across all projects in a GitLab group.
-    async fn list_group_mrs(
-        &self,
-        group: &str,
+        scope: &Scope,
         show_closed: bool,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<MergeRequest>>;
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest>;
+
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String>;
     async fn list_mr_notes(
         &self,
@@ -447,20 +435,15 @@ pub trait Backend: Send + Sync {
 
     // ── Pipelines ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
-    /// items each HTTP call asks for.
+    /// items each HTTP call asks for.  For `Scope::Group` aggregates across all projects
+    /// in the group/org.
     async fn list_pipelines(
         &self,
-        project: &str,
+        scope: &Scope,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Pipeline>>;
-    /// List pipelines across all projects in a GitLab group.
-    async fn list_group_pipelines(
-        &self,
-        group: &str,
-        page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<Pipeline>>;
+
     async fn list_pipeline_jobs(
         &self,
         project: &str,

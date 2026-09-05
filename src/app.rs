@@ -2797,7 +2797,9 @@ pub struct App {
     pub config: Config,
     pub active_tab: Tab,
     pub running: bool,
-    pub project_context: String,
+    pub scope: crate::scope::Scope,
+    pub prev_scope: Option<crate::scope::Scope>,
+    pub group_repos: Vec<String>,
     pub project_cache: crate::utils::cache::ProjectCache,
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
     pub terminal_commands: Vec<TerminalCommand>,
@@ -2913,7 +2915,9 @@ impl Default for App {
             config: config.clone(),
             active_tab: Tab::default(),
             running: true,
-            project_context: "group/repository".to_string(),
+            scope: crate::scope::Scope::default(),
+            prev_scope: None,
+            group_repos: vec![],
             project_cache: crate::utils::cache::ProjectCache::default(),
             gitlab_client: None,
             terminal_commands: vec![],
@@ -3034,6 +3038,32 @@ impl App {
         }
         self.prev_details_zoomed = self.details_zoomed;
         self.edit_menu = Some(menu);
+    }
+
+    pub fn project_path(&self) -> &str {
+        match &self.scope {
+            crate::scope::Scope::Repository(p) => p.as_str(),
+            crate::scope::Scope::Group(_) => "",
+        }
+    }
+
+    pub fn scope_label(&self) -> String {
+        self.scope.display()
+    }
+
+    pub fn tab_supported_in_scope(&self, tab: &Tab) -> bool {
+        if self.scope.is_repository() {
+            return true;
+        }
+        matches!(
+            tab,
+            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Milestones
+        )
+    }
+
+    pub fn drill_into(&mut self, repo: String) {
+        let old = std::mem::replace(&mut self.scope, crate::scope::Scope::Repository(repo));
+        self.prev_scope = Some(old);
     }
 
     pub fn selected_issue_reference(&self) -> Option<String> {
@@ -5678,6 +5708,7 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         app.issues.items = vec![
             mk_issue(3, "Third"),
@@ -5716,6 +5747,7 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         app.issues.items = vec![mk_issue(1), mk_issue(2)];
         app.selected_issues.extend([1, 2]);
@@ -5912,6 +5944,7 @@ mod tests {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
         };
 
         let mr_draft_title = MergeRequest {
@@ -5933,6 +5966,7 @@ mod tests {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
         };
 
         let mr_ready = MergeRequest {
@@ -5954,6 +5988,7 @@ mod tests {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
@@ -7062,6 +7097,7 @@ index 123456..789012 100644
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
         }
     }
 
@@ -7314,6 +7350,7 @@ index 123456..789012 100644
             duration_seconds: None,
             created_at: None,
             source: None,
+            project_path: String::new(),
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -7328,6 +7365,7 @@ index 123456..789012 100644
             duration_seconds: None,
             created_at: None,
             source: None,
+            project_path: String::new(),
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -7393,6 +7431,7 @@ index 123456..789012 100644
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         let i_closed = crate::domain::issues::Issue {
             iid: 2,
@@ -7410,6 +7449,7 @@ index 123456..789012 100644
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         app.issues.items = vec![i_open, i_closed];
 
@@ -7515,6 +7555,7 @@ index 123456..789012 100644
                 duration_seconds: Some(125),
                 created_at: Some("2026-01-01T00:00:00Z".to_string()),
                 source: Some("push".to_string()),
+                project_path: String::new(),
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -7529,6 +7570,7 @@ index 123456..789012 100644
                 duration_seconds: Some(65),
                 created_at: Some("2026-01-02T00:00:00Z".to_string()),
                 source: Some("schedule".to_string()),
+                project_path: String::new(),
             },
         ];
         app.column_filters
@@ -7636,6 +7678,7 @@ index 123456..789012 100644
             duration_seconds: None,
             created_at: None,
             source: Some("merge_request_event".to_string()),
+            project_path: String::new(),
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();

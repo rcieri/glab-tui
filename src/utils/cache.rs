@@ -95,6 +95,41 @@ pub fn add_recent_repo(repo_path: &str) {
     }
 }
 
+fn get_recent_groups_file_path() -> PathBuf {
+    let mut path = get_cache_dir();
+    let _ = fs::create_dir_all(&path);
+    path.push("recent_groups.json");
+    path
+}
+
+pub fn get_recent_groups() -> Vec<String> {
+    let path = get_recent_groups_file_path();
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(groups) = serde_json::from_str::<Vec<String>>(&content) {
+            return groups;
+        }
+    }
+    Vec::new()
+}
+
+pub fn add_recent_group(group: &str) {
+    if group.trim().is_empty() {
+        return;
+    }
+    let mut groups = get_recent_groups();
+    let g = group.trim().to_string();
+    if let Some(pos) = groups.iter().position(|r| r == &g) {
+        groups.remove(pos);
+    }
+    groups.insert(0, g);
+    groups.truncate(20);
+
+    let path = get_recent_groups_file_path();
+    if let Ok(content) = serde_json::to_string(&groups) {
+        let _ = fs::write(path, content);
+    }
+}
+
 pub fn get_cache_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))

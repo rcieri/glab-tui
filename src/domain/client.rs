@@ -82,18 +82,14 @@ impl GitlabClient {
     }
 
     pub async fn fetch_branches(&self, project_path: &str) -> Result<Vec<String>> {
-        let branches = self
-            .backend
-            .list_branches(project_path, self.page_size)
-            .await?;
+        let scope = crate::scope::Scope::Repository(project_path.to_string());
+        let branches = self.backend.list_branches(&scope, self.page_size).await?;
         Ok(branches.into_iter().map(|b| b.name).collect())
     }
 
     pub async fn fetch_milestones(&self, project_path: &str) -> Result<Vec<String>> {
-        let milestones = self
-            .backend
-            .list_milestones(project_path, self.page_size)
-            .await?;
+        let scope = crate::scope::Scope::Repository(project_path.to_string());
+        let milestones = self.backend.list_milestones(&scope, self.page_size).await?;
         Ok(milestones.into_iter().map(|m| m.title).collect())
     }
 

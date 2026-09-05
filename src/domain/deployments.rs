@@ -55,21 +55,21 @@ pub struct DeploymentUser {
 
 pub async fn list_environments(
     client: &GitlabClient,
-    project_path: &str,
+    scope: &crate::scope::Scope,
 ) -> Result<Vec<Environment>> {
     client
         .backend
-        .list_environments(project_path, client.page_size)
+        .list_environments(scope, client.page_size)
         .await
 }
 
 pub async fn list_deployments(
     client: &GitlabClient,
-    project_path: &str,
+    scope: &crate::scope::Scope,
     environment: Option<&str>,
 ) -> Result<Vec<Deployment>> {
     client
         .backend
-        .list_deployments(project_path, client.page_size, environment)
+        .list_deployments(scope, client.page_size, environment)
         .await
 }

@@ -10,6 +10,7 @@ use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::runners::Runner;
 use crate::event::Event;
+use crate::scope::Scope;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -100,6 +101,7 @@ fn issue_from_gh_json(issue: GhIssueJson) -> Issue {
         description: issue.body,
         due_date: None,
         web_url: issue.url,
+        project_path: String::new(),
     }
 }
 
@@ -344,44 +346,115 @@ impl Backend for GhBackend {
     /// not per-page pagination. Only GitLab backends paginate per-request.
     async fn list_issues(
         &self,
-        project: &str,
+        scope: &Scope,
         show_closed: bool,
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<Issue>> {
-        let state = if show_closed { "all" } else { "open" };
-        let total = page_size * 10;
-        let raw = self
-            .run_gh(
-                &[
-                    "issue",
-                    "list",
-                    "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url",
-                    "-R",
-                    project,
-                    "--state",
-                    state,
-                    "--limit",
-                    &total.to_string(),
-                ],
-                "Fetching Issues",
-            )
-            .await?;
+        match scope {
+            Scope::Repository(project) => {
+                let state = if show_closed { "all" } else { "open" };
+                let total = page_size * 10;
+                let raw = self
+                    .run_gh(
+                        &[
+                            "issue",
+                            "list",
+                            "--json",
+                            "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url",
+                            "-R",
+                            project,
+                            "--state",
+                            state,
+                            "--limit",
+                            &total.to_string(),
+                        ],
+                        "Fetching Issues",
+                    )
+                    .await?;
 
-        parse_gh_issues(&raw)
-    }
+                parse_gh_issues(&raw)
+            }
+            Scope::Group(org) => {
+                let state = if show_closed { "all" } else { "open" };
+                let per_page = (page_size * 10).clamp(1, 100);
+                let endpoint =
+                    format!("orgs/{org}/issues?filter=all&state={state}&per_page={per_page}");
+                let raw = self
+                    .run_gh(&["api", &endpoint], "Fetching Org Issues")
+                    .await?;
 
-    async fn list_group_issues(
-        &self,
-        _group: &str,
-        _show_closed: bool,
-        _page_size: usize,
-        _per_request: usize,
-    ) -> Result<Vec<Issue>> {
-        Err(anyhow::anyhow!(
-            "Group/org-level browsing is not supported on GitHub"
-        ))
+                #[derive(Deserialize)]
+                struct GhOrgIssueRepo {
+                    full_name: Option<String>,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgIssueUser {
+                    login: String,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgIssueMs {
+                    title: String,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgIssueLabel {
+                    name: String,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgIssue {
+                    number: u64,
+                    title: String,
+                    state: String,
+                    #[serde(default)]
+                    labels: Vec<GhOrgIssueLabel>,
+                    user: Option<GhOrgIssueUser>,
+                    body: Option<String>,
+                    created_at: Option<String>,
+                    updated_at: String,
+                    closed_at: Option<String>,
+                    milestone: Option<GhOrgIssueMs>,
+                    #[serde(default)]
+                    assignees: Vec<GhOrgIssueUser>,
+                    html_url: Option<String>,
+                    repository: Option<GhOrgIssueRepo>,
+                    pull_request: Option<serde_json::Value>,
+                }
+
+                let items: Vec<GhOrgIssue> = serde_json::from_str(&raw)?;
+                let issues: Vec<Issue> = items
+                    .into_iter()
+                    .filter(|item| item.pull_request.is_none())
+                    .map(|item| Issue {
+                        iid: item.number,
+                        title: item.title,
+                        state: item.state.to_lowercase(),
+                        labels: item.labels.into_iter().map(|l| l.name).collect(),
+                        updated_at: item.updated_at,
+                        created_at: item.created_at,
+                        closed_at: item.closed_at,
+                        author: crate::domain::issues::Author {
+                            username: item.user.map(|u| u.login).unwrap_or_default(),
+                        },
+                        milestone: item
+                            .milestone
+                            .map(|m| crate::domain::issues::Milestone { title: m.title }),
+                        assignees: item
+                            .assignees
+                            .into_iter()
+                            .map(|a| crate::domain::issues::Assignee { username: a.login })
+                            .collect(),
+                        description: item.body,
+                        due_date: None,
+                        web_url: item.html_url.unwrap_or_default(),
+                        project_path: item
+                            .repository
+                            .and_then(|r| r.full_name)
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+                Ok(issues)
+            }
+        }
     }
 
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue> {
@@ -532,165 +605,239 @@ impl Backend for GhBackend {
     /// for the total item count, not per-page pagination.
     async fn list_mrs(
         &self,
-        project: &str,
+        scope: &Scope,
         show_closed: bool,
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
-        let state = if show_closed { "all" } else { "open" };
-        let total = page_size * 10;
-        let raw = self
-            .run_gh(
-                &[
-                    "pr",
-                    "list",
-                    "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests",
-                    "-R",
-                    project,
-                    "--state",
-                    state,
-                    "--limit",
-                    &total.to_string(),
-                ],
-                "Fetching PRs",
-            )
-            .await?;
+        match scope {
+            Scope::Repository(project) => {
+                let state = if show_closed { "all" } else { "open" };
+                let total = page_size * 10;
+                let raw = self
+                    .run_gh(
+                        &[
+                            "pr",
+                            "list",
+                            "--json",
+                            "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests",
+                            "-R",
+                            project,
+                            "--state",
+                            state,
+                            "--limit",
+                            &total.to_string(),
+                        ],
+                        "Fetching PRs",
+                    )
+                    .await?;
 
-        #[derive(Deserialize)]
-        struct GhPr {
-            number: u64,
-            title: String,
-            state: String,
-            #[serde(default)]
-            labels: Vec<serde_json::Value>,
-            author: Option<GhLogin>,
-            body: Option<String>,
-            #[serde(rename = "createdAt")]
-            #[allow(dead_code)]
-            created_at: String,
-            #[serde(rename = "updatedAt")]
-            updated_at: String,
-            #[serde(rename = "headRefName")]
-            head_ref_name: Option<String>,
-            #[serde(rename = "baseRefName")]
-            base_ref_name: Option<String>,
-            #[serde(rename = "isDraft")]
-            is_draft: Option<bool>,
-            #[serde(default)]
-            assignees: Vec<GhLogin>,
-            milestone: Option<GhMs>,
-            #[serde(rename = "reviewDecision", default)]
-            review_decision: Option<String>,
-            #[serde(rename = "latestReviews", default)]
-            latest_reviews: Vec<serde_json::Value>,
-            #[serde(default)]
-            mergeable: Option<String>,
-            #[serde(rename = "mergeStateStatus", default)]
-            merge_state_status: Option<String>,
-            #[serde(rename = "reviewRequests", default)]
-            review_requests: Vec<serde_json::Value>,
-        }
-        #[derive(Deserialize)]
-        struct GhLogin {
-            login: String,
-        }
-        #[derive(Deserialize)]
-        struct GhMs {
-            title: String,
-        }
-
-        let me = self.current_user().await;
-        let gh_prs: Vec<GhPr> = serde_json::from_str(&raw)?;
-        Ok(gh_prs
-            .into_iter()
-            .map(|gp| {
-                let state = if gp.state == "OPEN" {
-                    "opened"
-                } else {
-                    "closed"
+                #[derive(Deserialize)]
+                struct GhPr {
+                    number: u64,
+                    title: String,
+                    state: String,
+                    #[serde(default)]
+                    labels: Vec<serde_json::Value>,
+                    author: Option<GhLogin>,
+                    body: Option<String>,
+                    #[serde(rename = "createdAt")]
+                    #[allow(dead_code)]
+                    created_at: String,
+                    #[serde(rename = "updatedAt")]
+                    updated_at: String,
+                    #[serde(rename = "headRefName")]
+                    head_ref_name: Option<String>,
+                    #[serde(rename = "baseRefName")]
+                    base_ref_name: Option<String>,
+                    #[serde(rename = "isDraft")]
+                    is_draft: Option<bool>,
+                    #[serde(default)]
+                    assignees: Vec<GhLogin>,
+                    milestone: Option<GhMs>,
+                    #[serde(rename = "reviewDecision", default)]
+                    review_decision: Option<String>,
+                    #[serde(rename = "latestReviews", default)]
+                    latest_reviews: Vec<serde_json::Value>,
+                    #[serde(default)]
+                    mergeable: Option<String>,
+                    #[serde(rename = "mergeStateStatus", default)]
+                    merge_state_status: Option<String>,
+                    #[serde(rename = "reviewRequests", default)]
+                    review_requests: Vec<serde_json::Value>,
                 }
-                .to_string();
-                let labels: Vec<String> = gp
-                    .labels
-                    .iter()
-                    .filter_map(|v| v.get("name")?.as_str().map(String::from))
-                    .collect();
-                let author = crate::domain::mr::Author {
-                    username: gp.author.map(|a| a.login).unwrap_or_default(),
-                };
-                let milestone = gp
-                    .milestone
-                    .map(|m| crate::domain::mr::Milestone { title: m.title });
-                let assignees: Vec<crate::domain::mr::Assignee> = gp
-                    .assignees
+                #[derive(Deserialize)]
+                struct GhLogin {
+                    login: String,
+                }
+                #[derive(Deserialize)]
+                struct GhMs {
+                    title: String,
+                }
+
+                let me = self.current_user().await;
+                let gh_prs: Vec<GhPr> = serde_json::from_str(&raw)?;
+                Ok(gh_prs
                     .into_iter()
-                    .map(|a| crate::domain::mr::Assignee { username: a.login })
-                    .collect();
-                let (latest_review_authors, approved_authors) =
-                    split_review_authors(&gp.latest_reviews);
-                let (approval, mergeability) = gh_state_from_fields(
-                    gp.review_decision.as_deref(),
-                    gp.mergeable.as_deref(),
-                    gp.merge_state_status.as_deref(),
-                    latest_review_authors,
-                    me,
-                    &approved_authors,
-                );
-                // gh_state_from_fields derives approved_by from the same
-                // (unfiltered) list it uses for you_reviewed; restore the
-                // approvals-only view here. (you_approved was already
-                // derived correctly inside gh_state_from_fields, from this
-                // same approved_authors list passed in below.)
-                let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
-                    approved_by: approved_authors,
-                    ..a
-                });
-                let reviewers: Vec<crate::domain::mr::Reviewer> = gp
-                    .review_requests
-                    .iter()
-                    .filter_map(|r| {
-                        r.get("login").or_else(|| r.get("name"))?.as_str().map(|s| {
-                            crate::domain::mr::Reviewer {
-                                username: s.to_string(),
-                            }
-                        })
+                    .map(|gp| {
+                        let state = if gp.state == "OPEN" {
+                            "opened"
+                        } else {
+                            "closed"
+                        }
+                        .to_string();
+                        let labels: Vec<String> = gp
+                            .labels
+                            .iter()
+                            .filter_map(|v| v.get("name")?.as_str().map(String::from))
+                            .collect();
+                        let author = crate::domain::mr::Author {
+                            username: gp.author.map(|a| a.login).unwrap_or_default(),
+                        };
+                        let milestone = gp
+                            .milestone
+                            .map(|m| crate::domain::mr::Milestone { title: m.title });
+                        let assignees: Vec<crate::domain::mr::Assignee> = gp
+                            .assignees
+                            .into_iter()
+                            .map(|a| crate::domain::mr::Assignee { username: a.login })
+                            .collect();
+                        let (latest_review_authors, approved_authors) =
+                            split_review_authors(&gp.latest_reviews);
+                        let (approval, mergeability) = gh_state_from_fields(
+                            gp.review_decision.as_deref(),
+                            gp.mergeable.as_deref(),
+                            gp.merge_state_status.as_deref(),
+                            latest_review_authors,
+                            me,
+                            &approved_authors,
+                        );
+                        let approval = approval.map(|a| crate::domain::mr_state::ApprovalState {
+                            approved_by: approved_authors,
+                            ..a
+                        });
+                        let reviewers: Vec<crate::domain::mr::Reviewer> = gp
+                            .review_requests
+                            .iter()
+                            .filter_map(|r| {
+                                r.get("login").or_else(|| r.get("name"))?.as_str().map(|s| {
+                                    crate::domain::mr::Reviewer {
+                                        username: s.to_string(),
+                                    }
+                                })
+                            })
+                            .collect();
+                        MergeRequest {
+                            iid: gp.number,
+                            title: gp.title,
+                            state,
+                            labels,
+                            updated_at: gp.updated_at,
+                            author,
+                            milestone,
+                            assignees,
+                            reviewers,
+                            target_branch: gp.base_ref_name.unwrap_or_default(),
+                            source_branch: gp.head_ref_name.unwrap_or_default(),
+                            draft: gp.is_draft.unwrap_or(false),
+                            description: gp.body,
+                            head_pipeline: None,
+                            blocking_discussions_resolved: None,
+                            approval,
+                            mergeability,
+                            workflow: None,
+                            project_path: String::new(),
+                        }
+                    })
+                    .collect())
+            }
+            Scope::Group(org) => {
+                let state = if show_closed { "all" } else { "open" };
+                let per_page = (page_size * 10).clamp(1, 100);
+                let endpoint =
+                    format!("orgs/{org}/issues?filter=all&state={state}&per_page={per_page}");
+                let raw = self.run_gh(&["api", &endpoint], "Fetching Org PRs").await?;
+
+                #[derive(Deserialize)]
+                struct GhOrgPrRepo {
+                    full_name: Option<String>,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgPrUser {
+                    login: String,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgPrMs {
+                    title: String,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgPrLabel {
+                    name: String,
+                }
+                #[derive(Deserialize)]
+                struct GhOrgPr {
+                    number: u64,
+                    title: String,
+                    state: String,
+                    #[serde(default)]
+                    labels: Vec<GhOrgPrLabel>,
+                    user: Option<GhOrgPrUser>,
+                    body: Option<String>,
+                    updated_at: String,
+                    milestone: Option<GhOrgPrMs>,
+                    #[serde(default)]
+                    assignees: Vec<GhOrgPrUser>,
+                    #[allow(dead_code)]
+                    html_url: Option<String>,
+                    repository: Option<GhOrgPrRepo>,
+                    pull_request: Option<serde_json::Value>,
+                }
+
+                let items: Vec<GhOrgPr> = serde_json::from_str(&raw)?;
+                let mrs: Vec<MergeRequest> = items
+                    .into_iter()
+                    .filter(|item| item.pull_request.is_some())
+                    .map(|item| MergeRequest {
+                        iid: item.number,
+                        title: item.title,
+                        state: if item.state == "OPEN" {
+                            "opened"
+                        } else {
+                            "closed"
+                        }
+                        .to_string(),
+                        labels: item.labels.into_iter().map(|l| l.name).collect(),
+                        updated_at: item.updated_at,
+                        author: crate::domain::mr::Author {
+                            username: item.user.map(|u| u.login).unwrap_or_default(),
+                        },
+                        milestone: item
+                            .milestone
+                            .map(|m| crate::domain::mr::Milestone { title: m.title }),
+                        assignees: item
+                            .assignees
+                            .into_iter()
+                            .map(|a| crate::domain::mr::Assignee { username: a.login })
+                            .collect(),
+                        reviewers: vec![],
+                        target_branch: String::new(),
+                        source_branch: String::new(),
+                        draft: false,
+                        description: item.body,
+                        head_pipeline: None,
+                        blocking_discussions_resolved: None,
+                        approval: None,
+                        mergeability: None,
+                        workflow: None,
+                        project_path: item
+                            .repository
+                            .and_then(|r| r.full_name)
+                            .unwrap_or_default(),
                     })
                     .collect();
-                MergeRequest {
-                    iid: gp.number,
-                    title: gp.title,
-                    state,
-                    labels,
-                    updated_at: gp.updated_at,
-                    author,
-                    milestone,
-                    assignees,
-                    reviewers,
-                    target_branch: gp.base_ref_name.unwrap_or_default(),
-                    source_branch: gp.head_ref_name.unwrap_or_default(),
-                    draft: gp.is_draft.unwrap_or(false),
-                    description: gp.body,
-                    head_pipeline: None,
-                    blocking_discussions_resolved: None,
-                    approval,
-                    mergeability,
-                    workflow: None,
-                }
-            })
-            .collect())
-    }
-
-    async fn list_group_mrs(
-        &self,
-        _group: &str,
-        _show_closed: bool,
-        _page_size: usize,
-        _per_request: usize,
-    ) -> Result<Vec<MergeRequest>> {
-        Err(anyhow::anyhow!(
-            "Group/org-level browsing is not supported on GitHub"
-        ))
+                Ok(mrs)
+            }
+        }
     }
 
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
@@ -784,6 +931,7 @@ impl Backend for GhBackend {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
         })
     }
 
@@ -1147,29 +1295,53 @@ impl Backend for GhBackend {
     /// uses `per_page` for pagination.
     async fn list_pipelines(
         &self,
-        project: &str,
+        scope: &Scope,
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<Pipeline>> {
-        // The Actions API caps `per_page` at 100. For repos with heavy workflow
-        // activity this means older runs may be invisible in the Pipelines tab.
-        // TODO: add multi-page support by following `Link: <...>; rel="next"` headers.
-        let per_page = (page_size * 10).clamp(1, 100);
-        let endpoint = format!("repos/{project}/actions/runs?per_page={per_page}");
-        let raw = self.run_gh(&["api", &endpoint], "Fetching Actions").await?;
+        match scope {
+            Scope::Repository(project) => {
+                let per_page = (page_size * 10).clamp(1, 100);
+                let endpoint = format!("repos/{project}/actions/runs?per_page={per_page}");
+                let raw = self.run_gh(&["api", &endpoint], "Fetching Actions").await?;
 
-        parse_github_actions_runs(&raw)
-    }
+                parse_github_actions_runs(&raw)
+            }
+            Scope::Group(org) => {
+                let repos_raw = self
+                    .run_gh(
+                        &[
+                            "api",
+                            &format!("orgs/{org}/repos?per_page=100"),
+                            "--jq",
+                            ".[].full_name",
+                        ],
+                        "Fetching Org Repos",
+                    )
+                    .await?;
+                let repos: Vec<String> = repos_raw
+                    .lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty())
+                    .collect();
 
-    async fn list_group_pipelines(
-        &self,
-        _group: &str,
-        _page_size: usize,
-        _per_request: usize,
-    ) -> Result<Vec<Pipeline>> {
-        Err(anyhow::anyhow!(
-            "Group/org-level browsing is not supported on GitHub"
-        ))
+                let mut all_pipelines: Vec<Pipeline> = Vec::new();
+                for repo in repos {
+                    let endpoint = format!("repos/{repo}/actions/runs?per_page=10");
+                    if let Ok(raw) = self.run_gh(&["api", &endpoint], "Fetching Actions").await {
+                        if let Ok(mut runs) = parse_github_actions_runs(&raw) {
+                            for run in runs.iter_mut() {
+                                run.project_path = repo.clone();
+                            }
+                            all_pipelines.extend(runs);
+                        }
+                    }
+                }
+                all_pipelines.sort_by(|a, b| b.created_at().cmp(&a.created_at()));
+                all_pipelines.truncate(page_size * 10);
+                Ok(all_pipelines)
+            }
+        }
     }
 
     async fn list_pipeline_jobs(
@@ -1359,7 +1531,13 @@ impl Backend for GhBackend {
 
     // ── Runners ──
 
-    async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>> {
+    async fn list_runners(&self, scope: &Scope, page_size: usize) -> Result<Vec<Runner>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!("Org-level runners not supported on GitHub"));
+            }
+        };
         let endpoint = format!("/repos/{}/actions/runners?per_page={}", project, page_size);
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Runners")
@@ -1412,7 +1590,15 @@ impl Backend for GhBackend {
 
     // ── Releases ──
 
-    async fn list_releases(&self, project: &str, page_size: usize) -> Result<Vec<Release>> {
+    async fn list_releases(&self, scope: &Scope, page_size: usize) -> Result<Vec<Release>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!(
+                    "Org-level releases not supported on GitHub"
+                ));
+            }
+        };
         let raw = self
             .run_gh(
                 &[
@@ -1523,7 +1709,15 @@ impl Backend for GhBackend {
 
     // ── Milestones ──
 
-    async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>> {
+    async fn list_milestones(&self, scope: &Scope, page_size: usize) -> Result<Vec<Milestone>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!(
+                    "Org-level milestones not supported on GitHub"
+                ));
+            }
+        };
         let endpoint = format!(
             "/repos/{}/milestones?state=all&per_page={}",
             project, page_size
@@ -1788,7 +1982,15 @@ impl Backend for GhBackend {
 
     // ── Branches ──
 
-    async fn list_branches(&self, project: &str, page_size: usize) -> Result<Vec<Branch>> {
+    async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!(
+                    "Org-level branches not supported on GitHub"
+                ));
+            }
+        };
         let endpoint = format!("/repos/{}/branches?per_page={}", project, page_size);
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Branches")
@@ -1859,7 +2061,15 @@ impl Backend for GhBackend {
 
     // ── Environments / Deployments ──
 
-    async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>> {
+    async fn list_environments(&self, scope: &Scope, page_size: usize) -> Result<Vec<Environment>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!(
+                    "Org-level environments not supported on GitHub"
+                ));
+            }
+        };
         let endpoint = format!("/repos/{}/environments?per_page={}", project, page_size);
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Environments")
@@ -1891,10 +2101,18 @@ impl Backend for GhBackend {
 
     async fn list_deployments(
         &self,
-        project: &str,
+        scope: &Scope,
         page_size: usize,
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!(
+                    "Org-level deployments not supported on GitHub"
+                ));
+            }
+        };
         let mut endpoint = format!("/repos/{}/deployments?per_page={}", project, page_size);
         if let Some(env) = environment {
             endpoint.push_str(&format!("&environment={}", env));
@@ -2253,6 +2471,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     duration_seconds: duration,
                     created_at: r.created_at,
                     source: r.event,
+                    project_path: String::new(),
                 }
             })
             .collect();

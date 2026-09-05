@@ -10,6 +10,7 @@ use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::runners::Runner;
 use crate::event::Event;
+use crate::scope::Scope;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -518,69 +519,61 @@ impl Backend for GlabBackend {
 
     async fn list_issues(
         &self,
-        project: &str,
+        scope: &Scope,
         show_closed: bool,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>> {
-        let pages = page_count(page_size, per_request);
-        // Every page is issued at once, so there is no last-page detection to
-        // stop early on: a repo with fewer issues than the budget pays for a
-        // few requests that come back empty, which merge harmlessly. That is
-        // the price of not serialising the round trips, and at the default
-        // `api_per_page = 100` it is still a single request.
-        let requests: Vec<Vec<String>> = (1..=pages)
-            .map(|page| {
-                let mut args: Vec<String> = vec![
-                    "issue".to_string(),
-                    "list".to_string(),
-                    "--output".to_string(),
-                    "json".to_string(),
-                    "-R".to_string(),
-                    project.to_string(),
-                ];
-                if show_closed {
-                    args.push("--all".to_string());
+        match scope {
+            Scope::Repository(project) => {
+                let pages = page_count(page_size, per_request);
+                let requests: Vec<Vec<String>> = (1..=pages)
+                    .map(|page| {
+                        let mut args: Vec<String> = vec![
+                            "issue".to_string(),
+                            "list".to_string(),
+                            "--output".to_string(),
+                            "json".to_string(),
+                            "-R".to_string(),
+                            project.to_string(),
+                        ];
+                        if show_closed {
+                            args.push("--all".to_string());
+                        }
+                        args.push("--page".to_string());
+                        args.push(page.to_string());
+                        args.push("--per-page".to_string());
+                        args.push(per_request.to_string());
+                        args
+                    })
+                    .collect();
+                let responses = ordered_or_first_error(
+                    run_glab_concurrent(self.tx.clone(), requests, "Fetching Issues").await,
+                )?;
+
+                let mut all: Vec<Issue> = Vec::new();
+                for raw in responses {
+                    all.extend(parse_glab_issues(&raw).unwrap_or_default());
                 }
-                args.push("--page".to_string());
-                args.push(page.to_string());
-                args.push("--per-page".to_string());
-                args.push(per_request.to_string());
-                args
-            })
-            .collect();
-        let responses = ordered_or_first_error(
-            run_glab_concurrent(self.tx.clone(), requests, "Fetching Issues").await,
-        )?;
-
-        let mut all: Vec<Issue> = Vec::new();
-        for raw in responses {
-            all.extend(parse_glab_issues(&raw).unwrap_or_default());
+                Ok(all)
+            }
+            Scope::Group(group) => {
+                let state = if show_closed { "all" } else { "opened" };
+                let out = self
+                    .run_glab(
+                        &[
+                            "api",
+                            &format!(
+                                "groups/{}/issues?state={}&per_page={}",
+                                group, state, per_request
+                            ),
+                        ],
+                        "FETCHING GROUP ISSUES",
+                    )
+                    .await?;
+                Ok(serde_json::from_str(&out)?)
+            }
         }
-        Ok(all)
-    }
-
-    async fn list_group_issues(
-        &self,
-        group: &str,
-        show_closed: bool,
-        page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<Issue>> {
-        let state = if show_closed { "all" } else { "opened" };
-        let out = self
-            .run_glab(
-                &[
-                    "api",
-                    &format!(
-                        "groups/{}/issues?state={}&per_page={}",
-                        group, state, per_request
-                    ),
-                ],
-                "FETCHING GROUP ISSUES",
-            )
-            .await?;
-        Ok(serde_json::from_str(&out)?)
     }
 
     async fn get_issue(&self, project: &str, iid: u64) -> Result<Issue> {
@@ -741,171 +734,163 @@ impl Backend for GlabBackend {
 
     async fn list_mrs(
         &self,
-        project: &str,
+        scope: &Scope,
         show_closed: bool,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
-        let pages = page_count(page_size, per_request);
-        // Every page is issued at once, so there is no last-page detection to
-        // stop early on: a repo with fewer MRs than the budget pays for a few
-        // requests that come back empty, which merge harmlessly. That is the
-        // price of not serialising the round trips, and at the default
-        // `api_per_page = 100` it is still a single request.
-        let requests: Vec<Vec<String>> = (1..=pages)
-            .map(|page| {
-                let mut args: Vec<String> = vec![
-                    "mr".to_string(),
-                    "list".to_string(),
-                    "--output".to_string(),
-                    "json".to_string(),
-                    "-R".to_string(),
-                    project.to_string(),
-                ];
-                if show_closed {
-                    args.push("--all".to_string());
-                }
-                args.push("--page".to_string());
-                args.push(page.to_string());
-                args.push("--per-page".to_string());
-                args.push(per_request.to_string());
-                args
-            })
-            .collect();
-        // Pages are merged in page order, not completion order: the MR table's
-        // row order is this list's order.
-        let responses = ordered_or_first_error(
-            run_glab_concurrent(self.tx.clone(), requests, "Fetching MRs").await,
-        )?;
+        match scope {
+            Scope::Repository(project) => {
+                let pages = page_count(page_size, per_request);
+                let requests: Vec<Vec<String>> = (1..=pages)
+                    .map(|page| {
+                        let mut args: Vec<String> = vec![
+                            "mr".to_string(),
+                            "list".to_string(),
+                            "--output".to_string(),
+                            "json".to_string(),
+                            "-R".to_string(),
+                            project.to_string(),
+                        ];
+                        if show_closed {
+                            args.push("--all".to_string());
+                        }
+                        args.push("--page".to_string());
+                        args.push(page.to_string());
+                        args.push("--per-page".to_string());
+                        args.push(per_request.to_string());
+                        args
+                    })
+                    .collect();
+                let responses = ordered_or_first_error(
+                    run_glab_concurrent(self.tx.clone(), requests, "Fetching MRs").await,
+                )?;
 
-        let mut all: Vec<MergeRequest> = Vec::new();
-        for raw in responses {
-            #[derive(Deserialize)]
-            struct GiMr {
-                iid: u64,
-                title: String,
-                state: String,
-                #[serde(default)]
-                labels: Vec<String>,
-                updated_at: String,
-                author: GiAuthor,
-                milestone: Option<GiMilestone>,
-                #[serde(default)]
-                assignees: Vec<GiAssignee>,
-                #[serde(default)]
-                reviewers: Vec<GiReviewer>,
-                target_branch: String,
-                #[serde(default)]
-                source_branch: String,
-                draft: bool,
-                #[serde(default)]
-                description: Option<String>,
-                #[serde(default)]
-                head_pipeline: Option<GiPipeline>,
-                #[serde(default)]
-                blocking_discussions_resolved: Option<bool>,
-            }
-            #[derive(Deserialize)]
-            struct GiAuthor {
-                username: String,
-            }
-            #[derive(Deserialize)]
-            struct GiMilestone {
-                title: String,
-            }
-            #[derive(Deserialize)]
-            struct GiAssignee {
-                username: String,
-            }
-            #[derive(Deserialize)]
-            struct GiReviewer {
-                username: String,
-            }
-            #[derive(Deserialize)]
-            struct GiPipeline {
-                id: u64,
-                status: String,
-                #[serde(rename = "ref")]
-                pipe_ref: String,
-                updated_at: String,
-            }
-            let mrs: Vec<GiMr> = serde_json::from_str(&raw).unwrap_or_default();
-            all.extend(mrs.into_iter().map(|m| {
-                MergeRequest {
-                    iid: m.iid,
-                    title: m.title,
-                    state: m.state,
-                    labels: m.labels,
-                    updated_at: m.updated_at,
-                    author: crate::domain::mr::Author {
-                        username: m.author.username,
-                    },
-                    milestone: m
-                        .milestone
-                        .map(|ms| crate::domain::mr::Milestone { title: ms.title }),
-                    assignees: m
-                        .assignees
-                        .into_iter()
-                        .map(|a| crate::domain::mr::Assignee {
-                            username: a.username,
-                        })
-                        .collect(),
-                    reviewers: m
-                        .reviewers
-                        .into_iter()
-                        .map(|r| crate::domain::mr::Reviewer {
-                            username: r.username,
-                        })
-                        .collect(),
-                    target_branch: m.target_branch,
-                    source_branch: m.source_branch,
-                    draft: m.draft,
-                    description: m.description,
-                    head_pipeline: m.head_pipeline.map(|p| Pipeline {
-                        id: p.id,
-                        status: p.status,
-                        r#ref: p.pipe_ref,
-                        updated_at: p.updated_at,
-                        name: String::new(),
-                        display_title: String::new(),
-                        event: String::new(),
-                        head_sha: String::new(),
-                        actor_login: String::new(),
-                        duration_seconds: None,
-                        created_at: None,
-                        source: None,
-                    }),
-                    blocking_discussions_resolved: m.blocking_discussions_resolved,
-                    approval: None,
-                    mergeability: None,
-                    workflow: None,
+                let mut all: Vec<MergeRequest> = Vec::new();
+                for raw in responses {
+                    #[derive(Deserialize)]
+                    struct GiMr {
+                        iid: u64,
+                        title: String,
+                        state: String,
+                        #[serde(default)]
+                        labels: Vec<String>,
+                        updated_at: String,
+                        author: GiAuthor,
+                        milestone: Option<GiMilestone>,
+                        #[serde(default)]
+                        assignees: Vec<GiAssignee>,
+                        #[serde(default)]
+                        reviewers: Vec<GiReviewer>,
+                        target_branch: String,
+                        #[serde(default)]
+                        source_branch: String,
+                        draft: bool,
+                        #[serde(default)]
+                        description: Option<String>,
+                        #[serde(default)]
+                        head_pipeline: Option<GiPipeline>,
+                        #[serde(default)]
+                        blocking_discussions_resolved: Option<bool>,
+                    }
+                    #[derive(Deserialize)]
+                    struct GiAuthor {
+                        username: String,
+                    }
+                    #[derive(Deserialize)]
+                    struct GiMilestone {
+                        title: String,
+                    }
+                    #[derive(Deserialize)]
+                    struct GiAssignee {
+                        username: String,
+                    }
+                    #[derive(Deserialize)]
+                    struct GiReviewer {
+                        username: String,
+                    }
+                    #[derive(Deserialize)]
+                    struct GiPipeline {
+                        id: u64,
+                        status: String,
+                        #[serde(rename = "ref")]
+                        pipe_ref: String,
+                        updated_at: String,
+                    }
+                    let mrs: Vec<GiMr> = serde_json::from_str(&raw).unwrap_or_default();
+                    all.extend(mrs.into_iter().map(|m| {
+                        MergeRequest {
+                            iid: m.iid,
+                            title: m.title,
+                            state: m.state,
+                            labels: m.labels,
+                            updated_at: m.updated_at,
+                            author: crate::domain::mr::Author {
+                                username: m.author.username,
+                            },
+                            milestone: m
+                                .milestone
+                                .map(|ms| crate::domain::mr::Milestone { title: ms.title }),
+                            assignees: m
+                                .assignees
+                                .into_iter()
+                                .map(|a| crate::domain::mr::Assignee {
+                                    username: a.username,
+                                })
+                                .collect(),
+                            reviewers: m
+                                .reviewers
+                                .into_iter()
+                                .map(|r| crate::domain::mr::Reviewer {
+                                    username: r.username,
+                                })
+                                .collect(),
+                            target_branch: m.target_branch,
+                            source_branch: m.source_branch,
+                            draft: m.draft,
+                            description: m.description,
+                            head_pipeline: m.head_pipeline.map(|p| Pipeline {
+                                id: p.id,
+                                status: p.status,
+                                r#ref: p.pipe_ref,
+                                updated_at: p.updated_at,
+                                name: String::new(),
+                                display_title: String::new(),
+                                event: String::new(),
+                                head_sha: String::new(),
+                                actor_login: String::new(),
+                                duration_seconds: None,
+                                created_at: None,
+                                source: None,
+                                project_path: String::new(),
+                            }),
+                            blocking_discussions_resolved: m.blocking_discussions_resolved,
+                            approval: None,
+                            mergeability: None,
+                            workflow: None,
+                            project_path: String::new(),
+                        }
+                    }));
                 }
-            }));
+                Ok(all)
+            }
+            Scope::Group(group) => {
+                let state = if show_closed { "all" } else { "opened" };
+                let out = self
+                    .run_glab(
+                        &[
+                            "api",
+                            &format!(
+                                "groups/{}/merge_requests?state={}&per_page={}",
+                                group, state, per_request
+                            ),
+                        ],
+                        "FETCHING GROUP MERGE REQUESTS",
+                    )
+                    .await?;
+                Ok(serde_json::from_str(&out)?)
+            }
         }
-        Ok(all)
-    }
-
-    async fn list_group_mrs(
-        &self,
-        group: &str,
-        show_closed: bool,
-        _page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<MergeRequest>> {
-        let state = if show_closed { "all" } else { "opened" };
-        let out = self
-            .run_glab(
-                &[
-                    "api",
-                    &format!(
-                        "groups/{}/merge_requests?state={}&per_page={}",
-                        group, state, per_request
-                    ),
-                ],
-                "FETCHING GROUP MERGE REQUESTS",
-            )
-            .await?;
-        Ok(serde_json::from_str(&out)?)
     }
 
     async fn get_mr(&self, project: &str, iid: u64) -> Result<MergeRequest> {
@@ -1016,11 +1001,13 @@ impl Backend for GlabBackend {
                 duration_seconds: None,
                 created_at: None,
                 source: None,
+                project_path: String::new(),
             }),
             blocking_discussions_resolved: m.blocking_discussions_resolved,
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
         })
     }
 
@@ -1370,92 +1357,87 @@ impl Backend for GlabBackend {
 
     async fn list_pipelines(
         &self,
-        project: &str,
+        scope: &Scope,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Pipeline>> {
-        let pages = page_count(page_size, per_request);
-        let encoded = Self::encode_path(project);
+        match scope {
+            Scope::Repository(project) => {
+                let pages = page_count(page_size, per_request);
+                let encoded = Self::encode_path(project);
 
-        // `glab ci list` returns only the basic fields (id, status, ref,
-        // updated_at), so the metadata the Pipelines tab now exposes
-        // (created_at, duration, source, sha, user) requires the raw API.
-        // Concurrently fan out across pages so the first paint is not
-        // serialised on long histories. `run_glab_concurrent` already caps
-        // the in-flight subprocesses.
-        let requests: Vec<Vec<String>> = (1..=pages)
-            .map(|page| {
-                vec![
-                    "api".to_string(),
-                    format!("/projects/{encoded}/pipelines?per_page={per_request}&page={page}"),
-                ]
-            })
-            .collect();
-        let responses = ordered_or_first_error(
-            run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipelines").await,
-        )?;
+                let requests: Vec<Vec<String>> = (1..=pages)
+                    .map(|page| {
+                        vec![
+                            "api".to_string(),
+                            format!(
+                                "/projects/{encoded}/pipelines?per_page={per_request}&page={page}"
+                            ),
+                        ]
+                    })
+                    .collect();
+                let responses = ordered_or_first_error(
+                    run_glab_concurrent(self.tx.clone(), requests, "Fetching Pipelines").await,
+                )?;
 
-        #[derive(Deserialize)]
-        struct GiUser {
-            username: Option<String>,
-            name: Option<String>,
-        }
-        #[derive(Deserialize)]
-        struct GiPipe {
-            id: u64,
-            status: String,
-            #[serde(rename = "ref")]
-            pipe_ref: String,
-            updated_at: String,
-            created_at: Option<String>,
-            duration: Option<f64>,
-            source: Option<String>,
-            sha: Option<String>,
-            user: Option<GiUser>,
-        }
-
-        let mut all: Vec<Pipeline> = Vec::new();
-        for raw in responses {
-            let pipes: Vec<GiPipe> = serde_json::from_str(&raw)?;
-            all.extend(pipes.into_iter().map(|p| {
-                Pipeline {
-                    id: p.id,
-                    status: p.status,
-                    r#ref: p.pipe_ref,
-                    updated_at: p.updated_at,
-                    name: String::new(),
-                    display_title: String::new(),
-                    event: p.source.clone().unwrap_or_default(),
-                    head_sha: p.sha.unwrap_or_default(),
-                    actor_login: p
-                        .user
-                        .and_then(|u| u.username.or(u.name))
-                        .unwrap_or_default(),
-                    duration_seconds: p.duration.map(|d| d.max(0.0) as u64),
-                    created_at: p.created_at,
-                    source: p.source,
+                #[derive(Deserialize)]
+                struct GiUser {
+                    username: Option<String>,
+                    name: Option<String>,
                 }
-            }));
-        }
-        Ok(all)
-    }
+                #[derive(Deserialize)]
+                struct GiPipe {
+                    id: u64,
+                    status: String,
+                    #[serde(rename = "ref")]
+                    pipe_ref: String,
+                    updated_at: String,
+                    created_at: Option<String>,
+                    duration: Option<f64>,
+                    source: Option<String>,
+                    sha: Option<String>,
+                    user: Option<GiUser>,
+                }
 
-    async fn list_group_pipelines(
-        &self,
-        group: &str,
-        _page_size: usize,
-        per_request: usize,
-    ) -> Result<Vec<Pipeline>> {
-        let out = self
-            .run_glab(
-                &[
-                    "api",
-                    &format!("groups/{}/pipelines?per_page={}", group, per_request),
-                ],
-                "FETCHING GROUP PIPELINES",
-            )
-            .await?;
-        Ok(serde_json::from_str(&out)?)
+                let mut all: Vec<Pipeline> = Vec::new();
+                for raw in responses {
+                    let pipes: Vec<GiPipe> = serde_json::from_str(&raw)?;
+                    all.extend(pipes.into_iter().map(|p| {
+                        Pipeline {
+                            id: p.id,
+                            status: p.status,
+                            r#ref: p.pipe_ref,
+                            updated_at: p.updated_at,
+                            name: String::new(),
+                            display_title: String::new(),
+                            event: p.source.clone().unwrap_or_default(),
+                            head_sha: p.sha.unwrap_or_default(),
+                            actor_login: p
+                                .user
+                                .and_then(|u| u.username.or(u.name))
+                                .unwrap_or_default(),
+                            duration_seconds: p.duration.map(|d| d.max(0.0) as u64),
+                            created_at: p.created_at,
+                            source: p.source,
+                            project_path: String::new(),
+                        }
+                    }));
+                }
+                Ok(all)
+            }
+            Scope::Group(group) => {
+                let out = self
+                    .run_glab(
+                        &[
+                            "api",
+                            &format!("groups/{}/pipelines?per_page={}", group, per_request),
+                        ],
+                        "FETCHING GROUP PIPELINES",
+                    )
+                    .await?;
+                Ok(serde_json::from_str(&out)?)
+            }
+        }
     }
 
     async fn list_pipeline_jobs(
@@ -1599,7 +1581,11 @@ impl Backend for GlabBackend {
 
     // ── Runners ──
 
-    async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>> {
+    async fn list_runners(&self, scope: &Scope, page_size: usize) -> Result<Vec<Runner>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => return Err(anyhow::anyhow!("Group-level runners not supported")),
+        };
         let raw = self
             .run_glab(
                 &[
@@ -1666,7 +1652,11 @@ impl Backend for GlabBackend {
 
     // ── Releases ──
 
-    async fn list_releases(&self, project: &str, page_size: usize) -> Result<Vec<Release>> {
+    async fn list_releases(&self, scope: &Scope, page_size: usize) -> Result<Vec<Release>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => return Err(anyhow::anyhow!("Group-level releases not supported")),
+        };
         let raw = self
             .run_glab(
                 &[
@@ -1788,22 +1778,35 @@ impl Backend for GlabBackend {
 
     // ── Milestones ──
 
-    async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>> {
-        let raw = self
-            .run_glab(
-                &[
-                    "milestone",
-                    "list",
-                    "--output",
-                    "json",
-                    "--project",
-                    project,
-                    "--per-page",
-                    &page_size.to_string(),
-                ],
-                "Fetching Milestones",
-            )
-            .await?;
+    async fn list_milestones(&self, scope: &Scope, page_size: usize) -> Result<Vec<Milestone>> {
+        let raw = match scope {
+            Scope::Repository(project) => {
+                self.run_glab(
+                    &[
+                        "milestone",
+                        "list",
+                        "--output",
+                        "json",
+                        "--project",
+                        project,
+                        "--per-page",
+                        &page_size.to_string(),
+                    ],
+                    "Fetching Milestones",
+                )
+                .await?
+            }
+            Scope::Group(group) => {
+                self.run_glab(
+                    &[
+                        "api",
+                        &format!("groups/{}/milestones?per_page={}", group, page_size),
+                    ],
+                    "Fetching Group Milestones",
+                )
+                .await?
+            }
+        };
         #[derive(Deserialize, Default)]
         struct GiMs {
             #[serde(default)]
@@ -2058,9 +2061,11 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    // ── Branches ──
-
-    async fn list_branches(&self, project: &str, page_size: usize) -> Result<Vec<Branch>> {
+    async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => return Err(anyhow::anyhow!("Group-level branches not supported")),
+        };
         let encoded = Self::encode_path(project);
         let endpoint = format!(
             "/projects/{}/repository/branches?per_page={}",
@@ -2126,7 +2131,13 @@ impl Backend for GlabBackend {
 
     // ── Environments / Deployments ──
 
-    async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>> {
+    async fn list_environments(&self, scope: &Scope, page_size: usize) -> Result<Vec<Environment>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!("Group-level environments not supported"));
+            }
+        };
         let encoded = Self::encode_path(project);
         let endpoint = format!("/projects/{}/environments?per_page={}", encoded, page_size);
         let raw = self
@@ -2190,10 +2201,16 @@ impl Backend for GlabBackend {
 
     async fn list_deployments(
         &self,
-        project: &str,
+        scope: &Scope,
         page_size: usize,
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>> {
+        let project = match scope {
+            Scope::Repository(p) => p,
+            Scope::Group(_) => {
+                return Err(anyhow::anyhow!("Group-level deployments not supported"));
+            }
+        };
         let encoded = Self::encode_path(project);
         let mut endpoint = format!("/projects/{}/deployments?per_page={}", encoded, page_size);
         if let Some(env) = environment {

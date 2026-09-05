@@ -61,6 +61,7 @@ mod tests {
             approval,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
         }
     }
 
@@ -116,30 +117,29 @@ pub fn spawn_fetch_repo_attributes(
 
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
-    project_context: &str,
+    scope: &crate::scope::Scope,
     tab: app::Tab,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
-    let project_context = project_context.to_string();
+    let scope = scope.clone();
     tokio::spawn(async move {
+        let repo_path = scope.as_str().to_string();
         match tab {
-            app::Tab::Issues => {
-                match domain::issues::list_issues(&client, &project_context, true).await {
-                    Ok(issues) => {
-                        let _ = tx.send(Event::IssuesFetched(issues));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch issues: {}", e),
-                        ));
-                    }
+            app::Tab::Issues => match domain::issues::list_issues(&client, &scope, true).await {
+                Ok(issues) => {
+                    let _ = tx.send(Event::IssuesFetched(issues));
                 }
-            }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch issues: {}", e),
+                    ));
+                }
+            },
             app::Tab::MergeRequests => {
-                match domain::mr::list_mrs(&client, &project_context, true).await {
+                match domain::mr::list_mrs(&client, &scope, true).await {
                     Ok(mut mrs) => {
                         // GitHub already populated both axes during list_mrs.
                         // GitLab needs one bulk GraphQL call for the same iids.
@@ -148,7 +148,7 @@ pub fn spawn_refresh_active_tab(
                             // A failure here leaves both axes None, which renders
                             // as "—". Deliberately not surfaced as an error: on an
                             // unsupported GitLab this would fire every refresh.
-                            if let Ok(state) = client.list_mr_state(&project_context, &iids).await {
+                            if let Ok(state) = client.list_mr_state(&repo_path, &iids).await {
                                 for mr in mrs.iter_mut() {
                                     if let Some((approval, mergeability)) = state.get(&mr.iid) {
                                         mr.approval = approval.clone();
@@ -170,45 +170,39 @@ pub fn spawn_refresh_active_tab(
                     }
                 }
             }
-            app::Tab::Pipelines => {
-                match domain::pipelines::list_pipelines(&client, &project_context).await {
-                    Ok(pipelines) => {
-                        let _ = tx.send(Event::PipelinesFetched(pipelines));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch pipelines: {}", e),
-                        ));
-                    }
+            app::Tab::Pipelines => match domain::pipelines::list_pipelines(&client, &scope).await {
+                Ok(pipelines) => {
+                    let _ = tx.send(Event::PipelinesFetched(pipelines));
                 }
-            }
-            app::Tab::Runners => {
-                match domain::runners::list_runners(&client, &project_context).await {
-                    Ok(runners) => {
-                        let _ = tx.send(Event::RunnersFetched(runners));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch runners: {}", e),
-                        ));
-                    }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch pipelines: {}", e),
+                    ));
                 }
-            }
-            app::Tab::Releases => {
-                match domain::releases::list_releases(&client, &project_context).await {
-                    Ok(releases) => {
-                        let _ = tx.send(Event::ReleasesFetched(releases));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch releases: {}", e),
-                        ));
-                    }
+            },
+            app::Tab::Runners => match domain::runners::list_runners(&client, &scope).await {
+                Ok(runners) => {
+                    let _ = tx.send(Event::RunnersFetched(runners));
                 }
-            }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch runners: {}", e),
+                    ));
+                }
+            },
+            app::Tab::Releases => match domain::releases::list_releases(&client, &scope).await {
+                Ok(releases) => {
+                    let _ = tx.send(Event::ReleasesFetched(releases));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch releases: {}", e),
+                    ));
+                }
+            },
             app::Tab::Todos => {
                 match domain::notifications::list_notifications(&client, true).await {
                     Ok(notifs) => {
@@ -227,8 +221,7 @@ pub fn spawn_refresh_active_tab(
                 let mut found_pipeline_id = None;
 
                 if let Some(branch) = &branch_name {
-                    let mr_iid = match domain::mr::list_mrs(&client, &project_context, false).await
-                    {
+                    let mr_iid = match domain::mr::list_mrs(&client, &scope, false).await {
                         Ok(mrs) => mrs
                             .into_iter()
                             .find(|m| &m.source_branch == branch)
@@ -236,8 +229,7 @@ pub fn spawn_refresh_active_tab(
                         Err(_) => None,
                     };
 
-                    if let Ok(pipelines) =
-                        domain::pipelines::list_pipelines(&client, &project_context).await
+                    if let Ok(pipelines) = domain::pipelines::list_pipelines(&client, &scope).await
                     {
                         let target_ref =
                             mr_iid.map(|iid| format!("refs/merge-requests/{}/head", iid));
@@ -251,12 +243,8 @@ pub fn spawn_refresh_active_tab(
                 }
 
                 if let Some(pipeline_id) = found_pipeline_id {
-                    match domain::pipelines::list_pipeline_jobs(
-                        &client,
-                        &project_context,
-                        pipeline_id,
-                    )
-                    .await
+                    match domain::pipelines::list_pipeline_jobs(&client, &repo_path, pipeline_id)
+                        .await
                     {
                         Ok(jobs) => {
                             let _ = tx.send(Event::JobsTabFetched(pipeline_id, jobs));
@@ -276,7 +264,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Milestones => {
-                match domain::milestones::list_milestones(&client, &project_context).await {
+                match domain::milestones::list_milestones(&client, &scope).await {
                     Ok(milestones) => {
                         let _ = tx.send(Event::MilestonesFetched(milestones));
                     }
@@ -288,21 +276,19 @@ pub fn spawn_refresh_active_tab(
                     }
                 }
             }
-            app::Tab::Branches => {
-                match domain::branches::list_branches(&client, &project_context).await {
-                    Ok(branches) => {
-                        let _ = tx.send(Event::BranchesFetched(branches));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Event::FetchFailed(
-                            tab,
-                            format!("Failed to fetch branches: {}", e),
-                        ));
-                    }
+            app::Tab::Branches => match domain::branches::list_branches(&client, &scope).await {
+                Ok(branches) => {
+                    let _ = tx.send(Event::BranchesFetched(branches));
                 }
-            }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchFailed(
+                        tab,
+                        format!("Failed to fetch branches: {}", e),
+                    ));
+                }
+            },
             app::Tab::Environments => {
-                match domain::deployments::list_environments(&client, &project_context).await {
+                match domain::deployments::list_environments(&client, &scope).await {
                     Ok(envs) => {
                         let _ = tx.send(Event::EnvironmentsFetched(envs));
                     }

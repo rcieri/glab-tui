@@ -114,6 +114,16 @@ pub(crate) fn render_tab_issues(
                 )
             };
             let mut cells = Vec::new();
+            if app.scope.is_group() {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&i.project_path, 20),
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(theme.badge_group_bg),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::Issues, "ID") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &format!("#{}", i.iid),
@@ -231,6 +241,11 @@ pub(crate) fn render_tab_issues(
 
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
+
+        if app.scope.is_group() {
+            header_cells.push(Cell::from("Project"));
+            widths.push(col_w(content_area.width, 20));
+        }
 
         if app.is_column_visible(Tab::Issues, "ID") {
             header_cells.push(Cell::from("ID"));
@@ -482,6 +497,16 @@ pub(crate) fn render_tab_merge_requests(
             );
 
             let mut cells = Vec::new();
+            if app.scope.is_group() {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&m.project_path, 20),
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(theme.badge_group_bg),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::MergeRequests, "ID") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &format!("!{}", m.iid),
@@ -850,6 +875,11 @@ pub(crate) fn render_tab_merge_requests(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
+        if app.scope.is_group() {
+            header_cells.push(Cell::from("Project"));
+            widths.push(col_w(content_area.width, 20));
+        }
+
         if app.is_column_visible(Tab::MergeRequests, "ID") {
             header_cells.push(Cell::from("ID"));
             widths.push(Constraint::Length(8));
@@ -1101,6 +1131,16 @@ pub(crate) fn render_tab_pipelines(
                 bg_color
             };
             let mut row_cells = Vec::new();
+            if app.scope.is_group() {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&p.project_path, 20),
+                    &app.search_query,
+                    is_row_highlighted,
+                    is_checked,
+                    Style::default().fg(theme.badge_group_bg),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::Pipelines, "ID") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &format!("#{}", p.id()),
@@ -1223,6 +1263,11 @@ pub(crate) fn render_tab_pipelines(
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
+
+        if app.scope.is_group() {
+            header_cells.push(Cell::from("Project"));
+            widths.push(col_w(content_area.width, 20));
+        }
 
         if app.is_column_visible(Tab::Pipelines, "ID") {
             header_cells.push(Cell::from("ID"));
@@ -1824,6 +1869,31 @@ pub(crate) fn render_tab_runners(
 ) {
     let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Runners tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.runners.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading runners...", icons.label_loading))
@@ -2029,6 +2099,31 @@ pub(crate) fn render_tab_releases(
         return;
     }
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Releases tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.releases.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading releases...", icons.label_loading))
@@ -2753,6 +2848,31 @@ pub(crate) fn render_tab_branches(
         return;
     }
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Branches tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.branches.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading branches...", icons.label_loading))
@@ -2916,6 +3036,31 @@ pub(crate) fn render_tab_environments(
 ) {
     let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Environments tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.environments.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!(

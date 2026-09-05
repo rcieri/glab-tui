@@ -470,7 +470,7 @@ pub trait Backend: Send + Sync {
     async fn download_artifact(&self, project: &str, ref_name: &str, job_name: &str) -> Result<()>;
 
     // ── Runners ──
-    async fn list_runners(&self, project: &str, page_size: usize) -> Result<Vec<Runner>>;
+    async fn list_runners(&self, scope: &Scope, page_size: usize) -> Result<Vec<Runner>>;
     async fn pause_runner(&self, project: &str, runner_id: u64) -> Result<()>;
     async fn resume_runner(&self, project: &str, runner_id: u64) -> Result<()>;
     async fn update_runner_description(
@@ -481,7 +481,7 @@ pub trait Backend: Send + Sync {
     ) -> Result<()>;
 
     // ── Releases ──
-    async fn list_releases(&self, project: &str, page_size: usize) -> Result<Vec<Release>>;
+    async fn list_releases(&self, scope: &Scope, page_size: usize) -> Result<Vec<Release>>;
     async fn create_release(
         &self,
         project: &str,
@@ -499,7 +499,7 @@ pub trait Backend: Send + Sync {
     async fn delete_release(&self, project: &str, tag_name: &str) -> Result<()>;
 
     // ── Milestones ──
-    async fn list_milestones(&self, project: &str, page_size: usize) -> Result<Vec<Milestone>>;
+    async fn list_milestones(&self, scope: &Scope, page_size: usize) -> Result<Vec<Milestone>>;
     async fn list_milestone_issues(
         &self,
         project: &str,
@@ -537,16 +537,16 @@ pub trait Backend: Send + Sync {
     async fn mark_notification_as_read(&self, id: &str) -> Result<()>;
 
     // ── Branches ──
-    async fn list_branches(&self, project: &str, page_size: usize) -> Result<Vec<Branch>>;
+    async fn list_branches(&self, scope: &Scope, page_size: usize) -> Result<Vec<Branch>>;
     async fn create_branch(&self, project: &str, branch_name: &str, ref_branch: &str)
     -> Result<()>;
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()>;
 
     // ── Environments / Deployments ──
-    async fn list_environments(&self, project: &str, page_size: usize) -> Result<Vec<Environment>>;
+    async fn list_environments(&self, scope: &Scope, page_size: usize) -> Result<Vec<Environment>>;
     async fn list_deployments(
         &self,
-        project: &str,
+        scope: &Scope,
         page_size: usize,
         environment: Option<&str>,
     ) -> Result<Vec<Deployment>>;

@@ -31,3 +31,5 @@ label_palette_8 = "#b4e628"
 label_palette_9 = "#dca0ff"
 diff_gutter_bg = "#2d353b"
 diff_sep = "#859289"
+
+badge_group_bg = "#00bcd4"

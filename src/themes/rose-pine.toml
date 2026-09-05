@@ -75,3 +75,5 @@ label_palette_6 = "#9983b6"  # dim iris
 label_palette_7 = "#95b1ac"  # leaf
 label_palette_8 = "#b65976"  # dim love
 label_palette_9 = "#908caa"  # subtle
+
+badge_group_bg = "#00bcd4"

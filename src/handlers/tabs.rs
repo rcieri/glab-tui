@@ -162,7 +162,11 @@ pub async fn handle_active_tab_key(
                         let Some(client) = app.gitlab_client.clone() else {
                             return;
                         };
-                        let project_path = app.scope.as_str().to_string();
+                        let project_path = if !issue.project_path.is_empty() {
+                            issue.project_path.clone()
+                        } else {
+                            app.scope.as_str().to_string()
+                        };
                         let iid_str = issue.iid.to_string();
                         let tx2 = tx.clone();
                         tokio::spawn(async move {
@@ -443,7 +447,7 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             if let Some(client) = app.gitlab_client.clone() {
-                                let project_path = app.scope.as_str().to_string();
+                                let project_path = app.project_path_for_mr(mr_iid);
                                 let tx2 = tx.clone();
                                 tokio::spawn(async move {
                                     let result = client.approve_mr(&project_path, mr_iid).await;
@@ -587,7 +591,11 @@ pub async fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
                             };
-                            let project_path = app.scope.as_str().to_string();
+                            let project_path = if !mr.project_path.is_empty() {
+                                mr.project_path.clone()
+                            } else {
+                                app.scope.as_str().to_string()
+                            };
                             let tx2 = tx.clone();
                             let iid_str = mr_iid.to_string();
                             let _ = tokio::spawn(async move {
@@ -618,7 +626,7 @@ pub async fn handle_active_tab_key(
                                 item.draft = !is_draft;
                             }
                             if let Some(client) = app.gitlab_client.clone() {
-                                let project_path = app.scope.as_str().to_string();
+                                let project_path = app.project_path_for_mr(mr_iid);
                                 let tx2 = tx.clone();
                                 tokio::spawn(async move {
                                     let result = client
@@ -897,7 +905,11 @@ pub async fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
                             };
-                            let project_path = app.scope.as_str().to_string();
+                            let project_path = if !item.project_path.is_empty() {
+                                item.project_path.clone()
+                            } else {
+                                app.scope.as_str().to_string()
+                            };
                             let pid_str = pipe_id.to_string();
                             let tx2 = tx.clone();
                             let _ = tokio::spawn(async move {
@@ -1160,7 +1172,18 @@ pub async fn handle_active_tab_key(
                                             .map(|p| p.ref_branch().to_string())
                                     })
                                     .unwrap_or_else(|| "master".to_string());
-                                let project_path = app.scope.as_str().to_string();
+                                let active_pipe_path = app
+                                    .active_pipeline_id
+                                    .and_then(|p_id| {
+                                        app.pipelines
+                                            .items
+                                            .iter()
+                                            .find(|p| p.id() == p_id)
+                                            .map(|p| p.project_path.clone())
+                                    })
+                                    .filter(|p| !p.is_empty());
+                                let project_path = active_pipe_path
+                                    .unwrap_or_else(|| app.scope.as_str().to_string());
                                 let tx2 = tx.clone();
                                 tokio::spawn(async move {
                                     let result = client
@@ -1181,7 +1204,18 @@ pub async fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
                             };
-                            let project_path = app.scope.as_str().to_string();
+                            let active_pipe_path = app
+                                .active_pipeline_id
+                                .and_then(|p_id| {
+                                    app.pipelines
+                                        .items
+                                        .iter()
+                                        .find(|p| p.id() == p_id)
+                                        .map(|p| p.project_path.clone())
+                                })
+                                .filter(|p| !p.is_empty());
+                            let project_path =
+                                active_pipe_path.unwrap_or_else(|| app.scope.as_str().to_string());
                             let jid_str = job_id.to_string();
                             let tx2 = tx.clone();
                             let _ = tokio::spawn(async move {
@@ -1507,7 +1541,11 @@ pub async fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return;
                             };
-                            let project_path = app.scope.as_str().to_string();
+                            let project_path = if !item.project_path.is_empty() {
+                                item.project_path.clone()
+                            } else {
+                                app.scope.as_str().to_string()
+                            };
                             let target_iid = item.target_iid.to_string();
                             let tx2 = tx.clone();
                             let _ = tokio::spawn(async move {

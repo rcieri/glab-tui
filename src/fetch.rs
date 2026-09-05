@@ -100,16 +100,14 @@ mod tests {
 
 pub fn spawn_fetch_repo_attributes(
     client: &domain::client::GitlabClient,
-    project_context: &str,
+    scope: &crate::scope::Scope,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     let client = client.clone();
-    let project_context = project_context.to_string();
+    let scope = scope.clone();
     tokio::spawn(async move {
-        let (labels_res, members_res) = tokio::join!(
-            client.fetch_labels(&project_context),
-            client.fetch_members(&project_context),
-        );
+        let (labels_res, members_res) =
+            tokio::join!(client.fetch_labels(&scope), client.fetch_members(&scope),);
         let labels = labels_res.unwrap_or_default();
         let members = members_res.unwrap_or_default();
         let _ = tx.send(Event::RepoAttributesFetched { labels, members });

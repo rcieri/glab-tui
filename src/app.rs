@@ -3133,6 +3133,38 @@ impl App {
         self.reset_on_scope_change();
     }
 
+    pub fn project_path_for_issue(&self, iid: u64) -> String {
+        self.issues
+            .items
+            .iter()
+            .find(|i| i.iid == iid)
+            .map(|i| i.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    pub fn project_path_for_mr(&self, iid: u64) -> String {
+        self.mrs
+            .items
+            .iter()
+            .find(|m| m.iid == iid)
+            .map(|m| m.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    pub fn project_path_for_release(&self, _tag_name: &str) -> String {
+        self.scope.as_str().to_string()
+    }
+
+    pub fn project_path_for_milestone(&self, _iid: u64) -> String {
+        self.scope.as_str().to_string()
+    }
+
+    pub fn project_path_for_runner(&self, _id: u64) -> String {
+        self.scope.as_str().to_string()
+    }
+
     pub fn selected_issue_reference(&self) -> Option<String> {
         self.issues
             .state

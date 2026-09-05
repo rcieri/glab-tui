@@ -70,26 +70,22 @@ impl GitlabClient {
 
     pub async fn fetch_labels(
         &self,
-        project_path: &str,
+        scope: &crate::scope::Scope,
     ) -> Result<Vec<crate::domain::labels::Label>> {
-        self.backend
-            .fetch_labels(project_path, self.api_per_page)
-            .await
+        self.backend.fetch_labels(scope, self.api_per_page).await
     }
 
-    pub async fn fetch_members(&self, project_path: &str) -> Result<Vec<String>> {
-        self.backend.fetch_members(project_path).await
+    pub async fn fetch_members(&self, scope: &crate::scope::Scope) -> Result<Vec<String>> {
+        self.backend.fetch_members(scope).await
     }
 
-    pub async fn fetch_branches(&self, project_path: &str) -> Result<Vec<String>> {
-        let scope = crate::scope::Scope::Repository(project_path.to_string());
-        let branches = self.backend.list_branches(&scope, self.page_size).await?;
+    pub async fn fetch_branches(&self, scope: &crate::scope::Scope) -> Result<Vec<String>> {
+        let branches = self.backend.list_branches(scope, self.page_size).await?;
         Ok(branches.into_iter().map(|b| b.name).collect())
     }
 
-    pub async fn fetch_milestones(&self, project_path: &str) -> Result<Vec<String>> {
-        let scope = crate::scope::Scope::Repository(project_path.to_string());
-        let milestones = self.backend.list_milestones(&scope, self.page_size).await?;
+    pub async fn fetch_milestones(&self, scope: &crate::scope::Scope) -> Result<Vec<String>> {
+        let milestones = self.backend.list_milestones(scope, self.page_size).await?;
         Ok(milestones.into_iter().map(|m| m.title).collect())
     }
 

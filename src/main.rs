@@ -728,7 +728,7 @@ async fn main() -> Result<()> {
             app.start_loading_tab(app.active_tab);
         }
         spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
-        spawn_fetch_repo_attributes(&client.muted(), app.scope.as_str(), tx);
+        spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         app.terminal_commands.push(crate::app::TerminalCommand {
@@ -981,7 +981,7 @@ async fn main() -> Result<()> {
                             if let Some(client) = app.gitlab_client.clone() {
                                 spawn_fetch_repo_attributes(
                                     &client.muted(),
-                                    app.scope.as_str(),
+                                    &app.scope,
                                     events.sender(),
                                 );
                             }
@@ -2844,7 +2844,7 @@ async fn main() -> Result<()> {
                                                     );
                                                     spawn_fetch_repo_attributes(
                                                         &client.muted(),
-                                                        app.scope.as_str(),
+                                                        &app.scope,
                                                         tx,
                                                     );
                                                 }
@@ -3022,7 +3022,7 @@ async fn main() -> Result<()> {
                                                         );
                                                         spawn_fetch_repo_attributes(
                                                             &client.clone().muted(),
-                                                            app.scope.as_str(),
+                                                            &app.scope,
                                                             events.sender(),
                                                         );
                                                     }
@@ -6226,13 +6226,13 @@ async fn main() -> Result<()> {
                                     if is_loading {
                                         if let Some(client) = &app.gitlab_client {
                                             let client = client.clone();
-                                            let project_context = app.scope.as_str().to_string();
+                                            let scope = app.scope.clone();
                                             let field_type = field_type.to_string();
                                             let tx = events.sender();
                                             tokio::spawn(async move {
                                                 let res = match field_type.as_str() {
                                                     "labels" => client
-                                                        .fetch_labels(&project_context)
+                                                        .fetch_labels(&scope)
                                                         .await
                                                         .map(|labels| {
                                                             labels
@@ -6241,18 +6241,14 @@ async fn main() -> Result<()> {
                                                                 .collect()
                                                         }),
                                                     "assignees" | "reviewers" => {
-                                                        client.fetch_members(&project_context).await
+                                                        client.fetch_members(&scope).await
                                                     }
                                                     "milestone" => {
-                                                        client
-                                                            .fetch_milestones(&project_context)
-                                                            .await
+                                                        client.fetch_milestones(&scope).await
                                                     }
                                                     "source_branch" | "target_branch"
                                                     | "pipeline_branch" => {
-                                                        client
-                                                            .fetch_branches(&project_context)
-                                                            .await
+                                                        client.fetch_branches(&scope).await
                                                     }
                                                     _ => Ok(Vec::new()),
                                                 };
@@ -7852,7 +7848,7 @@ async fn main() -> Result<()> {
                                 app.active_tab,
                                 tx.clone(),
                             );
-                            spawn_fetch_repo_attributes(&client.muted(), app.scope.as_str(), tx);
+                            spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
                         }
                     }
                 }

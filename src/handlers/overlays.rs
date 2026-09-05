@@ -133,9 +133,9 @@ fn run_submit_action(
 ) {
     match confirm_action {
         crate::app::ConfirmAction::DeleteMilestone(iid) => {
+            let project_path = app.project_path_for_milestone(iid);
             app.pending_delete_milestone_iid = Some(iid);
             let client = app.gitlab_client.clone().unwrap();
-            let project_path = app.scope.as_str().to_string();
             tokio::spawn(async move {
                 let res =
                     crate::domain::milestones::delete_milestone(&client, &project_path, iid).await;
@@ -155,12 +155,12 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::CloseMilestone(iid) => {
+            let project_path = app.project_path_for_milestone(iid);
             if let Some(m) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
                 m.state = "closed".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let res = crate::domain::milestones::update_milestone_state(
@@ -184,12 +184,12 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::ReopenMilestone(iid) => {
+            let project_path = app.project_path_for_milestone(iid);
             if let Some(m) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
                 m.state = "active".to_string();
             }
             app.project_cache.milestones = app.milestones.items.clone();
             let client = app.gitlab_client.clone().unwrap();
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let res = crate::domain::milestones::update_milestone_state(
@@ -213,9 +213,9 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::DeleteRelease(tag_name) => {
+            let project_path = app.project_path_for_release(&tag_name);
             app.pending_delete_release_tag = Some(tag_name.clone());
             let client = app.gitlab_client.clone().unwrap();
-            let project_path = app.scope.as_str().to_string();
             tokio::spawn(async move {
                 let res =
                     crate::domain::releases::delete_release(&client, &project_path, &tag_name)
@@ -255,6 +255,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::CloseIssue(iid) => {
+            let project_path = app.project_path_for_issue(iid);
             if let Some(pos) = app.issues.items.iter().position(|i| i.iid == iid) {
                 app.issues.items.remove(pos);
             }
@@ -262,7 +263,6 @@ fn run_submit_action(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client.close_issue(&project_path, iid).await;
@@ -273,7 +273,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::DeleteIssue(iid) => {
-            let project_path = app.scope.as_str().to_string();
+            let project_path = app.project_path_for_issue(iid);
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
                 let res = client.delete_issue(&project_path, iid).await;
@@ -292,13 +292,13 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::ReopenIssue(iid) => {
+            let project_path = app.project_path_for_issue(iid);
             if let Some(item) = app.issues.items.iter_mut().find(|i| i.iid == iid) {
                 item.state = "opened".to_string();
             }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client.reopen_issue(&project_path, iid).await;
@@ -309,6 +309,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::CloseMr(iid) => {
+            let project_path = app.project_path_for_mr(iid);
             if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                 app.mrs.items.remove(pos);
             }
@@ -316,7 +317,6 @@ fn run_submit_action(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client.close_mr(&project_path, iid).await;
@@ -327,7 +327,7 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::DeleteMr(iid) => {
-            let project_path = app.scope.as_str().to_string();
+            let project_path = app.project_path_for_mr(iid);
             let client = app.gitlab_client.clone().unwrap();
             tokio::spawn(async move {
                 let res = client.delete_mr(&project_path, iid).await;
@@ -349,13 +349,13 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::ReopenMr(iid) => {
+            let project_path = app.project_path_for_mr(iid);
             if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
                 item.state = "opened".to_string();
             }
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client.reopen_mr(&project_path, iid).await;
@@ -367,6 +367,7 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::MergeMr(iid) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
+            let project_path = app.project_path_for_mr(iid);
             if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                 app.mrs.items.remove(pos);
             }
@@ -374,7 +375,6 @@ fn run_submit_action(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client
@@ -403,8 +403,11 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::BulkMergeMrs(iids) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
-            let iids: Vec<u64> = iids.clone();
-            for mr_iid in &iids {
+            let mr_items: Vec<(u64, String)> = iids
+                .iter()
+                .map(|&id| (id, app.project_path_for_mr(id)))
+                .collect();
+            for (mr_iid, _) in &mr_items {
                 if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == *mr_iid) {
                     app.mrs.items.remove(pos);
                 }
@@ -413,12 +416,11 @@ fn run_submit_action(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
-            let total = iids.len();
+            let total = mr_items.len();
             tokio::spawn(async move {
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, mr_iid) in iids.into_iter().enumerate() {
+                for (i, (mr_iid, project_path)) in mr_items.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
@@ -467,10 +469,10 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::RevokeMr(iid) => {
+            let project_path = app.project_path_for_mr(iid);
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client.revoke_mr(&project_path, iid).await;
@@ -481,10 +483,10 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::RebaseMr(iid) => {
+            let project_path = app.project_path_for_mr(iid);
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client.rebase_mr(&project_path, iid).await;
@@ -686,7 +688,7 @@ pub fn handle_refresh(
                 app.start_loading_tab(app.active_tab);
                 spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
             }
-            spawn_fetch_repo_attributes(&client.muted(), app.scope.as_str(), tx);
+            spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
         }
         return true;
     }

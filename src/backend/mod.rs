@@ -554,10 +554,10 @@ pub trait Backend: Send + Sync {
     // ── Labels / Members / Misc ──
     async fn fetch_labels(
         &self,
-        project: &str,
+        scope: &Scope,
         per_request: usize,
     ) -> Result<Vec<crate::domain::labels::Label>>;
-    async fn fetch_members(&self, project: &str) -> Result<Vec<String>>;
+    async fn fetch_members(&self, scope: &Scope) -> Result<Vec<String>>;
 
     // ── MR review state (approval + mergeability) ──
     /// Bulk-fetch both readiness axes for the given MR iids.

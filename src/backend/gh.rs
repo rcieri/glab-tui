@@ -2237,7 +2237,11 @@ impl Backend for GhBackend {
 
     // ── Labels / Members / Misc ──
 
-    async fn fetch_labels(&self, project: &str, _per_request: usize) -> Result<Vec<Label>> {
+    async fn fetch_labels(&self, scope: &Scope, _per_request: usize) -> Result<Vec<Label>> {
+        let repo_arg = match scope {
+            Scope::Repository(project) => project.as_str(),
+            Scope::Group(org) => org.as_str(),
+        };
         let raw = self
             .run_gh(
                 &[
@@ -2246,7 +2250,7 @@ impl Backend for GhBackend {
                     "--json",
                     "name,color",
                     "-R",
-                    project,
+                    repo_arg,
                     "--limit",
                     "100",
                 ],
@@ -2273,8 +2277,11 @@ impl Backend for GhBackend {
             .collect())
     }
 
-    async fn fetch_members(&self, project: &str) -> Result<Vec<String>> {
-        let endpoint = format!("/repos/{}/assignees?per_page=100", project);
+    async fn fetch_members(&self, scope: &Scope) -> Result<Vec<String>> {
+        let endpoint = match scope {
+            Scope::Repository(project) => format!("/repos/{}/assignees?per_page=100", project),
+            Scope::Group(org) => format!("/orgs/{}/members?per_page=100", org),
+        };
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Members")
             .await?;
@@ -2291,15 +2298,31 @@ impl Backend for GhBackend {
 
     // ── Browser ──
 
-    async fn open_in_browser(&self, _project: &str, entity: &str, id: &str) -> Result<()> {
-        self.run_gh(&[entity, "view", id, "--web"], "OPENING IN BROWSER")
+    async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
+        if !project.is_empty() {
+            self.run_gh(
+                &[entity, "view", id, "-R", project, "--web"],
+                "OPENING IN BROWSER",
+            )
             .await?;
+        } else {
+            self.run_gh(&[entity, "view", id, "--web"], "OPENING IN BROWSER")
+                .await?;
+        }
         Ok(())
     }
 
-    async fn open_pipeline_in_browser(&self, _project: &str, id: &str) -> Result<()> {
-        self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
+    async fn open_pipeline_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        if !project.is_empty() {
+            self.run_gh(
+                &["run", "view", id, "-R", project, "--web"],
+                "OPENING IN BROWSER",
+            )
             .await?;
+        } else {
+            self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
+                .await?;
+        }
         Ok(())
     }
 
@@ -2312,9 +2335,17 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn open_job_in_browser(&self, _project: &str, id: &str) -> Result<()> {
-        self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
+    async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()> {
+        if !project.is_empty() {
+            self.run_gh(
+                &["run", "view", id, "-R", project, "--web"],
+                "OPENING IN BROWSER",
+            )
             .await?;
+        } else {
+            self.run_gh(&["run", "view", id, "--web"], "OPENING IN BROWSER")
+                .await?;
+        }
         Ok(())
     }
 

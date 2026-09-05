@@ -376,80 +376,98 @@ impl Backend for GhBackend {
                 parse_gh_issues(&raw)
             }
             Scope::Group(org) => {
-                let state = if show_closed { "all" } else { "open" };
                 let per_page = (page_size * 10).clamp(1, 100);
-                let endpoint =
-                    format!("orgs/{org}/issues?filter=all&state={state}&per_page={per_page}");
+                let q = if show_closed {
+                    format!("owner:{org}+type:issue")
+                } else {
+                    format!("owner:{org}+type:issue+state:open")
+                };
+                let endpoint = format!("search/issues?q={q}&per_page={per_page}");
                 let raw = self
                     .run_gh(&["api", &endpoint], "Fetching Org Issues")
                     .await?;
 
                 #[derive(Deserialize)]
-                struct GhOrgIssueRepo {
-                    full_name: Option<String>,
-                }
-                #[derive(Deserialize)]
-                struct GhOrgIssueUser {
+                struct GhSearchIssueUser {
                     login: String,
                 }
                 #[derive(Deserialize)]
-                struct GhOrgIssueMs {
+                struct GhSearchIssueMs {
                     title: String,
                 }
                 #[derive(Deserialize)]
-                struct GhOrgIssueLabel {
+                struct GhSearchIssueLabel {
                     name: String,
                 }
                 #[derive(Deserialize)]
-                struct GhOrgIssue {
+                struct GhSearchIssueItem {
                     number: u64,
                     title: String,
                     state: String,
                     #[serde(default)]
-                    labels: Vec<GhOrgIssueLabel>,
-                    user: Option<GhOrgIssueUser>,
+                    labels: Vec<GhSearchIssueLabel>,
+                    user: Option<GhSearchIssueUser>,
                     body: Option<String>,
                     created_at: Option<String>,
                     updated_at: String,
                     closed_at: Option<String>,
-                    milestone: Option<GhOrgIssueMs>,
+                    milestone: Option<GhSearchIssueMs>,
                     #[serde(default)]
-                    assignees: Vec<GhOrgIssueUser>,
+                    assignees: Vec<GhSearchIssueUser>,
                     html_url: Option<String>,
-                    repository: Option<GhOrgIssueRepo>,
-                    pull_request: Option<serde_json::Value>,
+                    repository_url: Option<String>,
+                }
+                #[derive(Deserialize)]
+                struct GhSearchResponse {
+                    items: Vec<GhSearchIssueItem>,
                 }
 
-                let items: Vec<GhOrgIssue> = serde_json::from_str(&raw)?;
-                let issues: Vec<Issue> = items
+                let resp: GhSearchResponse = serde_json::from_str(&raw)?;
+                let issues: Vec<Issue> = resp
+                    .items
                     .into_iter()
-                    .filter(|item| item.pull_request.is_none())
-                    .map(|item| Issue {
-                        iid: item.number,
-                        title: item.title,
-                        state: item.state.to_lowercase(),
-                        labels: item.labels.into_iter().map(|l| l.name).collect(),
-                        updated_at: item.updated_at,
-                        created_at: item.created_at,
-                        closed_at: item.closed_at,
-                        author: crate::domain::issues::Author {
-                            username: item.user.map(|u| u.login).unwrap_or_default(),
-                        },
-                        milestone: item
-                            .milestone
-                            .map(|m| crate::domain::issues::Milestone { title: m.title }),
-                        assignees: item
-                            .assignees
-                            .into_iter()
-                            .map(|a| crate::domain::issues::Assignee { username: a.login })
-                            .collect(),
-                        description: item.body,
-                        due_date: None,
-                        web_url: item.html_url.unwrap_or_default(),
-                        project_path: item
-                            .repository
-                            .and_then(|r| r.full_name)
-                            .unwrap_or_default(),
+                    .map(|item| {
+                        let project_path = item
+                            .repository_url
+                            .as_deref()
+                            .and_then(|url| url.strip_prefix("https://api.github.com/repos/"))
+                            .map(String::from)
+                            .or_else(|| {
+                                item.html_url.as_deref().and_then(|url| {
+                                    let parts: Vec<&str> = url.split('/').collect();
+                                    if parts.len() >= 5 {
+                                        Some(format!("{}/{}", parts[3], parts[4]))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .unwrap_or_default();
+
+                        Issue {
+                            iid: item.number,
+                            title: item.title,
+                            state: item.state.to_lowercase(),
+                            labels: item.labels.into_iter().map(|l| l.name).collect(),
+                            updated_at: item.updated_at,
+                            created_at: item.created_at,
+                            closed_at: item.closed_at,
+                            author: crate::domain::issues::Author {
+                                username: item.user.map(|u| u.login).unwrap_or_default(),
+                            },
+                            milestone: item
+                                .milestone
+                                .map(|m| crate::domain::issues::Milestone { title: m.title }),
+                            assignees: item
+                                .assignees
+                                .into_iter()
+                                .map(|a| crate::domain::issues::Assignee { username: a.login })
+                                .collect(),
+                            description: item.body,
+                            due_date: None,
+                            web_url: item.html_url.unwrap_or_default(),
+                            project_path,
+                        }
                     })
                     .collect();
                 Ok(issues)
@@ -752,87 +770,108 @@ impl Backend for GhBackend {
                     .collect())
             }
             Scope::Group(org) => {
-                let state = if show_closed { "all" } else { "open" };
                 let per_page = (page_size * 10).clamp(1, 100);
-                let endpoint =
-                    format!("orgs/{org}/issues?filter=all&state={state}&per_page={per_page}");
+                let q = if show_closed {
+                    format!("owner:{org}+type:pr")
+                } else {
+                    format!("owner:{org}+type:pr+state:open")
+                };
+                let endpoint = format!("search/issues?q={q}&per_page={per_page}");
                 let raw = self.run_gh(&["api", &endpoint], "Fetching Org PRs").await?;
 
                 #[derive(Deserialize)]
-                struct GhOrgPrRepo {
-                    full_name: Option<String>,
-                }
-                #[derive(Deserialize)]
-                struct GhOrgPrUser {
+                struct GhSearchPrUser {
                     login: String,
                 }
                 #[derive(Deserialize)]
-                struct GhOrgPrMs {
+                struct GhSearchPrMs {
                     title: String,
                 }
                 #[derive(Deserialize)]
-                struct GhOrgPrLabel {
+                struct GhSearchPrLabel {
                     name: String,
                 }
                 #[derive(Deserialize)]
-                struct GhOrgPr {
+                struct GhSearchPrItem {
                     number: u64,
                     title: String,
                     state: String,
                     #[serde(default)]
-                    labels: Vec<GhOrgPrLabel>,
-                    user: Option<GhOrgPrUser>,
+                    labels: Vec<GhSearchPrLabel>,
+                    user: Option<GhSearchPrUser>,
                     body: Option<String>,
                     updated_at: String,
-                    milestone: Option<GhOrgPrMs>,
+                    milestone: Option<GhSearchPrMs>,
                     #[serde(default)]
-                    assignees: Vec<GhOrgPrUser>,
-                    #[allow(dead_code)]
+                    assignees: Vec<GhSearchPrUser>,
+                    #[serde(default)]
+                    draft: bool,
                     html_url: Option<String>,
-                    repository: Option<GhOrgPrRepo>,
-                    pull_request: Option<serde_json::Value>,
+                    repository_url: Option<String>,
+                }
+                #[derive(Deserialize)]
+                struct GhSearchResponse {
+                    items: Vec<GhSearchPrItem>,
                 }
 
-                let items: Vec<GhOrgPr> = serde_json::from_str(&raw)?;
-                let mrs: Vec<MergeRequest> = items
+                let resp: GhSearchResponse = serde_json::from_str(&raw)?;
+                let mrs: Vec<MergeRequest> = resp
+                    .items
                     .into_iter()
-                    .filter(|item| item.pull_request.is_some())
-                    .map(|item| MergeRequest {
-                        iid: item.number,
-                        title: item.title,
-                        state: if item.state == "OPEN" {
-                            "opened"
+                    .map(|item| {
+                        let project_path = item
+                            .repository_url
+                            .as_deref()
+                            .and_then(|url| url.strip_prefix("https://api.github.com/repos/"))
+                            .map(String::from)
+                            .or_else(|| {
+                                item.html_url.as_deref().and_then(|url| {
+                                    let parts: Vec<&str> = url.split('/').collect();
+                                    if parts.len() >= 5 {
+                                        Some(format!("{}/{}", parts[3], parts[4]))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .unwrap_or_default();
+
+                        let state_str = item.state.to_lowercase();
+                        let norm_state = if state_str == "open" {
+                            "opened".to_string()
                         } else {
-                            "closed"
+                            state_str
+                        };
+
+                        MergeRequest {
+                            iid: item.number,
+                            title: item.title,
+                            state: norm_state,
+                            labels: item.labels.into_iter().map(|l| l.name).collect(),
+                            updated_at: item.updated_at,
+                            author: crate::domain::mr::Author {
+                                username: item.user.map(|u| u.login).unwrap_or_default(),
+                            },
+                            milestone: item
+                                .milestone
+                                .map(|m| crate::domain::mr::Milestone { title: m.title }),
+                            assignees: item
+                                .assignees
+                                .into_iter()
+                                .map(|a| crate::domain::mr::Assignee { username: a.login })
+                                .collect(),
+                            reviewers: vec![],
+                            target_branch: String::new(),
+                            source_branch: String::new(),
+                            draft: item.draft,
+                            description: item.body,
+                            head_pipeline: None,
+                            blocking_discussions_resolved: None,
+                            approval: None,
+                            mergeability: None,
+                            workflow: None,
+                            project_path,
                         }
-                        .to_string(),
-                        labels: item.labels.into_iter().map(|l| l.name).collect(),
-                        updated_at: item.updated_at,
-                        author: crate::domain::mr::Author {
-                            username: item.user.map(|u| u.login).unwrap_or_default(),
-                        },
-                        milestone: item
-                            .milestone
-                            .map(|m| crate::domain::mr::Milestone { title: m.title }),
-                        assignees: item
-                            .assignees
-                            .into_iter()
-                            .map(|a| crate::domain::mr::Assignee { username: a.login })
-                            .collect(),
-                        reviewers: vec![],
-                        target_branch: String::new(),
-                        source_branch: String::new(),
-                        draft: false,
-                        description: item.body,
-                        head_pipeline: None,
-                        blocking_discussions_resolved: None,
-                        approval: None,
-                        mergeability: None,
-                        workflow: None,
-                        project_path: item
-                            .repository
-                            .and_then(|r| r.full_name)
-                            .unwrap_or_default(),
                     })
                     .collect();
                 Ok(mrs)
@@ -1308,7 +1347,7 @@ impl Backend for GhBackend {
                 parse_github_actions_runs(&raw)
             }
             Scope::Group(org) => {
-                let repos_raw = self
+                let repos_raw = match self
                     .run_gh(
                         &[
                             "api",
@@ -1318,7 +1357,22 @@ impl Backend for GhBackend {
                         ],
                         "Fetching Org Repos",
                     )
-                    .await?;
+                    .await
+                {
+                    Ok(raw) => raw,
+                    Err(_) => {
+                        self.run_gh(
+                            &[
+                                "api",
+                                &format!("users/{org}/repos?per_page=100"),
+                                "--jq",
+                                ".[].full_name",
+                            ],
+                            "Fetching User Repos",
+                        )
+                        .await?
+                    }
+                };
                 let repos: Vec<String> = repos_raw
                     .lines()
                     .map(|l| l.trim().to_string())

@@ -24,6 +24,10 @@ pub struct Pipeline {
     pub created_at: Option<String>,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub project_path: String,
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
 impl Pipeline {
@@ -174,10 +178,13 @@ pub fn process_pipeline_jobs(all_jobs: Vec<Job>) -> Vec<Job> {
     all_jobs
 }
 
-pub async fn list_pipelines(client: &GitlabClient, project_path: &str) -> Result<Vec<Pipeline>> {
+pub async fn list_pipelines(
+    client: &GitlabClient,
+    scope: &crate::scope::Scope,
+) -> Result<Vec<Pipeline>> {
     client
         .backend
-        .list_pipelines(project_path, client.page_size, client.api_per_page)
+        .list_pipelines(scope, client.page_size, client.api_per_page)
         .await
 }
 

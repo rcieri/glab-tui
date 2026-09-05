@@ -52,3 +52,5 @@ label_palette_6 = "#fa7850"
 label_palette_7 = "#28c8c8"
 label_palette_8 = "#b4e628"
 label_palette_9 = "#dca0ff"
+
+badge_group_bg = "#00bcd4"

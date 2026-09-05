@@ -20,10 +20,13 @@ pub struct Milestone {
     pub created_at: String,
 }
 
-pub async fn list_milestones(client: &GitlabClient, project_path: &str) -> Result<Vec<Milestone>> {
+pub async fn list_milestones(
+    client: &GitlabClient,
+    scope: &crate::scope::Scope,
+) -> Result<Vec<Milestone>> {
     client
         .backend
-        .list_milestones(project_path, client.page_size)
+        .list_milestones(scope, client.page_size)
         .await
 }
 

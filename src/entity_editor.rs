@@ -679,7 +679,7 @@ pub fn apply_field_text_change(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.project_context.clone();
+            let project_path = app.scope.as_str().to_string();
             let tx_spawn = tx.clone();
             tokio::spawn(async move {
                 let res = crate::domain::milestones::update_milestone(
@@ -734,7 +734,7 @@ pub fn apply_field_text_change(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.project_context.clone();
+            let project_path = app.scope.as_str().to_string();
             let tx_spawn = tx.clone();
             tokio::spawn(async move {
                 let res = crate::domain::releases::update_release(
@@ -776,7 +776,7 @@ pub fn apply_field_text_change(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.project_context.clone();
+            let project_path = app.scope.as_str().to_string();
             let et = entity_type.to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
@@ -799,7 +799,7 @@ pub fn apply_field_text_change(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
                     let result = client
@@ -830,7 +830,7 @@ pub fn apply_field_text_change(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
                     let result = client
@@ -849,7 +849,7 @@ pub fn apply_field_text_change(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
                     let result = client.update_issue_weight(&project_path, iid, &value).await;
@@ -867,7 +867,7 @@ pub fn apply_field_text_change(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.project_context.clone();
+            let project_path = app.scope.as_str().to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
                 let result = client
@@ -894,7 +894,7 @@ pub fn apply_field_text_change(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.project_context.clone();
+            let project_path = app.scope.as_str().to_string();
             let et = entity_type.to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
@@ -962,7 +962,7 @@ pub fn apply_selector_changes<B: Backend>(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
@@ -1031,7 +1031,7 @@ pub fn apply_selector_changes<B: Backend>(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let et = entity_type.to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
@@ -1100,7 +1100,7 @@ pub fn apply_selector_changes<B: Backend>(
                     let Some(client) = app.gitlab_client.clone() else {
                         return;
                     };
-                    let project_path = app.project_context.clone();
+                    let project_path = app.scope.as_str().to_string();
                     let tx2 = tx.clone();
                     tokio::spawn(async move {
                         let result = client
@@ -1151,7 +1151,7 @@ pub fn apply_selector_changes<B: Backend>(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
-            let project_path = app.project_context.clone();
+            let project_path = app.scope.as_str().to_string();
             let et = entity_type.to_string();
             let tx2 = tx.clone();
             tokio::spawn(async move {
@@ -1177,7 +1177,7 @@ pub fn apply_selector_changes<B: Backend>(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
                     let result = client
@@ -1367,7 +1367,7 @@ pub async fn handle_entity_update(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let result = if entity_type == "issue"
                     || entity_type == "edit_issue"
                     || entity_type == "edit_issue"
@@ -1411,7 +1411,7 @@ pub async fn handle_entity_update(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 if let Err(e) = client.toggle_mr_draft(&project_path, iid, is_draft).await {
                     app.show_error(format!("Failed to toggle draft: {}", e));
                     return;
@@ -1434,7 +1434,7 @@ pub async fn handle_entity_update(
                     let Some(client) = app.gitlab_client.clone() else {
                         return;
                     };
-                    let project_path = app.project_context.clone();
+                    let project_path = app.scope.as_str().to_string();
                     if let Err(e) = client
                         .update_mr_target_branch(&project_path, iid, &target)
                         .await
@@ -1460,7 +1460,7 @@ pub async fn handle_entity_update(
                     let Some(client) = app.gitlab_client.clone() else {
                         return;
                     };
-                    let ppc = app.project_context.clone();
+                    let ppc = app.scope.as_str().to_string();
                     let confidential_val = flag == "--confidential";
                     if let Err(e) = client
                         .update_issue_confidential(&ppc, iid, confidential_val)
@@ -1484,7 +1484,7 @@ pub async fn handle_entity_update(
                     let Some(client) = app.gitlab_client.clone() else {
                         return;
                     };
-                    let project_path = app.project_context.clone();
+                    let project_path = app.scope.as_str().to_string();
                     if let Err(e) = client
                         .update_issue_due_date(&project_path, iid, flag_value)
                         .await
@@ -1501,7 +1501,7 @@ pub async fn handle_entity_update(
                     let Some(client) = app.gitlab_client.clone() else {
                         return;
                     };
-                    let project_path = app.project_context.clone();
+                    let project_path = app.scope.as_str().to_string();
                     if let Err(e) = client
                         .update_issue_weight(&project_path, iid, &weight)
                         .await
@@ -1579,7 +1579,7 @@ pub async fn handle_entity_update(
                 let Some(client) = app.gitlab_client.clone() else {
                     return;
                 };
-                let project_path = app.project_context.clone();
+                let project_path = app.scope.as_str().to_string();
                 let result = if entity_type == "issue"
                     || entity_type == "edit_issue"
                     || entity_type == "edit_issue"
@@ -1626,6 +1626,7 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         app.issues.items = vec![issue];
 
@@ -1652,6 +1653,8 @@ mod tests {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
+            web_url: None,
         };
         app.mrs.items = vec![mr];
 

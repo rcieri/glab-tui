@@ -69,3 +69,5 @@ label_palette_6 = "#736287"  # deep iris
 label_palette_7 = "#6d8f89"  # leaf
 label_palette_8 = "#8c4e5f"  # deep love
 label_palette_9 = "#797593"  # subtle
+
+badge_group_bg = "#00bcd4"

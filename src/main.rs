@@ -14,6 +14,7 @@ mod fetch;
 mod git_helpers;
 pub mod handlers;
 mod keybinding;
+pub mod scope;
 mod templates;
 mod ui;
 pub mod utils;
@@ -492,7 +493,7 @@ fn handle_date_picker_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16
 fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, col: u16) {
     let tab = app.active_tab;
     let kind = app.kind();
-    let cols = tab.columns(kind);
+    let cols = tab.columns(kind, app.scope.is_group());
     let group_cols: Vec<&str> = cols.iter().copied().collect();
     let columns_list: Vec<(usize, &str)> = cols.iter().copied().enumerate().collect();
 
@@ -632,11 +633,14 @@ async fn main() -> Result<()> {
     let mut events = EventHandler::new(250);
     app.tx = Some(events.sender());
 
-    // Initialize gitlab context
-    if let Some(repo) = custom_repo {
-        app.project_context = repo;
+    // Initialize scope context
+    if let Some(group) = cli.group {
+        app.scope = crate::scope::Scope::Group(group.clone());
+        crate::utils::cache::add_recent_group(&group);
+    } else if let Some(repo) = custom_repo {
+        app.scope = crate::scope::Scope::Repository(repo);
     } else if let Ok(context) = domain::client::get_project_context().await {
-        app.project_context = context;
+        app.scope = crate::scope::Scope::Repository(context);
     }
 
     // Add current directory to recent repositories list
@@ -647,7 +651,7 @@ async fn main() -> Result<()> {
     }
 
     // Load offline cache
-    let cache = crate::utils::cache::load_cache(&app.project_context);
+    let cache = crate::utils::cache::load_cache(app.scope.as_str());
     app.project_cache = cache.clone();
     app.issues.items = cache.issues;
     app.mrs.items = cache.mrs;
@@ -723,8 +727,8 @@ async fn main() -> Result<()> {
         if app.issues.items.is_empty() {
             app.start_loading_tab(app.active_tab);
         }
-        spawn_refresh_active_tab(&client, &app.project_context, app.active_tab, tx.clone());
-        spawn_fetch_repo_attributes(&client.muted(), &app.project_context, tx);
+        spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+        spawn_fetch_repo_attributes(&client.muted(), app.scope.as_str(), tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         app.terminal_commands.push(crate::app::TerminalCommand {
@@ -736,7 +740,9 @@ async fn main() -> Result<()> {
     }
 
     // If we couldn't detect a valid project, prompt to select a cached repo
-    if app.project_context == "unknown/unknown" || app.project_context == "group/repository" {
+    if app.scope.as_str().to_string() == "unknown/unknown"
+        || app.scope.as_str().to_string() == "group/repository"
+    {
         let switchable = crate::utils::cache::get_switchable_repos();
         if !switchable.is_empty() {
             let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
@@ -781,7 +787,7 @@ async fn main() -> Result<()> {
                         {
                             app.fetching_pipelines.insert(pipe_id);
                             let client_clone = client.clone();
-                            let project_context = app.project_context.clone();
+                            let project_context = app.scope.as_str().to_string();
                             let tx = events.sender();
                             tokio::spawn(async move {
                                 if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
@@ -826,7 +832,7 @@ async fn main() -> Result<()> {
                             {
                                 app.fetching_pipelines.insert(pipe_id);
                                 let client_clone = client.clone();
-                                let project_context = app.project_context.clone();
+                                let project_context = app.scope.as_str().to_string();
                                 let tx = events.sender();
                                 tokio::spawn(async move {
                                     if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
@@ -871,7 +877,7 @@ async fn main() -> Result<()> {
                             } else {
                                 app.selected_milestone_issues = None;
                                 let client_clone = client.clone();
-                                let project_context = app.project_context.clone();
+                                let project_context = app.scope.as_str().to_string();
                                 // `glab issue list --milestone` filters by milestone
                                 // title, not iid — passing the title here is required
                                 // for the glab backend to return any issues.
@@ -923,7 +929,7 @@ async fn main() -> Result<()> {
                         if let Some(selected) = app.jobs.state.selected() {
                             if let Some(job) = app.filtered_jobs().get(selected) {
                                 if let Some(client) = app.gitlab_client.clone() {
-                                    let project = app.project_context.clone();
+                                    let project = app.scope.as_str().to_string();
                                     let tx = events.sender();
                                     let job_id = job.id();
                                     app.job_trace_loading = true;
@@ -959,7 +965,7 @@ async fn main() -> Result<()> {
                                     app.start_loading_tab(app.active_tab);
                                     spawn_refresh_active_tab(
                                         &client.muted(),
-                                        &app.project_context,
+                                        &app.scope,
                                         app.active_tab,
                                         events.sender(),
                                     );
@@ -975,7 +981,7 @@ async fn main() -> Result<()> {
                             if let Some(client) = app.gitlab_client.clone() {
                                 spawn_fetch_repo_attributes(
                                     &client.muted(),
-                                    &app.project_context,
+                                    app.scope.as_str(),
                                     events.sender(),
                                 );
                             }
@@ -1004,7 +1010,7 @@ async fn main() -> Result<()> {
                     }
 
                     app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::JobsTabFetched(pipeline_id, jobs) => {
                     app.complete_loading_tab(app::Tab::Jobs, "Success");
@@ -1058,7 +1064,7 @@ async fn main() -> Result<()> {
                     app.issues.items = issues;
                     app.update_filter_selection();
                     app.project_cache.issues = app.issues.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MrsFetched(mrs) => {
                     app.complete_loading_tab(app::Tab::MergeRequests, "Success");
@@ -1068,7 +1074,7 @@ async fn main() -> Result<()> {
                     app.mrs.items = mrs;
                     app.update_filter_selection();
                     app.project_cache.mrs = app.mrs.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::PipelinesFetched(pipelines) => {
                     app.complete_loading_tab(app::Tab::Pipelines, "Success");
@@ -1090,7 +1096,7 @@ async fn main() -> Result<()> {
                     app.fetching_pipelines.clear();
                     app.project_cache.pipelines = app.pipelines.items.clone();
                     app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::TodosFetched(notifs) => {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
@@ -1100,7 +1106,7 @@ async fn main() -> Result<()> {
                     app.todos.items = notifs;
                     app.update_filter_selection();
                     app.project_cache.todos = app.todos.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::RunnersFetched(runners) => {
                     app.complete_loading_tab(app::Tab::Runners, "Success");
@@ -1110,7 +1116,7 @@ async fn main() -> Result<()> {
                     app.runners.items = runners;
                     app.update_filter_selection();
                     app.project_cache.runners = app.runners.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::ReleasesFetched(releases) => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
@@ -1120,7 +1126,7 @@ async fn main() -> Result<()> {
                     app.releases.items = releases;
                     app.update_filter_selection();
                     app.project_cache.releases = app.releases.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestonesFetched(milestones) => {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
@@ -1134,7 +1140,7 @@ async fn main() -> Result<()> {
                     app.selected_milestone_issues = None;
                     app.selected_milestone_iid = None;
                     app.project_cache.milestone_issues.clear();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestoneIssuesFetched(iid, issues) => {
                     let mut fallback_success = false;
@@ -1164,7 +1170,7 @@ async fn main() -> Result<()> {
                             app.selected_milestone_issues = Some(issues.clone());
                         }
                         app.project_cache.milestone_issues.insert(iid, issues);
-                        crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                     }
                 }
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {
@@ -1174,7 +1180,7 @@ async fn main() -> Result<()> {
                     app.selected_milestone_issues = None;
                     app.selected_milestone_iid = None;
                     app.project_cache.milestone_issues.clear();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestoneDeleted => {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
@@ -1183,12 +1189,12 @@ async fn main() -> Result<()> {
                         app.milestones.items.retain(|m| m.iid != iid);
                     }
                     app.project_cache.milestones = app.milestones.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::ReleaseUpdated => {
                     app.status_message = None;
                     app.project_cache.releases = app.releases.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::ReleaseDeleted => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
@@ -1197,7 +1203,7 @@ async fn main() -> Result<()> {
                         app.releases.items.retain(|r| r.tag_name != tag);
                     }
                     app.project_cache.releases = app.releases.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::IssueDeleted => {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
@@ -1209,7 +1215,7 @@ async fn main() -> Result<()> {
                         }
                         spawn_refresh_active_tab(
                             &client,
-                            &app.project_context,
+                            &app.scope,
                             app::Tab::Issues,
                             events.sender(),
                         );
@@ -1225,7 +1231,7 @@ async fn main() -> Result<()> {
                         }
                         spawn_refresh_active_tab(
                             &client,
-                            &app.project_context,
+                            &app.scope,
                             app::Tab::MergeRequests,
                             events.sender(),
                         );
@@ -1239,7 +1245,7 @@ async fn main() -> Result<()> {
                     app.branches.items = branches;
                     app.update_filter_selection();
                     app.project_cache.branches = app.branches.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::EnvironmentsFetched(envs) => {
                     app.complete_loading_tab(app::Tab::Environments, "Success");
@@ -1249,7 +1255,7 @@ async fn main() -> Result<()> {
                     app.environments.items = envs;
                     app.update_filter_selection();
                     app.project_cache.environments = app.environments.items.clone();
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::SelectorItemsFetched(items) => {
                     let mut applied_from_cache = false;
@@ -1313,7 +1319,7 @@ async fn main() -> Result<()> {
                                 _ => {}
                             }
                         }
-                        crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
                             selector.all_items = items;
                             selector.is_loading = false;
@@ -1346,7 +1352,7 @@ async fn main() -> Result<()> {
                         app.cached_members = members.clone();
                         app.project_cache.members = members;
                     }
-                    crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::DeploymentsFetched(deployments) => {
                     app.deployments.items = deployments;
@@ -1470,14 +1476,14 @@ async fn main() -> Result<()> {
                                 }
                                 spawn_refresh_active_tab(
                                     &client.muted(),
-                                    &app.project_context,
+                                    &app.scope,
                                     tab,
                                     events.sender(),
                                 );
                             }
                             if let Some(diff_view) = &app.diff_view {
                                 let client = app.gitlab_client.clone();
-                                let project_context = app.project_context.clone();
+                                let project_context = app.scope.as_str().to_string();
                                 let tx = events.sender();
                                 let mr_iid = diff_view.mr_iid;
                                 tokio::spawn(async move {
@@ -1604,7 +1610,7 @@ async fn main() -> Result<()> {
                                                     app.start_loading_tab(app.active_tab);
                                                     spawn_refresh_active_tab(
                                                         &client,
-                                                        &app.project_context,
+                                                        &app.scope,
                                                         app.active_tab,
                                                         events.sender(),
                                                     );
@@ -1633,7 +1639,7 @@ async fn main() -> Result<()> {
                                     crate::app::TextInputAction::CreateIssue => {
                                         if !value.trim().is_empty() {
                                             let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.project_context.clone();
+                                            let project = app.scope.as_str().to_string();
                                             let title = value.clone();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
@@ -1684,7 +1690,7 @@ async fn main() -> Result<()> {
                                                 ));
                                             } else {
                                                 let client = app.gitlab_client.clone().unwrap();
-                                                let project = app.project_context.clone();
+                                                let project = app.scope.as_str().to_string();
                                                 let body = value;
                                                 let tx = events.sender();
                                                 let tab = app.active_tab;
@@ -1724,7 +1730,8 @@ async fn main() -> Result<()> {
                                             if let Some(client) = &app.gitlab_client {
                                                 app.loading_tabs.insert(app::Tab::Jobs);
                                                 let client_clone = client.clone();
-                                                let project_context = app.project_context.clone();
+                                                let project_context =
+                                                    app.scope.as_str().to_string();
                                                 let tx = events.sender();
                                                 tokio::spawn(async move {
                                                     match domain::pipelines::list_pipeline_jobs(
@@ -1901,7 +1908,7 @@ async fn main() -> Result<()> {
                                         if !value.trim().is_empty() {
                                             let branch_name = value.trim().to_string();
                                             let client = app.gitlab_client.clone();
-                                            let project_context = app.project_context.clone();
+                                            let project_context = app.scope.as_str().to_string();
                                             let ref_branch = ref_branch.clone();
                                             let tx = events.sender();
                                             let _ = tx.send(Event::CommandStarted(format!(
@@ -1941,7 +1948,7 @@ async fn main() -> Result<()> {
                                         if !value.trim().is_empty() {
                                             let title = value.trim().to_string();
                                             let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.project_context.clone();
+                                            let project = app.scope.as_str().to_string();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             tokio::spawn(async move {
@@ -1974,7 +1981,7 @@ async fn main() -> Result<()> {
                                     } => {
                                         if !value.trim().is_empty() {
                                             let client = app.gitlab_client.clone();
-                                            let project_context = app.project_context.clone();
+                                            let project_context = app.scope.as_str().to_string();
                                             let tx = events.sender();
                                             let is_github =
                                                 client.as_ref().map_or(false, |c| c.is_github);
@@ -2103,7 +2110,7 @@ async fn main() -> Result<()> {
                                         app.draft_comments.clear();
                                         app.in_review_mode = false;
 
-                                        let project_context = app.project_context.clone();
+                                        let project_context = app.scope.as_str().to_string();
                                         let status_clone = status.clone();
                                         let value_clone = value.clone();
 
@@ -2733,11 +2740,15 @@ async fn main() -> Result<()> {
                                     }
                                     if field_type == "column_filter" {
                                         if let Some((tab, col)) = app.column_filter_context.take() {
-                                            app.set_column_filter(
-                                                tab,
-                                                &col,
-                                                selector.selected_items.clone(),
-                                            );
+                                            let mut selected = selector.selected_items.clone();
+                                            if selected.is_empty() && !filtered_items.is_empty() {
+                                                if let Some(focused) =
+                                                    filtered_items.get(selector.cursor_idx)
+                                                {
+                                                    selected.insert(focused.clone());
+                                                }
+                                            }
+                                            app.set_column_filter(tab, &col, selected);
                                             app.update_filter_selection();
                                         }
                                         continue;
@@ -2763,9 +2774,83 @@ async fn main() -> Result<()> {
                                                 } else {
                                                     repos_dir.join(&path)
                                                 };
-
                                             let target_path_str =
                                                 target_path.to_string_lossy().into_owned();
+
+                                            let group_opt = path
+                                                .strip_prefix("Group: ")
+                                                .or_else(|| path.strip_prefix("group: "))
+                                                .or_else(|| path.strip_prefix("Org: "))
+                                                .or_else(|| path.strip_prefix("org: "))
+                                                .map(|s| s.to_string())
+                                                .or_else(|| {
+                                                    if !path.contains('/')
+                                                        && !crate::utils::cache::is_git_repo(
+                                                            &target_path_str,
+                                                        )
+                                                    {
+                                                        Some(path.clone())
+                                                    } else {
+                                                        None
+                                                    }
+                                                });
+
+                                            if let Some(group_name) = group_opt {
+                                                if group_name.trim().is_empty() {
+                                                    continue;
+                                                }
+                                                app.scope = crate::scope::Scope::Group(
+                                                    group_name.to_string(),
+                                                );
+                                                app.reset_on_scope_change();
+                                                crate::utils::cache::add_recent_group(&group_name);
+                                                if let Ok(mut client) =
+                                                    domain::client::GitlabClient::new(&app.config)
+                                                        .await
+                                                {
+                                                    client.page_size = app.config.page_size;
+                                                    client.api_per_page =
+                                                        app.config.api_per_page_clamped();
+                                                    client.tx = Some(events.sender());
+                                                    client.backend.set_tx(events.sender());
+                                                    app.gitlab_client = Some(client.clone());
+                                                } else {
+                                                    app.gitlab_client = None;
+                                                }
+                                                let cache = crate::utils::cache::load_cache(
+                                                    app.scope.as_str(),
+                                                );
+                                                app.project_cache = cache.clone();
+                                                app.issues.items = cache.issues;
+                                                app.mrs.items = cache.mrs;
+                                                crate::fetch::derive_workflow(&mut app.mrs.items);
+                                                app.pipelines.items = cache.pipelines;
+                                                app.runners.items = cache.runners;
+                                                app.releases.items = cache.releases;
+                                                app.todos.items = cache.todos;
+                                                app.milestones.items = cache.milestones;
+                                                app.pipeline_jobs = cache.pipeline_jobs;
+                                                app.branches.items = cache.branches;
+                                                app.environments.items = cache.environments;
+                                                app.milestone_issues_cache = cache.milestone_issues;
+                                                if let Some(client) = app.gitlab_client.clone() {
+                                                    let tx = events.sender();
+                                                    app.start_loading_tab(app.active_tab);
+                                                    spawn_refresh_active_tab(
+                                                        &client,
+                                                        &app.scope,
+                                                        app.active_tab,
+                                                        tx.clone(),
+                                                    );
+                                                    spawn_fetch_repo_attributes(
+                                                        &client.muted(),
+                                                        app.scope.as_str(),
+                                                        tx,
+                                                    );
+                                                }
+                                                continue;
+                                            }
+
                                             if crate::utils::cache::is_git_repo(&target_path_str) {
                                                 if std::env::set_current_dir(&target_path).is_ok() {
                                                     crate::utils::cache::add_recent_repo(
@@ -2778,8 +2863,11 @@ async fn main() -> Result<()> {
                                                     if let Ok(context) =
                                                         domain::client::get_project_context().await
                                                     {
-                                                        app.project_context = context;
+                                                        app.scope = crate::scope::Scope::Repository(
+                                                            context,
+                                                        );
                                                     }
+                                                    app.reset_on_scope_change();
                                                     if let Ok(mut client) =
                                                         domain::client::GitlabClient::new(
                                                             &app.config,
@@ -2814,7 +2902,7 @@ async fn main() -> Result<()> {
                                                     app.selected_milestone_iid = None;
 
                                                     let cache = crate::utils::cache::load_cache(
-                                                        &app.project_context,
+                                                        app.scope.as_str(),
                                                     );
                                                     app.project_cache = cache.clone();
                                                     app.issues.items = cache.issues;
@@ -2928,13 +3016,13 @@ async fn main() -> Result<()> {
                                                         }
                                                         spawn_refresh_active_tab(
                                                             client,
-                                                            &app.project_context,
+                                                            &app.scope,
                                                             app.active_tab,
                                                             events.sender(),
                                                         );
                                                         spawn_fetch_repo_attributes(
                                                             &client.clone().muted(),
-                                                            &app.project_context,
+                                                            app.scope.as_str(),
                                                             events.sender(),
                                                         );
                                                     }
@@ -3095,7 +3183,7 @@ async fn main() -> Result<()> {
                                                 let Some(client) = app.gitlab_client.clone() else {
                                                     continue;
                                                 };
-                                                let project_path = app.project_context.clone();
+                                                let project_path = app.scope.as_str().to_string();
                                                 let result = if entity_type == "issue"
                                                     || entity_type == "edit_issue"
                                                 {
@@ -3309,7 +3397,7 @@ async fn main() -> Result<()> {
                                             );
                                             continue;
                                         };
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -3374,7 +3462,7 @@ async fn main() -> Result<()> {
                                                         app.loading_tabs.insert(app::Tab::Jobs);
                                                         let client_clone = client.clone();
                                                         let project_context =
-                                                            app.project_context.clone();
+                                                            app.scope.as_str().to_string();
                                                         let tx = events.sender();
                                                         tokio::spawn(async move {
                                                             match domain::pipelines::list_pipeline_jobs(
@@ -3534,7 +3622,7 @@ async fn main() -> Result<()> {
                                                             action_str == "Resolve Thread";
                                                         let client = app.gitlab_client.clone();
                                                         let project_context =
-                                                            app.project_context.clone();
+                                                            app.scope.as_str().to_string();
                                                         let tx = events.sender();
                                                         let discussion_id = comment
                                                             .discussion_id
@@ -3604,7 +3692,7 @@ async fn main() -> Result<()> {
                                                     "Edit Comment" => {
                                                         let client = app.gitlab_client.clone();
                                                         let project_context =
-                                                            app.project_context.clone();
+                                                            app.scope.as_str().to_string();
                                                         let tx = events.sender();
 
                                                         app.status_message = Some(
@@ -3726,7 +3814,7 @@ async fn main() -> Result<()> {
                                                     "Delete Comment" => {
                                                         let client = app.gitlab_client.clone();
                                                         let project_context =
-                                                            app.project_context.clone();
+                                                            app.scope.as_str().to_string();
                                                         let tx = events.sender();
                                                         let is_github = client
                                                             .as_ref()
@@ -4490,7 +4578,7 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -4598,7 +4686,7 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -4704,7 +4792,7 @@ async fn main() -> Result<()> {
                                         app.edit_menu = None;
                                         app.selected_issues.clear();
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -4801,7 +4889,7 @@ async fn main() -> Result<()> {
                                         app.edit_menu = None;
                                         app.selected_mrs.clear();
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -4854,7 +4942,7 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -4960,7 +5048,7 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5013,7 +5101,7 @@ async fn main() -> Result<()> {
                                         if !tag.is_empty() {
                                             app.edit_menu = None;
                                             let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.project_context.clone();
+                                            let project = app.scope.as_str().to_string();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             tokio::spawn(async move {
@@ -5092,7 +5180,7 @@ async fn main() -> Result<()> {
                                                 continue;
                                             }
                                             let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.project_context.clone();
+                                            let project = app.scope.as_str().to_string();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             let _ = tx.send(Event::CommandStarted(format!(
@@ -5376,7 +5464,7 @@ async fn main() -> Result<()> {
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5631,7 +5719,7 @@ async fn main() -> Result<()> {
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5714,7 +5802,7 @@ async fn main() -> Result<()> {
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.project_context.clone();
+                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -6138,7 +6226,7 @@ async fn main() -> Result<()> {
                                     if is_loading {
                                         if let Some(client) = &app.gitlab_client {
                                             let client = client.clone();
-                                            let project_context = app.project_context.clone();
+                                            let project_context = app.scope.as_str().to_string();
                                             let field_type = field_type.to_string();
                                             let tx = events.sender();
                                             tokio::spawn(async move {
@@ -6665,7 +6753,7 @@ async fn main() -> Result<()> {
                                         &diff_view.reviewed_files,
                                     );
                                     crate::utils::cache::save_cache(
-                                        &app.project_context,
+                                        app.scope.as_str(),
                                         &app.project_cache,
                                     );
                                     let (reviewed, total) = diff_view.review_progress();
@@ -7104,7 +7192,7 @@ async fn main() -> Result<()> {
                                                 ));
                                             } else {
                                                 let client = app.gitlab_client.clone().unwrap();
-                                                let project = app.project_context.clone();
+                                                let project = app.scope.as_str().to_string();
                                                 let mr_iid = diff_view.mr_iid;
                                                 let file_path = range.file_path.clone();
                                                 let line_num = range.line_num;
@@ -7226,7 +7314,7 @@ async fn main() -> Result<()> {
                                             ));
                                         } else {
                                             let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.project_context.clone();
+                                            let project = app.scope.as_str().to_string();
                                             let mr_iid = diff_view.mr_iid;
                                             let file_path = range.file_path.clone();
                                             let line_num = range.line_num;
@@ -7336,7 +7424,7 @@ async fn main() -> Result<()> {
                                                 app.start_loading_tab(app.active_tab);
                                                 spawn_refresh_active_tab(
                                                     &client,
-                                                    &app.project_context,
+                                                    &app.scope,
                                                     app.active_tab,
                                                     events.sender(),
                                                 );
@@ -7354,7 +7442,7 @@ async fn main() -> Result<()> {
                         }
 
                         let kind = app.kind();
-                        let cols = app.active_tab.columns(kind);
+                        let cols = app.active_tab.columns(kind, app.scope.is_group());
                         let group_cols: Vec<&str> = cols.iter().copied().collect();
                         let cols_end = cols.len();
                         let group_end = cols_end + group_cols.len();
@@ -7474,7 +7562,7 @@ async fn main() -> Result<()> {
                                     app.start_loading_tab(app.active_tab);
                                     spawn_refresh_active_tab(
                                         &client,
-                                        &app.project_context,
+                                        &app.scope,
                                         app.active_tab,
                                         events.sender(),
                                     );
@@ -7535,7 +7623,7 @@ async fn main() -> Result<()> {
                                         app.start_loading_tab(app.active_tab);
                                         spawn_refresh_active_tab(
                                             &client,
-                                            &app.project_context,
+                                            &app.scope,
                                             app.active_tab,
                                             events.sender(),
                                         );
@@ -7547,7 +7635,7 @@ async fn main() -> Result<()> {
                                         app.start_loading_tab(app.active_tab);
                                         spawn_refresh_active_tab(
                                             &client,
-                                            &app.project_context,
+                                            &app.scope,
                                             app.active_tab,
                                             events.sender(),
                                         );
@@ -7703,6 +7791,21 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
+                    if key_event.code == KeyCode::Esc
+                        && !app.focus_column_checklist
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && app.submit_dialog.is_none()
+                        && app.prev_scope.is_some()
+                    {
+                        if let Some(prev) = app.prev_scope.take() {
+                            app.scope = prev;
+                            app.reset_on_scope_change();
+                        }
+                    }
+
+                    let old_scope = app.scope.clone();
                     handlers::tabs::handle_active_tab_key(
                         &mut app,
                         &key_event,
@@ -7710,6 +7813,48 @@ async fn main() -> Result<()> {
                         events.sender(),
                     )
                     .await;
+
+                    if app.scope != old_scope {
+                        if let Ok(mut client) = domain::client::GitlabClient::new(&app.config).await
+                        {
+                            client.page_size = app.config.page_size;
+                            client.api_per_page = app.config.api_per_page_clamped();
+                            client.tx = Some(events.sender());
+                            client.backend.set_tx(events.sender());
+                            app.gitlab_client = Some(client.clone());
+                        } else {
+                            app.gitlab_client = None;
+                        }
+
+                        let cache = crate::utils::cache::load_cache(app.scope.as_str());
+                        app.project_cache = cache.clone();
+                        app.issues.items = cache.issues;
+                        app.mrs.items = cache.mrs;
+                        crate::fetch::derive_workflow(&mut app.mrs.items);
+                        app.pipelines.items = cache.pipelines;
+                        app.runners.items = cache.runners;
+                        app.releases.items = cache.releases;
+                        app.todos.items = cache.todos;
+                        app.milestones.items = cache.milestones;
+                        app.pipeline_jobs = cache.pipeline_jobs;
+                        app.branches.items = cache.branches;
+                        app.environments.items = cache.environments;
+                        app.milestone_issues_cache = cache.milestone_issues;
+                        app.cached_labels = cache.labels;
+                        app.cached_members = cache.members;
+
+                        if let Some(client) = app.gitlab_client.clone() {
+                            let tx = events.sender();
+                            app.start_loading_tab(app.active_tab);
+                            spawn_refresh_active_tab(
+                                &client,
+                                &app.scope,
+                                app.active_tab,
+                                tx.clone(),
+                            );
+                            spawn_fetch_repo_attributes(&client.muted(), app.scope.as_str(), tx);
+                        }
+                    }
                 }
                 _ => {}
             }

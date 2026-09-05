@@ -68,21 +68,7 @@ pub(crate) fn render_tab_issues(
             &mut filtered_issues,
             &app.column_filters,
             Tab::Issues,
-            |item, col| match col {
-                "Labels" => item.labels.clone(),
-                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
-                "Author" => vec![item.author.username.clone()],
-                "Milestone" => item
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .into_iter()
-                    .collect(),
-                "State" => vec![item.state.clone()],
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                _ => vec![],
-            },
+            App::issue_filter_values,
         );
 
         let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
@@ -114,6 +100,16 @@ pub(crate) fn render_tab_issues(
                 )
             };
             let mut cells = Vec::new();
+            if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&i.project_path, 35),
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(theme.badge_group_bg),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::Issues, "ID") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &format!("#{}", i.iid),
@@ -231,6 +227,11 @@ pub(crate) fn render_tab_issues(
 
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
+
+        if app.scope.is_group() && app.is_column_visible(Tab::Issues, "Project") {
+            header_cells.push(Cell::from("Project"));
+            widths.push(col_w(content_area.width, 30));
+        }
 
         if app.is_column_visible(Tab::Issues, "ID") {
             header_cells.push(Cell::from("ID"));
@@ -366,29 +367,7 @@ pub(crate) fn render_tab_merge_requests(
             &mut filtered_mrs,
             &app.column_filters,
             Tab::MergeRequests,
-            |item, col| match col {
-                "Labels" => item.labels.clone(),
-                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
-                "Reviewers" => item.reviewers.iter().map(|r| r.username.clone()).collect(),
-                "Author" => vec![item.author.username.clone()],
-                "Milestone" => item
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .into_iter()
-                    .collect(),
-                "State" => vec![item.state.clone()],
-                "Status" => {
-                    vec![if item.draft {
-                        "Draft".to_string()
-                    } else {
-                        "Ready".to_string()
-                    }]
-                }
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                _ => vec![],
-            },
+            App::mr_filter_values,
         );
 
         let rows = filtered_mrs.iter().enumerate().map(|(idx, m)| {
@@ -482,6 +461,16 @@ pub(crate) fn render_tab_merge_requests(
             );
 
             let mut cells = Vec::new();
+            if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&m.project_path, 35),
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(theme.badge_group_bg),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::MergeRequests, "ID") {
                 cells.push(super::helpers::render_fuzzy_cell(
                     &format!("!{}", m.iid),
@@ -850,6 +839,11 @@ pub(crate) fn render_tab_merge_requests(
         header_cells.push(Cell::from(""));
         widths.push(Constraint::Length(1));
 
+        if app.scope.is_group() && app.is_column_visible(Tab::MergeRequests, "Project") {
+            header_cells.push(Cell::from("Project"));
+            widths.push(col_w(content_area.width, 30));
+        }
+
         if app.is_column_visible(Tab::MergeRequests, "ID") {
             header_cells.push(Cell::from("ID"));
             widths.push(Constraint::Length(8));
@@ -1025,16 +1019,16 @@ pub(crate) fn render_tab_pipelines(
             detail_rect,
         );
     } else {
-        let mut filtered_pipelines = App::filtered_pipelines_list(
+        let default_set = std::collections::HashSet::new();
+        let enabled_cols = app
+            .enabled_columns
+            .get(&Tab::Pipelines)
+            .unwrap_or(&default_set);
+        let mut filtered_pipelines = App::filter_pipelines_list(
             &app.pipelines.items,
             &app.search_query,
             &app.pipeline_jobs,
-            &app.enabled_columns,
-            app.group_ascending
-                .get(&Tab::Pipelines)
-                .copied()
-                .unwrap_or(true),
-            app.group_by_column.get(&Tab::Pipelines).unwrap_or(&None),
+            enabled_cols,
         );
         App::apply_column_filters(
             &mut filtered_pipelines,
@@ -1101,6 +1095,16 @@ pub(crate) fn render_tab_pipelines(
                 bg_color
             };
             let mut row_cells = Vec::new();
+            if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
+                row_cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&p.project_path, 35),
+                    &app.search_query,
+                    is_row_highlighted,
+                    is_checked,
+                    Style::default().fg(theme.badge_group_bg),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::Pipelines, "ID") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
                     &format!("#{}", p.id()),
@@ -1223,6 +1227,11 @@ pub(crate) fn render_tab_pipelines(
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
+
+        if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
+            header_cells.push(Cell::from("Project"));
+            widths.push(col_w(content_area.width, 30));
+        }
 
         if app.is_column_visible(Tab::Pipelines, "ID") {
             header_cells.push(Cell::from("ID"));
@@ -1361,21 +1370,7 @@ pub(crate) fn render_tab_jobs(
             &mut filtered_jobs,
             &app.column_filters,
             Tab::Jobs,
-            |item, col| match col {
-                "ID" => vec![item.id().to_string()],
-                "Stage" => vec![item.stage().to_string()],
-                "Status" => vec![item.status().to_string()],
-                "Name" => vec![item.name().to_string()],
-                "Matrix" => vec![item.matrix().map(|m| m.to_string()).unwrap_or_default()],
-                "Runner" => vec![item.runner().unwrap_or("-").to_string()],
-                "Needs" => item.needs().to_vec(),
-                "Duration" => vec![
-                    item.duration_seconds()
-                        .map(|d| d.to_string())
-                        .unwrap_or_default(),
-                ],
-                _ => vec![],
-            },
+            App::job_filter_values,
         );
 
         let rows = filtered_jobs.iter().enumerate().map(|(i, j)| {
@@ -1824,6 +1819,31 @@ pub(crate) fn render_tab_runners(
 ) {
     let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Runners tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.runners.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading runners...", icons.label_loading))
@@ -1855,12 +1875,7 @@ pub(crate) fn render_tab_runners(
             &mut filtered_runners,
             &app.column_filters,
             Tab::Runners,
-            |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Status" => vec![item.status.clone()],
-                "Active" => vec![item.active.to_string()],
-                _ => vec![],
-            },
+            App::runner_filter_values,
         );
 
         let rows = filtered_runners.iter().enumerate().map(|(idx, r)| {
@@ -2029,6 +2044,31 @@ pub(crate) fn render_tab_releases(
         return;
     }
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Releases tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.releases.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading releases...", icons.label_loading))
@@ -2063,21 +2103,7 @@ pub(crate) fn render_tab_releases(
             &mut filtered_releases,
             &app.column_filters,
             Tab::Releases,
-            |item, col| match col {
-                "Tag" => vec![item.tag_name.clone()],
-                "Release Name" => vec![item.name.clone()],
-                "Description" => item
-                    .description
-                    .clone()
-                    .map(|d| vec![d])
-                    .unwrap_or_default(),
-                "Author" => item
-                    .author_name
-                    .clone()
-                    .map(|a| vec![a])
-                    .unwrap_or_default(),
-                _ => vec![],
-            },
+            App::release_filter_values,
         );
 
         let rows = filtered_releases.iter().enumerate().map(|(idx, r)| {
@@ -2294,15 +2320,7 @@ pub(crate) fn render_tab_todos(
             &mut filtered_todos,
             &app.column_filters,
             Tab::Todos,
-            |item, col| match col {
-                "State" => vec![item.state.clone()],
-                "Project" => vec![item.project_path.clone()],
-                "Type" => vec![item.target_type.clone()],
-                "ID" => vec![item.id.to_string()],
-                "Title" => vec![item.title.clone()],
-                "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
-                _ => vec![],
-            },
+            App::todo_filter_values,
         );
 
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
@@ -2528,17 +2546,12 @@ pub(crate) fn render_tab_milestones(
             &mut filtered_milestones,
             &app.column_filters,
             Tab::Milestones,
-            |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Title" => vec![item.title.clone()],
-                "State" => vec![item.state.clone()],
-                _ => vec![],
-            },
+            App::milestone_filter_values,
         );
 
         let mut header_cells = Vec::new();
         let mut widths = Vec::new();
-        let cols = Tab::Milestones.columns(app.kind());
+        let cols = Tab::Milestones.columns(app.kind(), app.scope.is_group());
         for col in &cols {
             if app.is_column_visible(Tab::Milestones, col) {
                 header_cells.push(Cell::from(*col));
@@ -2753,6 +2766,31 @@ pub(crate) fn render_tab_branches(
         return;
     }
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Branches tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.branches.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!("\n\n {} Loading branches...", icons.label_loading))
@@ -2767,8 +2805,14 @@ pub(crate) fn render_tab_branches(
             .enabled_columns
             .get(&Tab::Branches)
             .unwrap_or(&default_set);
-        let filtered =
+        let mut filtered =
             App::filter_branches_list(&app.branches.items, &app.search_query, enabled_cols);
+        App::apply_column_filters(
+            &mut filtered,
+            &app.column_filters,
+            Tab::Branches,
+            App::branch_filter_values,
+        );
         let rows = filtered.iter().enumerate().map(|(idx, b)| {
             let is_selected = app.branches.state.selected() == Some(idx);
             let row_style = if is_selected {
@@ -2841,7 +2885,7 @@ pub(crate) fn render_tab_branches(
             Row::new(cells).style(row_style).height(1)
         });
 
-        let cols = Tab::Branches.columns(app.kind());
+        let cols = Tab::Branches.columns(app.kind(), app.scope.is_group());
         let widths: Vec<Constraint> = cols
             .iter()
             .filter(|c| app.is_column_visible(Tab::Branches, c))
@@ -2916,6 +2960,31 @@ pub(crate) fn render_tab_environments(
 ) {
     let theme = THEME.read().unwrap();
     let icons = crate::config::ICONS.read().unwrap();
+    if app.scope.is_group() {
+        f.render_widget(
+            Paragraph::new(format!(
+                "\n\n {} Environments tab is not available in group scope ({}).\n Press `Ctrl+s` to switch to a repository scope, or `Esc` to return.",
+                icons.label_details,
+                app.scope.as_str()
+            ))
+            .alignment(Alignment::Center)
+            .block(main_block)
+            .style(Style::default().fg(theme.text_muted)),
+            content_area,
+        );
+        f.render_widget(
+            Paragraph::new("Select a repository scope to view details...")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!(" {} Preview ", icons.label_details))
+                        .border_style(Style::default().fg(theme.border)),
+                )
+                .style(Style::default().fg(theme.text_muted)),
+            detail_rect,
+        );
+        return;
+    }
     if app.environments.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!(
@@ -2933,8 +3002,14 @@ pub(crate) fn render_tab_environments(
             .enabled_columns
             .get(&Tab::Environments)
             .unwrap_or(&default_set);
-        let filtered =
+        let mut filtered =
             App::filter_environments_list(&app.environments.items, &app.search_query, enabled_cols);
+        App::apply_column_filters(
+            &mut filtered,
+            &app.column_filters,
+            Tab::Environments,
+            App::environment_filter_values,
+        );
         let rows = filtered.iter().enumerate().map(|(idx, e)| {
             let is_selected = app.environments.state.selected() == Some(idx);
             let row_style = if is_selected {
@@ -2988,7 +3063,7 @@ pub(crate) fn render_tab_environments(
             Row::new(cells).style(row_style).height(1)
         });
 
-        let cols = Tab::Environments.columns(app.kind());
+        let cols = Tab::Environments.columns(app.kind(), app.scope.is_group());
         let widths: Vec<Constraint> = cols
             .iter()
             .filter(|c| app.is_column_visible(Tab::Environments, c))

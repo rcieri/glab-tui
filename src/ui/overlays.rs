@@ -58,7 +58,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(f, &selector.title, 50, 60, 34, 6, size);
+            let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
             app.overlay_stack
                 .push((crate::app::OverlayKind::Selector, selector_area));
 
@@ -403,7 +403,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let tab = app.active_tab;
         let kind = app.kind();
         let is_github = kind.is_github();
-        let cols = tab.columns(kind);
+        let cols = tab.columns(kind, app.scope.is_group());
         let active_idx = app.column_checklist_idx;
 
         let group_cols: Vec<&str> = cols.iter().copied().collect();
@@ -759,7 +759,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     // Render value-based column filter selector as overlay on configure view
     if app.focus_column_checklist && app.column_filter_context.is_some() {
         if let Some(selector) = &mut app.selector {
-            let (body, selector_area) = modal_area(f, &selector.title, 50, 60, 34, 6, size);
+            let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
             app.overlay_stack
                 .push((crate::app::OverlayKind::ColumnFilter, selector_area));
 

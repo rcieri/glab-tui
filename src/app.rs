@@ -2809,6 +2809,7 @@ pub struct App {
     pub is_typing_search: bool,
     pub active_pipeline_id: Option<u64>,
     pub pending_pipeline_select: Option<u64>,
+    pub pending_mr_select: Option<u64>,
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
     pub error_message_at: Option<std::time::Instant>,
@@ -2821,6 +2822,10 @@ pub struct App {
     pub releases: StatefulTable<crate::domain::releases::Release>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
     pub fetching_pipelines: std::collections::HashSet<u64>,
+    /// Issue iids whose `related_mrs` is currently being fetched. Distinct
+    /// from `Issue::related_mrs == None` (genuinely not fetched) — only set
+    /// once a `spawn_fetch_related_mrs` task is in flight.
+    pub fetching_related_mrs: std::collections::HashSet<u64>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
     pub edit_menu: Option<EditMenu>,
@@ -2925,6 +2930,7 @@ impl Default for App {
             is_typing_search: false,
             active_pipeline_id: None,
             pending_pipeline_select: None,
+            pending_mr_select: None,
             job_trace: None,
             error_message: None,
             error_message_at: None,
@@ -2933,6 +2939,7 @@ impl Default for App {
             releases: StatefulTable::with_items(vec![]),
             pipeline_jobs: std::collections::HashMap::new(),
             fetching_pipelines: std::collections::HashSet::new(),
+            fetching_related_mrs: std::collections::HashSet::new(),
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
             edit_menu: None,
@@ -5678,6 +5685,7 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            related_mrs: None,
         };
         app.issues.items = vec![
             mk_issue(3, "Third"),
@@ -5716,6 +5724,7 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            related_mrs: None,
         };
         app.issues.items = vec![mk_issue(1), mk_issue(2)];
         app.selected_issues.extend([1, 2]);
@@ -7393,6 +7402,7 @@ index 123456..789012 100644
             description: None,
             due_date: None,
             web_url: String::new(),
+            related_mrs: None,
         };
         let i_closed = crate::domain::issues::Issue {
             iid: 2,
@@ -7410,6 +7420,7 @@ index 123456..789012 100644
             description: None,
             due_date: None,
             web_url: String::new(),
+            related_mrs: None,
         };
         app.issues.items = vec![i_open, i_closed];
 

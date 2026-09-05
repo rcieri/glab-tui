@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Features
+- **Jump to related MRs/PRs from the Issue preview** — Added a backend-aware "Related Merge Requests" / "Related Pull Requests" row to the issue preview. The closing relationship is fetched eagerly (`glab api projects/.../issues/<iid>/closed_by` on GitLab, `gh api graphql` over `closedByPullRequestsReferences` on GitHub). Press `M` (`keybindings.issues.jump_related_mrs`) to jump straight to the single MR/PR, or pick from a selector list when there are several — even when the target is currently filtered out of the MR/PR table (#409).
+
 ## [0.9.0] - 2026-08-23
 
 ### Breaking Changes

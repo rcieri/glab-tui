@@ -1,7 +1,7 @@
 use super::Backend;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
-use crate::domain::issues::Issue;
+use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest};
@@ -603,6 +603,37 @@ impl Backend for GlabBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn list_issue_related_mrs(
+        &self,
+        project: &str,
+        issue_iid: u64,
+        page_size: usize,
+    ) -> Result<Vec<RelatedMrRef>> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!(
+            "/projects/{}/issues/{}/closed_by?per_page={}",
+            encoded, issue_iid, page_size
+        );
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Related MRs")
+            .await?;
+        #[derive(Deserialize)]
+        struct GiClosedBy {
+            iid: u64,
+            title: String,
+            state: String,
+        }
+        let items: Vec<GiClosedBy> = serde_json::from_str(&raw)?;
+        Ok(items
+            .into_iter()
+            .map(|m| RelatedMrRef {
+                iid: m.iid,
+                title: m.title,
+                state: m.state,
+            })
+            .collect())
     }
 
     async fn create_issue(
@@ -2430,6 +2461,65 @@ mod tests {
             issues[0].markdown_reference(),
             "[#42: Fix parser](https://gitlab.com/acme/project/-/issues/42)"
         );
+    }
+
+    #[test]
+    fn parse_closed_by_mr_refs() {
+        let raw = r#"[
+            { "iid": 1471, "title": "wire up webhooks", "state": "opened" },
+            { "iid": 1502, "title": "fix closing flow",   "state": "merged" }
+        ]"#;
+        #[derive(Deserialize)]
+        struct GiClosedBy {
+            iid: u64,
+            title: String,
+            state: String,
+        }
+        let parsed: Vec<GiClosedBy> = serde_json::from_str(raw).unwrap();
+        let refs: Vec<RelatedMrRef> = parsed
+            .into_iter()
+            .map(|m| RelatedMrRef {
+                iid: m.iid,
+                title: m.title,
+                state: m.state,
+            })
+            .collect();
+        assert_eq!(
+            refs,
+            vec![
+                RelatedMrRef {
+                    iid: 1471,
+                    title: "wire up webhooks".into(),
+                    state: "opened".into()
+                },
+                RelatedMrRef {
+                    iid: 1502,
+                    title: "fix closing flow".into(),
+                    state: "merged".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_empty_closed_by_returns_empty_vec() {
+        let raw = "[]";
+        #[derive(Deserialize)]
+        struct GiClosedBy {
+            iid: u64,
+            title: String,
+            state: String,
+        }
+        let parsed: Vec<GiClosedBy> = serde_json::from_str(raw).unwrap();
+        let refs: Vec<RelatedMrRef> = parsed
+            .into_iter()
+            .map(|m| RelatedMrRef {
+                iid: m.iid,
+                title: m.title,
+                state: m.state,
+            })
+            .collect();
+        assert!(refs.is_empty());
     }
 
     #[test]

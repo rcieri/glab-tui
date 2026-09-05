@@ -2,12 +2,42 @@ use crate::AppTerminal;
 use crate::app::App;
 use crate::entity_editor::rebuild_edit_menu;
 use crate::event::Event;
-use crate::fetch::spawn_refresh_active_tab;
+use crate::fetch::{spawn_fetch_related_mrs, spawn_refresh_active_tab};
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
+
+/// Spawn a related-MRs/PRs fetch for the currently selected issue, but only
+/// the first time it is selected. Uses the in-flight tracker so rapid
+/// navigation between issues does not pile up requests.
+fn maybe_fetch_related_mrs(app: &mut App, tx: &UnboundedSender<Event>) {
+    let Some(iid) = app
+        .issues
+        .state
+        .selected()
+        .and_then(|idx| app.filtered_issues().get(idx).map(|i| i.iid))
+    else {
+        return;
+    };
+    if app
+        .issues
+        .items
+        .iter()
+        .any(|i| i.iid == iid && i.related_mrs.is_some())
+    {
+        return;
+    }
+    if !app.fetching_related_mrs.insert(iid) {
+        return;
+    }
+    if let Some(client) = app.gitlab_client.as_ref() {
+        spawn_fetch_related_mrs(client, &app.project_context, iid, tx.clone());
+    } else {
+        app.fetching_related_mrs.remove(&iid);
+    }
+}
 
 /// Insert the currently-highlighted Issue/MR into its selection set. Used by
 /// select mode: toggling the mode on and moving the cursor both mark items.
@@ -102,7 +132,11 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
-                        let mut doc = crate::entity_editor::build_issue_document(issue, is_github);
+                        let mut doc = crate::entity_editor::build_issue_document(
+                            issue,
+                            is_github,
+                            app.fetching_related_mrs.contains(&issue.iid),
+                        );
                         doc.fields.push(crate::app::Field::text(
                             "Description",
                             issue.description.clone().unwrap_or_default(),
@@ -124,6 +158,96 @@ pub async fn handle_active_tab_key(
                             editing: false,
                             desc_scroll: 0,
                         });
+                    }
+                }
+            }
+            _ if (key_event.code == KeyCode::Char('M')
+                || keybinding_matches(
+                    &app.config.keybindings.issues.jump_related_mrs,
+                    key_event,
+                )) =>
+            {
+                let Some(issue_iid) = app
+                    .issues
+                    .state
+                    .selected()
+                    .and_then(|idx| app.filtered_issues().get(idx).map(|i| i.iid))
+                else {
+                    return;
+                };
+                use crate::domain::issues::RelatedMrsState;
+                let state = app
+                    .issues
+                    .items
+                    .iter()
+                    .find(|i| i.iid == issue_iid)
+                    .and_then(|i| i.related_mrs.clone());
+                match state {
+                    None if app.fetching_related_mrs.contains(&issue_iid) => {
+                        app.show_error("Related Merge Requests still loading…".to_string());
+                    }
+                    None => {
+                        app.show_error(
+                            "No related Merge Requests cached yet — open the issue once and retry."
+                                .to_string(),
+                        );
+                    }
+                    Some(RelatedMrsState::Empty) => {
+                        app.show_error(
+                            "This issue has no related Merge Requests / Pull Requests.".to_string(),
+                        );
+                    }
+                    Some(RelatedMrsState::Failed(msg)) => {
+                        app.show_error(format!("Failed to fetch related Merge Requests: {}", msg));
+                    }
+                    Some(RelatedMrsState::Items(items)) => {
+                        let is_github = app.is_github();
+                        if items.len() == 1 {
+                            let client = app.gitlab_client.clone();
+                            jump_to_mr_tab(app, items[0].iid, client, tx.clone());
+                        } else {
+                            app.selector = Some(crate::app::Selector {
+                                title: format!(
+                                    " Related {} for Issue #{} ",
+                                    if is_github {
+                                        "Pull Requests"
+                                    } else {
+                                        "Merge Requests"
+                                    },
+                                    issue_iid
+                                ),
+                                all_items: items
+                                    .iter()
+                                    .map(|r| {
+                                        format!(
+                                            "!{} [{}] {}",
+                                            r.iid,
+                                            match r.state.as_str() {
+                                                "opened" | "open" => "OPEN",
+                                                "closed" | "close" => "CLOSED",
+                                                "merged" => "MERGED",
+                                                other => other,
+                                            },
+                                            r.title
+                                        )
+                                    })
+                                    .collect(),
+                                selected_items: std::collections::HashSet::new(),
+                                cursor_idx: 0,
+                                search_query: String::new(),
+                                is_filtering: false,
+                                is_loading: false,
+                                entity_iid: issue_iid,
+                                entity_type: "issue_related_mrs".to_string(),
+                                field_type: "related_mrs".to_string(),
+                                multi_select: false,
+                                state: {
+                                    let mut s = ListState::default();
+                                    s.select(Some(0));
+                                    s
+                                },
+                            });
+                        }
                     }
                 }
             }
@@ -1970,7 +2094,9 @@ pub async fn handle_active_tab_key(
                                     if let Some(issue) = filtered.get(selected_idx) {
                                         let is_github = app.is_github();
                                         let mut doc = crate::entity_editor::build_issue_document(
-                                            issue, is_github,
+                                            issue,
+                                            is_github,
+                                            app.fetching_related_mrs.contains(&issue.iid),
                                         );
                                         doc.fields.push(crate::app::Field::text(
                                             "Description",
@@ -2134,6 +2260,9 @@ pub async fn handle_active_tab_key(
                         );
                     }
                 }
+                if app.active_tab == crate::app::Tab::Issues {
+                    maybe_fetch_related_mrs(app, &tx);
+                }
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
@@ -2154,6 +2283,9 @@ pub async fn handle_active_tab_key(
                             tx.clone(),
                         );
                     }
+                }
+                if app.active_tab == crate::app::Tab::Issues {
+                    maybe_fetch_related_mrs(app, &tx);
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -2201,6 +2333,9 @@ pub async fn handle_active_tab_key(
                     }
                     if app.select_mode {
                         mark_current_selected(app);
+                    }
+                    if app.active_tab == crate::app::Tab::Issues {
+                        maybe_fetch_related_mrs(app, &tx);
                     }
                 }
             }
@@ -2250,9 +2385,52 @@ pub async fn handle_active_tab_key(
                     if app.select_mode {
                         mark_current_selected(app);
                     }
+                    if app.active_tab == crate::app::Tab::Issues {
+                        maybe_fetch_related_mrs(app, &tx);
+                    }
                 }
             }
             _ => {}
         }
     }
+}
+
+/// Switch to the Merge Requests tab and focus the given MR/PR. If the MR is
+/// already loaded, focus it immediately; otherwise set `pending_mr_select`
+/// so the `Event::MrsFetched` handler in `main.rs` can focus it once the
+/// in-flight tab refresh completes.
+fn jump_to_mr_tab(
+    app: &mut crate::app::App,
+    mr_iid: u64,
+    client: Option<crate::domain::client::GitlabClient>,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+) {
+    if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == mr_iid) {
+        app.mrs.state.select(Some(idx));
+    } else {
+        app.pending_mr_select = Some(mr_iid);
+    }
+    app.active_tab = crate::app::Tab::MergeRequests;
+    app.detail_scroll = 0;
+    if let Some(client) = client {
+        crate::fetch::spawn_refresh_active_tab(
+            &client,
+            &app.project_context,
+            crate::app::Tab::MergeRequests,
+            tx,
+        );
+    }
+}
+
+/// Public entry point used by the related-MRs selector. Mirrors `jump_to_mr_tab`
+/// but accepts a pre-resolved `GitlabClient` rather than digging one out of
+/// the app — the caller in `main.rs` already has a `Client` in scope after
+/// the early-bail checks.
+pub fn jump_to_mr_tab_from_selector(
+    app: &mut crate::app::App,
+    mr_iid: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    client: &crate::domain::client::GitlabClient,
+) {
+    jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx);
 }

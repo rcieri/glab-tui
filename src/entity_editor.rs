@@ -110,6 +110,7 @@ pub fn milestone_fields(
 pub fn build_issue_document(
     issue: &crate::domain::issues::Issue,
     is_github: bool,
+    fetching_related_mrs: bool,
 ) -> crate::app::EntityDocument {
     let mut fields = vec![
         crate::app::Field::read_only("ID", format!("#{}", issue.iid)),
@@ -160,6 +161,16 @@ pub fn build_issue_document(
         "Updated",
         crate::utils::format::time_ago(&issue.updated_at),
     ));
+    let kind = if is_github {
+        crate::backend::BackendKind::GitHub
+    } else {
+        crate::backend::BackendKind::GitLab
+    };
+    let related_label = format!("Related {}", kind.term("mr_plural"));
+    fields.push(crate::app::Field::read_only(
+        &related_label,
+        format_related_mrs_value(issue.related_mrs.as_ref(), fetching_related_mrs),
+    ));
     crate::app::EntityDocument {
         title: format!("Issue #{}", issue.iid),
         fields,
@@ -167,6 +178,55 @@ pub fn build_issue_document(
             issue.description.clone().unwrap_or_default(),
         ),
     }
+}
+
+/// Render the value cell of the "Related MRs/PRs" row. Three states:
+///
+/// * `None` + not fetching → plain dash, matches the rest of the read-only
+///   preview for unset fields. The render path will kick off the fetch on the
+///   next tick.
+/// * `None` + fetching → "Loading…" so the user knows the row will fill in.
+/// * `Some(...)` → either a comma-separated list (with state badges when there
+///   are items), "None", or a short error string for the failed case.
+fn format_related_mrs_value(
+    state: Option<&crate::domain::issues::RelatedMrsState>,
+    fetching: bool,
+) -> String {
+    use crate::domain::issues::RelatedMrsState;
+    match state {
+        None if fetching => "Loading…".to_string(),
+        None => "—".to_string(),
+        Some(RelatedMrsState::Empty) => "None".to_string(),
+        Some(RelatedMrsState::Failed(msg)) => format!("Failed: {}", truncate_inline(msg, 40)),
+        Some(RelatedMrsState::Items(items)) => items
+            .iter()
+            .map(|r| {
+                let badge = match r.state.as_str() {
+                    "opened" | "open" => "OPEN",
+                    "closed" | "close" => "CLOSED",
+                    "merged" => "MERGED",
+                    other => other,
+                };
+                format!("!{} [{}] {}", r.iid, badge, truncate_inline(&r.title, 60))
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+fn truncate_inline(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    for (i, ch) in text.chars().enumerate() {
+        if i + 1 >= max {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 pub fn build_mr_document(
@@ -1201,7 +1261,11 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
             let is_github = app.is_github();
 
-            let mut doc = build_issue_document(&issue, is_github);
+            let mut doc = build_issue_document(
+                &issue,
+                is_github,
+                app.fetching_related_mrs.contains(&issue.iid),
+            );
             doc.fields.push(crate::app::Field::text(
                 "Description",
                 issue.description.clone().unwrap_or_default(),
@@ -1604,6 +1668,106 @@ pub async fn handle_entity_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::issues::{Author, Issue, RelatedMrRef, RelatedMrsState};
+
+    fn mk_issue() -> Issue {
+        Issue {
+            iid: 7,
+            title: "Test issue".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-07-03T00:00:00Z".into(),
+            created_at: None,
+            closed_at: None,
+            author: Author {
+                username: "alice".into(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            related_mrs: None,
+        }
+    }
+
+    #[test]
+    fn build_issue_document_includes_backend_aware_related_mrs_label() {
+        let mut issue = mk_issue();
+        issue.related_mrs = Some(RelatedMrsState::Empty);
+
+        let gitlab_doc = build_issue_document(&issue, false, false);
+        let gh_doc = build_issue_document(&issue, true, false);
+
+        assert!(
+            gitlab_doc
+                .fields
+                .iter()
+                .any(|f| f.label == "Related Merge Requests"),
+            "GitLab issues must label the row 'Related Merge Requests'"
+        );
+        assert!(
+            gh_doc
+                .fields
+                .iter()
+                .any(|f| f.label == "Related Pull Requests"),
+            "GitHub issues must label the row 'Related Pull Requests'"
+        );
+    }
+
+    #[test]
+    fn build_issue_document_renders_loading_placeholder() {
+        let mut issue = mk_issue();
+        issue.related_mrs = None;
+
+        let doc = build_issue_document(&issue, false, true);
+        let field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Related Merge Requests")
+            .expect("related-mrs field must be present");
+        assert_eq!(field.value, "Loading…");
+    }
+
+    #[test]
+    fn build_issue_document_renders_empty_state_as_none() {
+        let mut issue = mk_issue();
+        issue.related_mrs = Some(RelatedMrsState::Empty);
+
+        let doc = build_issue_document(&issue, false, false);
+        let field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Related Merge Requests")
+            .expect("related-mrs field must be present");
+        assert_eq!(field.value, "None");
+    }
+
+    #[test]
+    fn build_issue_document_renders_closing_items_with_state_badges() {
+        let mut issue = mk_issue();
+        issue.related_mrs = Some(RelatedMrsState::Items(vec![
+            RelatedMrRef {
+                iid: 12,
+                title: "fix closing flow".into(),
+                state: "merged".into(),
+            },
+            RelatedMrRef {
+                iid: 14,
+                title: "wire up webhooks".into(),
+                state: "opened".into(),
+            },
+        ]));
+
+        let doc = build_issue_document(&issue, false, false);
+        let field = doc
+            .fields
+            .iter()
+            .find(|f| f.label == "Related Merge Requests")
+            .expect("related-mrs field must be present");
+        assert!(field.value.contains("!12 [MERGED] fix closing flow"));
+        assert!(field.value.contains("!14 [OPEN] wire up webhooks"));
+    }
 
     #[test]
     fn test_milestone_removal_clears_milestone_field() {
@@ -1626,6 +1790,7 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            related_mrs: None,
         };
         app.issues.items = vec![issue];
 

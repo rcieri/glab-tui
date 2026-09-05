@@ -4,7 +4,7 @@ pub mod rate_limit;
 
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
-use crate::domain::issues::Issue;
+use crate::domain::issues::{Issue, RelatedMrRef};
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest};
 use crate::domain::notifications::Notification;
@@ -39,6 +39,8 @@ impl BackendKind {
             (BackendKind::GitHub, "mr") => "Pull Request",
             (BackendKind::GitLab, "mr_short") => "MR",
             (BackendKind::GitHub, "mr_short") => "PR",
+            (BackendKind::GitLab, "mr_plural") => "Merge Requests",
+            (BackendKind::GitHub, "mr_plural") => "Pull Requests",
             (BackendKind::GitLab, "pipeline") => "Pipeline",
             (BackendKind::GitHub, "pipeline") => "Action",
             (BackendKind::GitLab, "pipeline_plural") => "Pipelines",
@@ -133,6 +135,15 @@ pub trait Backend: Send + Sync {
     async fn close_issue(&self, project: &str, iid: u64) -> Result<()>;
     async fn reopen_issue(&self, project: &str, iid: u64) -> Result<()>;
     async fn delete_issue(&self, project: &str, iid: u64) -> Result<()>;
+    /// Fetch MRs/PRs that close or otherwise reference an issue. Returns the
+    /// closing relationship (GitLab `closed_by`, GitHub
+    /// `closedByPullRequestsReferences`).
+    async fn list_issue_related_mrs(
+        &self,
+        project: &str,
+        issue_iid: u64,
+        page_size: usize,
+    ) -> Result<Vec<RelatedMrRef>>;
     async fn create_issue(
         &self,
         project: &str,

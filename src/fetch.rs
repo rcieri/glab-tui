@@ -114,6 +114,25 @@ pub fn spawn_fetch_repo_attributes(
     });
 }
 
+/// Kick off a single related-MRs fetch for one issue. The task body suppresses
+/// the terminal command log so the issue preview stays quiet, matching the
+/// convention used by every other background `spawn_refresh_*` helper.
+pub fn spawn_fetch_related_mrs(
+    client: &domain::client::GitlabClient,
+    project_context: &str,
+    issue_iid: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    let project_context = project_context.to_string();
+    tokio::spawn(async move {
+        let result = domain::issues::fetch_related_mrs(&client, &project_context, issue_iid).await;
+        let result = result.map_err(|e| e.to_string());
+        let _ = tx.send(Event::RelatedMrsFetched { issue_iid, result });
+    });
+}
+
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     project_context: &str,

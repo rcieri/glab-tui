@@ -55,6 +55,12 @@ pub enum Event {
     BranchesFetched(Vec<crate::domain::branches::Branch>),
     EnvironmentsFetched(Vec<crate::domain::deployments::Environment>),
     DeploymentsFetched(Vec<crate::domain::deployments::Deployment>),
+    /// Result of fetching MRs/PRs that close an issue. `Ok(vec![])` is
+    /// legitimate (the issue has no closing MRs) and is not an error.
+    RelatedMrsFetched {
+        issue_iid: u64,
+        result: Result<Vec<crate::domain::issues::RelatedMrRef>, String>,
+    },
 }
 
 #[derive(Debug)]

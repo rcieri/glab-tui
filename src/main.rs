@@ -2740,11 +2740,15 @@ async fn main() -> Result<()> {
                                     }
                                     if field_type == "column_filter" {
                                         if let Some((tab, col)) = app.column_filter_context.take() {
-                                            app.set_column_filter(
-                                                tab,
-                                                &col,
-                                                selector.selected_items.clone(),
-                                            );
+                                            let mut selected = selector.selected_items.clone();
+                                            if selected.is_empty() && !filtered_items.is_empty() {
+                                                if let Some(focused) =
+                                                    filtered_items.get(selector.cursor_idx)
+                                                {
+                                                    selected.insert(focused.clone());
+                                                }
+                                            }
+                                            app.set_column_filter(tab, &col, selected);
                                             app.update_filter_selection();
                                         }
                                         continue;

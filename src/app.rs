@@ -4907,7 +4907,7 @@ impl App {
             }
             let is_text = matches!(
                 col.as_str(),
-                "Title" | "Name" | "Ref" | "Tag" | "Release Name"
+                "Project" | "Title" | "Name" | "Ref" | "Tag" | "Release Name"
             );
             list.retain(|item| {
                 let vals = get_values(item, col);
@@ -7886,5 +7886,37 @@ index 123456..789012 100644
         app.reset_on_scope_change();
         assert!(app.is_column_visible(Tab::Issues, "Project"));
         assert!(app.is_column_visible(Tab::MergeRequests, "Project"));
+    }
+
+    #[test]
+    fn project_column_value_filtering_works() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+
+        let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
+        issue1.project_path = "group/repo-a".to_string();
+
+        let mut issue2 = mr_fixture(2, "opened", "b", false, "Issue 2");
+        issue2.project_path = "group/repo-b".to_string();
+
+        app.mrs.items = vec![issue1, issue2];
+
+        // Unique values collected for Project column
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Project");
+        assert_eq!(
+            values,
+            vec!["group/repo-a".to_string(), "group/repo-b".to_string()]
+        );
+
+        // Filter by repo-a
+        app.set_column_filter(
+            Tab::MergeRequests,
+            "Project",
+            ["group/repo-a".to_string()].into_iter().collect(),
+        );
+        let filtered = app.filtered_mrs();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].project_path, "group/repo-a");
     }
 }

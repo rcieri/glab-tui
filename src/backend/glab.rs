@@ -564,6 +564,7 @@ impl Backend for GlabBackend {
                 Ok(all)
             }
             Scope::Group(group) => {
+                let encoded_group = group.replace('/', "%2F");
                 let state = if show_closed { "all" } else { "opened" };
                 let out = self
                     .run_glab(
@@ -571,7 +572,7 @@ impl Backend for GlabBackend {
                             "api",
                             &format!(
                                 "groups/{}/issues?state={}&per_page={}",
-                                group, state, per_request
+                                encoded_group, state, per_request
                             ),
                         ],
                         "FETCHING GROUP ISSUES",
@@ -900,6 +901,7 @@ impl Backend for GlabBackend {
                 Ok(all)
             }
             Scope::Group(group) => {
+                let encoded_group = group.replace('/', "%2F");
                 let state = if show_closed { "all" } else { "opened" };
                 let out = self
                     .run_glab(
@@ -907,7 +909,7 @@ impl Backend for GlabBackend {
                             "api",
                             &format!(
                                 "groups/{}/merge_requests?state={}&per_page={}",
-                                group, state, per_request
+                                encoded_group, state, per_request
                             ),
                         ],
                         "FETCHING GROUP MERGE REQUESTS",
@@ -1470,11 +1472,15 @@ impl Backend for GlabBackend {
                 Ok(all)
             }
             Scope::Group(group) => {
+                let encoded_group = group.replace('/', "%2F");
                 let out = self
                     .run_glab(
                         &[
                             "api",
-                            &format!("groups/{}/pipelines?per_page={}", group, per_request),
+                            &format!(
+                                "groups/{}/pipelines?per_page={}",
+                                encoded_group, per_request
+                            ),
                         ],
                         "FETCHING GROUP PIPELINES",
                     )
@@ -1851,10 +1857,11 @@ impl Backend for GlabBackend {
                 .await?
             }
             Scope::Group(group) => {
+                let encoded_group = group.replace('/', "%2F");
                 self.run_glab(
                     &[
                         "api",
-                        &format!("groups/{}/milestones?per_page={}", group, page_size),
+                        &format!("groups/{}/milestones?per_page={}", encoded_group, page_size),
                     ],
                     "Fetching Group Milestones",
                 )

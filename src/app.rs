@@ -3103,6 +3103,9 @@ impl App {
         self.edit_menu = None;
         self.submit_dialog = None;
         self.status_message = None;
+        self.search_query.clear();
+        self.column_filters.clear();
+        self.column_filter_context = None;
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.select_mode = false;

@@ -384,9 +384,9 @@ impl Backend for GhBackend {
             Scope::Group(org) => {
                 let per_page = (page_size * 10).clamp(1, 100);
                 let q = if show_closed {
-                    format!("owner:{org}+type:issue")
+                    format!("owner:{org}+is:issue")
                 } else {
-                    format!("owner:{org}+type:issue+state:open")
+                    format!("owner:{org}+is:issue+state:open")
                 };
                 let endpoint = format!("search/issues?q={q}&per_page={per_page}");
                 let raw = self
@@ -422,6 +422,8 @@ impl Backend for GhBackend {
                     assignees: Vec<GhSearchIssueUser>,
                     html_url: Option<String>,
                     repository_url: Option<String>,
+                    #[serde(default)]
+                    pull_request: Option<serde_json::Value>,
                 }
                 #[derive(Deserialize)]
                 struct GhSearchResponse {
@@ -432,6 +434,7 @@ impl Backend for GhBackend {
                 let issues: Vec<Issue> = resp
                     .items
                     .into_iter()
+                    .filter(|item| item.pull_request.is_none())
                     .map(|item| {
                         let project_path = item
                             .repository_url
@@ -781,9 +784,9 @@ impl Backend for GhBackend {
             Scope::Group(org) => {
                 let per_page = (page_size * 10).clamp(1, 100);
                 let q = if show_closed {
-                    format!("owner:{org}+type:pr")
+                    format!("owner:{org}+is:pr")
                 } else {
-                    format!("owner:{org}+type:pr+state:open")
+                    format!("owner:{org}+is:pr+state:open")
                 };
                 let endpoint = format!("search/issues?q={q}&per_page={per_page}");
                 let raw = self.run_gh(&["api", &endpoint], "Fetching Org PRs").await?;

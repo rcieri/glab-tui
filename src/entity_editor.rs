@@ -215,14 +215,11 @@ fn format_related_mrs_value(
 }
 
 fn truncate_inline(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let mut out = String::new();
+    let mut out = String::with_capacity(max);
     for (i, ch) in text.chars().enumerate() {
-        if i + 1 >= max {
+        if i >= max {
             out.push('…');
-            break;
+            return out;
         }
         out.push(ch);
     }

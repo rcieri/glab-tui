@@ -1058,6 +1058,7 @@ async fn main() -> Result<()> {
                     app.status_message = None;
                     app.issues.items = issues;
                     app.update_filter_selection();
+                    crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
                     app.project_cache.issues = app.issues.items.clone();
                     crate::utils::cache::save_cache(&app.project_context, &app.project_cache);
                 }

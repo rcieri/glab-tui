@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 /// Spawn a related-MRs/PRs fetch for the currently selected issue, but only
 /// the first time it is selected. Uses the in-flight tracker so rapid
 /// navigation between issues does not pile up requests.
-fn maybe_fetch_related_mrs(app: &mut App, tx: &UnboundedSender<Event>) {
+pub(crate) fn maybe_fetch_related_mrs(app: &mut App, tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .issues
         .state
@@ -181,7 +181,7 @@ pub async fn handle_active_tab_key(
                     .items
                     .iter()
                     .find(|i| i.iid == issue_iid)
-                    .and_then(|i| i.related_mrs.clone());
+                    .and_then(|i| i.related_mrs.as_ref());
                 match state {
                     None if app.fetching_related_mrs.contains(&issue_iid) => {
                         app.show_error("Related Merge Requests still loading…".to_string());
@@ -238,7 +238,7 @@ pub async fn handle_active_tab_key(
                                 is_filtering: false,
                                 is_loading: false,
                                 entity_iid: issue_iid,
-                                entity_type: "issue_related_mrs".to_string(),
+                                entity_type: String::new(),
                                 field_type: "related_mrs".to_string(),
                                 multi_select: false,
                                 state: {
@@ -2399,7 +2399,7 @@ pub async fn handle_active_tab_key(
 /// already loaded, focus it immediately; otherwise set `pending_mr_select`
 /// so the `Event::MrsFetched` handler in `main.rs` can focus it once the
 /// in-flight tab refresh completes.
-fn jump_to_mr_tab(
+pub(crate) fn jump_to_mr_tab(
     app: &mut crate::app::App,
     mr_iid: u64,
     client: Option<crate::domain::client::GitlabClient>,
@@ -2419,14 +2419,13 @@ fn jump_to_mr_tab(
             crate::app::Tab::MergeRequests,
             tx,
         );
+    } else {
+        app.show_error("No backend client available to load Merge Requests.".to_string());
     }
 }
 
-/// Public entry point used by the related-MRs selector. Mirrors `jump_to_mr_tab`
-/// but accepts a pre-resolved `GitlabClient` rather than digging one out of
-/// the app — the caller in `main.rs` already has a `Client` in scope after
-/// the early-bail checks.
-pub fn jump_to_mr_tab_from_selector(
+/// Public entry point used by the related-MRs selector.
+pub(crate) fn jump_to_mr_tab_from_selector(
     app: &mut crate::app::App,
     mr_iid: u64,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,

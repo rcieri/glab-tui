@@ -2763,17 +2763,42 @@ async fn main() -> Result<()> {
                                                 path = selector.search_query.trim().to_string();
                                             }
 
+                                            let repos_dir = crate::utils::cache::get_repos_dir();
+                                            let target_path =
+                                                if std::path::Path::new(&path).is_absolute() {
+                                                    std::path::PathBuf::from(&path)
+                                                } else {
+                                                    repos_dir.join(&path)
+                                                };
+                                            let target_path_str =
+                                                target_path.to_string_lossy().into_owned();
+
                                             let group_opt = path
                                                 .strip_prefix("Group: ")
                                                 .or_else(|| path.strip_prefix("group: "))
                                                 .or_else(|| path.strip_prefix("Org: "))
-                                                .or_else(|| path.strip_prefix("org: "));
+                                                .or_else(|| path.strip_prefix("org: "))
+                                                .map(|s| s.to_string())
+                                                .or_else(|| {
+                                                    if !path.contains('/')
+                                                        && !crate::utils::cache::is_git_repo(
+                                                            &target_path_str,
+                                                        )
+                                                    {
+                                                        Some(path.clone())
+                                                    } else {
+                                                        None
+                                                    }
+                                                });
 
                                             if let Some(group_name) = group_opt {
+                                                if group_name.trim().is_empty() {
+                                                    continue;
+                                                }
                                                 app.scope = crate::scope::Scope::Group(
                                                     group_name.to_string(),
                                                 );
-                                                crate::utils::cache::add_recent_group(group_name);
+                                                crate::utils::cache::add_recent_group(&group_name);
                                                 if let Ok(mut client) =
                                                     domain::client::GitlabClient::new(&app.config)
                                                         .await
@@ -2824,16 +2849,6 @@ async fn main() -> Result<()> {
                                                 continue;
                                             }
 
-                                            let repos_dir = crate::utils::cache::get_repos_dir();
-                                            let target_path =
-                                                if std::path::Path::new(&path).is_absolute() {
-                                                    std::path::PathBuf::from(&path)
-                                                } else {
-                                                    repos_dir.join(&path)
-                                                };
-
-                                            let target_path_str =
-                                                target_path.to_string_lossy().into_owned();
                                             if crate::utils::cache::is_git_repo(&target_path_str) {
                                                 if std::env::set_current_dir(&target_path).is_ok() {
                                                     crate::utils::cache::add_recent_repo(

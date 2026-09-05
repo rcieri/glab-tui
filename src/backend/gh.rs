@@ -123,6 +123,19 @@ fn parse_gh_issues(raw: &str) -> Result<Vec<Issue>> {
         .collect())
 }
 
+/// Qualifies a PR head ref as `owner:branch` when the target repository is not
+/// the one `origin` points at, which is what GitHub requires for a pull request
+/// opened from a fork. Anything it cannot qualify is passed through untouched.
+fn qualify_head_ref(local_project: &str, target_project: &str, branch: &str) -> String {
+    if branch.contains(':') || local_project == target_project {
+        return branch.to_string();
+    }
+    match local_project.split_once('/') {
+        Some((owner, _)) if !owner.is_empty() => format!("{}:{}", owner, branch),
+        _ => branch.to_string(),
+    }
+}
+
 /// `None` for anything that is not a usable login, so an unknown user can
 /// never be mistaken for a known one. Never returns `Some("")`.
 fn parse_gh_login(raw: &str) -> Option<String> {
@@ -1359,8 +1372,10 @@ impl Backend for GhBackend {
             title.into(),
         ];
         if !source_branch.is_empty() {
+            let local_project =
+                crate::git_helpers::remote_project_path("origin").unwrap_or_default();
             args.push("--head".into());
-            args.push(source_branch.into());
+            args.push(qualify_head_ref(&local_project, project, source_branch));
         }
         if !target_branch.is_empty() {
             args.push("--base".into());
@@ -2958,6 +2973,42 @@ mod tests {
         assert_eq!(strip_ats("@user1, @user2"), "user1,user2");
         assert_eq!(strip_ats("user1, @user2, @user3"), "user1,user2,user3");
         assert_eq!(strip_ats("user1"), "user1");
+    }
+
+    #[test]
+    fn head_ref_stays_bare_when_target_is_the_local_project() {
+        assert_eq!(
+            qualify_head_ref("seflue/glab-tui", "seflue/glab-tui", "my-branch"),
+            "my-branch"
+        );
+    }
+
+    #[test]
+    fn head_ref_gains_the_fork_owner_when_target_differs() {
+        assert_eq!(
+            qualify_head_ref("seflue/glab-tui", "rcieri/glab-tui", "my-branch"),
+            "seflue:my-branch"
+        );
+    }
+
+    #[test]
+    fn head_ref_stays_bare_without_a_usable_local_project() {
+        assert_eq!(
+            qualify_head_ref("", "rcieri/glab-tui", "my-branch"),
+            "my-branch"
+        );
+        assert_eq!(
+            qualify_head_ref("no-slash", "rcieri/glab-tui", "my-branch"),
+            "my-branch"
+        );
+    }
+
+    #[test]
+    fn head_ref_is_not_qualified_twice() {
+        assert_eq!(
+            qualify_head_ref("seflue/glab-tui", "rcieri/glab-tui", "seflue:my-branch"),
+            "seflue:my-branch"
+        );
     }
 
     #[test]

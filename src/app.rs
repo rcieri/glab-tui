@@ -3605,6 +3605,40 @@ impl App {
         list
     }
 
+    pub fn issue_filter_values(item: &crate::domain::issues::Issue, col: &str) -> Vec<String> {
+        match col {
+            "Project" => {
+                if item.project_path.is_empty() {
+                    vec![]
+                } else {
+                    vec![item.project_path.clone()]
+                }
+            }
+            "Labels" => item.labels.clone(),
+            "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
+            "Author" => vec![item.author.username.clone()],
+            "Milestone" => item
+                .milestone
+                .as_ref()
+                .map(|m| m.title.clone())
+                .into_iter()
+                .collect(),
+            "State" => vec![if item.state == "opened" {
+                "OPEN".to_string()
+            } else {
+                "CLOSED".to_string()
+            }],
+            "ID" => vec![item.iid.to_string()],
+            "Title" => vec![item.title.clone()],
+            "Due Date" => item
+                .due_date
+                .as_ref()
+                .map(|d| vec![d.clone()])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_issues(&self) -> Vec<&crate::domain::issues::Issue> {
         let mut list = Self::filtered_issues_list(
             &self.issues.items,
@@ -3616,34 +3650,12 @@ impl App {
                 .unwrap_or(true),
             self.group_by_column.get(&Tab::Issues).unwrap_or(&None),
         );
-        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Issues, |item, col| {
-            match col {
-                "Project" => {
-                    if item.project_path.is_empty() {
-                        vec![]
-                    } else {
-                        vec![item.project_path.clone()]
-                    }
-                }
-                "Labels" => item.labels.clone(),
-                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
-                "Author" => vec![item.author.username.clone()],
-                "Milestone" => item
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .into_iter()
-                    .collect(),
-                "State" => vec![if item.state == "opened" {
-                    "OPEN".to_string()
-                } else {
-                    "CLOSED".to_string()
-                }],
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                _ => vec![],
-            }
-        });
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Issues,
+            Self::issue_filter_values,
+        );
         list
     }
 
@@ -3804,7 +3816,7 @@ impl App {
     /// whether an MR matches an active filter) and `collect_unique_column_values`
     /// (which populates the picker's selectable options). They previously drifted,
     /// leaving values that matched but could never be selected.
-    fn mr_filter_values(m: &crate::domain::mr::MergeRequest, col: &str) -> Vec<String> {
+    pub fn mr_filter_values(m: &crate::domain::mr::MergeRequest, col: &str) -> Vec<String> {
         match col {
             "Project" => {
                 if m.project_path.is_empty() {
@@ -4196,6 +4208,24 @@ impl App {
         list
     }
 
+    pub fn job_filter_values(item: &crate::domain::pipelines::Job, col: &str) -> Vec<String> {
+        match col {
+            "ID" => vec![item.id().to_string()],
+            "Stage" => vec![item.stage().to_string()],
+            "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
+            "Name" => vec![item.name().to_string()],
+            "Matrix" => vec![item.matrix().map(|m| m.to_string()).unwrap_or_default()],
+            "Runner" => vec![item.runner().unwrap_or("-").to_string()],
+            "Needs" => item.needs().to_vec(),
+            "Duration" => vec![
+                item.duration_seconds()
+                    .map(|d| d.to_string())
+                    .unwrap_or_default(),
+            ],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_jobs(&self) -> Vec<&crate::domain::pipelines::Job> {
         let mut list = Self::filtered_jobs_list(
             &self.jobs.items,
@@ -4211,15 +4241,8 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Jobs,
-            |item, col| match col {
-                "ID" => vec![item.id().to_string()],
-                "Stage" => vec![item.stage().to_string()],
-                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
-                "Name" => vec![item.name().to_string()],
-                _ => vec![],
-            },
+            Self::job_filter_values,
         );
-
         list
     }
 
@@ -4263,6 +4286,20 @@ impl App {
             .collect()
     }
 
+    pub fn runner_filter_values(item: &crate::domain::runners::Runner, col: &str) -> Vec<String> {
+        match col {
+            "ID" => vec![item.id.to_string()],
+            "Status" => vec![item.status.clone()],
+            "Active" => vec![item.active.to_string()],
+            "Description" => item
+                .description
+                .as_ref()
+                .map(|d| vec![d.clone()])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_runners(&self) -> Vec<&crate::domain::runners::Runner> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = self
@@ -4275,12 +4312,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Runners,
-            |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Status" => vec![item.status.clone()],
-                "Active" => vec![item.active.to_string()],
-                _ => vec![],
-            },
+            Self::runner_filter_values,
         );
         list
     }
@@ -4364,6 +4396,27 @@ impl App {
         list
     }
 
+    pub fn release_filter_values(
+        item: &crate::domain::releases::Release,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "Tag" => vec![item.tag_name.clone()],
+            "Release Name" => vec![item.name.clone()],
+            "Description" => item
+                .description
+                .clone()
+                .map(|d| vec![d])
+                .unwrap_or_default(),
+            "Author" => item
+                .author_name
+                .clone()
+                .map(|a| vec![a])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_releases(&self) -> Vec<&crate::domain::releases::Release> {
         let mut list = Self::filtered_releases_list(
             &self.releases.items,
@@ -4379,21 +4432,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Releases,
-            |item, col| match col {
-                "Tag" => vec![item.tag_name.clone()],
-                "Release Name" => vec![item.name.clone()],
-                "Description" => item
-                    .description
-                    .clone()
-                    .map(|d| vec![d])
-                    .unwrap_or_default(),
-                "Author" => item
-                    .author_name
-                    .clone()
-                    .map(|a| vec![a])
-                    .unwrap_or_default(),
-                _ => vec![],
-            },
+            Self::release_filter_values,
         );
         list
     }
@@ -4491,6 +4530,25 @@ impl App {
         list
     }
 
+    pub fn todo_filter_values(
+        item: &crate::domain::notifications::Notification,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "State" => vec![if item.state == "unread" || item.state == "pending" {
+                "NEW".to_string()
+            } else {
+                "READ".to_string()
+            }],
+            "Project" => vec![item.project_path.clone()],
+            "Type" => vec![item.target_type.clone()],
+            "ID" => vec![item.id.to_string()],
+            "Title" => vec![item.title.clone()],
+            "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_todos(&self) -> Vec<&crate::domain::notifications::Notification> {
         let mut list = Self::filtered_todos_list(
             &self.todos.items,
@@ -4502,21 +4560,12 @@ impl App {
                 .unwrap_or(true),
             self.group_by_column.get(&Tab::Todos).unwrap_or(&None),
         );
-        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
-            match col {
-                "State" => vec![if item.state == "unread" || item.state == "pending" {
-                    "NEW".to_string()
-                } else {
-                    "READ".to_string()
-                }],
-                "Project" => vec![item.project_path.clone()],
-                "Type" => vec![item.target_type.clone()],
-                "ID" => vec![item.id.clone()],
-                "Title" => vec![item.title.clone()],
-                "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
-                _ => vec![],
-            }
-        });
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Todos,
+            Self::todo_filter_values,
+        );
         list
     }
 
@@ -4633,6 +4682,18 @@ impl App {
         list
     }
 
+    pub fn milestone_filter_values(
+        item: &crate::domain::milestones::Milestone,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "ID" => vec![item.iid.to_string()],
+            "Title" => vec![item.title.clone()],
+            "State" => vec![item.state.clone()],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_milestones(&self) -> Vec<&crate::domain::milestones::Milestone> {
         let mut list = Self::filtered_milestones_list(
             &self.milestones.items,
@@ -4649,12 +4710,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Milestones,
-            |item, col| match col {
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                "State" => vec![item.state.clone()],
-                _ => vec![],
-            },
+            Self::milestone_filter_values,
         );
         list
     }
@@ -4689,6 +4745,15 @@ impl App {
             .collect()
     }
 
+    pub fn branch_filter_values(item: &crate::domain::branches::Branch, col: &str) -> Vec<String> {
+        match col {
+            "Name" => vec![item.name.clone()],
+            "Default" => vec![item.default.to_string()],
+            "Protected" => vec![item.protected.to_string()],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_branches(&self) -> Vec<&crate::domain::branches::Branch> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = self
@@ -4701,14 +4766,25 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Branches,
-            |item, col| match col {
-                "Name" => vec![item.name.clone()],
-                "Default" => vec![item.default.to_string()],
-                "Protected" => vec![item.protected.to_string()],
-                _ => vec![],
-            },
+            Self::branch_filter_values,
         );
         list
+    }
+
+    pub fn environment_filter_values(
+        item: &crate::domain::deployments::Environment,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "Name" => vec![item.name.clone()],
+            "State" => vec![item.state.clone()],
+            "Deployment Status" => item
+                .last_deployment
+                .as_ref()
+                .map(|d| vec![d.status.clone()])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
     }
 
     pub fn filter_environments_list<'a>(
@@ -4756,16 +4832,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Environments,
-            |item, col| match col {
-                "Name" => vec![item.name.clone()],
-                "State" => vec![item.state.clone()],
-                "Deployment Status" => item
-                    .last_deployment
-                    .as_ref()
-                    .map(|d| vec![d.status.clone()])
-                    .unwrap_or_default(),
-                _ => vec![],
-            },
+            Self::environment_filter_values,
         );
         list
     }
@@ -4938,45 +5005,8 @@ impl App {
         match tab {
             Tab::Issues => {
                 for item in &self.issues.items {
-                    match col {
-                        "Project" => {
-                            if !item.project_path.is_empty() {
-                                values.insert(item.project_path.clone());
-                            }
-                        }
-                        "ID" => {
-                            values.insert(item.iid.to_string());
-                        }
-                        "State" => {
-                            let display = if item.state == "opened" {
-                                "OPEN"
-                            } else {
-                                "CLOSED"
-                            };
-                            values.insert(display.to_string());
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "Labels" => {
-                            for l in &item.labels {
-                                values.insert(l.clone());
-                            }
-                        }
-                        "Assignees" => {
-                            for a in &item.assignees {
-                                values.insert(a.username.clone());
-                            }
-                        }
-                        "Author" => {
-                            values.insert(item.author.username.clone());
-                        }
-                        "Milestone" => {
-                            if let Some(m) = &item.milestone {
-                                values.insert(m.title.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::issue_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
@@ -4999,152 +5029,50 @@ impl App {
             }
             Tab::Jobs => {
                 for item in &self.jobs.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id().to_string());
-                        }
-                        "Stage" => {
-                            values.insert(item.stage().to_string());
-                        }
-                        "Status" => {
-                            values.insert(Self::pipeline_status_display(item.status()).to_string());
-                        }
-                        "Name" => {
-                            values.insert(item.name().to_string());
-                        }
-                        "Runner" => {
-                            if let Some(r) = item.runner() {
-                                values.insert(r.to_string());
-                            }
-                        }
-                        "Needs" => {
-                            values.extend(item.needs().iter().cloned());
-                        }
-                        "Duration" => {
-                            if let Some(d) = item.duration_seconds() {
-                                values.insert(format!("{}m {}s", d / 60, d % 60));
-                            }
-                        }
-                        _ => {}
-                    };
+                    for v in Self::job_filter_values(item, col) {
+                        values.insert(v);
+                    }
                 }
             }
             Tab::Runners => {
                 for item in &self.runners.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id.to_string());
-                        }
-                        "Description" => {
-                            if let Some(d) = &item.description {
-                                values.insert(d.clone());
-                            }
-                        }
-                        "Status" => {
-                            values.insert(item.status.clone());
-                        }
-                        "Active" => {
-                            values.insert(item.active.to_string());
-                        }
-                        _ => {}
+                    for v in Self::runner_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Releases => {
                 for item in &self.releases.items {
-                    match col {
-                        "Tag" => {
-                            values.insert(item.tag_name.clone());
-                        }
-                        "Release Name" => {
-                            values.insert(item.name.clone());
-                        }
-                        "Author" => {
-                            if let Some(ref a) = item.author_name {
-                                values.insert(a.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::release_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Todos => {
                 for item in &self.todos.items {
-                    match col {
-                        "State" => {
-                            let display = if item.state == "unread" || item.state == "pending" {
-                                "NEW"
-                            } else {
-                                "READ"
-                            };
-                            values.insert(display.to_string());
-                        }
-                        "Project" => {
-                            values.insert(item.project_path.clone());
-                        }
-                        "Type" => {
-                            values.insert(item.target_type.clone());
-                        }
-                        "ID" => {
-                            values.insert(item.id.clone());
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "Updated" => {
-                            values.insert(crate::utils::format::time_ago(&item.updated_at));
-                        }
-                        _ => {}
+                    for v in Self::todo_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Milestones => {
                 for item in &self.milestones.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id.to_string());
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "State" => {
-                            values.insert(item.state.clone());
-                        }
-                        _ => {}
+                    for v in Self::milestone_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Branches => {
                 for item in &self.branches.items {
-                    match col {
-                        "Name" => {
-                            values.insert(item.name.clone());
-                        }
-                        "Default" => {
-                            values.insert(item.default.to_string());
-                        }
-                        "Protected" => {
-                            values.insert(item.protected.to_string());
-                        }
-                        _ => {}
+                    for v in Self::branch_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Environments => {
                 for item in &self.environments.items {
-                    match col {
-                        "Name" => {
-                            values.insert(item.name.clone());
-                        }
-                        "State" => {
-                            values.insert(item.state.clone());
-                        }
-                        "Deployment Status" => {
-                            if let Some(ref d) = item.last_deployment {
-                                values.insert(d.status.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::environment_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
@@ -7916,6 +7844,68 @@ index 123456..789012 100644
             ["group/repo-a".to_string()].into_iter().collect(),
         );
         let filtered = app.filtered_mrs();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    #[test]
+    fn project_column_issue_value_filtering_works() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+
+        let issue1 = crate::domain::issues::Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "now".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "a".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: "".to_string(),
+            project_path: "group/repo-a".to_string(),
+        };
+
+        let issue2 = crate::domain::issues::Issue {
+            iid: 2,
+            title: "Issue 2".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "now".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "b".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: "".to_string(),
+            project_path: "group/repo-b".to_string(),
+        };
+
+        app.issues.items = vec![issue1, issue2];
+
+        let values = app.collect_unique_column_values(Tab::Issues, "Project");
+        assert_eq!(
+            values,
+            vec!["group/repo-a".to_string(), "group/repo-b".to_string()]
+        );
+
+        app.set_column_filter(
+            Tab::Issues,
+            "Project",
+            ["group/repo-a".to_string()].into_iter().collect(),
+        );
+        let filtered = app.filtered_issues();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
     }

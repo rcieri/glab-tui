@@ -586,16 +586,53 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
         && app.edit_menu.is_none()
         && app.selector.is_none()
     {
-        let items = crate::utils::cache::get_switchable_repos();
+        let mut items = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // 1. Add recent groups
+        for g in crate::utils::cache::get_recent_groups() {
+            let entry = format!("Group: {}", g);
+            if seen.insert(entry.clone()) {
+                items.push(entry);
+            }
+        }
+
+        // 2. Add current scope's group if available
+        let current_group = match &app.scope {
+            crate::scope::Scope::Group(g) => Some(g.clone()),
+            crate::scope::Scope::Repository(r) => r.rsplit_once('/').map(|(g, _)| g.to_string()),
+        };
+        if let Some(g) = current_group {
+            if !g.is_empty() {
+                let entry = format!("Group: {}", g);
+                if seen.insert(entry.clone()) {
+                    items.push(entry);
+                }
+            }
+        }
+
+        // 3. Add repositories
+        for repo in crate::utils::cache::get_switchable_repos() {
+            if seen.insert(repo.clone()) {
+                items.push(repo);
+            }
+        }
 
         app.selector = Some(crate::app::Selector {
-            title: " Switch Repository ".to_string(),
+            title: " Switch Repository / Group ".to_string(),
             all_items: items,
             selected_items: {
                 let mut s = std::collections::HashSet::new();
-                if let Ok(cwd) = std::env::current_dir() {
-                    if let Some(name) = cwd.file_name().and_then(|n| n.to_str()) {
-                        s.insert(name.to_string());
+                match &app.scope {
+                    crate::scope::Scope::Group(g) => {
+                        s.insert(format!("Group: {}", g));
+                    }
+                    crate::scope::Scope::Repository(_) => {
+                        if let Ok(cwd) = std::env::current_dir() {
+                            if let Some(name) = cwd.file_name().and_then(|n| n.to_str()) {
+                                s.insert(name.to_string());
+                            }
+                        }
                     }
                 }
                 s

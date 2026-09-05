@@ -2763,7 +2763,13 @@ async fn main() -> Result<()> {
                                                 path = selector.search_query.trim().to_string();
                                             }
 
-                                            if let Some(group_name) = path.strip_prefix("Group: ") {
+                                            let group_opt = path
+                                                .strip_prefix("Group: ")
+                                                .or_else(|| path.strip_prefix("group: "))
+                                                .or_else(|| path.strip_prefix("Org: "))
+                                                .or_else(|| path.strip_prefix("org: "));
+
+                                            if let Some(group_name) = group_opt {
                                                 app.scope = crate::scope::Scope::Group(
                                                     group_name.to_string(),
                                                 );

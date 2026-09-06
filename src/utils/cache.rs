@@ -95,6 +95,41 @@ pub fn add_recent_repo(repo_path: &str) {
     }
 }
 
+fn get_recent_groups_file_path() -> PathBuf {
+    let mut path = get_cache_dir();
+    let _ = fs::create_dir_all(&path);
+    path.push("recent_groups.json");
+    path
+}
+
+pub fn get_recent_groups() -> Vec<String> {
+    let path = get_recent_groups_file_path();
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(groups) = serde_json::from_str::<Vec<String>>(&content) {
+            return groups;
+        }
+    }
+    Vec::new()
+}
+
+pub fn add_recent_group(group: &str) {
+    if group.trim().is_empty() {
+        return;
+    }
+    let mut groups = get_recent_groups();
+    let g = group.trim().to_string();
+    if let Some(pos) = groups.iter().position(|r| r == &g) {
+        groups.remove(pos);
+    }
+    groups.insert(0, g);
+    groups.truncate(20);
+
+    let path = get_recent_groups_file_path();
+    if let Ok(content) = serde_json::to_string(&groups) {
+        let _ = fs::write(path, content);
+    }
+}
+
 pub fn get_cache_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
@@ -170,13 +205,19 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
             valid_cache_files.insert(cache_file_name(&context));
         }
     }
+    for group in get_recent_groups() {
+        valid_cache_files.insert(cache_file_name(&group));
+    }
 
     let cache_dir = get_cache_dir();
     if let Ok(entries) = fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
             let file_name = entry.file_name().to_string_lossy().to_string();
             // Skip non-JSON files and special files
-            if file_name == "recent_repos.json" || !file_name.ends_with(".json") {
+            if file_name == "recent_repos.json"
+                || file_name == "recent_groups.json"
+                || !file_name.ends_with(".json")
+            {
                 continue;
             }
             if valid_cache_files.contains(&file_name) {

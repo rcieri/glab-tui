@@ -279,7 +279,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(
                 " {} {} ",
                 &crate::config::ICONS.read().unwrap().separator,
-                app.project_context
+                app.scope_label()
             ),
             Style::default()
                 .fg(THEME.read().unwrap().text_normal)

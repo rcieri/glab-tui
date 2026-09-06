@@ -52,6 +52,13 @@ pub struct Cli {
     pub repo: Option<String>,
 
     #[arg(
+        short = 'g',
+        long = "group",
+        help = "Specify GitLab group or GitHub org context"
+    )]
+    pub group: Option<String>,
+
+    #[arg(
         short = 'd',
         long = "dir",
         help = "Specify local repository directory to run in"

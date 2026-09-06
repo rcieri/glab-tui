@@ -335,10 +335,14 @@ impl Tab {
         }
     }
 
-    pub fn columns(&self, kind: BackendKind) -> Vec<&'static str> {
+    pub fn columns(&self, kind: BackendKind, is_group: bool) -> Vec<&'static str> {
         match self {
             Tab::Issues => {
-                let mut cols = vec!["ID", "State", "Title", "Assignees", "Labels", "Milestone"];
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend(["ID", "State", "Title", "Assignees", "Labels", "Milestone"]);
                 if !kind.is_github() {
                     cols.push("Due Date");
                 }
@@ -346,7 +350,11 @@ impl Tab {
                 cols
             }
             Tab::MergeRequests => {
-                let mut cols = vec![
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend([
                     "ID",
                     "State",
                     "Status",
@@ -357,7 +365,7 @@ impl Tab {
                     "Reviewers",
                     "Workflow",
                     "Labels",
-                ];
+                ]);
                 if kind.is_github() {
                     cols.push("Action");
                 } else {
@@ -368,7 +376,11 @@ impl Tab {
                 cols
             }
             Tab::Pipelines => {
-                let mut cols = vec!["ID", "Status", "Ref"];
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend(["ID", "Status", "Ref"]);
                 if kind.is_github() {
                     cols.push("Name");
                     cols.push("Event");
@@ -411,32 +423,48 @@ impl Tab {
         }
     }
 
-    pub fn default_columns(&self, kind: BackendKind) -> Vec<&'static str> {
+    pub fn default_columns(&self, kind: BackendKind, is_group: bool) -> Vec<&'static str> {
         match self {
             Tab::Issues => {
-                let mut cols = vec!["ID", "State", "Title", "Labels"];
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                cols.extend(["ID", "State", "Title", "Labels"]);
                 if !kind.is_github() {
                     cols.push("Due Date");
                 }
                 cols
             }
-            Tab::MergeRequests => vec![
-                "ID",
-                "State",
-                "Status",
-                "Mergeable",
-                "Approval",
-                "Title",
-                "Labels",
-            ],
-            Tab::Pipelines => {
-                if kind.is_github() {
-                    vec!["Name", "Status", "Event", "Ref", "Created", "Duration"]
-                } else {
-                    vec![
-                        "ID", "Status", "Stages", "Ref", "Source", "Created", "Duration",
-                    ]
+            Tab::MergeRequests => {
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
                 }
+                cols.extend([
+                    "ID",
+                    "State",
+                    "Status",
+                    "Mergeable",
+                    "Approval",
+                    "Title",
+                    "Labels",
+                ]);
+                cols
+            }
+            Tab::Pipelines => {
+                let mut cols = Vec::new();
+                if is_group {
+                    cols.push("Project");
+                }
+                if kind.is_github() {
+                    cols.extend(["Name", "Status", "Event", "Ref", "Created", "Duration"]);
+                } else {
+                    cols.extend([
+                        "ID", "Status", "Stages", "Ref", "Source", "Created", "Duration",
+                    ]);
+                }
+                cols
             }
             Tab::Jobs => {
                 if kind.is_github() {
@@ -541,6 +569,7 @@ impl EditEntityKind {
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
+    pub entity_project: String,
     pub fields: Vec<Field>,
     pub initial_fields: std::collections::HashMap<String, String>,
     pub selected_idx: usize,
@@ -1124,6 +1153,7 @@ pub struct SideBySideLine {
 #[allow(dead_code)]
 pub struct DiffView {
     pub mr_iid: u64,
+    pub project_path: String,
     pub raw_diff: String,
     pub all_lines: Vec<DiffLine>,
     pub lines: Vec<DiffLine>,
@@ -1226,7 +1256,7 @@ fn strip_ansi_escapes(input: &str) -> String {
 
 impl DiffView {
     #[allow(clippy::too_many_lines)]
-    pub fn new(mr_iid: u64, raw_diff: String) -> Self {
+    pub fn new(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
         // Expand tabs once, here: everything downstream — the stored line
         // content, the syntect highlighting computed from it, the search's
         // fuzzy match indices, the side-by-side pairs — is derived from these
@@ -1520,6 +1550,7 @@ impl DiffView {
 
         let mut view = Self {
             mr_iid,
+            project_path,
             raw_diff,
             all_lines,
             lines: Vec::new(),
@@ -2397,22 +2428,22 @@ pub enum OverlayKind {
 
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
-    DeleteMilestone(u64),   // milestone iid
-    DeleteRelease(String),  // release tag_name
-    DeleteBranch(String),   // branch name
-    DeleteIssue(u64),       // issue iid
-    DeleteMr(u64),          // mr iid
-    CloseIssue(u64),        // issue iid
-    CloseMr(u64),           // mr iid
-    CloseMilestone(u64),    // milestone iid
-    ReopenIssue(u64),       // issue iid
-    ReopenMr(u64),          // mr iid
-    ReopenMilestone(u64),   // milestone iid
-    MergeMr(u64),           // mr iid
-    BulkMergeMrs(Vec<u64>), // mr iids (multiple selected)
-    RevokeMr(u64),          // mr iid
-    RebaseMr(u64),          // mr iid
-    SubmitReview(u64),      // mr iid
+    DeleteMilestone(u64),             // milestone iid
+    DeleteRelease(String),            // release tag_name
+    DeleteBranch(String),             // branch name
+    DeleteIssue(u64),                 // issue iid
+    DeleteMr(u64),                    // mr iid
+    CloseIssue(u64),                  // issue iid
+    CloseMr(u64),                     // mr iid
+    CloseMilestone(u64),              // milestone iid
+    ReopenIssue(u64),                 // issue iid
+    ReopenMr(u64),                    // mr iid
+    ReopenMilestone(u64),             // milestone iid
+    MergeMr(u64),                     // mr iid
+    BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
+    RevokeMr(u64),                    // mr iid
+    RebaseMr(u64),                    // mr iid
+    SubmitReview(u64),                // mr iid
 }
 
 impl ConfirmAction {
@@ -2490,6 +2521,7 @@ impl SubmitOption {
 #[derive(Clone, Debug)]
 pub struct SubmitDialog {
     pub action: ConfirmAction,
+    pub project_path: String,
     pub title: String,
     pub body: String,
     pub options: Vec<SubmitOption>,
@@ -2539,8 +2571,20 @@ impl SubmitDialog {
         submit_label: impl Into<String>,
         options: Vec<SubmitOption>,
     ) -> Self {
+        Self::new_with_project(action, String::new(), title, body, submit_label, options)
+    }
+
+    pub fn new_with_project(
+        action: ConfirmAction,
+        project_path: impl Into<String>,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        submit_label: impl Into<String>,
+        options: Vec<SubmitOption>,
+    ) -> Self {
         Self {
             action,
+            project_path: project_path.into(),
             title: title.into(),
             body: body.into(),
             options,
@@ -2558,9 +2602,21 @@ impl SubmitDialog {
         submit_label: impl Into<String>,
         options: Vec<SubmitOption>,
     ) -> Self {
+        Self::new_safe_with_project(action, String::new(), title, body, submit_label, options)
+    }
+
+    pub fn new_safe_with_project(
+        action: ConfirmAction,
+        project_path: impl Into<String>,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        submit_label: impl Into<String>,
+        options: Vec<SubmitOption>,
+    ) -> Self {
         let options_len = options.len();
         Self {
             action,
+            project_path: project_path.into(),
             title: title.into(),
             body: body.into(),
             options,
@@ -2607,6 +2663,28 @@ impl SubmitDialog {
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
     pub fn build(action: ConfirmAction, app: &App) -> Self {
+        let project_path = match &action {
+            ConfirmAction::DeleteMilestone(iid)
+            | ConfirmAction::CloseMilestone(iid)
+            | ConfirmAction::ReopenMilestone(iid) => app.project_path_for_milestone(*iid),
+            ConfirmAction::DeleteRelease(tag) => app.project_path_for_release(tag),
+            ConfirmAction::DeleteBranch(_) => app.scope.as_str().to_string(),
+            ConfirmAction::CloseIssue(iid)
+            | ConfirmAction::DeleteIssue(iid)
+            | ConfirmAction::ReopenIssue(iid) => app.project_path_for_issue(*iid),
+            ConfirmAction::CloseMr(iid)
+            | ConfirmAction::ReopenMr(iid)
+            | ConfirmAction::DeleteMr(iid)
+            | ConfirmAction::MergeMr(iid)
+            | ConfirmAction::RevokeMr(iid)
+            | ConfirmAction::RebaseMr(iid)
+            | ConfirmAction::SubmitReview(iid) => app.project_path_for_mr(*iid),
+            ConfirmAction::BulkMergeMrs(_) => app.scope.as_str().to_string(),
+        };
+        Self::build_with_project(action, project_path, app)
+    }
+
+    pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
         let mr_short = kind.term("mr_short");
@@ -2784,6 +2862,7 @@ impl SubmitDialog {
         };
         Self {
             action: action_clone,
+            project_path,
             title,
             body,
             options,
@@ -2797,7 +2876,9 @@ pub struct App {
     pub config: Config,
     pub active_tab: Tab,
     pub running: bool,
-    pub project_context: String,
+    pub scope: crate::scope::Scope,
+    pub prev_scope: Option<crate::scope::Scope>,
+    pub group_repos: Vec<String>,
     pub project_cache: crate::utils::cache::ProjectCache,
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
     pub terminal_commands: Vec<TerminalCommand>,
@@ -2808,6 +2889,7 @@ pub struct App {
     pub search_query: String,
     pub is_typing_search: bool,
     pub active_pipeline_id: Option<u64>,
+    pub active_pipeline_project: Option<String>,
     pub pending_pipeline_select: Option<u64>,
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
@@ -2833,8 +2915,8 @@ pub struct App {
     pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
-    pub selected_issues: std::collections::HashSet<u64>,
-    pub selected_mrs: std::collections::HashSet<u64>,
+    pub selected_issues: std::collections::HashSet<(String, u64)>,
+    pub selected_mrs: std::collections::HashSet<(String, u64)>,
     /// When true, moving the cursor through Issues/MRs marks each visited
     /// item into the selection set (yazi-style "select mode"). `Space` still
     /// toggles the current item individually regardless of this flag.
@@ -2913,7 +2995,9 @@ impl Default for App {
             config: config.clone(),
             active_tab: Tab::default(),
             running: true,
-            project_context: "group/repository".to_string(),
+            scope: crate::scope::Scope::default(),
+            prev_scope: None,
+            group_repos: vec![],
             project_cache: crate::utils::cache::ProjectCache::default(),
             gitlab_client: None,
             terminal_commands: vec![],
@@ -2924,6 +3008,7 @@ impl Default for App {
             search_query: String::new(),
             is_typing_search: false,
             active_pipeline_id: None,
+            active_pipeline_project: None,
             pending_pipeline_select: None,
             job_trace: None,
             error_message: None,
@@ -2975,7 +3060,7 @@ impl Default for App {
                 let mut ec = std::collections::HashMap::new();
                 for tab in Tab::ALL {
                     let set: std::collections::HashSet<String> = tab
-                        .default_columns(BackendKind::GitLab)
+                        .default_columns(BackendKind::GitLab, false)
                         .iter()
                         .map(|s| s.to_string())
                         .collect();
@@ -3036,6 +3121,125 @@ impl App {
         self.edit_menu = Some(menu);
     }
 
+    pub fn project_path(&self) -> &str {
+        match &self.scope {
+            crate::scope::Scope::Repository(p) => p.as_str(),
+            crate::scope::Scope::Group(_) => "",
+        }
+    }
+
+    pub fn scope_label(&self) -> String {
+        self.scope.display()
+    }
+
+    pub fn tab_supported_in_scope(&self, tab: &Tab) -> bool {
+        if self.scope.is_repository() {
+            return true;
+        }
+        matches!(
+            tab,
+            Tab::Issues | Tab::MergeRequests | Tab::Pipelines | Tab::Milestones
+        )
+    }
+
+    pub fn reset_on_scope_change(&mut self) {
+        if self.scope.is_group() {
+            for tab in [Tab::Issues, Tab::MergeRequests, Tab::Pipelines] {
+                self.enabled_columns
+                    .entry(tab)
+                    .or_default()
+                    .insert("Project".to_string());
+            }
+        }
+        self.selector = None;
+        self.text_input = None;
+        self.edit_menu = None;
+        self.submit_dialog = None;
+        self.status_message = None;
+        self.search_query.clear();
+        self.column_filters.clear();
+        self.column_filter_context = None;
+        self.selected_issues.clear();
+        self.selected_mrs.clear();
+        self.select_mode = false;
+        self.loaded_tabs.clear();
+        self.loading_tabs.clear();
+        self.refreshed_tabs.clear();
+        self.pipeline_jobs.clear();
+        self.fetching_pipelines.clear();
+        self.active_pipeline_project = None;
+        self.selected_milestone_issues = None;
+        self.selected_milestone_iid = None;
+        self.issues.state.select(Some(0));
+        self.mrs.state.select(Some(0));
+        self.pipelines.state.select(Some(0));
+        self.runners.state.select(Some(0));
+        self.releases.state.select(Some(0));
+        self.todos.state.select(Some(0));
+        self.milestones.state.select(Some(0));
+        self.branches.state.select(Some(0));
+        self.environments.state.select(Some(0));
+    }
+
+    pub fn drill_into(&mut self, repo: String) {
+        let old = std::mem::replace(&mut self.scope, crate::scope::Scope::Repository(repo));
+        self.prev_scope = Some(old);
+        self.reset_on_scope_change();
+    }
+
+    pub fn project_path_for_issue(&self, iid: u64) -> String {
+        self.issues
+            .items
+            .iter()
+            .find(|i| i.iid == iid)
+            .map(|i| i.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    pub fn project_path_for_mr(&self, iid: u64) -> String {
+        self.mrs
+            .items
+            .iter()
+            .find(|m| m.iid == iid)
+            .map(|m| m.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+        if let Some(proj) = &self.active_pipeline_project {
+            if !proj.is_empty() {
+                return proj.clone();
+            }
+        }
+        self.pipelines
+            .items
+            .iter()
+            .find(|p| p.id() == id)
+            .map(|p| p.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    pub fn project_path_for_release(&self, _tag_name: &str) -> String {
+        self.scope.as_str().to_string()
+    }
+
+    pub fn project_path_for_milestone(&self, iid: u64) -> String {
+        self.milestones
+            .items
+            .iter()
+            .find(|m| m.iid == iid)
+            .map(|m| m.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    pub fn project_path_for_runner(&self, _id: u64) -> String {
+        self.scope.as_str().to_string()
+    }
+
     pub fn selected_issue_reference(&self) -> Option<String> {
         self.issues
             .state
@@ -3062,14 +3266,17 @@ impl App {
             self.issues
                 .items
                 .iter()
-                .filter(|i| self.selected_issues.contains(&i.iid))
+                .filter(|i| {
+                    self.selected_issues
+                        .contains(&(i.project_path.clone(), i.iid))
+                })
                 .map(|i| (i.iid, i.title.clone()))
                 .collect()
         } else {
             self.mrs
                 .items
                 .iter()
-                .filter(|m| self.selected_mrs.contains(&m.iid))
+                .filter(|m| self.selected_mrs.contains(&(m.project_path.clone(), m.iid)))
                 .map(|m| (m.iid, m.title.clone()))
                 .collect()
         };
@@ -3150,6 +3357,9 @@ impl App {
     }
 
     pub fn is_column_visible(&self, tab: Tab, col: &str) -> bool {
+        if col == "Project" && tab != Tab::Todos && !self.scope.is_group() {
+            return false;
+        }
         if self.is_github() {
             if tab == Tab::Issues && col == "Due Date" {
                 return false;
@@ -3403,6 +3613,9 @@ impl App {
                         matches = true;
                     }
                 };
+                if enabled_cols.contains("Project") && !item.project_path.is_empty() {
+                    check_match(&item.project_path);
+                }
                 if enabled_cols.contains("ID") {
                     check_match(&format!("#{}", item.iid));
                     check_match(&item.iid.to_string());
@@ -3455,6 +3668,7 @@ impl App {
         if let Some(col) = group_by_column {
             list.sort_by(|a, b| {
                 let val_a = match col.as_str() {
+                    "Project" => a.project_path.clone(),
                     "State" => a.state.clone(),
                     "Author" => a.author.username.clone(),
                     "Labels" => a.labels.first().cloned().unwrap_or_default(),
@@ -3473,6 +3687,7 @@ impl App {
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
+                    "Project" => b.project_path.clone(),
                     "State" => b.state.clone(),
                     "Author" => b.author.username.clone(),
                     "Labels" => b.labels.first().cloned().unwrap_or_default(),
@@ -3500,6 +3715,40 @@ impl App {
         list
     }
 
+    pub fn issue_filter_values(item: &crate::domain::issues::Issue, col: &str) -> Vec<String> {
+        match col {
+            "Project" => {
+                if item.project_path.is_empty() {
+                    vec![]
+                } else {
+                    vec![item.project_path.clone()]
+                }
+            }
+            "Labels" => item.labels.clone(),
+            "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
+            "Author" => vec![item.author.username.clone()],
+            "Milestone" => item
+                .milestone
+                .as_ref()
+                .map(|m| m.title.clone())
+                .into_iter()
+                .collect(),
+            "State" => vec![if item.state == "opened" {
+                "OPEN".to_string()
+            } else {
+                "CLOSED".to_string()
+            }],
+            "ID" => vec![item.iid.to_string()],
+            "Title" => vec![item.title.clone()],
+            "Due Date" => item
+                .due_date
+                .as_ref()
+                .map(|d| vec![d.clone()])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_issues(&self) -> Vec<&crate::domain::issues::Issue> {
         let mut list = Self::filtered_issues_list(
             &self.issues.items,
@@ -3511,27 +3760,12 @@ impl App {
                 .unwrap_or(true),
             self.group_by_column.get(&Tab::Issues).unwrap_or(&None),
         );
-        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Issues, |item, col| {
-            match col {
-                "Labels" => item.labels.clone(),
-                "Assignees" => item.assignees.iter().map(|a| a.username.clone()).collect(),
-                "Author" => vec![item.author.username.clone()],
-                "Milestone" => item
-                    .milestone
-                    .as_ref()
-                    .map(|m| m.title.clone())
-                    .into_iter()
-                    .collect(),
-                "State" => vec![if item.state == "opened" {
-                    "OPEN".to_string()
-                } else {
-                    "CLOSED".to_string()
-                }],
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                _ => vec![],
-            }
-        });
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Issues,
+            Self::issue_filter_values,
+        );
         list
     }
 
@@ -3557,6 +3791,9 @@ impl App {
                 }
             };
 
+            if enabled_cols.contains("Project") && !item.project_path.is_empty() {
+                check_match(&item.project_path);
+            }
             if enabled_cols.contains("ID") {
                 check_match(&format!("!{}", item.iid));
                 check_match(&item.iid.to_string());
@@ -3689,8 +3926,15 @@ impl App {
     /// whether an MR matches an active filter) and `collect_unique_column_values`
     /// (which populates the picker's selectable options). They previously drifted,
     /// leaving values that matched but could never be selected.
-    fn mr_filter_values(m: &crate::domain::mr::MergeRequest, col: &str) -> Vec<String> {
+    pub fn mr_filter_values(m: &crate::domain::mr::MergeRequest, col: &str) -> Vec<String> {
         match col {
+            "Project" => {
+                if m.project_path.is_empty() {
+                    vec![]
+                } else {
+                    vec![m.project_path.clone()]
+                }
+            }
             "Labels" => m.labels.clone(),
             "Assignees" => m.assignees.iter().map(|a| a.username.clone()).collect(),
             "Reviewers" => m.reviewers.iter().map(|r| r.username.clone()).collect(),
@@ -3816,6 +4060,9 @@ impl App {
                 }
             };
 
+            if enabled_cols.contains("Project") && !item.project_path.is_empty() {
+                check_match(&item.project_path);
+            }
             if enabled_cols.contains("ID") {
                 check_match(&format!("#{}", item.id()));
                 check_match(&item.id().to_string());
@@ -4071,6 +4318,24 @@ impl App {
         list
     }
 
+    pub fn job_filter_values(item: &crate::domain::pipelines::Job, col: &str) -> Vec<String> {
+        match col {
+            "ID" => vec![item.id().to_string()],
+            "Stage" => vec![item.stage().to_string()],
+            "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
+            "Name" => vec![item.name().to_string()],
+            "Matrix" => vec![item.matrix().map(|m| m.to_string()).unwrap_or_default()],
+            "Runner" => vec![item.runner().unwrap_or("-").to_string()],
+            "Needs" => item.needs().to_vec(),
+            "Duration" => vec![
+                item.duration_seconds()
+                    .map(|d| d.to_string())
+                    .unwrap_or_default(),
+            ],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_jobs(&self) -> Vec<&crate::domain::pipelines::Job> {
         let mut list = Self::filtered_jobs_list(
             &self.jobs.items,
@@ -4086,15 +4351,8 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Jobs,
-            |item, col| match col {
-                "ID" => vec![item.id().to_string()],
-                "Stage" => vec![item.stage().to_string()],
-                "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
-                "Name" => vec![item.name().to_string()],
-                _ => vec![],
-            },
+            Self::job_filter_values,
         );
-
         list
     }
 
@@ -4138,6 +4396,20 @@ impl App {
             .collect()
     }
 
+    pub fn runner_filter_values(item: &crate::domain::runners::Runner, col: &str) -> Vec<String> {
+        match col {
+            "ID" => vec![item.id.to_string()],
+            "Status" => vec![item.status.clone()],
+            "Active" => vec![item.active.to_string()],
+            "Description" => item
+                .description
+                .as_ref()
+                .map(|d| vec![d.clone()])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_runners(&self) -> Vec<&crate::domain::runners::Runner> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = self
@@ -4150,12 +4422,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Runners,
-            |item, col| match col {
-                "ID" => vec![item.id.to_string()],
-                "Status" => vec![item.status.clone()],
-                "Active" => vec![item.active.to_string()],
-                _ => vec![],
-            },
+            Self::runner_filter_values,
         );
         list
     }
@@ -4239,6 +4506,27 @@ impl App {
         list
     }
 
+    pub fn release_filter_values(
+        item: &crate::domain::releases::Release,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "Tag" => vec![item.tag_name.clone()],
+            "Release Name" => vec![item.name.clone()],
+            "Description" => item
+                .description
+                .clone()
+                .map(|d| vec![d])
+                .unwrap_or_default(),
+            "Author" => item
+                .author_name
+                .clone()
+                .map(|a| vec![a])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_releases(&self) -> Vec<&crate::domain::releases::Release> {
         let mut list = Self::filtered_releases_list(
             &self.releases.items,
@@ -4254,21 +4542,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Releases,
-            |item, col| match col {
-                "Tag" => vec![item.tag_name.clone()],
-                "Release Name" => vec![item.name.clone()],
-                "Description" => item
-                    .description
-                    .clone()
-                    .map(|d| vec![d])
-                    .unwrap_or_default(),
-                "Author" => item
-                    .author_name
-                    .clone()
-                    .map(|a| vec![a])
-                    .unwrap_or_default(),
-                _ => vec![],
-            },
+            Self::release_filter_values,
         );
         list
     }
@@ -4366,6 +4640,25 @@ impl App {
         list
     }
 
+    pub fn todo_filter_values(
+        item: &crate::domain::notifications::Notification,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "State" => vec![if item.state == "unread" || item.state == "pending" {
+                "NEW".to_string()
+            } else {
+                "READ".to_string()
+            }],
+            "Project" => vec![item.project_path.clone()],
+            "Type" => vec![item.target_type.clone()],
+            "ID" => vec![item.id.to_string()],
+            "Title" => vec![item.title.clone()],
+            "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_todos(&self) -> Vec<&crate::domain::notifications::Notification> {
         let mut list = Self::filtered_todos_list(
             &self.todos.items,
@@ -4377,21 +4670,12 @@ impl App {
                 .unwrap_or(true),
             self.group_by_column.get(&Tab::Todos).unwrap_or(&None),
         );
-        Self::apply_column_filters(&mut list, &self.column_filters, Tab::Todos, |item, col| {
-            match col {
-                "State" => vec![if item.state == "unread" || item.state == "pending" {
-                    "NEW".to_string()
-                } else {
-                    "READ".to_string()
-                }],
-                "Project" => vec![item.project_path.clone()],
-                "Type" => vec![item.target_type.clone()],
-                "ID" => vec![item.id.clone()],
-                "Title" => vec![item.title.clone()],
-                "Updated" => vec![crate::utils::format::time_ago(&item.updated_at)],
-                _ => vec![],
-            }
-        });
+        Self::apply_column_filters(
+            &mut list,
+            &self.column_filters,
+            Tab::Todos,
+            Self::todo_filter_values,
+        );
         list
     }
 
@@ -4508,6 +4792,18 @@ impl App {
         list
     }
 
+    pub fn milestone_filter_values(
+        item: &crate::domain::milestones::Milestone,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "ID" => vec![item.iid.to_string()],
+            "Title" => vec![item.title.clone()],
+            "State" => vec![item.state.clone()],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_milestones(&self) -> Vec<&crate::domain::milestones::Milestone> {
         let mut list = Self::filtered_milestones_list(
             &self.milestones.items,
@@ -4524,12 +4820,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Milestones,
-            |item, col| match col {
-                "ID" => vec![item.iid.to_string()],
-                "Title" => vec![item.title.clone()],
-                "State" => vec![item.state.clone()],
-                _ => vec![],
-            },
+            Self::milestone_filter_values,
         );
         list
     }
@@ -4564,6 +4855,15 @@ impl App {
             .collect()
     }
 
+    pub fn branch_filter_values(item: &crate::domain::branches::Branch, col: &str) -> Vec<String> {
+        match col {
+            "Name" => vec![item.name.clone()],
+            "Default" => vec![item.default.to_string()],
+            "Protected" => vec![item.protected.to_string()],
+            _ => vec![],
+        }
+    }
+
     pub fn filtered_branches(&self) -> Vec<&crate::domain::branches::Branch> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = self
@@ -4576,14 +4876,25 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Branches,
-            |item, col| match col {
-                "Name" => vec![item.name.clone()],
-                "Default" => vec![item.default.to_string()],
-                "Protected" => vec![item.protected.to_string()],
-                _ => vec![],
-            },
+            Self::branch_filter_values,
         );
         list
+    }
+
+    pub fn environment_filter_values(
+        item: &crate::domain::deployments::Environment,
+        col: &str,
+    ) -> Vec<String> {
+        match col {
+            "Name" => vec![item.name.clone()],
+            "State" => vec![item.state.clone()],
+            "Deployment Status" => item
+                .last_deployment
+                .as_ref()
+                .map(|d| vec![d.status.clone()])
+                .unwrap_or_default(),
+            _ => vec![],
+        }
     }
 
     pub fn filter_environments_list<'a>(
@@ -4631,16 +4942,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::Environments,
-            |item, col| match col {
-                "Name" => vec![item.name.clone()],
-                "State" => vec![item.state.clone()],
-                "Deployment Status" => item
-                    .last_deployment
-                    .as_ref()
-                    .map(|d| vec![d.status.clone()])
-                    .unwrap_or_default(),
-                _ => vec![],
-            },
+            Self::environment_filter_values,
         );
         list
     }
@@ -4683,6 +4985,13 @@ impl App {
         col: &str,
     ) -> Vec<String> {
         match col {
+            "Project" => {
+                if item.project_path.is_empty() {
+                    vec![]
+                } else {
+                    vec![item.project_path.clone()]
+                }
+            }
             "ID" => vec![item.id().to_string()],
             "Status" => vec![Self::pipeline_status_display(item.status()).to_string()],
             "Ref" => {
@@ -4775,15 +5084,20 @@ impl App {
             }
             let is_text = matches!(
                 col.as_str(),
-                "Title" | "Name" | "Ref" | "Tag" | "Release Name"
+                "Project" | "Title" | "Name" | "Ref" | "Tag" | "Release Name"
             );
             list.retain(|item| {
                 let vals = get_values(item, col);
                 if is_text {
                     vals.iter().any(|v| {
-                        selected
-                            .iter()
-                            .any(|s| v.to_lowercase().contains(&s.to_lowercase()))
+                        selected.contains(v)
+                            || selected.iter().any(|s| {
+                                let norm_v = v.to_lowercase();
+                                let norm_s = s.to_lowercase();
+                                norm_v == norm_s
+                                    || norm_v.contains(&norm_s)
+                                    || norm_s.contains(&norm_v)
+                            })
                     })
                 } else {
                     vals.iter().any(|v| {
@@ -4806,40 +5120,8 @@ impl App {
         match tab {
             Tab::Issues => {
                 for item in &self.issues.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.iid.to_string());
-                        }
-                        "State" => {
-                            let display = if item.state == "opened" {
-                                "OPEN"
-                            } else {
-                                "CLOSED"
-                            };
-                            values.insert(display.to_string());
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "Labels" => {
-                            for l in &item.labels {
-                                values.insert(l.clone());
-                            }
-                        }
-                        "Assignees" => {
-                            for a in &item.assignees {
-                                values.insert(a.username.clone());
-                            }
-                        }
-                        "Author" => {
-                            values.insert(item.author.username.clone());
-                        }
-                        "Milestone" => {
-                            if let Some(m) = &item.milestone {
-                                values.insert(m.title.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::issue_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
@@ -4862,152 +5144,50 @@ impl App {
             }
             Tab::Jobs => {
                 for item in &self.jobs.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id().to_string());
-                        }
-                        "Stage" => {
-                            values.insert(item.stage().to_string());
-                        }
-                        "Status" => {
-                            values.insert(Self::pipeline_status_display(item.status()).to_string());
-                        }
-                        "Name" => {
-                            values.insert(item.name().to_string());
-                        }
-                        "Runner" => {
-                            if let Some(r) = item.runner() {
-                                values.insert(r.to_string());
-                            }
-                        }
-                        "Needs" => {
-                            values.extend(item.needs().iter().cloned());
-                        }
-                        "Duration" => {
-                            if let Some(d) = item.duration_seconds() {
-                                values.insert(format!("{}m {}s", d / 60, d % 60));
-                            }
-                        }
-                        _ => {}
-                    };
+                    for v in Self::job_filter_values(item, col) {
+                        values.insert(v);
+                    }
                 }
             }
             Tab::Runners => {
                 for item in &self.runners.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id.to_string());
-                        }
-                        "Description" => {
-                            if let Some(d) = &item.description {
-                                values.insert(d.clone());
-                            }
-                        }
-                        "Status" => {
-                            values.insert(item.status.clone());
-                        }
-                        "Active" => {
-                            values.insert(item.active.to_string());
-                        }
-                        _ => {}
+                    for v in Self::runner_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Releases => {
                 for item in &self.releases.items {
-                    match col {
-                        "Tag" => {
-                            values.insert(item.tag_name.clone());
-                        }
-                        "Release Name" => {
-                            values.insert(item.name.clone());
-                        }
-                        "Author" => {
-                            if let Some(ref a) = item.author_name {
-                                values.insert(a.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::release_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Todos => {
                 for item in &self.todos.items {
-                    match col {
-                        "State" => {
-                            let display = if item.state == "unread" || item.state == "pending" {
-                                "NEW"
-                            } else {
-                                "READ"
-                            };
-                            values.insert(display.to_string());
-                        }
-                        "Project" => {
-                            values.insert(item.project_path.clone());
-                        }
-                        "Type" => {
-                            values.insert(item.target_type.clone());
-                        }
-                        "ID" => {
-                            values.insert(item.id.clone());
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "Updated" => {
-                            values.insert(crate::utils::format::time_ago(&item.updated_at));
-                        }
-                        _ => {}
+                    for v in Self::todo_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Milestones => {
                 for item in &self.milestones.items {
-                    match col {
-                        "ID" => {
-                            values.insert(item.id.to_string());
-                        }
-                        "Title" => {
-                            values.insert(item.title.clone());
-                        }
-                        "State" => {
-                            values.insert(item.state.clone());
-                        }
-                        _ => {}
+                    for v in Self::milestone_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Branches => {
                 for item in &self.branches.items {
-                    match col {
-                        "Name" => {
-                            values.insert(item.name.clone());
-                        }
-                        "Default" => {
-                            values.insert(item.default.to_string());
-                        }
-                        "Protected" => {
-                            values.insert(item.protected.to_string());
-                        }
-                        _ => {}
+                    for v in Self::branch_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
             Tab::Environments => {
                 for item in &self.environments.items {
-                    match col {
-                        "Name" => {
-                            values.insert(item.name.clone());
-                        }
-                        "State" => {
-                            values.insert(item.state.clone());
-                        }
-                        "Deployment Status" => {
-                            if let Some(ref d) = item.last_deployment {
-                                values.insert(d.status.clone());
-                            }
-                        }
-                        _ => {}
+                    for v in Self::environment_filter_values(item, col) {
+                        values.insert(v);
                     }
                 }
             }
@@ -5678,13 +5858,15 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         app.issues.items = vec![
             mk_issue(3, "Third"),
             mk_issue(1, "First"),
             mk_issue(2, "Second"),
         ];
-        app.selected_issues.extend([3, 1, 2]);
+        app.selected_issues
+            .extend([(String::new(), 3), (String::new(), 1), (String::new(), 2)]);
 
         let summary = app.bulk_selection_summary();
         assert_eq!(
@@ -5716,9 +5898,11 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         app.issues.items = vec![mk_issue(1), mk_issue(2)];
-        app.selected_issues.extend([1, 2]);
+        app.selected_issues
+            .extend([(String::new(), 1), (String::new(), 2)]);
         // A State column filter that hides issue 2 from the table must not
         // shrink the summary — bulk submit applies to the full selection.
         app.column_filters.entry(Tab::Issues).or_default().insert(
@@ -5912,6 +6096,8 @@ mod tests {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
+            web_url: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -5933,6 +6119,8 @@ mod tests {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
+            web_url: None,
         };
 
         let mr_ready = MergeRequest {
@@ -5954,11 +6142,13 @@ mod tests {
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
+            web_url: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
         let enabled_cols: std::collections::HashSet<String> = Tab::MergeRequests
-            .columns(BackendKind::GitLab)
+            .columns(BackendKind::GitLab, false)
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -6032,7 +6222,7 @@ index abcdef..ffffff 100644
  main content
 +main new line 1
 ";
-        let mut diff_view = DiffView::new(42, diff_content.to_string());
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), diff_content.to_string());
 
         // Check visible nodes (flattened tree)
         assert_eq!(diff_view.visible_nodes.len(), 3);
@@ -6080,7 +6270,7 @@ index abcdef..ffffff 100644
 \u{1b}[32m+new line 1\u{1b}[0m
 \u{1b}[31m-deleted line 1\u{1b}[0m
 ";
-        let color_view = DiffView::new(42, color_diff.to_string());
+        let color_view = DiffView::new(42, "owner/repo".to_string(), color_diff.to_string());
         assert_eq!(color_view.visible_nodes.len(), 2); // "src" directory and "app.rs" file
         assert_eq!(
             color_view.visible_nodes[1].file_path.as_deref(),
@@ -6102,7 +6292,7 @@ index abcdef..ffffff 100644
 @@ -20,6 +20,7 @@
  some content
 ";
-        let diff_view = DiffView::new(42, glab_diff.to_string());
+        let diff_view = DiffView::new(42, "owner/repo".to_string(), glab_diff.to_string());
         assert_eq!(diff_view.visible_nodes.len(), 2);
         assert_eq!(diff_view.visible_nodes[0].name, "README.md");
         assert_eq!(diff_view.visible_nodes[1].name, "vn-protocol");
@@ -6229,7 +6419,7 @@ index 123456..789012 100644
 +added line 2
  normal line 2
 ";
-        let mut diff_view = DiffView::new(42, diff_content.to_string());
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), diff_content.to_string());
         diff_view.side_by_side = true;
         diff_view.update_active_lines();
 
@@ -6257,7 +6447,8 @@ diff --git a/foo.txt b/foo.txt
 -deleted line 3
 +added line 1
 ";
-        let mut diff_view_2 = DiffView::new(42, diff_content_2.to_string());
+        let mut diff_view_2 =
+            DiffView::new(42, "owner/repo".to_string(), diff_content_2.to_string());
         diff_view_2.side_by_side = true;
         diff_view_2.update_active_lines();
 
@@ -6545,7 +6736,7 @@ rename to src/new_name.rs
   some content
 +new line 1
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let files: Vec<&str> = view
             .visible_nodes
             .iter()
@@ -6577,7 +6768,7 @@ index 0000000..e69de29
 +fn main() {}
 +
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let file_node = view
             .visible_nodes
             .iter()
@@ -6594,14 +6785,14 @@ index 0000000..e69de29
 diff --git a/src/old_module.rs b/src/old_module.rs
 deleted file mode 100644
 index e69de29..0000000
---- a/src/old_module.rs
-+++ /dev/null
+--- /dev/null
++++ b/src/old_module.rs
 @@ -1,3 +0,0 @@
 -// Old file
 -fn main() {}
 -
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let file_node = view
             .visible_nodes
             .iter()
@@ -6618,7 +6809,7 @@ diff --git a/bin/app b/bin/app
 index abcdef..ffffff 100644
 Binary files a/bin/app and b/bin/app differ
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let meta_line = view
             .all_lines
             .iter()
@@ -6640,7 +6831,7 @@ new mode 100755
   line1
 +line2
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let old_mode = view
             .all_lines
             .iter()
@@ -6665,9 +6856,9 @@ new mode 100755
     #[test]
     fn test_line_number_width_floors_at_the_narrow_gutter() {
         // Anything that fits the old fixed field keeps the old look.
-        let view = DiffView::new(42, diff_starting_at(1));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(1));
         assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
-        let view = DiffView::new(42, diff_starting_at(9997));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(9997));
         assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
     }
 
@@ -6675,10 +6866,10 @@ new mode 100755
     fn test_line_number_width_grows_for_a_wider_number() {
         // The bug: `{:>4}` is a minimum, so a five-digit number took a fifth
         // cell and shifted that row's separator and content one column right.
-        let view = DiffView::new(42, diff_starting_at(10_848));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(10_848));
         assert_eq!(view.line_number_width, 5);
 
-        let view = DiffView::new(42, diff_starting_at(100_000));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(100_000));
         assert_eq!(view.line_number_width, 6);
     }
 
@@ -6691,7 +6882,7 @@ new mode 100755
             second.push('\n');
             second
         });
-        let view = DiffView::new(42, diff);
+        let view = DiffView::new(42, "owner/repo".to_string(), diff);
         assert_eq!(view.line_number_width, 5);
     }
 
@@ -6700,6 +6891,7 @@ new mode 100755
         // Meta-only output (a rename with no hunks) has no line numbers at all.
         let view = DiffView::new(
             42,
+            "owner/repo".to_string(),
             "diff --git a/a.txt b/b.txt\nsimilarity index 100%\nrename from a.txt\nrename to b.txt\n"
                 .to_string(),
         );
@@ -6726,7 +6918,7 @@ new mode 100755
 
     #[test]
     fn test_diff_view_expands_tabs_so_indentation_survives() {
-        let view = DiffView::new(42, tab_indented_diff());
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
 
         let content: Vec<&str> = view
             .all_lines
@@ -6752,7 +6944,7 @@ new mode 100755
 
     #[test]
     fn test_diff_view_keeps_the_marker_out_of_the_tab_stops() {
-        let view = DiffView::new(42, tab_indented_diff());
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
         let added = view
             .all_lines
             .iter()
@@ -6774,7 +6966,7 @@ new mode 100755
         // A highlighted line renders from its spans, not from `content`, so a
         // tab surviving there would leave syntax-highlighted code sitting at a
         // different indent from everything else.
-        let view = DiffView::new(42, tab_indented_diff());
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
         let mut highlighted_lines = 0;
         for line in &view.all_lines {
             if let Some(ref spans) = line.syntax_highlighted {
@@ -6800,7 +6992,7 @@ index 123456..789012 100644
 - old
 + new
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         assert_eq!(view.file_tree_scroll_offset, 0);
     }
 
@@ -6828,7 +7020,7 @@ index 123456..789012 100644
 - old
 + new
 ";
-        DiffView::new(42, diff.to_string())
+        DiffView::new(42, "owner/repo".to_string(), diff.to_string())
     }
 
     #[test]
@@ -6945,7 +7137,7 @@ index 123456..789012 100644
 - old
 + new
 ";
-        let mut view = DiffView::new(42, diff.to_string());
+        let mut view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         assert_eq!(view.visible_nodes.len(), 5); // a, b, c, deep.rs, README.md
 
         view.selected_visible_idx = 3; // a/b/c/deep.rs
@@ -7062,6 +7254,8 @@ index 123456..789012 100644
             approval: None,
             mergeability: None,
             workflow: None,
+            project_path: String::new(),
+            web_url: None,
         }
     }
 
@@ -7164,7 +7358,7 @@ index 123456..789012 100644
     #[test]
     fn mr_columns_include_both_state_columns_on_both_hosts() {
         for kind in [BackendKind::GitLab, BackendKind::GitHub] {
-            let cols = Tab::MergeRequests.columns(kind);
+            let cols = Tab::MergeRequests.columns(kind, false);
             assert!(cols.contains(&"Approval"), "missing Approval for {kind:?}");
             assert!(
                 cols.contains(&"Mergeable"),
@@ -7176,7 +7370,7 @@ index 123456..789012 100644
     #[test]
     fn mr_default_columns_show_both_state_columns() {
         // Default-on, else the feature hides behind Tab -> configure.
-        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab, false);
         assert!(cols.contains(&"Approval"));
         assert!(cols.contains(&"Mergeable"));
     }
@@ -7184,7 +7378,7 @@ index 123456..789012 100644
     #[test]
     fn mr_default_columns_keep_pre_existing_defaults() {
         // Adding columns must not remove any.
-        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab);
+        let cols = Tab::MergeRequests.default_columns(BackendKind::GitLab, false);
         for expected in ["ID", "State", "Status", "Title", "Labels"] {
             assert!(cols.contains(&expected), "lost default column {expected}");
         }
@@ -7314,6 +7508,8 @@ index 123456..789012 100644
             duration_seconds: None,
             created_at: None,
             source: None,
+            project_path: String::new(),
+            web_url: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -7328,6 +7524,8 @@ index 123456..789012 100644
             duration_seconds: None,
             created_at: None,
             source: None,
+            project_path: String::new(),
+            web_url: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -7393,6 +7591,7 @@ index 123456..789012 100644
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         let i_closed = crate::domain::issues::Issue {
             iid: 2,
@@ -7410,6 +7609,7 @@ index 123456..789012 100644
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
         };
         app.issues.items = vec![i_open, i_closed];
 
@@ -7436,14 +7636,16 @@ index 123456..789012 100644
     fn workflow_column_is_offered_but_not_default() {
         for kind in [BackendKind::GitLab, BackendKind::GitHub] {
             assert!(
-                Tab::MergeRequests.columns(kind).contains(&"Workflow"),
+                Tab::MergeRequests
+                    .columns(kind, false)
+                    .contains(&"Workflow"),
                 "Workflow must be offered for {kind:?}"
             );
         }
         // Default-off: eight default columns collapse Title at 80 cols.
         assert!(
             !Tab::MergeRequests
-                .default_columns(BackendKind::GitLab)
+                .default_columns(BackendKind::GitLab, false)
                 .contains(&"Workflow")
         );
     }
@@ -7515,6 +7717,8 @@ index 123456..789012 100644
                 duration_seconds: Some(125),
                 created_at: Some("2026-01-01T00:00:00Z".to_string()),
                 source: Some("push".to_string()),
+                project_path: String::new(),
+                web_url: None,
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -7529,6 +7733,8 @@ index 123456..789012 100644
                 duration_seconds: Some(65),
                 created_at: Some("2026-01-02T00:00:00Z".to_string()),
                 source: Some("schedule".to_string()),
+                project_path: String::new(),
+                web_url: None,
             },
         ];
         app.column_filters
@@ -7636,6 +7842,8 @@ index 123456..789012 100644
             duration_seconds: None,
             created_at: None,
             source: Some("merge_request_event".to_string()),
+            project_path: String::new(),
+            web_url: None,
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();
@@ -7673,5 +7881,151 @@ index 123456..789012 100644
                     .collect(),
             );
         assert_eq!(app.filtered_pipelines().len(), 1);
+    }
+
+    #[test]
+    fn project_column_only_available_in_group_mode() {
+        let kind = BackendKind::GitLab;
+        // Repository scope (is_group = false)
+        assert!(!Tab::Issues.columns(kind, false).contains(&"Project"));
+        assert!(!Tab::MergeRequests.columns(kind, false).contains(&"Project"));
+        assert!(!Tab::Pipelines.columns(kind, false).contains(&"Project"));
+
+        assert!(
+            !Tab::Issues
+                .default_columns(kind, false)
+                .contains(&"Project")
+        );
+        assert!(
+            !Tab::MergeRequests
+                .default_columns(kind, false)
+                .contains(&"Project")
+        );
+        assert!(
+            !Tab::Pipelines
+                .default_columns(kind, false)
+                .contains(&"Project")
+        );
+
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("group/repo".to_string());
+        assert!(!app.is_column_visible(Tab::Issues, "Project"));
+        assert!(!app.is_column_visible(Tab::MergeRequests, "Project"));
+
+        // Group scope (is_group = true)
+        assert!(Tab::Issues.columns(kind, true).contains(&"Project"));
+        assert!(Tab::MergeRequests.columns(kind, true).contains(&"Project"));
+        assert!(Tab::Pipelines.columns(kind, true).contains(&"Project"));
+
+        assert!(Tab::Issues.default_columns(kind, true).contains(&"Project"));
+        assert!(
+            Tab::MergeRequests
+                .default_columns(kind, true)
+                .contains(&"Project")
+        );
+        assert!(
+            Tab::Pipelines
+                .default_columns(kind, true)
+                .contains(&"Project")
+        );
+
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+        assert!(app.is_column_visible(Tab::Issues, "Project"));
+        assert!(app.is_column_visible(Tab::MergeRequests, "Project"));
+    }
+
+    #[test]
+    fn project_column_value_filtering_works() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+
+        let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
+        issue1.project_path = "group/repo-a".to_string();
+
+        let mut issue2 = mr_fixture(2, "opened", "b", false, "Issue 2");
+        issue2.project_path = "group/repo-b".to_string();
+
+        app.mrs.items = vec![issue1, issue2];
+
+        // Unique values collected for Project column
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Project");
+        assert_eq!(
+            values,
+            vec!["group/repo-a".to_string(), "group/repo-b".to_string()]
+        );
+
+        // Filter by repo-a
+        app.set_column_filter(
+            Tab::MergeRequests,
+            "Project",
+            ["group/repo-a".to_string()].into_iter().collect(),
+        );
+        let filtered = app.filtered_mrs();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    #[test]
+    fn project_column_issue_value_filtering_works() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+
+        let issue1 = crate::domain::issues::Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "now".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "a".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: "".to_string(),
+            project_path: "group/repo-a".to_string(),
+        };
+
+        let issue2 = crate::domain::issues::Issue {
+            iid: 2,
+            title: "Issue 2".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "now".to_string(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "b".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: "".to_string(),
+            project_path: "group/repo-b".to_string(),
+        };
+
+        app.issues.items = vec![issue1, issue2];
+
+        let values = app.collect_unique_column_values(Tab::Issues, "Project");
+        assert_eq!(
+            values,
+            vec!["group/repo-a".to_string(), "group/repo-b".to_string()]
+        );
+
+        app.set_column_filter(
+            Tab::Issues,
+            "Project",
+            ["group/repo-a".to_string()].into_iter().collect(),
+        );
+        let filtered = app.filtered_issues();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].project_path, "group/repo-a");
     }
 }

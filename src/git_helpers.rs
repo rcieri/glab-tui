@@ -49,6 +49,43 @@ pub fn parse_project_path(url: &str) -> Option<String> {
     path.contains('/').then(|| path.to_string())
 }
 
+pub fn parse_project_path_from_web_url(web_url: &str) -> Option<String> {
+    if web_url.is_empty() {
+        return None;
+    }
+    if let Some((base, _)) = web_url.split_once("/-/") {
+        let without_scheme = base.split_once("://").map(|(_, p)| p).unwrap_or(base);
+        if let Some((_, path)) = without_scheme.split_once('/') {
+            if !path.is_empty() {
+                return Some(path.to_string());
+            }
+        }
+    }
+    if let Some((_, path_part)) = web_url.split_once("github.com/") {
+        let parts: Vec<&str> = path_part.split('/').collect();
+        if parts.len() >= 2 {
+            return Some(format!("{}/{}", parts[0], parts[1]));
+        }
+    }
+    None
+}
+
+/// If the remote URL points at a group clone (path has no slash, e.g.
+/// `git@host:group` or `https://host/group`), return the group name.
+/// Returns `None` for project clones (which have `group/project`).
+pub fn parse_group(url: &str) -> Option<String> {
+    let url = url.trim();
+    let path = if let Some((_scheme, rest)) = url.split_once("://") {
+        rest.split_once('/')?.1
+    } else if let Some((_host, rest)) = url.split_once(':') {
+        rest
+    } else {
+        return None;
+    };
+    let path = path.trim_matches('/').strip_suffix(".git").unwrap_or(path);
+    (!path.is_empty() && !path.contains('/')).then(|| path.to_string())
+}
+
 pub fn parse_remote_host(url: &str) -> Option<String> {
     let url = url.trim();
     let authority = if let Some((_, rest)) = url.split_once("://") {

@@ -14,11 +14,11 @@ pub struct Branch {
     pub commit_sha: String,
 }
 
-pub async fn list_branches(client: &GitlabClient, project_path: &str) -> Result<Vec<Branch>> {
-    client
-        .backend
-        .list_branches(project_path, client.page_size)
-        .await
+pub async fn list_branches(
+    client: &GitlabClient,
+    scope: &crate::scope::Scope,
+) -> Result<Vec<Branch>> {
+    client.backend.list_branches(scope, client.page_size).await
 }
 
 pub async fn create_branch(

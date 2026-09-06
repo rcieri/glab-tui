@@ -18,8 +18,12 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
         "PageDown" => event.code == KeyCode::PageDown,
         "F5" => event.code == KeyCode::F(5),
         other if other.starts_with("Ctrl+") && other.len() == 6 => {
-            let c = other.as_bytes()[5];
-            event.code == KeyCode::Char(c as char)
+            let c = (other.as_bytes()[5] as char).to_ascii_lowercase();
+            let event_c = match event.code {
+                KeyCode::Char(ch) => Some(ch.to_ascii_lowercase()),
+                _ => None,
+            };
+            event_c == Some(c)
                 && event
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL)

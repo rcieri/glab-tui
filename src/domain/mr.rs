@@ -59,6 +59,10 @@ pub struct MergeRequest {
     /// status could not be determined — distinct from `Some(NotYours)`.
     #[serde(skip)]
     pub workflow: Option<crate::domain::mr_state::WorkflowStatus>,
+    #[serde(default)]
+    pub project_path: String,
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -134,17 +138,12 @@ pub struct DiscussionNote {
 
 pub async fn list_mrs(
     client: &GitlabClient,
-    project_path: &str,
+    scope: &crate::scope::Scope,
     show_closed: bool,
 ) -> Result<Vec<MergeRequest>> {
     client
         .backend
-        .list_mrs(
-            project_path,
-            show_closed,
-            client.page_size,
-            client.api_per_page,
-        )
+        .list_mrs(scope, show_closed, client.page_size, client.api_per_page)
         .await
 }
 

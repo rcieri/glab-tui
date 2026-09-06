@@ -28,6 +28,7 @@ pub enum Event {
     FetchFailed(crate::app::Tab, String),
     DiffFetched {
         mr_iid: u64,
+        project_path: String,
         raw_diff: String,
         comments: Vec<crate::domain::mr::DiscussionNote>,
     },

@@ -36,6 +36,8 @@ pub struct Issue {
     pub due_date: Option<String>,
     #[serde(default)]
     pub web_url: String,
+    #[serde(default)]
+    pub project_path: String,
 }
 
 impl Issue {
@@ -51,17 +53,12 @@ impl Issue {
 
 pub async fn list_issues(
     client: &GitlabClient,
-    project_path: &str,
+    scope: &crate::scope::Scope,
     show_closed: bool,
 ) -> Result<Vec<Issue>> {
     client
         .backend
-        .list_issues(
-            project_path,
-            show_closed,
-            client.page_size,
-            client.api_per_page,
-        )
+        .list_issues(scope, show_closed, client.page_size, client.api_per_page)
         .await
 }
 

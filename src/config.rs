@@ -51,6 +51,8 @@ pub struct Theme {
     pub pipeline_pending: Color,
     pub pipeline_canceled: Color,
     pub pipeline_skipped: Color,
+    // ── Badges ──
+    pub badge_group_bg: Color,
     // ── Label palette ──
     pub label_palette: [Color; 10],
 }
@@ -353,6 +355,9 @@ struct ThemeToml {
     pipeline_canceled: Option<String>,
     #[serde(default)]
     pipeline_skipped: Option<String>,
+    // ── Badges ──
+    #[serde(default)]
+    badge_group_bg: Option<String>,
     // ── Label palette ──
     #[serde(default)]
     label_palette_0: Option<String>,
@@ -439,6 +444,7 @@ impl ThemeToml {
             pipeline_pending: hex_or(&self.pipeline_pending, yellow),
             pipeline_canceled: hex_or(&self.pipeline_canceled, text_muted),
             pipeline_skipped: hex_or(&self.pipeline_skipped, text_muted),
+            badge_group_bg: hex_or(&self.badge_group_bg, blue),
             label_palette: [
                 hex_or(&self.label_palette_0, purple),
                 hex_or(&self.label_palette_1, blue),
@@ -602,6 +608,8 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.pipeline_pending, &overrides.pipeline_pending);
     apply_color(&mut base.pipeline_canceled, &overrides.pipeline_canceled);
     apply_color(&mut base.pipeline_skipped, &overrides.pipeline_skipped);
+    // ── Badges ──
+    apply_color(&mut base.badge_group_bg, &overrides.badge_group_bg);
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -645,6 +653,8 @@ pub struct ThemeOverrides {
     pipeline_pending: Option<String>,
     pipeline_canceled: Option<String>,
     pipeline_skipped: Option<String>,
+    // ── Badges ──
+    badge_group_bg: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -671,6 +681,8 @@ pub struct KeybindingGlobal {
     pub scroll_up: String,
     #[serde(default)]
     pub save_view: String,
+    #[serde(default = "def_switch_repo")]
+    pub switch_repo: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -695,6 +707,8 @@ pub struct KeybindingIssues {
     pub copy_reference: String,
     #[serde(default)]
     pub selection_toggle: String,
+    #[serde(default = "def_drill_into_scope")]
+    pub drill_into_scope: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -729,6 +743,8 @@ pub struct KeybindingMrs {
     pub open_in_browser: String,
     #[serde(default)]
     pub selection_toggle: String,
+    #[serde(default = "def_drill_into_scope")]
+    pub drill_into_scope: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -945,6 +961,8 @@ keybind_defaults! {
     def_delete_branch = "d",
     def_view_deployments = "Enter",
     def_toggle_terminal_wrap = "w",
+    def_drill_into_scope = "G",
+    def_switch_repo = "Ctrl+s",
 }
 
 impl Default for KeybindingGlobal {
@@ -961,6 +979,7 @@ impl Default for KeybindingGlobal {
             scroll_down: def_scroll_down(),
             scroll_up: def_scroll_up(),
             save_view: def_save_view(),
+            switch_repo: def_switch_repo(),
         }
     }
 }
@@ -978,6 +997,7 @@ impl Default for KeybindingIssues {
             open_in_browser: def_open_in_browser(),
             copy_reference: def_copy_reference(),
             selection_toggle: def_selection_toggle(),
+            drill_into_scope: def_drill_into_scope(),
         }
     }
 }
@@ -1000,6 +1020,7 @@ impl Default for KeybindingMrs {
             select_mr: def_select_mr(),
             open_in_browser: def_open_in_browser(),
             selection_toggle: def_selection_toggle(),
+            drill_into_scope: def_drill_into_scope(),
         }
     }
 }

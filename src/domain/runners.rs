@@ -10,9 +10,9 @@ pub struct Runner {
     pub active: bool,
 }
 
-pub async fn list_runners(client: &GitlabClient, project_path: &str) -> Result<Vec<Runner>> {
-    client
-        .backend
-        .list_runners(project_path, client.page_size)
-        .await
+pub async fn list_runners(
+    client: &GitlabClient,
+    scope: &crate::scope::Scope,
+) -> Result<Vec<Runner>> {
+    client.backend.list_runners(scope, client.page_size).await
 }

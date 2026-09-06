@@ -787,7 +787,7 @@ async fn main() -> Result<()> {
                         {
                             app.fetching_pipelines.insert(pipe_id);
                             let client_clone = client.clone();
-                            let project_context = app.scope.as_str().to_string();
+                            let project_context = app.project_path_for_pipeline(pipe_id);
                             let tx = events.sender();
                             tokio::spawn(async move {
                                 if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
@@ -811,28 +811,37 @@ async fn main() -> Result<()> {
         if app.active_tab == app::Tab::MergeRequests {
             if let Some(client) = &app.gitlab_client {
                 if let Some(idx) = app.mrs.state.selected() {
-                    let m = app.filtered_mrs().get(idx).cloned();
-                    if let Some(m) = m {
+                    let mr_info = app.filtered_mrs().get(idx).map(|m| {
+                        (
+                            m.source_branch.clone(),
+                            m.head_pipeline.as_ref().map(|p| p.id()),
+                            m.project_path.clone(),
+                        )
+                    });
+                    if let Some((source_branch, head_pipeline_id, mr_project_path)) = mr_info {
                         let is_github = client.is_github;
-                        let resolved_pipe =
-                            m.head_pipeline.as_ref().map(|p| p.id()).or_else(|| {
-                                if is_github {
-                                    app.pipelines
-                                        .items
-                                        .iter()
-                                        .find(|p| p.ref_branch() == m.source_branch)
-                                        .map(|p| p.id())
-                                } else {
-                                    None
-                                }
-                            });
+                        let resolved_pipe = head_pipeline_id.or_else(|| {
+                            if is_github {
+                                app.pipelines
+                                    .items
+                                    .iter()
+                                    .find(|p| p.ref_branch() == source_branch)
+                                    .map(|p| p.id())
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(pipe_id) = resolved_pipe {
                             if !app.pipeline_jobs.contains_key(&pipe_id)
                                 && !app.fetching_pipelines.contains(&pipe_id)
                             {
                                 app.fetching_pipelines.insert(pipe_id);
                                 let client_clone = client.clone();
-                                let project_context = app.scope.as_str().to_string();
+                                let project_context = if !mr_project_path.is_empty() {
+                                    mr_project_path
+                                } else {
+                                    app.project_path_for_pipeline(pipe_id)
+                                };
                                 let tx = events.sender();
                                 tokio::spawn(async move {
                                     if let Ok(jobs) = domain::pipelines::list_pipeline_jobs(
@@ -860,8 +869,8 @@ async fn main() -> Result<()> {
                     let milestone = app
                         .filtered_milestones()
                         .get(idx)
-                        .map(|m| (m.iid, m.title.clone()));
-                    if let Some((milestone_iid, milestone_title)) = milestone {
+                        .map(|m| (m.iid, m.title.clone(), m.project_path.clone()));
+                    if let Some((milestone_iid, milestone_title, m_proj)) = milestone {
                         if app.selected_milestone_iid != Some(milestone_iid) {
                             app.selected_milestone_iid = Some(milestone_iid);
                             // Use cached data if available; only fetch if not yet cached.
@@ -877,7 +886,11 @@ async fn main() -> Result<()> {
                             } else {
                                 app.selected_milestone_issues = None;
                                 let client_clone = client.clone();
-                                let project_context = app.scope.as_str().to_string();
+                                let project_context = if !m_proj.is_empty() {
+                                    m_proj
+                                } else {
+                                    app.scope.as_str().to_string()
+                                };
                                 // `glab issue list --milestone` filters by milestone
                                 // title, not iid — passing the title here is required
                                 // for the glab backend to return any issues.
@@ -1383,11 +1396,12 @@ async fn main() -> Result<()> {
                 }
                 Event::DiffFetched {
                     mr_iid,
+                    project_path,
                     raw_diff,
                     comments,
                 } => {
                     app.diff_loading = false;
-                    let mut diff_view = crate::app::DiffView::new(mr_iid, raw_diff);
+                    let mut diff_view = crate::app::DiffView::new(mr_iid, project_path, raw_diff);
                     // Restore the files marked as reviewed on an earlier pass.
                     diff_view.restore_review_state(
                         app.reviewed_files_for_mr(mr_iid),
@@ -1483,7 +1497,7 @@ async fn main() -> Result<()> {
                             }
                             if let Some(diff_view) = &app.diff_view {
                                 let client = app.gitlab_client.clone();
-                                let project_context = app.scope.as_str().to_string();
+                                let project_context = diff_view.project_path.clone();
                                 let tx = events.sender();
                                 let mr_iid = diff_view.mr_iid;
                                 tokio::spawn(async move {
@@ -1499,6 +1513,7 @@ async fn main() -> Result<()> {
                                         let comments = comments_res.unwrap_or_default();
                                         let _ = tx.send(Event::DiffFetched {
                                             mr_iid,
+                                            project_path: project_context,
                                             raw_diff,
                                             comments,
                                         });
@@ -1731,7 +1746,9 @@ async fn main() -> Result<()> {
                                                 app.loading_tabs.insert(app::Tab::Jobs);
                                                 let client_clone = client.clone();
                                                 let project_context =
-                                                    app.scope.as_str().to_string();
+                                                    app.project_path_for_pipeline(pipeline_id);
+                                                app.active_pipeline_project =
+                                                    Some(project_context.clone());
                                                 let tx = events.sender();
                                                 tokio::spawn(async move {
                                                     match domain::pipelines::list_pipeline_jobs(
@@ -1981,7 +1998,7 @@ async fn main() -> Result<()> {
                                     } => {
                                         if !value.trim().is_empty() {
                                             let client = app.gitlab_client.clone();
-                                            let project_context = app.scope.as_str().to_string();
+                                            let project_context = app.project_path_for_mr(mr_iid);
                                             let tx = events.sender();
                                             let is_github =
                                                 client.as_ref().map_or(false, |c| c.is_github);
@@ -2110,7 +2127,7 @@ async fn main() -> Result<()> {
                                         app.draft_comments.clear();
                                         app.in_review_mode = false;
 
-                                        let project_context = app.scope.as_str().to_string();
+                                        let project_context = app.project_path_for_mr(mr_iid);
                                         let status_clone = status.clone();
                                         let value_clone = value.clone();
 
@@ -3089,6 +3106,7 @@ async fn main() -> Result<()> {
                                                 initial_fields: std::collections::HashMap::new(),
                                                 selected_idx: 0,
                                                 entity_iid: 0,
+                                                entity_project: app.scope.as_str().to_string(),
                                                 entity_kind:
                                                     crate::app::EditEntityKind::CreateIssue,
                                                 state: {
@@ -3364,13 +3382,16 @@ async fn main() -> Result<()> {
                                     if field_type == "merge_options" {
                                         let is_bulk_merge =
                                             selector.entity_type == "bulk_merge_mrs";
-                                        let merge_iids = if is_bulk_merge {
-                                            let mut iids: Vec<u64> =
-                                                app.selected_mrs.iter().copied().collect();
-                                            iids.sort_unstable();
-                                            iids
+                                        let merge_items = if is_bulk_merge {
+                                            let mut items: Vec<(String, u64)> =
+                                                app.selected_mrs.iter().cloned().collect();
+                                            items.sort_unstable();
+                                            items
                                         } else {
-                                            vec![selector.entity_iid]
+                                            vec![(
+                                                app.project_path_for_mr(selector.entity_iid),
+                                                selector.entity_iid,
+                                            )]
                                         };
                                         let mut squash = false;
                                         let mut delete_branch = false;
@@ -3402,10 +3423,12 @@ async fn main() -> Result<()> {
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
                                             let mut failures = Vec::new();
-                                            for mr_iid in merge_iids {
+                                            for (proj, mr_iid) in merge_items {
+                                                let p =
+                                                    if !proj.is_empty() { &proj } else { &project };
                                                 if let Err(e) = client
                                                     .merge_mr(
-                                                        &project,
+                                                        p,
                                                         mr_iid,
                                                         squash,
                                                         delete_branch,
@@ -3622,7 +3645,7 @@ async fn main() -> Result<()> {
                                                             action_str == "Resolve Thread";
                                                         let client = app.gitlab_client.clone();
                                                         let project_context =
-                                                            app.scope.as_str().to_string();
+                                                            app.project_path_for_mr(mr_iid);
                                                         let tx = events.sender();
                                                         let discussion_id = comment
                                                             .discussion_id
@@ -4787,8 +4810,8 @@ async fn main() -> Result<()> {
                                             continue;
                                         }
 
-                                        let selected: Vec<u64> =
-                                            app.selected_issues.iter().copied().collect();
+                                        let selected: Vec<(String, u64)> =
+                                            app.selected_issues.iter().cloned().collect();
                                         app.edit_menu = None;
                                         app.selected_issues.clear();
                                         let client = app.gitlab_client.clone().unwrap();
@@ -4796,13 +4819,18 @@ async fn main() -> Result<()> {
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
-                                            for (i, &iid) in selected.iter().enumerate() {
+                                            for (i, (proj_path, iid)) in selected.iter().enumerate()
+                                            {
                                                 if i > 0 {
                                                     crate::backend::rate_limit::pace_bulk_operation().await;
                                                 }
-                                                if let Err(e) = client
-                                                    .update_issue(&project, iid, &update)
-                                                    .await
+                                                let p = if !proj_path.is_empty() {
+                                                    proj_path.as_str()
+                                                } else {
+                                                    &project
+                                                };
+                                                if let Err(e) =
+                                                    client.update_issue(p, *iid, &update).await
                                                 {
                                                     let _ = tx.send(Event::CommandCompleted(
                                                         tab,
@@ -4884,8 +4912,8 @@ async fn main() -> Result<()> {
                                             continue;
                                         }
 
-                                        let selected: Vec<u64> =
-                                            app.selected_mrs.iter().copied().collect();
+                                        let selected: Vec<(String, u64)> =
+                                            app.selected_mrs.iter().cloned().collect();
                                         app.edit_menu = None;
                                         app.selected_mrs.clear();
                                         let client = app.gitlab_client.clone().unwrap();
@@ -4893,12 +4921,18 @@ async fn main() -> Result<()> {
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
-                                            for (i, &iid) in selected.iter().enumerate() {
+                                            for (i, (proj_path, iid)) in selected.iter().enumerate()
+                                            {
                                                 if i > 0 {
                                                     crate::backend::rate_limit::pace_bulk_operation().await;
                                                 }
+                                                let p = if !proj_path.is_empty() {
+                                                    proj_path.as_str()
+                                                } else {
+                                                    &project
+                                                };
                                                 if let Err(e) =
-                                                    client.update_mr(&project, iid, &update).await
+                                                    client.update_mr(p, *iid, &update).await
                                                 {
                                                     let _ = tx.send(Event::CommandCompleted(
                                                         tab,
@@ -5464,7 +5498,11 @@ async fn main() -> Result<()> {
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let project = if !menu.entity_project.is_empty() {
+                                            menu.entity_project.clone()
+                                        } else {
+                                            app.scope.as_str().to_string()
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5719,7 +5757,11 @@ async fn main() -> Result<()> {
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let project = if !menu.entity_project.is_empty() {
+                                            menu.entity_project.clone()
+                                        } else {
+                                            app.scope.as_str().to_string()
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5802,7 +5844,11 @@ async fn main() -> Result<()> {
                                         }
 
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let project = if !menu.entity_project.is_empty() {
+                                            menu.entity_project.clone()
+                                        } else {
+                                            app.scope.as_str().to_string()
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {

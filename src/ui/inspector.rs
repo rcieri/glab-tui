@@ -1187,6 +1187,7 @@ mod tests {
         let label_colors = HashMap::new();
         let mut menu = EditMenu {
             title: doc.title.clone(),
+            entity_project: String::new(),
             fields: vec![Field::multi_select("Labels", String::new())],
             initial_fields: HashMap::new(),
             selected_idx: 0,

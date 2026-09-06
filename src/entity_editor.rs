@@ -1223,6 +1223,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
 
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Issue #{}", issue.iid),
+                entity_project: issue.project_path.clone(),
                 fields: doc.fields,
                 initial_fields: std::collections::HashMap::new(),
                 selected_idx,
@@ -1262,6 +1263,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             let mr_label = app.kind().term("mr_short");
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit {} #{}", mr_label, mr.iid),
+                entity_project: mr.project_path.clone(),
                 fields: doc.fields,
                 initial_fields: std::collections::HashMap::new(),
                 selected_idx,
@@ -1301,6 +1303,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
 
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Milestone %{}", milestone.iid),
+                entity_project: milestone.project_path.clone(),
                 fields: doc.fields,
                 initial_fields: std::collections::HashMap::new(),
                 selected_idx,
@@ -1328,6 +1331,7 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
 
             app.open_edit_menu(crate::app::EditMenu {
                 title: format!("Edit Release {}", release.tag_name),
+                entity_project: app.scope.as_str().to_string(),
                 fields: doc.fields,
                 initial_fields: std::collections::HashMap::new(),
                 selected_idx,

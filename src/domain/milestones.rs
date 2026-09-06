@@ -18,6 +18,8 @@ pub struct Milestone {
     pub due_date: Option<String>,
     #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
+    pub project_path: String,
 }
 
 pub async fn list_milestones(

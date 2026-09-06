@@ -32,8 +32,8 @@ impl GitlabClient {
             is_github,
             backend,
             tx: None,
-            page_size: 100,
-            api_per_page: 100,
+            page_size: config.page_size,
+            api_per_page: config.api_per_page_clamped(),
         })
     }
 

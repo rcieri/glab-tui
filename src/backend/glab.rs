@@ -1911,6 +1911,10 @@ impl Backend for GlabBackend {
             created_at: String,
         }
         let milestones: Vec<GiMs> = serde_json::from_str(&raw)?;
+        let project_fallback = match scope {
+            Scope::Repository(r) => r.clone(),
+            Scope::Group(g) => g.clone(),
+        };
         Ok(milestones
             .into_iter()
             .map(|m| Milestone {
@@ -1922,6 +1926,7 @@ impl Backend for GlabBackend {
                 start_date: m.start_date,
                 due_date: m.due_date,
                 created_at: m.created_at,
+                project_path: project_fallback.clone(),
             })
             .collect())
     }

@@ -73,7 +73,9 @@ pub(crate) fn render_tab_issues(
 
         let rows = filtered_issues.iter().enumerate().map(|(idx, i)| {
             let is_selected = app.issues.state.selected() == Some(idx);
-            let is_checked = app.selected_issues.contains(&i.iid);
+            let is_checked = app
+                .selected_issues
+                .contains(&(i.project_path.clone(), i.iid));
             let (state_text, state_style) = if i.state == "opened" {
                 (
                     format!("{} OPEN", icons.state_open),
@@ -372,7 +374,7 @@ pub(crate) fn render_tab_merge_requests(
 
         let rows = filtered_mrs.iter().enumerate().map(|(idx, m)| {
             let is_selected = app.mrs.state.selected() == Some(idx);
-            let is_checked = app.selected_mrs.contains(&m.iid);
+            let is_checked = app.selected_mrs.contains(&(m.project_path.clone(), m.iid));
             let (prefix, clean_title) = crate::utils::format::parse_mr_title_prefix(&m.title);
 
             let (state_text, state_style) = if m.state == "opened" {

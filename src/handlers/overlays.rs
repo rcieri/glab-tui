@@ -401,14 +401,12 @@ fn run_submit_action(
                 ));
             });
         }
-        crate::app::ConfirmAction::BulkMergeMrs(iids) => {
+        crate::app::ConfirmAction::BulkMergeMrs(items) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
-            let mr_items: Vec<(u64, String)> = iids
-                .iter()
-                .map(|&id| (id, app.project_path_for_mr(id)))
-                .collect();
-            for (mr_iid, _) in &mr_items {
-                if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == *mr_iid) {
+            for (project_path, mr_iid) in &items {
+                if let Some(pos) = app.mrs.items.iter().position(|m| {
+                    m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)
+                }) {
                     app.mrs.items.remove(pos);
                 }
             }
@@ -417,16 +415,22 @@ fn run_submit_action(
                 return;
             };
             let tx2 = tx.clone();
-            let total = mr_items.len();
+            let scope = app.scope.as_str().to_string();
+            let total = items.len();
             tokio::spawn(async move {
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, (mr_iid, project_path)) in mr_items.into_iter().enumerate() {
+                for (i, (project_path, mr_iid)) in items.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
+                    let proj = if !project_path.is_empty() {
+                        project_path
+                    } else {
+                        scope.clone()
+                    };
                     match client
                         .merge_mr(
-                            &project_path,
+                            &proj,
                             mr_iid,
                             squash,
                             delete_branch,
@@ -809,6 +813,7 @@ mod tests {
 
         // 2. Edit menu (Inspector / Form) - not actively editing text
         app.edit_menu = Some(EditMenu {
+            entity_project: String::new(),
             entity_iid: 1,
             entity_kind: EditEntityKind::EditIssue,
             title: "Edit Issue".to_string(),
@@ -848,6 +853,7 @@ mod tests {
         // 3. Diff View - not searching
         app.diff_view = Some(DiffView::new(
             1,
+            String::new(),
             "diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n".to_string(),
         ));
         assert!(handle_help_keybinding(

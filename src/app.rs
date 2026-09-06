@@ -569,6 +569,7 @@ impl EditEntityKind {
 #[derive(Clone, Debug)]
 pub struct EditMenu {
     pub title: String,
+    pub entity_project: String,
     pub fields: Vec<Field>,
     pub initial_fields: std::collections::HashMap<String, String>,
     pub selected_idx: usize,
@@ -1152,6 +1153,7 @@ pub struct SideBySideLine {
 #[allow(dead_code)]
 pub struct DiffView {
     pub mr_iid: u64,
+    pub project_path: String,
     pub raw_diff: String,
     pub all_lines: Vec<DiffLine>,
     pub lines: Vec<DiffLine>,
@@ -1254,7 +1256,7 @@ fn strip_ansi_escapes(input: &str) -> String {
 
 impl DiffView {
     #[allow(clippy::too_many_lines)]
-    pub fn new(mr_iid: u64, raw_diff: String) -> Self {
+    pub fn new(mr_iid: u64, project_path: String, raw_diff: String) -> Self {
         // Expand tabs once, here: everything downstream — the stored line
         // content, the syntect highlighting computed from it, the search's
         // fuzzy match indices, the side-by-side pairs — is derived from these
@@ -1548,6 +1550,7 @@ impl DiffView {
 
         let mut view = Self {
             mr_iid,
+            project_path,
             raw_diff,
             all_lines,
             lines: Vec::new(),
@@ -2425,22 +2428,22 @@ pub enum OverlayKind {
 
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
-    DeleteMilestone(u64),   // milestone iid
-    DeleteRelease(String),  // release tag_name
-    DeleteBranch(String),   // branch name
-    DeleteIssue(u64),       // issue iid
-    DeleteMr(u64),          // mr iid
-    CloseIssue(u64),        // issue iid
-    CloseMr(u64),           // mr iid
-    CloseMilestone(u64),    // milestone iid
-    ReopenIssue(u64),       // issue iid
-    ReopenMr(u64),          // mr iid
-    ReopenMilestone(u64),   // milestone iid
-    MergeMr(u64),           // mr iid
-    BulkMergeMrs(Vec<u64>), // mr iids (multiple selected)
-    RevokeMr(u64),          // mr iid
-    RebaseMr(u64),          // mr iid
-    SubmitReview(u64),      // mr iid
+    DeleteMilestone(u64),             // milestone iid
+    DeleteRelease(String),            // release tag_name
+    DeleteBranch(String),             // branch name
+    DeleteIssue(u64),                 // issue iid
+    DeleteMr(u64),                    // mr iid
+    CloseIssue(u64),                  // issue iid
+    CloseMr(u64),                     // mr iid
+    CloseMilestone(u64),              // milestone iid
+    ReopenIssue(u64),                 // issue iid
+    ReopenMr(u64),                    // mr iid
+    ReopenMilestone(u64),             // milestone iid
+    MergeMr(u64),                     // mr iid
+    BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
+    RevokeMr(u64),                    // mr iid
+    RebaseMr(u64),                    // mr iid
+    SubmitReview(u64),                // mr iid
 }
 
 impl ConfirmAction {
@@ -2518,6 +2521,7 @@ impl SubmitOption {
 #[derive(Clone, Debug)]
 pub struct SubmitDialog {
     pub action: ConfirmAction,
+    pub project_path: String,
     pub title: String,
     pub body: String,
     pub options: Vec<SubmitOption>,
@@ -2567,8 +2571,20 @@ impl SubmitDialog {
         submit_label: impl Into<String>,
         options: Vec<SubmitOption>,
     ) -> Self {
+        Self::new_with_project(action, String::new(), title, body, submit_label, options)
+    }
+
+    pub fn new_with_project(
+        action: ConfirmAction,
+        project_path: impl Into<String>,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        submit_label: impl Into<String>,
+        options: Vec<SubmitOption>,
+    ) -> Self {
         Self {
             action,
+            project_path: project_path.into(),
             title: title.into(),
             body: body.into(),
             options,
@@ -2586,9 +2602,21 @@ impl SubmitDialog {
         submit_label: impl Into<String>,
         options: Vec<SubmitOption>,
     ) -> Self {
+        Self::new_safe_with_project(action, String::new(), title, body, submit_label, options)
+    }
+
+    pub fn new_safe_with_project(
+        action: ConfirmAction,
+        project_path: impl Into<String>,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        submit_label: impl Into<String>,
+        options: Vec<SubmitOption>,
+    ) -> Self {
         let options_len = options.len();
         Self {
             action,
+            project_path: project_path.into(),
             title: title.into(),
             body: body.into(),
             options,
@@ -2635,6 +2663,28 @@ impl SubmitDialog {
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
     pub fn build(action: ConfirmAction, app: &App) -> Self {
+        let project_path = match &action {
+            ConfirmAction::DeleteMilestone(iid)
+            | ConfirmAction::CloseMilestone(iid)
+            | ConfirmAction::ReopenMilestone(iid) => app.project_path_for_milestone(*iid),
+            ConfirmAction::DeleteRelease(tag) => app.project_path_for_release(tag),
+            ConfirmAction::DeleteBranch(_) => app.scope.as_str().to_string(),
+            ConfirmAction::CloseIssue(iid)
+            | ConfirmAction::DeleteIssue(iid)
+            | ConfirmAction::ReopenIssue(iid) => app.project_path_for_issue(*iid),
+            ConfirmAction::CloseMr(iid)
+            | ConfirmAction::ReopenMr(iid)
+            | ConfirmAction::DeleteMr(iid)
+            | ConfirmAction::MergeMr(iid)
+            | ConfirmAction::RevokeMr(iid)
+            | ConfirmAction::RebaseMr(iid)
+            | ConfirmAction::SubmitReview(iid) => app.project_path_for_mr(*iid),
+            ConfirmAction::BulkMergeMrs(_) => app.scope.as_str().to_string(),
+        };
+        Self::build_with_project(action, project_path, app)
+    }
+
+    pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
         let mr_short = kind.term("mr_short");
@@ -2812,6 +2862,7 @@ impl SubmitDialog {
         };
         Self {
             action: action_clone,
+            project_path,
             title,
             body,
             options,
@@ -2838,6 +2889,7 @@ pub struct App {
     pub search_query: String,
     pub is_typing_search: bool,
     pub active_pipeline_id: Option<u64>,
+    pub active_pipeline_project: Option<String>,
     pub pending_pipeline_select: Option<u64>,
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
@@ -2863,8 +2915,8 @@ pub struct App {
     pub detail_scroll: u16,
     pub selected_pipelines: std::collections::HashSet<u64>,
     pub selected_jobs: std::collections::HashSet<u64>,
-    pub selected_issues: std::collections::HashSet<u64>,
-    pub selected_mrs: std::collections::HashSet<u64>,
+    pub selected_issues: std::collections::HashSet<(String, u64)>,
+    pub selected_mrs: std::collections::HashSet<(String, u64)>,
     /// When true, moving the cursor through Issues/MRs marks each visited
     /// item into the selection set (yazi-style "select mode"). `Space` still
     /// toggles the current item individually regardless of this flag.
@@ -2956,6 +3008,7 @@ impl Default for App {
             search_query: String::new(),
             is_typing_search: false,
             active_pipeline_id: None,
+            active_pipeline_project: None,
             pending_pipeline_select: None,
             job_trace: None,
             error_message: None,
@@ -3114,6 +3167,7 @@ impl App {
         self.refreshed_tabs.clear();
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
+        self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
         self.issues.state.select(Some(0));
@@ -3153,12 +3207,33 @@ impl App {
             .unwrap_or_else(|| self.scope.as_str().to_string())
     }
 
+    pub fn project_path_for_pipeline(&self, id: u64) -> String {
+        if let Some(proj) = &self.active_pipeline_project {
+            if !proj.is_empty() {
+                return proj.clone();
+            }
+        }
+        self.pipelines
+            .items
+            .iter()
+            .find(|p| p.id() == id)
+            .map(|p| p.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
     pub fn project_path_for_release(&self, _tag_name: &str) -> String {
         self.scope.as_str().to_string()
     }
 
-    pub fn project_path_for_milestone(&self, _iid: u64) -> String {
-        self.scope.as_str().to_string()
+    pub fn project_path_for_milestone(&self, iid: u64) -> String {
+        self.milestones
+            .items
+            .iter()
+            .find(|m| m.iid == iid)
+            .map(|m| m.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
     }
 
     pub fn project_path_for_runner(&self, _id: u64) -> String {
@@ -3191,14 +3266,17 @@ impl App {
             self.issues
                 .items
                 .iter()
-                .filter(|i| self.selected_issues.contains(&i.iid))
+                .filter(|i| {
+                    self.selected_issues
+                        .contains(&(i.project_path.clone(), i.iid))
+                })
                 .map(|i| (i.iid, i.title.clone()))
                 .collect()
         } else {
             self.mrs
                 .items
                 .iter()
-                .filter(|m| self.selected_mrs.contains(&m.iid))
+                .filter(|m| self.selected_mrs.contains(&(m.project_path.clone(), m.iid)))
                 .map(|m| (m.iid, m.title.clone()))
                 .collect()
         };
@@ -5787,7 +5865,8 @@ mod tests {
             mk_issue(1, "First"),
             mk_issue(2, "Second"),
         ];
-        app.selected_issues.extend([3, 1, 2]);
+        app.selected_issues
+            .extend([(String::new(), 3), (String::new(), 1), (String::new(), 2)]);
 
         let summary = app.bulk_selection_summary();
         assert_eq!(
@@ -5822,7 +5901,8 @@ mod tests {
             project_path: String::new(),
         };
         app.issues.items = vec![mk_issue(1), mk_issue(2)];
-        app.selected_issues.extend([1, 2]);
+        app.selected_issues
+            .extend([(String::new(), 1), (String::new(), 2)]);
         // A State column filter that hides issue 2 from the table must not
         // shrink the summary — bulk submit applies to the full selection.
         app.column_filters.entry(Tab::Issues).or_default().insert(
@@ -6142,7 +6222,7 @@ index abcdef..ffffff 100644
  main content
 +main new line 1
 ";
-        let mut diff_view = DiffView::new(42, diff_content.to_string());
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), diff_content.to_string());
 
         // Check visible nodes (flattened tree)
         assert_eq!(diff_view.visible_nodes.len(), 3);
@@ -6190,7 +6270,7 @@ index abcdef..ffffff 100644
 \u{1b}[32m+new line 1\u{1b}[0m
 \u{1b}[31m-deleted line 1\u{1b}[0m
 ";
-        let color_view = DiffView::new(42, color_diff.to_string());
+        let color_view = DiffView::new(42, "owner/repo".to_string(), color_diff.to_string());
         assert_eq!(color_view.visible_nodes.len(), 2); // "src" directory and "app.rs" file
         assert_eq!(
             color_view.visible_nodes[1].file_path.as_deref(),
@@ -6212,7 +6292,7 @@ index abcdef..ffffff 100644
 @@ -20,6 +20,7 @@
  some content
 ";
-        let diff_view = DiffView::new(42, glab_diff.to_string());
+        let diff_view = DiffView::new(42, "owner/repo".to_string(), glab_diff.to_string());
         assert_eq!(diff_view.visible_nodes.len(), 2);
         assert_eq!(diff_view.visible_nodes[0].name, "README.md");
         assert_eq!(diff_view.visible_nodes[1].name, "vn-protocol");
@@ -6339,7 +6419,7 @@ index 123456..789012 100644
 +added line 2
  normal line 2
 ";
-        let mut diff_view = DiffView::new(42, diff_content.to_string());
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), diff_content.to_string());
         diff_view.side_by_side = true;
         diff_view.update_active_lines();
 
@@ -6367,7 +6447,8 @@ diff --git a/foo.txt b/foo.txt
 -deleted line 3
 +added line 1
 ";
-        let mut diff_view_2 = DiffView::new(42, diff_content_2.to_string());
+        let mut diff_view_2 =
+            DiffView::new(42, "owner/repo".to_string(), diff_content_2.to_string());
         diff_view_2.side_by_side = true;
         diff_view_2.update_active_lines();
 
@@ -6655,7 +6736,7 @@ rename to src/new_name.rs
   some content
 +new line 1
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let files: Vec<&str> = view
             .visible_nodes
             .iter()
@@ -6687,7 +6768,7 @@ index 0000000..e69de29
 +fn main() {}
 +
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let file_node = view
             .visible_nodes
             .iter()
@@ -6704,14 +6785,14 @@ index 0000000..e69de29
 diff --git a/src/old_module.rs b/src/old_module.rs
 deleted file mode 100644
 index e69de29..0000000
---- a/src/old_module.rs
-+++ /dev/null
+--- /dev/null
++++ b/src/old_module.rs
 @@ -1,3 +0,0 @@
 -// Old file
 -fn main() {}
 -
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let file_node = view
             .visible_nodes
             .iter()
@@ -6728,7 +6809,7 @@ diff --git a/bin/app b/bin/app
 index abcdef..ffffff 100644
 Binary files a/bin/app and b/bin/app differ
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let meta_line = view
             .all_lines
             .iter()
@@ -6750,7 +6831,7 @@ new mode 100755
   line1
 +line2
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         let old_mode = view
             .all_lines
             .iter()
@@ -6775,9 +6856,9 @@ new mode 100755
     #[test]
     fn test_line_number_width_floors_at_the_narrow_gutter() {
         // Anything that fits the old fixed field keeps the old look.
-        let view = DiffView::new(42, diff_starting_at(1));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(1));
         assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
-        let view = DiffView::new(42, diff_starting_at(9997));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(9997));
         assert_eq!(view.line_number_width, MIN_LINE_NUMBER_WIDTH);
     }
 
@@ -6785,10 +6866,10 @@ new mode 100755
     fn test_line_number_width_grows_for_a_wider_number() {
         // The bug: `{:>4}` is a minimum, so a five-digit number took a fifth
         // cell and shifted that row's separator and content one column right.
-        let view = DiffView::new(42, diff_starting_at(10_848));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(10_848));
         assert_eq!(view.line_number_width, 5);
 
-        let view = DiffView::new(42, diff_starting_at(100_000));
+        let view = DiffView::new(42, "owner/repo".to_string(), diff_starting_at(100_000));
         assert_eq!(view.line_number_width, 6);
     }
 
@@ -6801,7 +6882,7 @@ new mode 100755
             second.push('\n');
             second
         });
-        let view = DiffView::new(42, diff);
+        let view = DiffView::new(42, "owner/repo".to_string(), diff);
         assert_eq!(view.line_number_width, 5);
     }
 
@@ -6810,6 +6891,7 @@ new mode 100755
         // Meta-only output (a rename with no hunks) has no line numbers at all.
         let view = DiffView::new(
             42,
+            "owner/repo".to_string(),
             "diff --git a/a.txt b/b.txt\nsimilarity index 100%\nrename from a.txt\nrename to b.txt\n"
                 .to_string(),
         );
@@ -6836,7 +6918,7 @@ new mode 100755
 
     #[test]
     fn test_diff_view_expands_tabs_so_indentation_survives() {
-        let view = DiffView::new(42, tab_indented_diff());
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
 
         let content: Vec<&str> = view
             .all_lines
@@ -6862,7 +6944,7 @@ new mode 100755
 
     #[test]
     fn test_diff_view_keeps_the_marker_out_of_the_tab_stops() {
-        let view = DiffView::new(42, tab_indented_diff());
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
         let added = view
             .all_lines
             .iter()
@@ -6884,7 +6966,7 @@ new mode 100755
         // A highlighted line renders from its spans, not from `content`, so a
         // tab surviving there would leave syntax-highlighted code sitting at a
         // different indent from everything else.
-        let view = DiffView::new(42, tab_indented_diff());
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
         let mut highlighted_lines = 0;
         for line in &view.all_lines {
             if let Some(ref spans) = line.syntax_highlighted {
@@ -6910,7 +6992,7 @@ index 123456..789012 100644
 - old
 + new
 ";
-        let view = DiffView::new(42, diff.to_string());
+        let view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         assert_eq!(view.file_tree_scroll_offset, 0);
     }
 
@@ -6938,7 +7020,7 @@ index 123456..789012 100644
 - old
 + new
 ";
-        DiffView::new(42, diff.to_string())
+        DiffView::new(42, "owner/repo".to_string(), diff.to_string())
     }
 
     #[test]
@@ -7055,7 +7137,7 @@ index 123456..789012 100644
 - old
 + new
 ";
-        let mut view = DiffView::new(42, diff.to_string());
+        let mut view = DiffView::new(42, "owner/repo".to_string(), diff.to_string());
         assert_eq!(view.visible_nodes.len(), 5); // a, b, c, deep.rs, README.md
 
         view.selected_visible_idx = 3; // a/b/c/deep.rs

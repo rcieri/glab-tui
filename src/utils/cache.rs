@@ -205,13 +205,19 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
             valid_cache_files.insert(cache_file_name(&context));
         }
     }
+    for group in get_recent_groups() {
+        valid_cache_files.insert(cache_file_name(&group));
+    }
 
     let cache_dir = get_cache_dir();
     if let Ok(entries) = fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
             let file_name = entry.file_name().to_string_lossy().to_string();
             // Skip non-JSON files and special files
-            if file_name == "recent_repos.json" || !file_name.ends_with(".json") {
+            if file_name == "recent_repos.json"
+                || file_name == "recent_groups.json"
+                || !file_name.ends_with(".json")
+            {
                 continue;
             }
             if valid_cache_files.contains(&file_name) {

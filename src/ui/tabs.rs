@@ -1804,9 +1804,10 @@ pub(crate) fn render_tab_jobs(
                 super::helpers::append_stage_summaries(&mut text, &app.jobs.items);
             }
             let summary_height = detail_rect.height.saturating_sub(2) as usize;
-            let summary_width = detail_rect.width.saturating_sub(2) as usize;
-            let total_lines = super::helpers::rendered_line_count(&text, summary_width, false);
-            let max_detail_scroll = total_lines.saturating_sub(summary_height) as u16;
+            // Not wrapped, so rendered_line_count doesn't read the width.
+            let total_lines = super::helpers::rendered_line_count(&text, 0, false);
+            let max_detail_scroll =
+                u16::try_from(total_lines.saturating_sub(summary_height)).unwrap_or(u16::MAX);
             clamp_detail_scroll(app, max_detail_scroll);
             f.render_widget(
                 Paragraph::new(text)
@@ -3310,6 +3311,60 @@ pub(crate) fn render_tab_terminal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::issues::{Author, Issue};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn render_tab_issues_clamps_detail_scroll_to_content_max() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.issues.items = vec![Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: Author {
+                username: "u1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: Some("line\n\n".repeat(100)),
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        }];
+        app.issues.state.select(Some(0));
+        app.detail_scroll = 999;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 10);
+                let detail_rect = Rect::new(0, 10, area.width, 10);
+                render_tab_issues(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        assert!(
+            app.detail_scroll < 999,
+            "detail_scroll should have been clamped to the content's max, was {}",
+            app.detail_scroll
+        );
+    }
 
     #[test]
     fn clamp_detail_scroll_caps_scroll_to_max() {

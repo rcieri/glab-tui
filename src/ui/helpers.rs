@@ -942,7 +942,7 @@ pub(crate) fn rendered_line_count(lines: &[Line], width: usize, wrap: bool) -> u
         .iter()
         .map(|line| {
             let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-            super::diff::count_wrapped_lines(&text, width)
+            super::diff::count_wrapped_lines(&text, width).max(1)
         })
         .sum()
 }
@@ -1221,5 +1221,12 @@ mod tests {
 
         assert_eq!(rendered_line_count(&lines, 10, true), 4);
         assert_eq!(rendered_line_count(&lines, 10, false), 3);
+    }
+
+    #[test]
+    fn rendered_line_count_counts_blank_lines_as_one_row() {
+        let lines = vec![Line::from("a"), Line::from(""), Line::from("b")];
+
+        assert_eq!(rendered_line_count(&lines, 10, true), 3);
     }
 }

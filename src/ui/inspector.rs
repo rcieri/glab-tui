@@ -1153,7 +1153,8 @@ pub(crate) fn render_inspector_content(
                 render_markdown(md, &theme, area.width)
             };
             let total_lines = rendered_line_count(&lines, area.width as usize, true);
-            let max_scroll = total_lines.saturating_sub(area.height as usize) as u16;
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             f.render_widget(
                 Paragraph::new(lines)
                     .scroll((scroll, 0))
@@ -1165,7 +1166,8 @@ pub(crate) fn render_inspector_content(
         InspectorContent::AnsiTrace { trace, wrap } => {
             let formatted_lines = parse_ansi_trace(trace, &theme);
             let total_lines = rendered_line_count(&formatted_lines, area.width as usize, *wrap);
-            let max_scroll = total_lines.saturating_sub(area.height as usize) as u16;
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             let mut paragraph = Paragraph::new(formatted_lines).scroll((scroll, 0));
             if *wrap {
                 paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
@@ -1226,7 +1228,8 @@ pub(crate) fn render_inspector_content(
                 ]));
             }
             let total_lines = rendered_line_count(&lines, area.width as usize, true);
-            let max_scroll = total_lines.saturating_sub(area.height as usize) as u16;
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             f.render_widget(
                 Paragraph::new(lines)
                     .scroll((scroll, 0))
@@ -1237,7 +1240,8 @@ pub(crate) fn render_inspector_content(
         }
         InspectorContent::Custom(lines) => {
             let total_lines = rendered_line_count(lines, area.width as usize, true);
-            let max_scroll = total_lines.saturating_sub(area.height as usize) as u16;
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             f.render_widget(
                 Paragraph::new(lines.clone())
                     .scroll((scroll, 0))

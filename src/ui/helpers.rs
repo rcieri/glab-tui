@@ -929,6 +929,24 @@ pub(crate) fn diff_tree_row_layout(
     (name_display, padding)
 }
 
+/// Count the rows `Paragraph` renders for `lines`: `lines.len()` unwrapped,
+/// or per-`Line` word-wrapping at `width` (via `count_wrapped_lines`) when
+/// `wrap` is set — the same approximation the job-trace path already uses,
+/// since `Paragraph::line_count` needs ratatui's `unstable-rendered-line-info`
+/// feature, which this project doesn't enable.
+pub(crate) fn rendered_line_count(lines: &[Line], width: usize, wrap: bool) -> usize {
+    if !wrap {
+        return lines.len();
+    }
+    lines
+        .iter()
+        .map(|line| {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            super::diff::count_wrapped_lines(&text, width)
+        })
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1191,5 +1209,17 @@ mod tests {
         assert_eq!(spans[1].style, num);
         assert_eq!(spans[2].content, "│ ");
         assert_eq!(spans[2].style, sep);
+    }
+
+    #[test]
+    fn rendered_line_count_wraps_only_when_asked() {
+        let lines = vec![
+            Line::from("short line"),
+            Line::from("abcdefghijklmnopqrst"),
+            Line::from("other"),
+        ];
+
+        assert_eq!(rendered_line_count(&lines, 10, true), 4);
+        assert_eq!(rendered_line_count(&lines, 10, false), 3);
     }
 }

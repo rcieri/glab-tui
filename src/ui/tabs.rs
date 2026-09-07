@@ -9,6 +9,12 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
+/// Cap `app.detail_scroll` to `max` so a held-down scroll key can't push the
+/// preview content past its last line.
+fn clamp_detail_scroll(app: &mut App, max: u16) {
+    app.detail_scroll = app.detail_scroll.min(max);
+}
+
 /// Return a responsive column width: uses `base` normally but shrinks on narrow terminals.
 fn col_w(content_width: u16, base: u16) -> Constraint {
     if content_width >= 120 {
@@ -300,7 +306,7 @@ pub(crate) fn render_tab_issues(
                     is_github,
                     app.fetching_related_mrs.contains(&issue.iid),
                 );
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -310,6 +316,7 @@ pub(crate) fn render_tab_issues(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -962,7 +969,7 @@ pub(crate) fn render_tab_merge_requests(
 
                 let doc =
                     crate::entity_editor::build_mr_document(mr, is_github, unresolved_threads);
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -972,6 +979,7 @@ pub(crate) fn render_tab_merge_requests(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -1314,7 +1322,7 @@ pub(crate) fn render_tab_pipelines(
             if let Some(p) = filtered_pipelines.get(selected) {
                 let jobs = app.pipeline_jobs.get(&p.id()).cloned().unwrap_or_default();
                 let doc = crate::entity_editor::build_pipeline_document(p, &jobs);
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -1324,6 +1332,7 @@ pub(crate) fn render_tab_pipelines(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -1794,6 +1803,11 @@ pub(crate) fn render_tab_jobs(
             } else {
                 super::helpers::append_stage_summaries(&mut text, &app.jobs.items);
             }
+            let summary_height = detail_rect.height.saturating_sub(2) as usize;
+            let summary_width = detail_rect.width.saturating_sub(2) as usize;
+            let total_lines = super::helpers::rendered_line_count(&text, summary_width, false);
+            let max_detail_scroll = total_lines.saturating_sub(summary_height) as u16;
+            clamp_detail_scroll(app, max_detail_scroll);
             f.render_widget(
                 Paragraph::new(text)
                     .block(preview_block)
@@ -2016,7 +2030,7 @@ pub(crate) fn render_tab_runners(
         if let Some(selected) = app.runners.state.selected() {
             if let Some(r) = filtered_runners.get(selected) {
                 let doc = crate::entity_editor::build_runner_document(r);
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -2026,6 +2040,7 @@ pub(crate) fn render_tab_runners(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -2243,7 +2258,7 @@ pub(crate) fn render_tab_releases(
         if let Some(selected) = app.releases.state.selected() {
             if let Some(r) = filtered_releases.get(selected) {
                 let doc = crate::entity_editor::build_release_document(r);
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -2253,6 +2268,7 @@ pub(crate) fn render_tab_releases(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -2480,7 +2496,7 @@ pub(crate) fn render_tab_todos(
         if let Some(selected) = app.todos.state.selected() {
             if let Some(n) = filtered_todos.get(selected) {
                 let doc = crate::entity_editor::build_todo_document(n);
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -2490,6 +2506,7 @@ pub(crate) fn render_tab_todos(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -2738,7 +2755,7 @@ pub(crate) fn render_tab_milestones(
                     .as_deref()
                     .or_else(|| app.milestone_issues_cache.get(&m.iid).map(|v| v.as_slice()));
                 let doc = crate::entity_editor::build_milestone_document(m, issues, is_github);
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -2748,6 +2765,7 @@ pub(crate) fn render_tab_milestones(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -2935,7 +2953,7 @@ pub(crate) fn render_tab_branches(
         if let Some(idx) = app.branches.state.selected() {
             if let Some(branch) = filtered.get(idx) {
                 let doc = crate::entity_editor::build_branch_document(branch);
-                super::inspector::render_entity_inspector(
+                let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,
                     detail_rect,
@@ -2945,6 +2963,7 @@ pub(crate) fn render_tab_branches(
                     },
                     &app.label_colors,
                 );
+                clamp_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -3114,7 +3133,7 @@ pub(crate) fn render_tab_environments(
             if let Some(idx) = app.environments.state.selected() {
                 if let Some(env) = filtered.get(idx) {
                     let doc = crate::entity_editor::build_environment_document(env);
-                    super::inspector::render_entity_inspector(
+                    let max_detail_scroll = super::inspector::render_entity_inspector(
                         f,
                         &doc,
                         detail_rect,
@@ -3124,6 +3143,7 @@ pub(crate) fn render_tab_environments(
                         },
                         &app.label_colors,
                     );
+                    clamp_detail_scroll(app, max_detail_scroll);
                 }
             } else {
                 f.render_widget(
@@ -3284,5 +3304,30 @@ pub(crate) fn render_tab_terminal(
         }
 
         f.render_widget(Paragraph::new(log_lines).block(custom_main_block), area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_detail_scroll_caps_scroll_to_max() {
+        let mut app = App::default();
+        app.detail_scroll = 50;
+
+        clamp_detail_scroll(&mut app, 10);
+
+        assert_eq!(app.detail_scroll, 10);
+    }
+
+    #[test]
+    fn clamp_detail_scroll_leaves_scroll_below_max_unchanged() {
+        let mut app = App::default();
+        app.detail_scroll = 3;
+
+        clamp_detail_scroll(&mut app, 10);
+
+        assert_eq!(app.detail_scroll, 3);
     }
 }

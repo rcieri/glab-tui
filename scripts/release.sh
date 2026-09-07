@@ -715,47 +715,12 @@ update_homebrew() {
     macos_amd64=$(fetch_sha glab-tui-macos-amd64.tar.gz)
     macos_arm64=$(fetch_sha glab-tui-macos-arm64.tar.gz)
 
-    # Discover all Linux assets actually present in the release (the ubuntu-latest
-    # runner's asset name carries a VERSION_ID we don't know up front).
-    local assets_json
-    assets_json=$(gh release view "$NEW_TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
-
-    declare -A linux_amd64_shas=()
-    declare -A linux_arm64_shas=()
-    local variant
-    while IFS= read -r name; do
-      [[ "$name" =~ ^glab-tui-linux-(amd64|arm64)-(.+)\.tar\.gz$ ]] || continue
-      local arch="${BASH_REMATCH[1]}" variant="${BASH_REMATCH[2]}"
-      local sha
-      sha=$(fetch_sha "$name")
-      if [[ "$arch" == "amd64" ]]; then
-        linux_amd64_shas["$variant"]="$sha"
-      else
-        linux_arm64_shas["$variant"]="$sha"
-      fi
-    done <<< "$assets_json"
-
-    if [[ "${#linux_amd64_shas[@]}" -eq 0 ]] || [[ "${#linux_arm64_shas[@]}" -eq 0 ]]; then
-      die "no Linux assets found in release $NEW_TAG — did the build matrix finish?"
-    fi
-
-    # Render a Ruby hash literal from the bash assoc array (sorted by key).
-    render_ruby_hash() {
-      local -n arr=$1
-      local indent="${2:-    }" k v first=1
-      printf '%s{\n' "$indent"
-      while IFS=$'\t' read -r k v; do
-        [[ -z "$k" ]] && continue
-        if (( first )); then first=0; else printf ',\n'; fi
-        printf '%s  "%s" => "%s"' "$indent" "$k" "$v"
-      done < <(for k in "${!arr[@]}"; do printf '%s\t%s\n' "$k" "${arr[$k]}"; done | sort)
-      printf '\n%s}.freeze\n' "$indent"
-    }
-
-    local linux_amd64_hash
-    linux_amd64_hash=$(render_ruby_hash linux_amd64_shas "    ")
-    local linux_arm64_hash
-    linux_arm64_hash=$(render_ruby_hash linux_arm64_shas "    ")
+    # Use the fully static musl Linux builds: they run on any Linux distro
+    # regardless of glibc version, matching Homebrew's minimum glibc baseline
+    # and passing the CI static-link + Alpine smoke test. (The ubuntu-XX.YY
+    # assets are glibc-linked and should not be preferred here.)
+    linux_amd64=$(fetch_sha glab-tui-linux-amd64-musl.tar.gz)
+    linux_arm64=$(fetch_sha glab-tui-linux-arm64-musl.tar.gz)
 
     cat > "$TMP_DIR/glab-tui.rb" <<EOF
 class GlabTui < Formula
@@ -765,33 +730,6 @@ class GlabTui < Formula
 
   depends_on "gh"
   depends_on "glab" => :recommended
-
-  # Discovered at release time: variant (ubuntu-XX.YY or "musl") -> sha256.
-$(printf '%s' "$linux_amd64_hash" | sed 's/^/  /')
-$(printf '%s' "$linux_arm64_hash" | sed 's/^/  /')
-
-  # Pick the best-matching variant for the local Ubuntu version. Non-Ubuntu
-  # Linux distros fall back to the oldest Ubuntu LTS asset (broadest glibc
-  # compatibility). If no Ubuntu version asset is available for the current
-  # release, fall through to whichever LTS asset is newest.
-  def self.linux_variant(sha_map)
-    return nil if sha_map.nil? || sha_map.empty?
-    v = OS::Version.from_symbol(:ubuntu)
-    candidates = []
-    if v
-      candidates << "ubuntu-\#{v}"
-      # Walk down through known LTS baselines (newest first) inserted at
-      # the front of the candidate list.
-      %w[24.04 22.04].each { |baseline| candidates << "ubuntu-\#{baseline}" unless "ubuntu-\#{v}" == "ubuntu-\#{baseline}" }
-    else
-      candidates = %w[ubuntu-24.04 ubuntu-22.04]
-    end
-    candidates << "musl"
-    candidates.uniq.each do |c|
-      return c if sha_map.key?(c)
-    end
-    sha_map.keys.first
-  end
 
   on_macos do
     on_intel do
@@ -804,16 +742,16 @@ $(printf '%s' "$linux_arm64_hash" | sed 's/^/  /')
     end
   end
 
+  # Fully static musl builds: run on any Linux distro regardless of glibc
+  # version, matching Homebrew's minimum glibc support baseline.
   on_linux do
     on_intel do
-      amd64_variant = linux_variant(LINUX_AMD64_SHAS)
-      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-amd64-\#{amd64_variant}.tar.gz"
-      sha256 LINUX_AMD64_SHAS.fetch(amd64_variant)
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-amd64-musl.tar.gz"
+      sha256 "${linux_amd64}"
     end
     on_arm do
-      arm64_variant = linux_variant(LINUX_ARM64_SHAS)
-      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-arm64-\#{arm64_variant}.tar.gz"
-      sha256 LINUX_ARM64_SHAS.fetch(arm64_variant)
+      url "https://github.com/rcieri/glab-tui/releases/download/${NEW_TAG}/glab-tui-linux-arm64-musl.tar.gz"
+      sha256 "${linux_arm64}"
     end
   end
 

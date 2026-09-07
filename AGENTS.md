@@ -17,12 +17,14 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
 * **YAML:** `serde_yaml` (v0.9) — diagnostics output
-* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.0`)
+* **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.1`)
 
 ### Dual-Engine Architecture
 The application detects whether the current repository is hosted on GitHub or GitLab and instantiates either a `GlabBackend` or `GhBackend`. Detection is centralized in `git_helpers::detect_backend(remote_url, override_kind)` ([src/git_helpers.rs](src/git_helpers.rs)): `github.com` remotes (with or without `www.` prefix) resolve to GitHub; other hosts are probed with `gh auth status --active --hostname <host>` and `glab auth status --hostname <host>`, defaulting to GitLab when neither/both respond. A repo-local `backend = "github" | "gitlab"` config override always takes precedence — set it for SSH aliases or hosts serving both platforms. Always route backend detection through `detect_backend`; do not reimplement inline `github.com` string matching. Both backends implement the `Backend` trait ([src/backend/mod.rs](src/backend/mod.rs)). The domain layer ([src/domain/](src/domain/)) calls backend methods through `GitlabClient` ([src/domain/client.rs](src/domain/client.rs)). Runtime backend identification is available via the `BackendKind` enum (`BackendKind::GitLab` / `BackendKind::GitHub`) which also provides host-aware terminology through `BackendKind::term()`.
 
 The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call is extracted from the remote URL by `git_helpers::parse_project_path` ([src/git_helpers.rs](src/git_helpers.rs)), which keeps every path segment after the host so nested GitLab subgroup namespaces (`group/subgroup/project`) resolve correctly. Always use this helper — do not reimplement remote-URL parsing inline.
+
+Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/scope.rs)) and the `-g`/`--group` CLI flag (`src/cli.rs`). A `Scope::Group` is inferred from the remote URL by `git_helpers::parse_group` (paths without a slash), from the `--group` CLI/`config.group` value, or from `parse_project_path_from_web_url` (web URLs). All listing backend methods (`list_issues`, `list_mrs`, `list_pipelines`, `list_runners`, `list_releases`, `list_milestones`, `list_branches`, `list_environments`, `list_deployments`, `fetch_members`) accept a `&Scope` and use `cli_group_arg()` to inject `-g` (glab) / org flags instead of `-R`. Recent groups are persisted in `recent_groups.json` ([src/utils/cache.rs](src/utils/cache.rs)). GitHub has no org-level listing equivalent, so group-backed GitHub listings return `Err`.
 
 **Rule:** Never use `glab api` or `gh api` when a native subcommand exists. Prefer native subcommands — they use built-in pagination, auth, and output formatting. Only fall back to raw API calls for endpoints with no native CLI equivalent.
 
@@ -33,7 +35,8 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 * [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/backend/](src/backend/): CLI backend layer.
-    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions.
+    * [rate_limit.rs](src/backend/rate_limit.rs): `ApiRateLimiter` — automatic 429/graphql rate-limit detection and retry with exponential backoff plus bulk-operation pacing (`pace_bulk_operation`).
+    * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits.
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
     * [gh.rs](src/backend/gh.rs): `GhBackend` — shells out to `gh` CLI.
 * [src/domain/](src/domain/): Domain models and top-level API functions.
@@ -50,14 +53,15 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
     * [branches.rs](src/domain/branches.rs): Branch structures.
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
-* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
-* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_remote_host`, `get_current_branch`, `slugify`, `get_workflow_files`.
+* [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches (routed through `&Scope`); `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
+* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_project_path_from_web_url`, `parse_group`, `parse_remote_host`, `get_current_branch`, `slugify`, `get_workflow_files`.
+* [src/scope.rs](src/scope.rs): `Scope` enum (`Repository` / `Group`) — `as_str()`, `is_group()`/`is_repository()`, `cli_repo_arg()`/`cli_group_arg()` (glab/gh flag injection), `api_path_prefix()` (with `%2F` URL encoding), and `Display`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
 * [src/utils/](src/utils/):
-    * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json`.
+    * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
     * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
@@ -119,13 +123,21 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 * Displays a 3-row floating rounded toast box with `status_failed` icon and auto-dismiss after 5 seconds.
 * Automatically stamps the most recent running command in the terminal commands bar as failed, keeping both UI surfaces synchronized.
 
+### Rate Limiting (`src/backend/rate_limit.rs`)
+* `ApiRateLimiter` is a global (`RATE_LIMITER`) that shields every `glab`/`gh` CLI call from HTTP 429 and GitLab GraphQL rate-limit errors.
+* Backend command execution delegates to `rate_limit::execute_with_retry` (used by both `GlabBackend` and `GhBackend`), which:
+  - acquires a concurrency slot via `RATE_LIMITER.pace_request()` (bounds concurrent subprocesses to `MAX_CONCURRENT_REQUESTS` and enforces a minimum inter-request burst delay),
+  - retries failures that `is_rate_limit_error()` recognizes (429, `rate_limit`, abuse-detection, `retry-after`) with exponential backoff plus per-thread jitter up to `MAX_RATE_LIMIT_RETRIES`,
+  - bubbles up immediately on non-rate-limit errors so the UI shows the real failure.
+* Bulk operations (merging, editing many MRs/issues, etc.) call `pace_bulk_operation()` before each item to avoid tripping secondary rate limits during batch loops.
+
 ### Code Review & Diff System
 * **Diff view** supports inline comments, code suggestions, draft reviews, dynamic gutter sizing, and tab expansion:
   - `DiscussionNote` / `NotePosition` structs in [src/domain/mr.rs](src/domain/mr.rs).
   - `list_mr_notes()` fetches notes for an MR via the API.
   - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` and submitted atomically.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
-  - `DiffFetched` event uses named fields: `{ mr_iid, raw_diff, comments }`.
+  - `DiffFetched` event uses named fields: `{ mr_iid, project_path, raw_diff, comments }`.
   - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`).
   - Open diff key is `D` (remappable via `keybindings.mrs.view_diff`).
 * **Dynamic line numbers & tab expansion:** Gutter width is dynamically calculated in `DiffView::new` from the widest line number in the diff (floored at 4). Tabs are expanded to spaces at tab stops at diff parse time (`expand_tabs`) so Go/Makefiles maintain indentation without breaking syntax highlighting or search indices.
@@ -155,6 +167,7 @@ The `namespace/project` context passed as `-R <repo>` to every `glab`/`gh` call 
 * Theme selection: `Config` holds a `theme_preset: Option<String>` and optional per-color `ThemeOverrides`. At startup, `App::apply_config()` resolves the final `Theme` and writes it into the global `THEME` `RwLock`. `Theme::default()` derives directly from `src/themes/default.toml` — there is no hardcoded in-code fallback, so the bundled TOML is the single source of truth. Invalid user theme overrides automatically fall back to bundled presets.
 * Icons: The global `ICONS` `RwLock` is initialized at startup with hardcoded nerd font defaults and is not user-configurable.
 * Built-in theme presets are compiled into the binary via `include_str!` in `BUNDLED_THEMES` (18 presets including `oled`, `github-dark-hc`, and the Rosé Pine set). User themes in `~/.config/glab-tui/themes/` take precedence.
+* **Semantic tokens & transparent backgrounds:** `group_by` banner styling uses the `badge_group_bg` token, and an empty color string in theme TOMLs maps to `Color::Reset`, letting the terminal's own (possibly transparent) background show through instead of painting a solid fill.
 * **Rule:** Never hard-code RGB colors outside `src/themes/*.toml`. Add new semantic tokens (`diff_gutter_bg`, `diff_sep`, etc.) to `Theme` if needed.
 
 ### Keybinding System
@@ -270,6 +283,11 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List members | `GET /projects/{}/members/all?per_page=100` | `glab repo members` only has add/remove |
 | Retry pipeline | `POST /projects/{}/pipelines/{}/retry` | `glab ci retry` is job-only; no pipeline retry subcommand |
 | MR approval/mergeability state | `glab api graphql` over `mergeRequests(iids: [...])` | `glab mr list` exposes neither axis; one bulk query fills the Approval/Mergeable columns (batched by `api_per_page`) |
+| List group issues | `GET /groups/{}/issues?state=...&per_page=<N>&page=<P>` | `glab issue list -g` spans each project via separate requests; a single group endpoint aggregates across the whole group. Group path is `%2F` URL-encoded. |
+| List group MRs | `GET /groups/{}/merge_requests?state=...&per_page=<N>&page=<P>` | Same rationale as group issues |
+| List group pipelines | `GET /groups/{}/pipelines?per_page=<N>&page=<P>` | Same rationale as group issues |
+| List group milestones | `GET /groups/{}/milestones?per_page=<N>` | Native `glab milestone list --group` returns only the group's own milestones per project |
+| List group labels | `GET /groups/{}/labels?per_page=<N>` | `glab label list -g` has no pagination control |
 | List environments | `GET /projects/{}/environments?per_page=<N>` | No native command |
 | List deployments | `GET /projects/{}/deployments?per_page=<N>` | No native command |
 
@@ -6298,7 +6316,7 @@ Run `scripts/release.sh [patch|minor|major|nightly]` (default `patch`) and the s
 2. **Prepare** — computes the next tag from `git describe --tags`, bumps the crate version in `Cargo.toml`, prompts for the opencode model (provider → model → variant; see below) unless `OPENCODE_MODEL` is set, regenerates `CHANGELOG.md`/`AGENTS.md`/`README.md` via headless `opencode run`, rebuilds the demo GIFs against an authenticated `gh`, and opens a `chore: prepare release vX.Y.Z` PR.
 3. **Review gate** — pauses for the maintainer to review the PR (CI checks run in the background); the script continues on Enter.
 4. **Merge & tag** — squash-merges the PR with `--auto`, tags the merge commit and pushes `vX.Y.Z`. `.github/workflows/release.yml` builds the 11-target binary matrix (8 Linux + 3 non-Linux) and uploads them to the GitHub release.
-5. **Wait for build** — polls the release until every required asset exists (timeout: `RELEASE_WAIT_MIN`, default 45 min). The required-asset list in `REQUIRED_ASSETS_STATIC` covers the fixed name patterns; the dynamic Ubuntu-latest build is required to produce at least two `ubuntu-<VERSION_ID>` assets whose VERSION_ID differs from the 22.04 / 24.04 baselines.
+5. **Wait for build** — polls the release until every required asset exists (timeout: `RELEASE_WAIT_MIN`, default 45 min). The required-asset list in `REQUIRED_ASSETS_STATIC` covers the fixed name patterns; the dynamic Ubuntu-latest build is required to produce at least two `ubuntu-<VERSION_ID>` assets whose VERSION_ID differs from the 22.04 / 24.04 baselines. The script protects against unbound variables and off-by-one asset-count math under `set -u`, and it can resume from a chosen phase (`--phase`) if an earlier step failed or was interrupted.
 6. **Post-release** — generates `RELEASE_NOTES.md` via headless `opencode run` (entries attribute their contributors as `(thanks @username)` and a `**Contributors**` section lists all `@username` handles since the previous tag), edits the release body, and pushes the Homebrew formula and Scoop manifest. The manifest repos' scheduled auto-updaters have been removed; this local sync is the only update path.
 7. **Publish** — pushes the Docker image to GHCR and publishes the crate to crates.io.
 

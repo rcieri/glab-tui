@@ -426,8 +426,11 @@ preflight() {
       gh api "repos/$repo" --jq ".permissions.push" | grep -q true || \
         { echo "no push access to $repo; grant your token write permission"; exit 1; }
     done
-    fc-list 2>/dev/null | grep -qi "JetBrainsMono.*Nerd" || \
-      { echo "JetBrainsMono Nerd Font not installed (see https://github.com/ryanoasis/nerd-fonts)"; exit 1; }
+    if command -v fc-list >/dev/null 2>&1; then
+      if ! fc-list 2>/dev/null | grep -qi "JetBrainsMono.*Nerd"; then
+        echo "warning: JetBrainsMono Nerd Font not detected; demo GIF generation may fall back to system font" >&2
+      fi
+    fi
     exit 0
   '; then
     die "preflight checks failed (see $TMP_DIR/spinner.log)"
@@ -493,7 +496,7 @@ bump_cargo_version() {
     /^\[/ && !/^\[package\]/ { in_pkg = 0 }
     in_pkg && /^version[[:space:]]*=/ { sub(/=.*/, "= \"" v "\""); print; next }
     { print }
-  ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml
+  ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml || { rm -f Cargo.toml.new; die "failed to bump Cargo.toml"; }
 }
 
 prepare() {
@@ -620,7 +623,12 @@ merge_and_tag() {
   export PR_NUMBER REPO
   if ! spinner "Waiting for PR #$PR_NUMBER to merge (up to 20m)" bash -c '
       for i in $(seq 1 120); do
-        [[ "$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state --jq .state)" == "MERGED" ]] && exit 0
+        state="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,isDraft,mergeable --jq "{state: .state, draft: .isDraft, mergeable: .mergeable}")"
+        [[ "$(jq -r .state <<< "$state")" == "MERGED" ]] && exit 0
+        if [[ "$(jq -r .mergeable <<< "$state")" == "CONFLICTING" ]]; then
+          echo "PR #$PR_NUMBER has merge conflicts" >&2
+          exit 1
+        fi
         sleep 10
       done
       exit 1
@@ -658,6 +666,15 @@ wait_for_release() {
           missing+=("$asset")
         fi
       done
+
+      # Verify dynamic Ubuntu assets for amd64 and arm64
+      if ! grep -qE '^glab-tui-linux-amd64-ubuntu-.*\.tar\.gz$' <<< "$current"; then
+        missing+=("glab-tui-linux-amd64-ubuntu-*")
+      fi
+      if ! grep -qE '^glab-tui-linux-arm64-ubuntu-.*\.tar\.gz$' <<< "$current"; then
+        missing+=("glab-tui-linux-arm64-ubuntu-*")
+      fi
+
       if [[ "${#missing[@]}" -eq 0 ]]; then
         [[ -t 1 ]] && printf '\r\e[2K'
         ok "All release assets present ($(echo "$current" | wc -l) total)"
@@ -682,64 +699,65 @@ wait_for_release() {
 # Phase 5: post-release (notes, Homebrew, Scoop)
 # ---------------------------------------------------------------------------
 update_homebrew() {
-  local macos_amd64 macos_arm64
+  (
+    local macos_amd64 macos_arm64
 
-  spinner "Cloning rcieri/homebrew-glab-tui" gh repo clone rcieri/homebrew-glab-tui "$TMP_DIR/homebrew-glab-tui"
-  cd "$TMP_DIR/homebrew-glab-tui"
+    spinner "Cloning rcieri/homebrew-glab-tui" gh repo clone rcieri/homebrew-glab-tui "$TMP_DIR/homebrew-glab-tui"
+    cd "$TMP_DIR/homebrew-glab-tui"
 
-  fetch_sha() {
-    local name="$1"
-    spinner "Fetching ${name}" \
-      curl -sL "https://github.com/$REPO/releases/download/${NEW_TAG}/${name}" -o "$TMP_DIR/${name}"
-    sha256sum "$TMP_DIR/${name}" | cut -d' ' -f1
-  }
+    fetch_sha() {
+      local name="$1"
+      spinner "Fetching ${name}" \
+        curl -sL "https://github.com/$REPO/releases/download/${NEW_TAG}/${name}" -o "$TMP_DIR/${name}"
+      sha256sum "$TMP_DIR/${name}" | cut -d' ' -f1
+    }
 
-  macos_amd64=$(fetch_sha glab-tui-macos-amd64.tar.gz)
-  macos_arm64=$(fetch_sha glab-tui-macos-arm64.tar.gz)
+    macos_amd64=$(fetch_sha glab-tui-macos-amd64.tar.gz)
+    macos_arm64=$(fetch_sha glab-tui-macos-arm64.tar.gz)
 
-  # Discover all Linux assets actually present in the release (the ubuntu-latest
-  # runner's asset name carries a VERSION_ID we don't know up front).
-  local assets_json
-  assets_json=$(gh release view "$NEW_TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
+    # Discover all Linux assets actually present in the release (the ubuntu-latest
+    # runner's asset name carries a VERSION_ID we don't know up front).
+    local assets_json
+    assets_json=$(gh release view "$NEW_TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
 
-  declare -A linux_amd64_shas=()
-  declare -A linux_arm64_shas=()
-  local variant
-  while IFS= read -r name; do
-    [[ "$name" =~ ^glab-tui-linux-(amd64|arm64)-(.+)\.tar\.gz$ ]] || continue
-    local arch="${BASH_REMATCH[1]}" variant="${BASH_REMATCH[2]}"
-    local sha
-    sha=$(fetch_sha "$name")
-    if [[ "$arch" == "amd64" ]]; then
-      linux_amd64_shas["$variant"]="$sha"
-    else
-      linux_arm64_shas["$variant"]="$sha"
+    declare -A linux_amd64_shas=()
+    declare -A linux_arm64_shas=()
+    local variant
+    while IFS= read -r name; do
+      [[ "$name" =~ ^glab-tui-linux-(amd64|arm64)-(.+)\.tar\.gz$ ]] || continue
+      local arch="${BASH_REMATCH[1]}" variant="${BASH_REMATCH[2]}"
+      local sha
+      sha=$(fetch_sha "$name")
+      if [[ "$arch" == "amd64" ]]; then
+        linux_amd64_shas["$variant"]="$sha"
+      else
+        linux_arm64_shas["$variant"]="$sha"
+      fi
+    done <<< "$assets_json"
+
+    if [[ "${#linux_amd64_shas[@]}" -eq 0 ]] || [[ "${#linux_arm64_shas[@]}" -eq 0 ]]; then
+      die "no Linux assets found in release $NEW_TAG — did the build matrix finish?"
     fi
-  done <<< "$assets_json"
 
-  if [[ "${#linux_amd64_shas[@]}" -eq 0 ]] || [[ "${#linux_arm64_shas[@]}" -eq 0 ]]; then
-    die "no Linux assets found in release $NEW_TAG — did the build matrix finish?"
-  fi
+    # Render a Ruby hash literal from the bash assoc array (sorted by key).
+    render_ruby_hash() {
+      local -n arr=$1
+      local indent="${2:-    }" k v first=1
+      printf '%s{\n' "$indent"
+      while IFS=$'\t' read -r k v; do
+        [[ -z "$k" ]] && continue
+        if (( first )); then first=0; else printf ',\n'; fi
+        printf '%s  "%s" => "%s"' "$indent" "$k" "$v"
+      done < <(for k in "${!arr[@]}"; do printf '%s\t%s\n' "$k" "${arr[$k]}"; done | sort)
+      printf '\n%s}.freeze\n' "$indent"
+    }
 
-  # Render a Ruby hash literal from the bash assoc array (sorted by key).
-  render_ruby_hash() {
-    local -n arr=$1
-    local indent="${2:-    }" k v first=1
-    printf '%s{\n' "$indent"
-    while IFS=$'\t' read -r k v; do
-      [[ -z "$k" ]] && continue
-      if (( first )); then first=0; else printf ',\n'; fi
-      printf '%s  "%s" => "%s"' "$indent" "$k" "$v"
-    done < <(for k in "${!arr[@]}"; do printf '%s\t%s\n' "$k" "${arr[$k]}"; done | sort)
-    printf '\n%s}.freeze\n' "$indent"
-  }
+    local linux_amd64_hash
+    linux_amd64_hash=$(render_ruby_hash linux_amd64_shas "    ")
+    local linux_arm64_hash
+    linux_arm64_hash=$(render_ruby_hash linux_arm64_shas "    ")
 
-  local linux_amd64_hash
-  linux_amd64_hash=$(render_ruby_hash linux_amd64_shas "    ")
-  local linux_arm64_hash
-  linux_arm64_hash=$(render_ruby_hash linux_arm64_shas "    ")
-
-  cat > "$TMP_DIR/glab-tui.rb" <<EOF
+    cat > "$TMP_DIR/glab-tui.rb" <<EOF
 class GlabTui < Formula
   desc "Terminal user interface for GitLab and GitHub"
   homepage "https://github.com/rcieri/glab-tui"
@@ -814,47 +832,48 @@ $(printf '%s' "$linux_arm64_hash" | sed 's/^/  /')
 end
 EOF
 
-  mv "$TMP_DIR/glab-tui.rb" Formula/glab-tui.rb
+    mv "$TMP_DIR/glab-tui.rb" Formula/glab-tui.rb
 
-  git add Formula/glab-tui.rb
-  if git diff --cached --quiet; then
-    note "Homebrew formula already up to date"
-  else
-    git -c user.name="${AI_TOOL:-release}-release[bot]" \
-        -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
-        commit -m "Update to ${NEW_TAG}" >/dev/null
-    spinner "Pushing Homebrew formula" git push
-    ok "Homebrew formula updated and pushed"
-  fi
-  cd "$ROOT"
+    git add Formula/glab-tui.rb
+    if git diff --cached --quiet; then
+      note "Homebrew formula already up to date"
+    else
+      git -c user.name="${AI_TOOL:-release}-release[bot]" \
+          -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
+          commit -m "Update to ${NEW_TAG}" >/dev/null
+      spinner "Pushing Homebrew formula" git push
+      ok "Homebrew formula updated and pushed"
+    fi
+  )
 }
 
 update_scoop() {
-  local version sha
-  spinner "Cloning rcieri/scoop-glab-tui" gh repo clone rcieri/scoop-glab-tui "$TMP_DIR/scoop-glab-tui"
-  cd "$TMP_DIR/scoop-glab-tui"
+  (
+    local version sha
+    spinner "Cloning rcieri/scoop-glab-tui" gh repo clone rcieri/scoop-glab-tui "$TMP_DIR/scoop-glab-tui"
+    cd "$TMP_DIR/scoop-glab-tui"
 
-  version="${NEW_TAG#v}"
-  spinner "Fetching glab-tui-windows-amd64.zip" \
-    curl -sL "https://github.com/$REPO/releases/download/$NEW_TAG/glab-tui-windows-amd64.zip" -o "$TMP_DIR/glab-tui-windows-amd64.zip"
-  sha="$(sha256sum "$TMP_DIR/glab-tui-windows-amd64.zip" | cut -d' ' -f1)"
+    version="${NEW_TAG#v}"
+    spinner "Fetching glab-tui-windows-amd64.zip" \
+      curl -sL "https://github.com/$REPO/releases/download/$NEW_TAG/glab-tui-windows-amd64.zip" -o "$TMP_DIR/glab-tui-windows-amd64.zip"
+    sha="$(sha256sum "$TMP_DIR/glab-tui-windows-amd64.zip" | cut -d' ' -f1)"
 
-  jq --arg v "$version" --arg sha "$sha" \
-    '.version = $v | .architecture."64bit".url = "https://github.com/rcieri/glab-tui/releases/download/v\($v)/glab-tui-windows-amd64.zip" | .architecture."64bit".hash = $sha' \
-    bucket/glab-tui.json > bucket/glab-tui.json.tmp
-  mv bucket/glab-tui.json.tmp bucket/glab-tui.json
+    jq --arg v "$version" --arg sha "$sha" \
+      '.version = $v | .architecture."64bit".url = "https://github.com/rcieri/glab-tui/releases/download/v\($v)/glab-tui-windows-amd64.zip" | .architecture."64bit".hash = $sha' \
+      bucket/glab-tui.json > bucket/glab-tui.json.tmp
+    mv bucket/glab-tui.json.tmp bucket/glab-tui.json
 
-  git add bucket/glab-tui.json
-  if git diff --cached --quiet; then
-    note "Scoop manifest already up to date"
-  else
-    git -c user.name="${AI_TOOL:-release}-release[bot]" \
-        -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
-        commit -m "Update to ${NEW_TAG}" >/dev/null
-    spinner "Pushing Scoop manifest" git push
-    ok "Scoop manifest updated and pushed"
-  fi
-  cd "$ROOT"
+    git add bucket/glab-tui.json
+    if git diff --cached --quiet; then
+      note "Scoop manifest already up to date"
+    else
+      git -c user.name="${AI_TOOL:-release}-release[bot]" \
+          -c user.email="${AI_TOOL:-release}-release[bot]@users.noreply.github.com" \
+          commit -m "Update to ${NEW_TAG}" >/dev/null
+      spinner "Pushing Scoop manifest" git push
+      ok "Scoop manifest updated and pushed"
+    fi
+  )
 }
 
 post_release() {
@@ -881,7 +900,7 @@ Write the file RELEASE_NOTES.md matching the same format:
 Use the content from CHANGELOG.md for the current version as the source material."
 
   run_ai "$prompt"
-  [[ -f RELEASE_NOTES.md ]] || die "RELEASE_NOTES.md was not generated"
+  [[ -f RELEASE_NOTES.md && -s RELEASE_NOTES.md ]] || die "RELEASE_NOTES.md was not generated or is empty"
   ok "RELEASE_NOTES.md generated"
 
   note "Updating release $NEW_TAG body..."

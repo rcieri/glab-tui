@@ -2562,9 +2562,16 @@ mod tests {
 
     /// Constructs the real `AppTerminal` and dispatches `key_event` through
     /// `handle_active_tab_key`, discarding any events it sends.
+    ///
+    /// Uses `Viewport::Fixed` so construction never queries the backend's
+    /// terminal size - `cargo test` has no controlling tty in CI.
     async fn dispatch(app: &mut App, key_event: &KeyEvent) {
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let mut terminal = ratatui::Terminal::new(backend).expect("terminal construction failed");
+        let options = ratatui::TerminalOptions {
+            viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
+        };
+        let mut terminal = ratatui::Terminal::with_options(backend, options)
+            .expect("terminal construction failed");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         handle_active_tab_key(app, key_event, &mut terminal, tx).await;
     }
@@ -2575,10 +2582,18 @@ mod tests {
         app.detail_visible = true;
         app.detail_scroll = 5;
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+        )
+        .await;
         assert_eq!(app.detail_scroll, 6);
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
+        )
+        .await;
         assert_eq!(app.detail_scroll, 5);
     }
 
@@ -2588,17 +2603,24 @@ mod tests {
         app.detail_visible = false;
         app.detail_scroll = 5;
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+        )
+        .await;
         assert_eq!(app.detail_scroll, 5);
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
+        )
+        .await;
         assert_eq!(app.detail_scroll, 5);
     }
 
     /// With `scroll_down` remapped away from the hardcoded "J", both halves
-    /// of the merged condition still scroll independently by exactly one
-    /// line each - the config half never doubles up with the hardcoded 'J'
-    /// fallback.
+    /// of the merged condition remain reachable: the remapped key and the
+    /// hardcoded 'J' fallback each move the pane by exactly one line.
     #[tokio::test]
     async fn remapped_scroll_down_and_hardcoded_j_each_scroll_one_line() {
         let mut app = App::default();
@@ -2606,10 +2628,18 @@ mod tests {
         app.detail_scroll = 5;
         app.config.keybindings.global.scroll_down = "z".to_string();
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+        )
+        .await;
         assert_eq!(app.detail_scroll, 6);
 
-        dispatch(&mut app, &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT)).await;
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+        )
+        .await;
         assert_eq!(app.detail_scroll, 7);
     }
 }

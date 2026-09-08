@@ -20,6 +20,7 @@ pub fn edit_in_editor_with_suffix(
     let mut tmp = tempfile::Builder::new().suffix(suffix).tempfile().ok()?;
     std::io::Write::write_all(&mut tmp, current_val.as_bytes()).ok()?;
     let file_path = tmp.into_temp_path();
+    let path_buf = file_path.to_path_buf();
 
     crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -34,15 +35,16 @@ pub fn edit_in_editor_with_suffix(
         .ok()?;
 
         let mut cmd = std::process::Command::new(&editor);
-        cmd.arg(file_path.as_os_str());
+        cmd.arg(&path_buf);
         cmd.stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit());
-        if let Ok(mut child) = cmd.spawn() {
-            child.wait().ok()?;
+        let status = cmd.spawn().ok()?.wait().ok()?;
+        if !status.success() {
+            return None;
         }
 
-        let content = std::fs::read_to_string(&file_path).ok()?;
+        let content = std::fs::read_to_string(&path_buf).ok()?;
         let trimmed = content.trim().to_string();
         if trimmed.is_empty() {
             None

@@ -3621,10 +3621,20 @@ impl App {
                     check_match(&item.iid.to_string());
                 }
                 if enabled_cols.contains("State") {
-                    if item.state == "opened" {
+                    if item.state.eq_ignore_ascii_case("opened")
+                        || item.state.eq_ignore_ascii_case("open")
+                        || item.state.eq_ignore_ascii_case("OPEN")
+                    {
                         check_match("OPEN");
-                    } else if item.state == "closed" {
+                        check_match("opened");
+                        check_match("open");
+                    } else if item.state.eq_ignore_ascii_case("closed")
+                        || item.state.eq_ignore_ascii_case("CLOSED")
+                    {
                         check_match("CLOSED");
+                        check_match("closed");
+                    } else {
+                        check_match(&item.state);
                     }
                 }
                 if enabled_cols.contains("Title") {

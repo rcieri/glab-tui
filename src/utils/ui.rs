@@ -82,6 +82,11 @@ impl<T> StatefulTable<T> {
         self.state.select(Some(i));
     }
 
+    pub fn next_item(&mut self) {
+        let len = self.items.len();
+        self.next(len);
+    }
+
     pub fn previous(&mut self, len: usize) {
         if len == 0 {
             return;
@@ -97,6 +102,11 @@ impl<T> StatefulTable<T> {
             None => 0,
         };
         self.state.select(Some(i));
+    }
+
+    pub fn previous_item(&mut self) {
+        let len = self.items.len();
+        self.previous(len);
     }
 
     pub fn unselect(&mut self) {

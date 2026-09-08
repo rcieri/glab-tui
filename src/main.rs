@@ -7827,6 +7827,17 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
+                    if keybinding_matches(&app.config.keybindings.global.save_view, &key_event)
+                        && !app.focus_column_checklist
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                    {
+                        app.save_layout(crate::app::SaveMenu::Global);
+                        app.show_error("Saved view configuration to config.toml".to_string());
+                        continue;
+                    }
+
                     if key_event.code == KeyCode::Char(',') && !app.focus_column_checklist {
                         app.focus_column_checklist = true;
                         app.column_checklist_idx = 0;

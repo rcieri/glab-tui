@@ -683,6 +683,8 @@ pub struct KeybindingGlobal {
     pub save_view: String,
     #[serde(default = "def_switch_repo")]
     pub switch_repo: String,
+    #[serde(default = "def_jump_to_id")]
+    pub jump_to_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -963,6 +965,7 @@ keybind_defaults! {
     def_toggle_terminal_wrap = "w",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
+    def_jump_to_id = "g",
 }
 
 impl Default for KeybindingGlobal {
@@ -980,6 +983,7 @@ impl Default for KeybindingGlobal {
             scroll_up: def_scroll_up(),
             save_view: def_save_view(),
             switch_repo: def_switch_repo(),
+            jump_to_id: def_jump_to_id(),
         }
     }
 }

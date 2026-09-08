@@ -2298,6 +2298,7 @@ pub enum TextInputAction {
     },
     CreateBranch(String), // ref_branch name
     EditPageSize,
+    JumpToId,
 }
 
 #[derive(Clone, Debug)]

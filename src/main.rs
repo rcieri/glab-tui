@@ -1921,6 +1921,77 @@ async fn main() -> Result<()> {
                                             });
                                         }
                                     }
+                                    crate::app::TextInputAction::JumpToId => {
+                                        if let Ok(id) = value.trim().parse::<u64>() {
+                                            let mut found = false;
+                                            match app.active_tab {
+                                                app::Tab::Issues => {
+                                                    if let Some(pos) = app
+                                                        .filtered_issues()
+                                                        .iter()
+                                                        .position(|i| i.iid == id)
+                                                    {
+                                                        app.issues.state.select(Some(pos));
+                                                        app.detail_scroll = 0;
+                                                        found = true;
+                                                    }
+                                                }
+                                                app::Tab::MergeRequests => {
+                                                    if let Some(pos) = app
+                                                        .filtered_mrs()
+                                                        .iter()
+                                                        .position(|m| m.iid == id)
+                                                    {
+                                                        app.mrs.state.select(Some(pos));
+                                                        app.detail_scroll = 0;
+                                                        found = true;
+                                                    }
+                                                }
+                                                app::Tab::Pipelines => {
+                                                    if let Some(pos) = app
+                                                        .filtered_pipelines()
+                                                        .iter()
+                                                        .position(|p| p.id == id)
+                                                    {
+                                                        app.pipelines.state.select(Some(pos));
+                                                        app.detail_scroll = 0;
+                                                        found = true;
+                                                    }
+                                                }
+                                                app::Tab::Jobs => {
+                                                    if let Some(pos) = app
+                                                        .filtered_jobs()
+                                                        .iter()
+                                                        .position(|j| j.id == id)
+                                                    {
+                                                        app.jobs.state.select(Some(pos));
+                                                        app.detail_scroll = 0;
+                                                        found = true;
+                                                    }
+                                                }
+                                                app::Tab::Milestones => {
+                                                    if let Some(pos) = app
+                                                        .filtered_milestones()
+                                                        .iter()
+                                                        .position(|m| m.iid == id || m.id == id)
+                                                    {
+                                                        app.milestones.state.select(Some(pos));
+                                                        app.detail_scroll = 0;
+                                                        found = true;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            if !found {
+                                                app.show_error(format!(
+                                                    "Item #{} not found in current view",
+                                                    id
+                                                ));
+                                            }
+                                        } else {
+                                            app.show_error("Invalid ID format".to_string());
+                                        }
+                                    }
                                     crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
                                         if !value.trim().is_empty() {
                                             let branch_name = value.trim().to_string();
@@ -7816,6 +7887,22 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
+                    if keybinding_matches(&app.config.keybindings.global.jump_to_id, &key_event)
+                        && app.text_input.is_none()
+                        && app.edit_menu.is_none()
+                        && app.selector.is_none()
+                        && !app.focus_column_checklist
+                        && !app.is_typing_search
+                    {
+                        app.text_input = Some(crate::app::TextInput {
+                            title: " Jump to ID ".to_string(),
+                            value: String::new(),
+                            cursor_idx: 0,
+                            action: crate::app::TextInputAction::JumpToId,
+                        });
+                        continue;
+                    }
+
                     if keybinding_matches(&app.config.keybindings.global.configure, &key_event)
                         && !app.focus_column_checklist
                         && app.text_input.is_none()
@@ -7918,6 +8005,12 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_jump_to_id_keybinding_defaults() {
+        let config = crate::config::Config::default();
+        assert_eq!(config.keybindings.global.jump_to_id, "g");
+    }
 
     #[test]
     fn test_parse_key_value_pairs() {

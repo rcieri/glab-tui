@@ -141,6 +141,9 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                                 if scroll_down {
                                     new = (new + 1).min(max);
                                 } else {
+                                    if new == 0 {
+                                        break;
+                                    }
                                     new = new.saturating_sub(1);
                                 }
                             }
@@ -4240,6 +4243,20 @@ async fn main() -> Result<()> {
                     }
 
                     if let Some(mut menu) = app.edit_menu.take() {
+                        if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                            && key_event.code == KeyCode::Char('s')
+                        {
+                            menu.editing = false;
+                            let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
+                            if is_new {
+                                menu.selected_idx = menu.fields.len() + 1;
+                            } else {
+                                app.details_zoomed = app.prev_details_zoomed;
+                                app.edit_menu = None;
+                                continue;
+                            }
+                        }
+
                         if menu.editing {
                             match key_event.code {
                                 KeyCode::Esc | KeyCode::Enter => {
@@ -4328,47 +4345,22 @@ async fn main() -> Result<()> {
                                     app.edit_menu = Some(menu);
                                 }
                                 KeyCode::Backspace => {
-                                    let field_name = if menu.selected_idx < menu.fields.len() {
-                                        menu.fields[menu.selected_idx].label.clone()
-                                    } else {
-                                        String::new()
-                                    };
-                                    if field_name == "Title"
-                                        || field_name == "Name"
-                                        || field_name == "Release Name"
-                                        || field_name == "Branch Name"
-                                        || field_name == "Description"
-                                        || field_name == "Release Notes"
-                                    {
-                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                            if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
-                                                .char_indices()
-                                                .next_back()
-                                            {
-                                                f.value.remove(byte_idx);
-                                                menu.cursor_pos = byte_idx;
-                                            }
+                                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                        menu.cursor_pos = menu.cursor_pos.min(f.value.len());
+                                        if let Some((byte_idx, _)) =
+                                            f.value[..menu.cursor_pos].char_indices().next_back()
+                                        {
+                                            f.value.remove(byte_idx);
+                                            menu.cursor_pos = byte_idx;
                                         }
                                     }
                                     app.edit_menu = Some(menu);
                                 }
                                 KeyCode::Delete => {
-                                    let field_name = if menu.selected_idx < menu.fields.len() {
-                                        menu.fields[menu.selected_idx].label.clone()
-                                    } else {
-                                        String::new()
-                                    };
-                                    if field_name == "Title"
-                                        || field_name == "Name"
-                                        || field_name == "Release Name"
-                                        || field_name == "Branch Name"
-                                        || field_name == "Description"
-                                        || field_name == "Release Notes"
-                                    {
-                                        if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
-                                            if menu.cursor_pos < f.value.len() {
-                                                f.value.remove(menu.cursor_pos);
-                                            }
+                                    if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
+                                        menu.cursor_pos = menu.cursor_pos.min(f.value.len());
+                                        if menu.cursor_pos < f.value.len() {
+                                            f.value.remove(menu.cursor_pos);
                                         }
                                     }
                                     app.edit_menu = Some(menu);
@@ -4476,17 +4468,7 @@ async fn main() -> Result<()> {
                                 menu.state.select(Some(menu.selected_idx));
                                 // Reset cursor for inline-editable fields
                                 if menu.selected_idx < menu.fields.len() {
-                                    let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title"
-                                        || label == "Name"
-                                        || label == "Release Name"
-                                        || label == "Branch Name"
-                                        || label == "Description"
-                                        || label == "Release Notes"
-                                    {
-                                        menu.cursor_pos =
-                                            menu.fields[menu.selected_idx].value.len();
-                                    }
+                                    menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
                                 }
                                 app.edit_menu = Some(menu);
                             }
@@ -4529,17 +4511,7 @@ async fn main() -> Result<()> {
                                 menu.state.select(Some(menu.selected_idx));
                                 // Reset cursor for inline-editable fields
                                 if menu.selected_idx < menu.fields.len() {
-                                    let label = &menu.fields[menu.selected_idx].label;
-                                    if label == "Title"
-                                        || label == "Name"
-                                        || label == "Release Name"
-                                        || label == "Branch Name"
-                                        || label == "Description"
-                                        || label == "Release Notes"
-                                    {
-                                        menu.cursor_pos =
-                                            menu.fields[menu.selected_idx].value.len();
-                                    }
+                                    menu.cursor_pos = menu.fields[menu.selected_idx].value.len();
                                 }
                                 app.edit_menu = Some(menu);
                             }

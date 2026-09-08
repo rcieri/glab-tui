@@ -179,11 +179,16 @@ pub fn get_branches() -> Vec<String> {
                     if line.is_empty() {
                         return None;
                     }
-                    let name = line.strip_prefix('*').unwrap_or(line).trim().to_string();
-                    let name = name
-                        .strip_prefix("remotes/origin/")
-                        .unwrap_or(&name)
-                        .to_string();
+                    let name = line.strip_prefix('*').unwrap_or(line).trim();
+                    let name = if let Some(stripped) = name.strip_prefix("remotes/") {
+                        if let Some((_remote, branch_part)) = stripped.split_once('/') {
+                            branch_part.to_string()
+                        } else {
+                            stripped.to_string()
+                        }
+                    } else {
+                        name.to_string()
+                    };
                     if name.is_empty() || name.contains(" -> ") {
                         return None;
                     }

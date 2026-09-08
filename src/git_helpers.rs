@@ -61,9 +61,10 @@ pub fn parse_project_path_from_web_url(web_url: &str) -> Option<String> {
             }
         }
     }
-    if let Some((_, path_part)) = web_url.split_once("github.com/") {
+    let without_scheme = web_url.split_once("://").map(|(_, p)| p).unwrap_or(web_url);
+    if let Some((_, path_part)) = without_scheme.split_once('/') {
         let parts: Vec<&str> = path_part.split('/').collect();
-        if parts.len() >= 2 {
+        if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
             return Some(format!("{}/{}", parts[0], parts[1]));
         }
     }
@@ -274,6 +275,24 @@ pub fn get_workflow_files(is_github: bool) -> Vec<String> {
 mod tests {
     use super::{detect_backend, parse_project_path, parse_remote_host};
     use crate::backend::BackendKind;
+
+    #[test]
+    fn parses_web_url_for_custom_hosts() {
+        assert_eq!(
+            super::parse_project_path_from_web_url(
+                "https://github.mycorp.com/myorg/myrepo/issues/1"
+            )
+            .as_deref(),
+            Some("myorg/myrepo")
+        );
+        assert_eq!(
+            super::parse_project_path_from_web_url(
+                "https://gitlab.mycorp.com/group/subgroup/project/-/issues/1"
+            )
+            .as_deref(),
+            Some("group/subgroup/project")
+        );
+    }
 
     #[test]
     fn parses_remote_hosts() {

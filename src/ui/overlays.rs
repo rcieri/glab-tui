@@ -1248,7 +1248,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Global & Nav",
             key: d(app.config.keybindings.global.submit_edit.clone()),
-            action: "Submit/Save active edit form",
+            action: "Submit active edit form",
         },
         Shortcut {
             category: "Global & Nav",

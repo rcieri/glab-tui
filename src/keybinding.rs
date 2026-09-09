@@ -17,16 +17,68 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
         "PageUp" => event.code == KeyCode::PageUp,
         "PageDown" => event.code == KeyCode::PageDown,
         "F5" => event.code == KeyCode::F(5),
-        other if other.starts_with("Ctrl+") && other.len() == 6 => {
+        "Ctrl+Enter" | "Ctrl+Return" => {
+            (event
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL)
+                && (event.code == KeyCode::Enter
+                    || event.code == KeyCode::Char('j')
+                    || event.code == KeyCode::Char('\n')
+                    || event.code == KeyCode::Char('\r')))
+                || (event.code == KeyCode::Char('\n') && event.modifiers.is_empty())
+        }
+        "Alt+Enter" | "Alt+Return" => {
+            event
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::ALT)
+                && event.code == KeyCode::Enter
+        }
+        other if other.starts_with('F') && other.len() <= 3 => {
+            if let Ok(n) = other[1..].parse::<u8>() {
+                event.code == KeyCode::F(n)
+            } else {
+                false
+            }
+        }
+        other
+            if (other.starts_with("Alt+")
+                || other.starts_with("alt+")
+                || other.starts_with("ALT+"))
+                && other.len() == 5 =>
+        {
+            let c = (other.as_bytes()[4] as char).to_ascii_lowercase();
+            match event.code {
+                KeyCode::Char(ch) => {
+                    ch.to_ascii_lowercase() == c
+                        && event
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::ALT)
+                }
+                _ => false,
+            }
+        }
+        other
+            if (other.starts_with("Ctrl+")
+                || other.starts_with("ctrl+")
+                || other.starts_with("CTRL+"))
+                && other.len() == 6 =>
+        {
             let c = (other.as_bytes()[5] as char).to_ascii_lowercase();
-            let event_c = match event.code {
-                KeyCode::Char(ch) => Some(ch.to_ascii_lowercase()),
-                _ => None,
-            };
-            event_c == Some(c)
-                && event
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL)
+            if c.is_ascii_lowercase() {
+                let ascii_ctrl = (c as u8 - b'a' + 1) as char;
+                match event.code {
+                    KeyCode::Char(ch) => {
+                        (ch.to_ascii_lowercase() == c
+                            && event
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL))
+                            || ch == ascii_ctrl
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
         }
         other if other.len() == 1 => {
             let c = other.chars().next().unwrap();
@@ -73,5 +125,37 @@ mod tests {
     fn ctrl_prefixed_binding_matches_control_modified_key() {
         let event = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
         assert!(keybinding_matches("Ctrl+r", &event));
+        let event_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+x", &event_x));
+        let event_upper_x = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+x", &event_upper_x));
+        let event_ascii_ctrl_x = KeyEvent::new(KeyCode::Char('\x18'), KeyModifiers::NONE);
+        assert!(keybinding_matches("Ctrl+x", &event_ascii_ctrl_x));
+        let event_ascii_ctrl_x_ctrl = KeyEvent::new(KeyCode::Char('\x18'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+x", &event_ascii_ctrl_x_ctrl));
+    }
+
+    #[test]
+    fn alt_prefixed_binding_matches_alt_modified_key() {
+        let event = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
+        assert!(keybinding_matches("Alt+w", &event));
+        let event_upper = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::ALT);
+        assert!(keybinding_matches("Alt+w", &event_upper));
+    }
+
+    #[test]
+    fn ctrl_enter_matches_ctrl_modified_enter() {
+        let event_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+Enter", &event_enter));
+        assert!(keybinding_matches("Ctrl+Return", &event_enter));
+
+        let event_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+Enter", &event_j));
+
+        let event_nl = KeyEvent::new(KeyCode::Char('\n'), KeyModifiers::NONE);
+        assert!(keybinding_matches("Ctrl+Enter", &event_nl));
+
+        let event_unmodified = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!keybinding_matches("Ctrl+Enter", &event_unmodified));
     }
 }

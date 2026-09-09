@@ -971,7 +971,7 @@ keybind_defaults! {
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
-    def_submit_edit = "Ctrl+w",
+    def_submit_edit = "Ctrl+x",
 }
 
 impl Default for KeybindingGlobal {

@@ -279,7 +279,7 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # Remap any keybinding
 [keybindings.global]
 next_tab = "l"
-submit_edit = "Ctrl+w"
+submit_edit = "Ctrl+x"
 # ...
 
 [keybindings.issues]

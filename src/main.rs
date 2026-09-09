@@ -4383,16 +4383,16 @@ async fn main() -> Result<()> {
                     }
 
                     if let Some(mut menu) = app.edit_menu.take() {
-                        let is_ctrl_w = (key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        let is_ctrl_x = (key_event.modifiers.contains(KeyModifiers::CONTROL)
                             && (matches!(
                                 key_event.code,
-                                KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Char('\x17')
+                                KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('\x18')
                             )))
-                            || key_event.code == KeyCode::Char('\x17');
+                            || key_event.code == KeyCode::Char('\x18');
                         let is_submit_edit = keybinding_matches(
                             &app.config.keybindings.global.submit_edit,
                             &key_event,
-                        ) || is_ctrl_w;
+                        ) || is_ctrl_x;
 
                         if !is_submit_edit && menu.editing {
                             match key_event.code {

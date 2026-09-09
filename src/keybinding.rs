@@ -95,14 +95,14 @@ mod tests {
     fn ctrl_prefixed_binding_matches_control_modified_key() {
         let event = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
         assert!(keybinding_matches("Ctrl+r", &event));
-        let event_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
-        assert!(keybinding_matches("Ctrl+w", &event_w));
-        let event_upper_w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::CONTROL);
-        assert!(keybinding_matches("Ctrl+w", &event_upper_w));
-        let event_ascii_ctrl_w = KeyEvent::new(KeyCode::Char('\x17'), KeyModifiers::NONE);
-        assert!(keybinding_matches("Ctrl+w", &event_ascii_ctrl_w));
-        let event_ascii_ctrl_w_ctrl = KeyEvent::new(KeyCode::Char('\x17'), KeyModifiers::CONTROL);
-        assert!(keybinding_matches("Ctrl+w", &event_ascii_ctrl_w_ctrl));
+        let event_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+x", &event_x));
+        let event_upper_x = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+x", &event_upper_x));
+        let event_ascii_ctrl_x = KeyEvent::new(KeyCode::Char('\x18'), KeyModifiers::NONE);
+        assert!(keybinding_matches("Ctrl+x", &event_ascii_ctrl_x));
+        let event_ascii_ctrl_x_ctrl = KeyEvent::new(KeyCode::Char('\x18'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+x", &event_ascii_ctrl_x_ctrl));
     }
 
     #[test]

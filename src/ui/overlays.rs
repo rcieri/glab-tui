@@ -64,7 +64,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let has_filter = selector.field_type != "comment_action_select"
                 && selector.field_type != "review_submit_status"
-                && selector.field_type != "merge_options";
+                && selector.field_type != "merge_options"
+                && selector.field_type != "related_mrs";
 
             let constraints = if has_filter {
                 vec![
@@ -1290,6 +1291,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Issues",
             key: d(app.config.keybindings.issues.create_mr.clone()),
             action: "Create Merge Request from selected Issue",
+        },
+        Shortcut {
+            category: "Issues",
+            key: d(app.config.keybindings.issues.jump_related_mrs.clone()),
+            action: "Jump to related Merge Requests / Pull Requests",
         },
         // ── Merge Requests ──
         Shortcut {

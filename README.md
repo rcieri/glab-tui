@@ -439,6 +439,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `o` | Open selected issue in browser | `open_in_browser` |
 | `Space` | Select issue for bulk editing | `select_issue` |
 | `v` | Toggle select mode (yazi-style contiguous selection) | `selection_toggle` |
+| `M` | Jump to related Merge Requests / Pull Requests (single target jumps directly; multiple targets open a selector) | `jump_related_mrs` |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
 

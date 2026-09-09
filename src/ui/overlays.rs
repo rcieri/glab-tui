@@ -1196,6 +1196,15 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Global & Nav",
             key: d(format!(
+                "{} / {}",
+                app.config.keybindings.global.jump_to_id,
+                app.config.keybindings.global.global_search
+            )),
+            action: "Jump to issue/MR by ID; fetch if not cached",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!(
                 "F5 / Ctrl+R / {}",
                 app.config.keybindings.global.refresh
             )),

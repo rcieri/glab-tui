@@ -349,3 +349,65 @@ pub fn spawn_refresh_active_tab(
         }
     });
 }
+
+/// Fetch a single issue by iid from `project_path` for the "go to issue/MR by
+/// ID" prompt. Suppresses the terminal command log like other background fetches.
+pub fn spawn_fetch_issue(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+    iid: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    let project_path = project_path.to_string();
+    tokio::spawn(async move {
+        let result = domain::issues::get_issue(&client, &project_path, iid).await;
+        let result = result.map(|mut issue| {
+            if issue.project_path.is_empty() {
+                issue.project_path = project_path.clone();
+            }
+            issue
+        });
+        let _ = tx.send(Event::IssueFetched(iid, result.map_err(|e| e.to_string())));
+    });
+}
+
+/// Fetch a single MR/PR by iid from `project_path` for the "go to issue/MR by
+/// ID" prompt. GitLab fills the approval/mergeability axes with the same bulk
+/// GraphQL state query used by the list path; GitHub derives both inside
+/// `gh pr view`. Suppresses the terminal command log like other background fetches.
+pub fn spawn_fetch_mr(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+    iid: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    let project_path = project_path.to_string();
+    tokio::spawn(async move {
+        let result = domain::mr::get_mr(&client, &project_path, iid).await;
+        let result = match result {
+            Ok(mut mr) => {
+                // GitLab: merge the Approval/Mergeable state, then re-derive
+                // the workflow column (it reads from approval state).
+                if !client.is_github {
+                    if let Ok(state) = client.list_mr_state(&project_path, &[iid]).await {
+                        if let Some((approval, mergeability)) = state.get(&iid) {
+                            mr.approval = approval.clone();
+                            mr.mergeability = mergeability.clone();
+                        }
+                    }
+                }
+                if mr.project_path.is_empty() {
+                    mr.project_path = project_path.clone();
+                }
+                derive_workflow(std::slice::from_mut(&mut mr));
+                Ok(mr)
+            }
+            Err(e) => Err(e),
+        };
+        let _ = tx.send(Event::MrFetched(iid, result.map_err(|e| e.to_string())));
+    });
+}

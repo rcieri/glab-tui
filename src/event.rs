@@ -62,6 +62,10 @@ pub enum Event {
         issue_iid: u64,
         result: Result<Vec<crate::domain::issues::RelatedMrRef>, String>,
     },
+    /// Single item fetched by the "go to issue/MR by ID" prompt. `Ok` carries
+    /// the item so the handler can insert it into the loaded set if absent.
+    IssueFetched(u64, Result<crate::domain::issues::Issue, String>),
+    MrFetched(u64, Result<crate::domain::mr::MergeRequest, String>),
 }
 
 #[derive(Debug)]

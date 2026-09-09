@@ -2300,7 +2300,6 @@ pub enum TextInputAction {
     },
     CreateBranch(String), // ref_branch name
     EditPageSize,
-    JumpToId,
 }
 
 #[derive(Clone, Debug)]
@@ -2309,6 +2308,49 @@ pub struct TextInput {
     pub value: String,
     pub cursor_idx: usize,
     pub action: TextInputAction,
+}
+
+/// Target kind parsed from the "go to issue/MR by ID" prompt value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JumpKind {
+    Issue,
+    Mr,
+}
+
+/// Parse a "jump to issue/MR by ID" prompt value into an optional target kind
+/// plus a numeric ID. Supported forms: `#123` / `issue 123` (issue),
+/// `!123` / `mr 123` / `pr 123` (merge request), and a bare `123` which stays
+/// scoped to the active tab (`None` kind). Returns `None` when the value
+/// cannot be interpreted as an ID.
+pub fn parse_jump_input(input: &str) -> Option<(Option<JumpKind>, u64)> {
+    let raw = input.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let (kind, digits) = if let Some(rest) = raw.strip_prefix('#') {
+        (Some(JumpKind::Issue), rest)
+    } else if let Some(rest) = raw.strip_prefix('!') {
+        (Some(JumpKind::Mr), rest)
+    } else if let Some((word, num)) = raw.split_once(char::is_whitespace) {
+        if word.eq_ignore_ascii_case("issue") || word.eq_ignore_ascii_case("issues") {
+            (Some(JumpKind::Issue), num)
+        } else if word.eq_ignore_ascii_case("mr")
+            || word.eq_ignore_ascii_case("mrs")
+            || word.eq_ignore_ascii_case("pr")
+            || word.eq_ignore_ascii_case("prs")
+        {
+            (Some(JumpKind::Mr), num)
+        } else {
+            return None;
+        }
+    } else {
+        (None, raw)
+    };
+    let id: u64 = digits.trim().parse().ok()?;
+    if id == 0 {
+        return None;
+    }
+    Some((kind, id))
 }
 
 #[derive(Clone, Debug)]
@@ -3195,6 +3237,52 @@ impl App {
         let old = std::mem::replace(&mut self.scope, crate::scope::Scope::Repository(repo));
         self.prev_scope = Some(old);
         self.reset_on_scope_change();
+    }
+
+    /// Clear the fuzzy-search query and the given tab's column filters so a
+    /// target row stays visible regardless of active filtering.
+    fn clear_tab_filters(&mut self, tab: Tab) {
+        self.search_query.clear();
+        self.column_filters.remove(&tab);
+    }
+
+    /// Switch to the Issues tab, drop filters that would hide the target, and
+    /// select + preview `iid`. Returns whether the item is already loaded.
+    pub fn focus_issue(&mut self, iid: u64) -> bool {
+        self.active_tab = Tab::Issues;
+        self.clear_tab_filters(Tab::Issues);
+        let idx = {
+            let filtered = self.filtered_issues();
+            filtered.iter().position(|i| i.iid == iid)
+        };
+        if let Some(idx) = idx {
+            self.issues.state.select(Some(idx));
+            self.detail_scroll = 0;
+            self.details_zoomed = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Switch to the MergeRequests tab, drop filters that would hide the
+    /// target, and select + preview `iid`. Returns whether the item is already
+    /// loaded.
+    pub fn focus_mr(&mut self, iid: u64) -> bool {
+        self.active_tab = Tab::MergeRequests;
+        self.clear_tab_filters(Tab::MergeRequests);
+        let idx = {
+            let filtered = self.filtered_mrs();
+            filtered.iter().position(|m| m.iid == iid)
+        };
+        if let Some(idx) = idx {
+            self.mrs.state.select(Some(idx));
+            self.detail_scroll = 0;
+            self.details_zoomed = false;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn project_path_for_issue(&self, iid: u64) -> String {
@@ -5769,6 +5857,50 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_jump_input_handles_issue_forms() {
+        assert_eq!(parse_jump_input("#123"), Some((Some(JumpKind::Issue), 123)));
+        assert_eq!(
+            parse_jump_input("issue 42"),
+            Some((Some(JumpKind::Issue), 42))
+        );
+        assert_eq!(
+            parse_jump_input("issues 7"),
+            Some((Some(JumpKind::Issue), 7))
+        );
+        assert_eq!(
+            parse_jump_input("  #99  "),
+            Some((Some(JumpKind::Issue), 99))
+        );
+    }
+
+    #[test]
+    fn parse_jump_input_handles_mr_forms() {
+        assert_eq!(parse_jump_input("!321"), Some((Some(JumpKind::Mr), 321)));
+        assert_eq!(parse_jump_input("mr 12"), Some((Some(JumpKind::Mr), 12)));
+        assert_eq!(parse_jump_input("mrs 5"), Some((Some(JumpKind::Mr), 5)));
+        assert_eq!(parse_jump_input("pr 3"), Some((Some(JumpKind::Mr), 3)));
+        assert_eq!(parse_jump_input("prs 8"), Some((Some(JumpKind::Mr), 8)));
+    }
+
+    #[test]
+    fn parse_jump_input_handles_bare_ids() {
+        assert_eq!(parse_jump_input("123"), Some((None, 123)));
+        assert_eq!(parse_jump_input("0"), None);
+    }
+
+    #[test]
+    fn parse_jump_input_rejects_invalid_input() {
+        assert_eq!(parse_jump_input(""), None);
+        assert_eq!(parse_jump_input("  "), None);
+        assert_eq!(parse_jump_input("abc"), None);
+        assert_eq!(parse_jump_input("#abc"), None);
+        assert_eq!(parse_jump_input("!0"), None);
+        assert_eq!(parse_jump_input("issue"), None);
+        assert_eq!(parse_jump_input("123abc"), None);
+        assert_eq!(parse_jump_input("#123abc"), None);
+    }
 
     #[test]
     fn selected_issue_reference_uses_the_highlighted_issue() {

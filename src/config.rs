@@ -1338,6 +1338,7 @@ prev_tab = "h"
 scroll_down = "J"
 scroll_up = "K"
 save_view = "s"
+jump_to_id = "g"
 
 [keybindings.issues]
 create_issue = "n"

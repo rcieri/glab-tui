@@ -4384,7 +4384,14 @@ async fn main() -> Result<()> {
 
                         if is_submit_edit {
                             menu.editing = false;
-                            menu.selected_idx = menu.fields.len() + 1;
+                            let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
+                            if is_new {
+                                menu.selected_idx = menu.fields.len() + 1;
+                            } else {
+                                app.details_zoomed = app.prev_details_zoomed;
+                                app.edit_menu = None;
+                                continue;
+                            }
                         }
 
                         if key_event.modifiers.contains(KeyModifiers::CONTROL)
@@ -4671,7 +4678,7 @@ async fn main() -> Result<()> {
                                     ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
                                         && key_event.code == KeyCode::Enter);
                                 let is_on_submit = (menu.selected_idx == menu.fields.len() + 1)
-                                    || (is_new_entity && is_submit_edit_key);
+                                    || is_submit_edit_key;
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {

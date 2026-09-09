@@ -2241,7 +2241,7 @@ impl Backend for GhBackend {
     async fn fetch_labels(&self, scope: &Scope, _per_request: usize) -> Result<Vec<Label>> {
         let repo_arg = match scope {
             Scope::Repository(project) => project.as_str(),
-            Scope::Group(org) => org.as_str(),
+            Scope::Group(_org) => return Ok(vec![]),
         };
         let raw = self
             .run_gh(

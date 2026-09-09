@@ -53,9 +53,27 @@ pub async fn handle_active_tab_key(
                     String::new(),
                     is_github,
                 );
+                let project = if app.scope.is_group() {
+                    app.issues
+                        .state
+                        .selected()
+                        .and_then(|idx| app.issues.items.get(idx))
+                        .map(|i| {
+                            if !i.project_path.is_empty() {
+                                i.project_path.clone()
+                            } else {
+                                crate::git_helpers::parse_project_path_from_web_url(&i.web_url)
+                                    .unwrap_or_default()
+                            }
+                        })
+                        .filter(|p| !p.is_empty())
+                        .unwrap_or_else(|| app.scope.as_str().to_string())
+                } else {
+                    app.scope.as_str().to_string()
+                };
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Issue".to_string(),
-                    entity_project: app.scope.as_str().to_string(),
+                    entity_project: project,
                     fields,
                     initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
@@ -326,9 +344,29 @@ pub async fn handle_active_tab_key(
                     String::new(),
                     is_github,
                 );
+                let project = if app.scope.is_group() {
+                    app.mrs
+                        .state
+                        .selected()
+                        .and_then(|idx| app.mrs.items.get(idx))
+                        .map(|m| {
+                            if !m.project_path.is_empty() {
+                                m.project_path.clone()
+                            } else {
+                                m.web_url
+                                    .as_deref()
+                                    .and_then(crate::git_helpers::parse_project_path_from_web_url)
+                                    .unwrap_or_default()
+                            }
+                        })
+                        .filter(|p| !p.is_empty())
+                        .unwrap_or_else(|| app.scope.as_str().to_string())
+                } else {
+                    app.scope.as_str().to_string()
+                };
                 app.open_edit_menu(crate::app::EditMenu {
                     title: format!("Create {}", pr_suffix),
-                    entity_project: app.scope.as_str().to_string(),
+                    entity_project: project,
                     fields,
                     initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,

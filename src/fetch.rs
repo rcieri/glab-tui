@@ -143,15 +143,42 @@ pub fn spawn_refresh_active_tab(
                         // GitHub already populated both axes during list_mrs.
                         // GitLab needs one bulk GraphQL call for the same iids.
                         if !client.is_github && !mrs.is_empty() {
-                            let iids: Vec<u64> = mrs.iter().map(|m| m.iid).collect();
-                            // A failure here leaves both axes None, which renders
-                            // as "—". Deliberately not surfaced as an error: on an
-                            // unsupported GitLab this would fire every refresh.
-                            if let Ok(state) = client.list_mr_state(&repo_path, &iids).await {
-                                for mr in mrs.iter_mut() {
-                                    if let Some((approval, mergeability)) = state.get(&mr.iid) {
-                                        mr.approval = approval.clone();
-                                        mr.mergeability = mergeability.clone();
+                            let mut by_project: std::collections::HashMap<String, Vec<u64>> =
+                                std::collections::HashMap::new();
+                            for mr in mrs.iter() {
+                                let proj =
+                                    if !mr.project_path.is_empty() {
+                                        mr.project_path.clone()
+                                    } else if let Some(p) = mr.web_url.as_deref().and_then(
+                                        crate::git_helpers::parse_project_path_from_web_url,
+                                    ) {
+                                        p
+                                    } else {
+                                        repo_path.clone()
+                                    };
+                                by_project.entry(proj).or_default().push(mr.iid);
+                            }
+                            for (proj, iids) in by_project {
+                                if let Ok(state) = client.list_mr_state(&proj, &iids).await {
+                                    for mr in mrs.iter_mut() {
+                                        let mr_proj = if !mr.project_path.is_empty() {
+                                            mr.project_path.clone()
+                                        } else {
+                                            mr.web_url
+                                                .as_deref()
+                                                .and_then(
+                                                    crate::git_helpers::parse_project_path_from_web_url,
+                                                )
+                                                .unwrap_or_default()
+                                        };
+                                        if mr_proj == proj || scope.is_repository() {
+                                            if let Some((approval, mergeability)) =
+                                                state.get(&mr.iid)
+                                            {
+                                                mr.approval = approval.clone();
+                                                mr.mergeability = mergeability.clone();
+                                            }
+                                        }
                                     }
                                 }
                             }

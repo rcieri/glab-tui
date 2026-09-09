@@ -403,9 +403,9 @@ fn render_submit_footer(
     let is_new_entity = menu.is_new();
     let submit_idx = menu.fields.len() + 1;
     let btn_text = if is_new_entity {
-        format!(" {} Submit ", icons.check_on)
+        format!(" {} Submit (Ctrl+w) ", icons.check_on)
     } else {
-        format!(" {} Save ", icons.check_on)
+        format!(" {} Save (Ctrl+w) ", icons.check_on)
     };
     let is_submit_selected = menu.selected_idx == submit_idx;
     let submit_fg = if is_submit_selected {

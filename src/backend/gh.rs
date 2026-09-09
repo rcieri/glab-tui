@@ -618,9 +618,17 @@ impl Backend for GhBackend {
                 args.extend(["--milestone".into(), milestone.clone()]);
             }
         }
-        // Note: GitHub issues do not support due dates at the REST API level
-        // (`gh issue edit` has no `--due-date` flag). The `due_date` field in
-        // `IssueUpdate` is GitLab-specific and is intentionally ignored here.
+        if update.due_date.is_some()
+            && update.title.is_none()
+            && update.description.is_none()
+            && update.add_labels.is_empty()
+            && update.remove_labels.is_empty()
+            && update.add_assignees.is_empty()
+            && update.remove_assignees.is_empty()
+            && update.milestone.is_none()
+        {
+            anyhow::bail!("GitHub issues do not support due dates");
+        }
         let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
         self.run_gh(&args_refs, "UPDATING ISSUE").await?;
         Ok(())
@@ -1356,16 +1364,33 @@ impl Backend for GhBackend {
     ) -> Result<Vec<Pipeline>> {
         match scope {
             Scope::Repository(project) => {
-                let per_page = (page_size * 10).clamp(1, 100);
-                let endpoint = format!("repos/{project}/actions/runs?per_page={per_page}");
-                let raw = self.run_gh(&["api", &endpoint], "Fetching Actions").await?;
-
-                let mut runs = parse_github_actions_runs(&raw)?;
-                for run in &mut runs {
-                    if run.project_path.is_empty() {
-                        run.project_path = project.to_string();
+                let mut runs = Vec::new();
+                let limit = page_size.max(1);
+                let per_page = limit.min(100);
+                let mut page = 1;
+                while runs.len() < limit {
+                    let endpoint =
+                        format!("repos/{project}/actions/runs?per_page={per_page}&page={page}");
+                    let Ok(raw) = self.run_gh(&["api", &endpoint], "Fetching Actions").await else {
+                        break;
+                    };
+                    let fetched = parse_github_actions_runs(&raw)?;
+                    if fetched.is_empty() {
+                        break;
                     }
+                    let count = fetched.len();
+                    for mut run in fetched {
+                        if run.project_path.is_empty() {
+                            run.project_path = project.to_string();
+                        }
+                        runs.push(run);
+                    }
+                    if count < per_page {
+                        break;
+                    }
+                    page += 1;
                 }
+                runs.truncate(limit);
                 Ok(runs)
             }
             Scope::Group(org) => {
@@ -1641,27 +1666,21 @@ impl Backend for GhBackend {
             .collect())
     }
 
-    async fn pause_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
-        anyhow::bail!(
-            "GitHub runner management requires a repository path; trait method lacks project parameter"
-        )
+    async fn pause_runner(&self, _project: &str, _runner_id: u64) -> Result<()> {
+        anyhow::bail!("Runner management (pause/resume/edit) is not supported for GitHub runners")
     }
 
-    async fn resume_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
-        anyhow::bail!(
-            "GitHub runner management requires a repository path; trait method lacks project parameter"
-        )
+    async fn resume_runner(&self, _project: &str, _runner_id: u64) -> Result<()> {
+        anyhow::bail!("Runner management (pause/resume/edit) is not supported for GitHub runners")
     }
 
     async fn update_runner_description(
         &self,
         _project: &str,
-        runner_id: u64,
-        description: &str,
+        _runner_id: u64,
+        _description: &str,
     ) -> Result<()> {
-        anyhow::bail!(
-            "GitHub runner management requires a repository path; trait method lacks project parameter"
-        )
+        anyhow::bail!("Runner management (pause/resume/edit) is not supported for GitHub runners")
     }
 
     // ── Releases ──
@@ -1962,7 +1981,7 @@ impl Backend for GhBackend {
                 let iso_due = if due.contains('T') {
                     due.to_string()
                 } else {
-                    format!("{}T23:59:59Z", due)
+                    format!("{}T00:00:00Z", due)
                 };
                 args.push("-f".into());
                 args.push(format!("due_on={}", iso_due));
@@ -2530,6 +2549,14 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
         triggering_actor: Option<GhActor>,
         #[serde(default)]
         html_url: Option<String>,
+        #[serde(default)]
+        repository: Option<GhRepo>,
+    }
+
+    #[derive(Deserialize)]
+    struct GhRepo {
+        #[serde(default)]
+        full_name: String,
     }
 
     #[derive(Deserialize)]
@@ -2568,6 +2595,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     .and_then(|a| a.login)
                     .or_else(|| r.actor.and_then(|a| a.login))
                     .unwrap_or_default();
+                let project_path = r.repository.map(|repo| repo.full_name).unwrap_or_default();
                 Pipeline {
                     id: r.id,
                     status,
@@ -2581,7 +2609,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     duration_seconds: duration,
                     created_at: r.created_at,
                     source: r.event,
-                    project_path: String::new(),
+                    project_path,
                     web_url: r.html_url,
                 }
             })

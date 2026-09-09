@@ -770,7 +770,27 @@ impl Selector {
             .iter()
             .any(|item| item.to_lowercase() == query.to_lowercase());
         if !exact_match {
-            items.push((format!("+ Create \"{}\"", query), None));
+            if self.field_type == "jump_to_id" {
+                if let Some((kind, id)) = parse_jump_input(query) {
+                    let loaded = self.all_items.iter().any(|item| {
+                        let parsed = item
+                            .split(':')
+                            .next()
+                            .and_then(|p| parse_jump_input(p));
+                        matches!(parsed, Some((k, iid)) if iid == id && (kind.is_none() || k == kind))
+                    });
+                    if !loaded {
+                        let label = match kind {
+                            Some(JumpKind::Issue) => format!("#{id}"),
+                            Some(JumpKind::Mr) => format!("!{id}"),
+                            None => format!("#{id} / !{id}"),
+                        };
+                        items.push((format!("+ Fetch {label} from API"), None));
+                    }
+                }
+            } else {
+                items.push((format!("+ Create \"{}\"", query), None));
+            }
         }
         items
     }

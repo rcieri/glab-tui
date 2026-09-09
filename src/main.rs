@@ -2852,21 +2852,9 @@ async fn main() -> Result<()> {
                                                 }
                                             };
                                         let parse_row_kind = |val: &str| {
-                                            if let Some(rest) = val.strip_prefix("Issue #") {
-                                                rest.split(':').next().and_then(|s| {
-                                                    s.trim().parse::<u64>().ok().map(|id| {
-                                                        (Some(crate::app::JumpKind::Issue), id)
-                                                    })
-                                                })
-                                            } else if let Some(rest) = val.strip_prefix("MR !") {
-                                                rest.split(':').next().and_then(|s| {
-                                                    s.trim().parse::<u64>().ok().map(|id| {
-                                                        (Some(crate::app::JumpKind::Mr), id)
-                                                    })
-                                                })
-                                            } else {
-                                                None
-                                            }
+                                            crate::app::parse_jump_input(
+                                                val.split(':').next().unwrap_or(val).trim(),
+                                            )
                                         };
                                         let query_val = selector.search_query.trim().to_string();
                                         let mut handled = false;
@@ -7935,10 +7923,10 @@ async fn main() -> Result<()> {
                     {
                         let mut items = Vec::new();
                         for issue in &app.issues.items {
-                            items.push(format!("Issue #{}: {}", issue.iid, issue.title));
+                            items.push(format!("#{}: {}", issue.iid, issue.title));
                         }
                         for mr in &app.mrs.items {
-                            items.push(format!("MR !{}: {}", mr.iid, mr.title));
+                            items.push(format!("!{}: {}", mr.iid, mr.title));
                         }
 
                         app.selector = Some(crate::app::Selector {

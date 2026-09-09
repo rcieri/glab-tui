@@ -677,7 +677,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             .border_style(Style::default().fg(THEME.read().unwrap().border_focused))
             .style(Style::default().bg(THEME.read().unwrap().bg))
             .title(format!(
-                " {} Configure View: {} (Enter to filter) ",
+                " {} Configure View: {}",
                 icons.label_configure,
                 tab.title(kind)
             ))

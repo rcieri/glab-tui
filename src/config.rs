@@ -685,6 +685,8 @@ pub struct KeybindingGlobal {
     pub switch_repo: String,
     #[serde(default = "def_jump_to_id")]
     pub jump_to_id: String,
+    #[serde(default = "def_submit_edit")]
+    pub submit_edit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -969,6 +971,7 @@ keybind_defaults! {
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
+    def_submit_edit = "Ctrl+Enter",
 }
 
 impl Default for KeybindingGlobal {
@@ -987,6 +990,7 @@ impl Default for KeybindingGlobal {
             save_view: def_save_view(),
             switch_repo: def_switch_repo(),
             jump_to_id: def_jump_to_id(),
+            submit_edit: def_submit_edit(),
         }
     }
 }

@@ -4375,6 +4375,18 @@ async fn main() -> Result<()> {
                     }
 
                     if let Some(mut menu) = app.edit_menu.take() {
+                        let is_submit_edit =
+                            keybinding_matches(
+                                &app.config.keybindings.global.submit_edit,
+                                &key_event,
+                            ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
+                                && key_event.code == KeyCode::Enter);
+
+                        if is_submit_edit {
+                            menu.editing = false;
+                            menu.selected_idx = menu.fields.len() + 1;
+                        }
+
                         if key_event.modifiers.contains(KeyModifiers::CONTROL)
                             && key_event.code == KeyCode::Char('s')
                         {
@@ -4652,7 +4664,14 @@ async fn main() -> Result<()> {
                                 let entity_type = menu.entity_kind.legacy_string();
                                 let is_new_entity =
                                     entity_iid == 0 || entity_type.starts_with("new_");
-                                let is_on_submit = menu.selected_idx == menu.fields.len() + 1;
+                                let is_submit_edit_key =
+                                    keybinding_matches(
+                                        &app.config.keybindings.global.submit_edit,
+                                        &key_event,
+                                    ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
+                                        && key_event.code == KeyCode::Enter);
+                                let is_on_submit = (menu.selected_idx == menu.fields.len() + 1)
+                                    || (is_new_entity && is_submit_edit_key);
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {

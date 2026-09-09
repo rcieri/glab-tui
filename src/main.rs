@@ -4389,8 +4389,6 @@ async fn main() -> Result<()> {
                                 &key_event,
                             ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
                                 && (key_event.code == KeyCode::Enter
-                                    || key_event.code == KeyCode::Char('m')
-                                    || key_event.code == KeyCode::Char('j')
                                     || key_event.code == KeyCode::Char('\n')
                                     || key_event.code == KeyCode::Char('\r')));
 

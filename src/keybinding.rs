@@ -22,8 +22,6 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
                 .modifiers
                 .contains(crossterm::event::KeyModifiers::CONTROL)
                 && (event.code == KeyCode::Enter
-                    || event.code == KeyCode::Char('m')
-                    || event.code == KeyCode::Char('j')
                     || event.code == KeyCode::Char('\n')
                     || event.code == KeyCode::Char('\r'))
         }
@@ -90,9 +88,6 @@ mod tests {
         let event_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
         assert!(keybinding_matches("Ctrl+Enter", &event_enter));
         assert!(keybinding_matches("Ctrl+Return", &event_enter));
-
-        let event_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
-        assert!(keybinding_matches("Ctrl+Enter", &event_j));
 
         let event_unmodified = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert!(!keybinding_matches("Ctrl+Enter", &event_unmodified));

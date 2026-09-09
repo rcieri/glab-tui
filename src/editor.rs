@@ -31,6 +31,7 @@ pub fn edit_in_editor_with_suffix(
             std::io::stdout(),
             crossterm::terminal::LeaveAlternateScreen,
             crossterm::event::DisableMouseCapture,
+            crossterm::event::PopKeyboardEnhancementFlags,
         )
         .ok()?;
 
@@ -60,6 +61,9 @@ pub fn edit_in_editor_with_suffix(
         std::io::stdout(),
         crossterm::terminal::EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        ),
     );
     while crossterm::event::poll(std::time::Duration::from_secs(0)).unwrap_or(false) {
         let _ = crossterm::event::read();

@@ -22,7 +22,10 @@ pub mod utils;
 use anyhow::Result;
 use app::{App, SaveMenu};
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -628,7 +631,12 @@ async fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -4383,7 +4391,6 @@ async fn main() -> Result<()> {
                                 && (key_event.code == KeyCode::Enter
                                     || key_event.code == KeyCode::Char('m')
                                     || key_event.code == KeyCode::Char('j')
-                                    || key_event.code == KeyCode::Char('s')
                                     || key_event.code == KeyCode::Char('\n')
                                     || key_event.code == KeyCode::Char('\r')));
 
@@ -8041,7 +8048,8 @@ async fn main() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        PopKeyboardEnhancementFlags
     )?;
     terminal.show_cursor()?;
 

@@ -669,8 +669,20 @@ pub fn apply_field_text_change(
         if let Some(item) = app.milestones.items.iter_mut().find(|m| m.iid == iid) {
             match field_type {
                 "title" => item.title = value.clone(),
-                "start_date" => item.start_date = Some(value.clone()),
-                "due_date" => item.due_date = Some(value.clone()),
+                "start_date" => {
+                    item.start_date = if value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(value.clone())
+                    }
+                }
+                "due_date" => {
+                    item.due_date = if value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(value.clone())
+                    }
+                }
                 "description" => item.description = Some(value.clone()),
                 _ => {}
             }
@@ -684,8 +696,20 @@ pub fn apply_field_text_change(
 
             match field_type {
                 "title" => title = value.clone(),
-                "start_date" => start_date = Some(value.clone()),
-                "due_date" => due_date = Some(value.clone()),
+                "start_date" => {
+                    start_date = if value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(value.clone())
+                    }
+                }
+                "due_date" => {
+                    due_date = if value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(value.clone())
+                    }
+                }
                 "description" => description = value.clone(),
                 _ => {}
             }

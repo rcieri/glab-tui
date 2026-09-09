@@ -75,7 +75,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Columns Config Modal** — press `Tab` / `,` to open a centered popup overlay to toggle column visibility (`Space`), group by any column, set sort order, page size, and theme
 - **Value-based Column Filtering** — press `Enter` on any column inside the configure popup to filter rows by that column's values (e.g. Issues → `State` → `opened`); multi-select supports multiple values per column
 - **Live Search** — fuzzy-filter across all visible columns by pressing `/`
-- **Global Search** — press `Ctrl+P` to fuzzy-search across all loaded issues and MRs from any tab
+- **Jump to issue/MR by ID** — press `g` from any tab to jump straight to an issue/MR by ID (rows show as `#123` / `!456`); type an ID such as `#123` or `!456` into the fuzzy search — rows not already loaded are fetched from the API
 - **Switch Repository** — press `Ctrl+S` to switch to another local repository without restarting
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus

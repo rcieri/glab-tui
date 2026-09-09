@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- **Jump to issue/MR by ID** — Press `g` (`keybindings.global.jump_to_id`) from any tab to open an ID-focused search over issues and MRs (rows shown compactly as `#123: title` / `!456: title`). Pick a listed item, or type an ID (`#123` issue, `!123` MR, bare `123` scoped to the active tab); an ID that isn't already loaded is fetched directly from the API. The fuzzy searcher shows a `+ Fetch … from API` row for such IDs instead of the generic `+ Create` row (#434).
 - **Jump to related MRs/PRs from the Issue preview** — Added a backend-aware "Related Merge Requests" / "Related Pull Requests" row to the issue preview. The closing relationship is fetched eagerly (`glab api projects/.../issues/<iid>/closed_by` on GitLab, `gh api graphql` over `closedByPullRequestsReferences` on GitHub). Press `M` (`keybindings.issues.jump_related_mrs`) to jump straight to the single MR/PR, or pick from a selector list when there are several — even when the target is currently filtered out of the MR/PR table (#409).
 - **Shortcut to submit edit forms** — Configurable global shortcut `submit_edit = "Ctrl+x"` to submit/save Issue/MR/Milestone/Release edit and create forms from anywhere in the form, including while actively editing text boxes (#410).
 

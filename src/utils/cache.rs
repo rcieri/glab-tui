@@ -26,6 +26,15 @@ pub struct ProjectCache {
     /// Files marked as reviewed in the diff view, keyed by MR/PR iid.
     #[serde(default)]
     pub reviewed_files: HashMap<u64, Vec<String>>,
+    #[serde(default)]
+    pub enabled_columns: HashMap<crate::app::Tab, std::collections::HashSet<String>>,
+    #[serde(default)]
+    pub group_by_column: HashMap<crate::app::Tab, Option<String>>,
+    #[serde(default)]
+    pub group_ascending: HashMap<crate::app::Tab, bool>,
+    #[serde(default)]
+    pub column_filters:
+        HashMap<crate::app::Tab, HashMap<String, std::collections::HashSet<String>>>,
 }
 
 fn get_cache_file_path(project_context: &str) -> PathBuf {

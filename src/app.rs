@@ -224,7 +224,9 @@ fn syntect_style_to_ratatui(style: SyntectStyle) -> ratatui::style::Style {
 
 pub use crate::config::SaveMenu;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Tab {
     #[default]
     Issues,

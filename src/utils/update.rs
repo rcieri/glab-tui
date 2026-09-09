@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::fs;
+use std::path::PathBuf;
 use tempfile::tempdir;
 
 fn read_linux_distro() -> Option<String> {
@@ -216,18 +217,33 @@ pub async fn perform_self_update() -> Result<bool> {
         }
     }
 
+    fn find_file_recursive(dir: &std::path::Path, target_name: &str) -> Option<PathBuf> {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.file_name().map_or(false, |n| n == target_name) {
+                    return Some(path);
+                } else if path.is_dir() {
+                    if let Some(found) = find_file_recursive(&path, target_name) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     let exe_filename = if target_os == "windows" {
         "glab-tui.exe"
     } else {
         "glab-tui"
     };
-    let new_bin_path = extract_dir.join(exe_filename);
-    if !new_bin_path.exists() {
-        anyhow::bail!(
-            "Extracted binary not found at expected path: {:?}",
-            new_bin_path
-        );
-    }
+    let new_bin_path = find_file_recursive(&extract_dir, exe_filename).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Extracted binary `{}` not found inside archive",
+            exe_filename
+        )
+    })?;
 
     let current_exe = std::env::current_exe()?;
 
@@ -235,14 +251,21 @@ pub async fn perform_self_update() -> Result<bool> {
     old_exe.set_extension("old");
     let _ = fs::rename(&current_exe, &old_exe);
 
-    fs::copy(&new_bin_path, &current_exe)?;
+    let install_res = (|| -> Result<()> {
+        fs::copy(&new_bin_path, &current_exe)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&current_exe)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&current_exe, perms)?;
+        }
+        Ok(())
+    })();
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&current_exe)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&current_exe, perms)?;
+    if let Err(e) = install_res {
+        let _ = fs::rename(&old_exe, &current_exe);
+        return Err(e).context("Failed to install update; original binary restored");
     }
 
     let _ = fs::remove_file(old_exe);

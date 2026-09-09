@@ -81,6 +81,44 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
     pairs
 }
 
+/// "go to issue/MR by ID": when the target item isn't already loaded, kick off
+/// a direct API lookup. Group scopes can't resolve a bare project item, so
+/// surface a hint instead of silently failing.
+fn jump_to_unloaded_issue(app: &mut App, iid: u64, events: &EventHandler) {
+    if app.scope.is_group() {
+        app.show_error(format!(
+            "Issue #{} isn't loaded and direct lookup needs a repository scope. Navigate to its project first.",
+            iid
+        ));
+        return;
+    }
+    let Some(client) = app.gitlab_client.clone() else {
+        app.show_error("No active backend to look up the issue.".to_string());
+        return;
+    };
+    let project = app.scope.as_str().to_string();
+    crate::fetch::spawn_fetch_issue(&client, &project, iid, events.sender());
+}
+
+/// "go to issue/MR by ID": when the target MR/PR isn't already loaded, kick off
+/// a direct API lookup. Group scopes can't resolve a bare project item, so
+/// surface a hint instead of silently failing.
+fn jump_to_unloaded_mr(app: &mut App, iid: u64, events: &EventHandler) {
+    if app.scope.is_group() {
+        app.show_error(format!(
+            "MR #{} isn't loaded and direct lookup needs a repository scope. Navigate to its project first.",
+            iid
+        ));
+        return;
+    }
+    let Some(client) = app.gitlab_client.clone() else {
+        app.show_error("No active backend to look up the MR.".to_string());
+        return;
+    };
+    let project = app.scope.as_str().to_string();
+    crate::fetch::spawn_fetch_mr(&client, &project, iid, events.sender());
+}
+
 fn rect_contains(rect: ratatui::layout::Rect, row: u16, col: u16) -> bool {
     col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
 }
@@ -1107,6 +1145,31 @@ async fn main() -> Result<()> {
                     app.project_cache.mrs = app.mrs.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
+                Event::IssueFetched(iid, Ok(issue)) => {
+                    if !app.issues.items.iter().any(|i| i.iid == iid) {
+                        app.issues.items.push(issue);
+                        app.update_filter_selection();
+                    }
+                    app.focus_issue(iid);
+                    crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
+                    app.project_cache.issues = app.issues.items.clone();
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::IssueFetched(iid, Err(err)) => {
+                    app.show_error(format!("Failed to fetch issue #{}: {}", iid, err));
+                }
+                Event::MrFetched(iid, Ok(mr)) => {
+                    if !app.mrs.items.iter().any(|m| m.iid == iid) {
+                        app.mrs.items.push(mr);
+                        app.update_filter_selection();
+                    }
+                    app.focus_mr(iid);
+                    app.project_cache.mrs = app.mrs.items.clone();
+                    crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::MrFetched(iid, Err(err)) => {
+                    app.show_error(format!("Failed to fetch MR #{}: {}", iid, err));
+                }
                 Event::PipelinesFetched(pipelines) => {
                     app.complete_loading_tab(app::Tab::Pipelines, "Success");
                     app.loaded_tabs.insert(app::Tab::Pipelines);
@@ -1955,77 +2018,6 @@ async fn main() -> Result<()> {
                                             });
                                         }
                                     }
-                                    crate::app::TextInputAction::JumpToId => {
-                                        if let Ok(id) = value.trim().parse::<u64>() {
-                                            let mut found = false;
-                                            match app.active_tab {
-                                                app::Tab::Issues => {
-                                                    if let Some(pos) = app
-                                                        .filtered_issues()
-                                                        .iter()
-                                                        .position(|i| i.iid == id)
-                                                    {
-                                                        app.issues.state.select(Some(pos));
-                                                        app.detail_scroll = 0;
-                                                        found = true;
-                                                    }
-                                                }
-                                                app::Tab::MergeRequests => {
-                                                    if let Some(pos) = app
-                                                        .filtered_mrs()
-                                                        .iter()
-                                                        .position(|m| m.iid == id)
-                                                    {
-                                                        app.mrs.state.select(Some(pos));
-                                                        app.detail_scroll = 0;
-                                                        found = true;
-                                                    }
-                                                }
-                                                app::Tab::Pipelines => {
-                                                    if let Some(pos) = app
-                                                        .filtered_pipelines()
-                                                        .iter()
-                                                        .position(|p| p.id == id)
-                                                    {
-                                                        app.pipelines.state.select(Some(pos));
-                                                        app.detail_scroll = 0;
-                                                        found = true;
-                                                    }
-                                                }
-                                                app::Tab::Jobs => {
-                                                    if let Some(pos) = app
-                                                        .filtered_jobs()
-                                                        .iter()
-                                                        .position(|j| j.id == id)
-                                                    {
-                                                        app.jobs.state.select(Some(pos));
-                                                        app.detail_scroll = 0;
-                                                        found = true;
-                                                    }
-                                                }
-                                                app::Tab::Milestones => {
-                                                    if let Some(pos) = app
-                                                        .filtered_milestones()
-                                                        .iter()
-                                                        .position(|m| m.iid == id || m.id == id)
-                                                    {
-                                                        app.milestones.state.select(Some(pos));
-                                                        app.detail_scroll = 0;
-                                                        found = true;
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-                                            if !found {
-                                                app.show_error(format!(
-                                                    "Item #{} not found in current view",
-                                                    id
-                                                ));
-                                            }
-                                        } else {
-                                            app.show_error("Invalid ID format".to_string());
-                                        }
-                                    }
                                     crate::app::TextInputAction::CreateBranch(ref ref_branch) => {
                                         if !value.trim().is_empty() {
                                             let branch_name = value.trim().to_string();
@@ -2812,7 +2804,7 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Enter => {
                                     let field_type = selector.field_type.clone();
-                                    if field_type == "global_search" {
+                                    if field_type == "jump_to_id" {
                                         let filtered_items = selector.get_filtered_items();
                                         let selected_val = if !selector.selected_items.is_empty() {
                                             selector.selected_items.iter().next().cloned()
@@ -2821,43 +2813,72 @@ async fn main() -> Result<()> {
                                         } else {
                                             None
                                         };
-                                        if let Some(val) = selected_val {
-                                            if val.starts_with("Issue #") {
-                                                if let Some(iid_str) = val
-                                                    .strip_prefix("Issue #")
-                                                    .and_then(|s| s.split(':').next())
-                                                {
-                                                    if let Ok(iid) = iid_str.parse::<u64>() {
-                                                        app.active_tab = crate::app::Tab::Issues;
-                                                        if let Some(idx) = app
-                                                            .issues
-                                                            .items
-                                                            .iter()
-                                                            .position(|i| i.iid == iid)
+                                        let handle_jump =
+                                            |app: &mut App,
+                                             kind: Option<crate::app::JumpKind>,
+                                             id: u64| {
+                                                match kind {
+                                                    Some(crate::app::JumpKind::Issue) => {
+                                                        if !app.focus_issue(id) {
+                                                            jump_to_unloaded_issue(
+                                                                app, id, &events,
+                                                            );
+                                                        }
+                                                    }
+                                                    Some(crate::app::JumpKind::Mr) => {
+                                                        if !app.focus_mr(id) {
+                                                            jump_to_unloaded_mr(app, id, &events);
+                                                        }
+                                                    }
+                                                    None => {
+                                                        if !app.focus_issue(id) && !app.focus_mr(id)
                                                         {
-                                                            app.issues.state.select(Some(idx));
+                                                            match app.active_tab {
+                                                            crate::app::Tab::Issues => {
+                                                                jump_to_unloaded_issue(
+                                                                    app, id, &events,
+                                                                )
+                                                            }
+                                                            crate::app::Tab::MergeRequests => {
+                                                                jump_to_unloaded_mr(app, id, &events)
+                                                            }
+                                                            _ => app.show_error(format!(
+                                                                "Item #{} not found in current view",
+                                                                id
+                                                            )),
+                                                        }
                                                         }
                                                     }
                                                 }
-                                            } else if val.starts_with("MR !") {
-                                                if let Some(iid_str) = val
-                                                    .strip_prefix("MR !")
-                                                    .and_then(|s| s.split(':').next())
+                                            };
+                                        let parse_row_kind = |val: &str| {
+                                            crate::app::parse_jump_input(
+                                                val.split(':').next().unwrap_or(val).trim(),
+                                            )
+                                        };
+                                        let query_val = selector.search_query.trim().to_string();
+                                        let mut handled = false;
+                                        if let Some((kind, id)) =
+                                            crate::app::parse_jump_input(&query_val)
+                                        {
+                                            handle_jump(&mut app, kind, id);
+                                            handled = true;
+                                        }
+                                        if !handled {
+                                            if let Some(val) = selected_val {
+                                                if let Some((kind, id)) = parse_row_kind(&val)
+                                                    .or_else(|| crate::app::parse_jump_input(&val))
                                                 {
-                                                    if let Ok(iid) = iid_str.parse::<u64>() {
-                                                        app.active_tab =
-                                                            crate::app::Tab::MergeRequests;
-                                                        if let Some(idx) = app
-                                                            .mrs
-                                                            .items
-                                                            .iter()
-                                                            .position(|m| m.iid == iid)
-                                                        {
-                                                            app.mrs.state.select(Some(idx));
-                                                        }
-                                                    }
+                                                    handle_jump(&mut app, kind, id);
+                                                    handled = true;
                                                 }
                                             }
+                                        }
+                                        if !handled {
+                                            app.show_error(
+                                                "Not found. Use #123 (issue) / !123 (MR), or pick a listed item."
+                                                    .to_string(),
+                                            );
                                         }
                                         continue;
                                     }
@@ -7893,7 +7914,7 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if keybinding_matches(&app.config.keybindings.global.global_search, &key_event)
+                    if keybinding_matches(&app.config.keybindings.global.jump_to_id, &key_event)
                         && !app.is_typing_search
                         && app.text_input.is_none()
                         && app.edit_menu.is_none()
@@ -7902,14 +7923,14 @@ async fn main() -> Result<()> {
                     {
                         let mut items = Vec::new();
                         for issue in &app.issues.items {
-                            items.push(format!("Issue #{}: {}", issue.iid, issue.title));
+                            items.push(format!("#{}: {}", issue.iid, issue.title));
                         }
                         for mr in &app.mrs.items {
-                            items.push(format!("MR !{}: {}", mr.iid, mr.title));
+                            items.push(format!("!{}: {}", mr.iid, mr.title));
                         }
 
                         app.selector = Some(crate::app::Selector {
-                            title: " Global Search ".to_string(),
+                            title: " Jump to Issue/MR (#123 / !123) ".to_string(),
                             all_items: items,
                             selected_items: std::collections::HashSet::new(),
                             cursor_idx: 0,
@@ -7917,30 +7938,14 @@ async fn main() -> Result<()> {
                             is_filtering: false,
                             is_loading: false,
                             entity_iid: 0,
-                            entity_type: "global_search".to_string(),
-                            field_type: "global_search".to_string(),
+                            entity_type: "jump_to_id".to_string(),
+                            field_type: "jump_to_id".to_string(),
                             multi_select: false,
                             state: {
                                 let mut s = ratatui::widgets::ListState::default();
                                 s.select(Some(0));
                                 s
                             },
-                        });
-                        continue;
-                    }
-
-                    if keybinding_matches(&app.config.keybindings.global.jump_to_id, &key_event)
-                        && app.text_input.is_none()
-                        && app.edit_menu.is_none()
-                        && app.selector.is_none()
-                        && !app.focus_column_checklist
-                        && !app.is_typing_search
-                    {
-                        app.text_input = Some(crate::app::TextInput {
-                            title: " Jump to ID ".to_string(),
-                            value: String::new(),
-                            cursor_idx: 0,
-                            action: crate::app::TextInputAction::JumpToId,
                         });
                         continue;
                     }

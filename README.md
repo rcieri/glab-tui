@@ -415,7 +415,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `f` / `/` | Open search / filter bar | `search` |
 | `Enter` / `Esc` (in search) | Close search bar | — |
 | `?` / `F1` | Show help | `help` |
-| `Ctrl+P` | Global search across all loaded issues & MRs | `global_search` |
+| `g` | Jump to issue/MR by ID; fetches from the API if not cached | `jump_to_id` |
 | `Ctrl+S` | Switch repository | — |
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
 | `s` | Save view layout to config | `save_view` |

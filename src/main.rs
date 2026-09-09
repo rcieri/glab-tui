@@ -22,7 +22,10 @@ pub mod utils;
 use anyhow::Result;
 use app::{App, SaveMenu};
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -628,7 +631,12 @@ async fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -4375,33 +4383,18 @@ async fn main() -> Result<()> {
                     }
 
                     if let Some(mut menu) = app.edit_menu.take() {
-                        let is_submit_edit =
-                            keybinding_matches(
-                                &app.config.keybindings.global.submit_edit,
-                                &key_event,
-                            ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
-                                && key_event.code == KeyCode::Enter);
+                        let is_ctrl_x = (key_event.modifiers.contains(KeyModifiers::CONTROL)
+                            && matches!(
+                                key_event.code,
+                                KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('\x18')
+                            ))
+                            || key_event.code == KeyCode::Char('\x18');
+                        let is_submit_edit = keybinding_matches(
+                            &app.config.keybindings.global.submit_edit,
+                            &key_event,
+                        ) || is_ctrl_x;
 
-                        if is_submit_edit {
-                            menu.editing = false;
-                            menu.selected_idx = menu.fields.len() + 1;
-                        }
-
-                        if key_event.modifiers.contains(KeyModifiers::CONTROL)
-                            && key_event.code == KeyCode::Char('s')
-                        {
-                            menu.editing = false;
-                            let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
-                            if is_new {
-                                menu.selected_idx = menu.fields.len() + 1;
-                            } else {
-                                app.details_zoomed = app.prev_details_zoomed;
-                                app.edit_menu = None;
-                                continue;
-                            }
-                        }
-
-                        if menu.editing {
+                        if !is_submit_edit && menu.editing {
                             match key_event.code {
                                 KeyCode::Esc | KeyCode::Enter => {
                                     menu.editing = false;
@@ -4659,19 +4652,16 @@ async fn main() -> Result<()> {
                                 }
                                 app.edit_menu = Some(menu);
                             }
-                            KeyCode::Enter => {
+                            _ if is_submit_edit || key_event.code == KeyCode::Enter => {
+                                if is_submit_edit {
+                                    menu.editing = false;
+                                }
                                 let entity_iid = menu.entity_iid;
                                 let entity_type = menu.entity_kind.legacy_string();
                                 let is_new_entity =
                                     entity_iid == 0 || entity_type.starts_with("new_");
-                                let is_submit_edit_key =
-                                    keybinding_matches(
-                                        &app.config.keybindings.global.submit_edit,
-                                        &key_event,
-                                    ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
-                                        && key_event.code == KeyCode::Enter);
-                                let is_on_submit = (menu.selected_idx == menu.fields.len() + 1)
-                                    || (is_new_entity && is_submit_edit_key);
+                                let is_on_submit =
+                                    (menu.selected_idx == menu.fields.len() + 1) || is_submit_edit;
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {
@@ -8058,7 +8048,8 @@ async fn main() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        PopKeyboardEnhancementFlags
     )?;
     terminal.show_cursor()?;
 

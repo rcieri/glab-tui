@@ -1423,7 +1423,8 @@ pub async fn handle_active_tab_key(
                             let _ = crossterm::execute!(
                                 std::io::stdout(),
                                 crossterm::terminal::LeaveAlternateScreen,
-                                crossterm::event::DisableMouseCapture
+                                crossterm::event::DisableMouseCapture,
+                                crossterm::event::PopKeyboardEnhancementFlags,
                             );
                             let editor = std::env::var("EDITOR")
                                 .or_else(|_| std::env::var("VISUAL"))
@@ -1440,7 +1441,10 @@ pub async fn handle_active_tab_key(
                             let _ = crossterm::execute!(
                                 std::io::stdout(),
                                 crossterm::terminal::EnterAlternateScreen,
-                                crossterm::event::EnableMouseCapture
+                                crossterm::event::EnableMouseCapture,
+                                crossterm::event::PushKeyboardEnhancementFlags(
+                                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                                ),
                             );
                             let _ = terminal.clear();
                             crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);

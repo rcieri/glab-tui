@@ -1726,6 +1726,7 @@ mod tests {
             description: None,
             due_date: None,
             web_url: String::new(),
+            project_path: String::new(),
             related_mrs: None,
         }
     }
@@ -1827,6 +1828,7 @@ mod tests {
             }),
             assignees: vec![],
             description: None,
+            due_date: None,
             web_url: String::new(),
             project_path: String::new(),
             related_mrs: None,

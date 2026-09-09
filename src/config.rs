@@ -705,6 +705,8 @@ pub struct KeybindingIssues {
     pub create_mr: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_copy_reference")]
+    pub copy_reference: String,
     #[serde(default)]
     pub selection_toggle: String,
     #[serde(default = "def_drill_into_scope")]

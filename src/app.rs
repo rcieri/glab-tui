@@ -7611,6 +7611,8 @@ index 123456..789012 100644
             milestone: None,
             assignees: vec![],
             description: None,
+            due_date: None,
+            web_url: String::new(),
             project_path: String::new(),
             related_mrs: None,
         };
@@ -8012,6 +8014,7 @@ index 123456..789012 100644
             due_date: None,
             web_url: "".to_string(),
             project_path: "group/repo-a".to_string(),
+            related_mrs: None,
         };
 
         let issue2 = crate::domain::issues::Issue {
@@ -8031,6 +8034,7 @@ index 123456..789012 100644
             due_date: None,
             web_url: "".to_string(),
             project_path: "group/repo-b".to_string(),
+            related_mrs: None,
         };
 
         app.issues.items = vec![issue1, issue2];

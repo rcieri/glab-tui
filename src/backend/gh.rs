@@ -530,6 +530,7 @@ impl Backend for GhBackend {
                             due_date: None,
                             web_url: item.html_url.unwrap_or_default(),
                             project_path,
+                            related_mrs: None,
                         }
                     })
                     .collect();

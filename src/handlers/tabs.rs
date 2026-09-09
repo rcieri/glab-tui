@@ -33,7 +33,8 @@ pub(crate) fn maybe_fetch_related_mrs(app: &mut App, tx: &UnboundedSender<Event>
         return;
     }
     if let Some(client) = app.gitlab_client.as_ref() {
-        spawn_fetch_related_mrs(client, &app.project_context, iid, tx.clone());
+        let project_path = app.project_path_for_issue(iid);
+        spawn_fetch_related_mrs(client, &project_path, iid, tx.clone());
     } else {
         app.fetching_related_mrs.remove(&iid);
     }
@@ -2534,7 +2535,7 @@ pub(crate) fn jump_to_mr_tab(
     if let Some(client) = client {
         crate::fetch::spawn_refresh_active_tab(
             &client,
-            &app.project_context,
+            &app.scope,
             crate::app::Tab::MergeRequests,
             tx,
         );

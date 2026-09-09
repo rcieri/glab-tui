@@ -76,7 +76,10 @@ pub(crate) fn render_tab_issues(
             let is_checked = app
                 .selected_issues
                 .contains(&(i.project_path.clone(), i.iid));
-            let (state_text, state_style) = if i.state == "opened" {
+            let (state_text, state_style) = if i.state.eq_ignore_ascii_case("opened")
+                || i.state.eq_ignore_ascii_case("open")
+                || i.state.eq_ignore_ascii_case("OPEN")
+            {
                 (
                     format!("{} OPEN", icons.state_open),
                     Style::default()

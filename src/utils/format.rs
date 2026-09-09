@@ -190,16 +190,30 @@ pub fn parse_mr_title_prefix(title: &str) -> (String, String) {
 
 pub fn strip_ansi_escapes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
+    let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\u{1b}' {
-            if let Some(next_c) = chars.next() {
+            if let Some(&next_c) = chars.peek() {
                 if next_c == '[' {
+                    chars.next();
                     for seq_c in chars.by_ref() {
                         if ('\u{40}'..='\u{7e}').contains(&seq_c) {
                             break;
                         }
                     }
+                } else if next_c == ']' {
+                    chars.next();
+                    while let Some(seq_c) = chars.next() {
+                        if seq_c == '\x07' {
+                            break;
+                        }
+                        if seq_c == '\u{1b}' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                } else if ('\u{40}'..='\u{5f}').contains(&next_c) {
+                    chars.next();
                 }
             }
         } else {
@@ -780,6 +794,12 @@ mod tests {
             strip_ansi_escapes(input),
             "[SUCCESS] Job finished successfully"
         );
+    }
+
+    #[test]
+    fn test_strip_ansi_escapes_osc_sequences() {
+        let input = "\u{1b}]0;title\u{07}clean text\u{1b}]8;;http://example.com\u{1b}\\link\u{1b}]8;;\u{1b}\\";
+        assert_eq!(strip_ansi_escapes(input), "clean textlink");
     }
 
     #[test]

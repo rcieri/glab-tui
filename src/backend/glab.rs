@@ -2568,7 +2568,12 @@ async fn run_glab_raw_api(
         if !b.is_empty() {
             cmd.arg("--input");
             cmd.arg("-");
+            // Pipe all three streams: inherited stdout/stderr is a TTY under the
+            // ratatui alternate screen, which lets the CLI page JSON through
+            // $PAGER and corrupt the TUI after POSTs like create_branch.
             cmd.stdin(std::process::Stdio::piped());
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
         }
     }
     cmd.arg(endpoint);

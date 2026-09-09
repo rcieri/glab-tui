@@ -2231,10 +2231,34 @@ impl Backend for GhBackend {
         branch_name: &str,
         ref_branch: &str,
     ) -> Result<()> {
+        // GitHub API expects a commit SHA, not a branch name. Resolve if needed.
+        let sha = if ref_branch.len() == 40 && ref_branch.chars().all(|c| c.is_ascii_hexdigit()) {
+            // Already looks like a SHA
+            ref_branch.to_string()
+        } else {
+            // Try to resolve branch name to SHA via GitHub API
+            let endpoint = format!("/repos/{}/git/refs/heads/{}", project, ref_branch);
+            let resp = self
+                .raw_api(&endpoint, "GET", None, "Resolving Branch SHA")
+                .await?;
+            let parsed: serde_json::Value = serde_json::from_str(&resp)?;
+            // GitHub returns {"ref":"refs/heads/main","node_id":...,"object":{"sha":"abc123..."},...}
+            // or {"sha":"abc123...","url":"...","node_id":...} for newer API responses
+            parsed
+                .get("object")
+                .and_then(|o| o.get("sha"))
+                .and_then(|s| s.as_str())
+                .or_else(|| parsed.get("sha").and_then(|s| s.as_str()))
+                .map(|s| s.to_string())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Could not resolve branch '{}' to SHA", ref_branch)
+                })?
+        };
+
         let endpoint = format!("/repos/{}/git/refs", project);
         let payload = serde_json::json!({
             "ref": format!("refs/heads/{}", branch_name),
-            "sha": ref_branch,
+            "sha": sha,
         });
         let json_str = serde_json::to_string(&payload)?;
         self.raw_api(&endpoint, "POST", Some(&json_str), "Creating Branch")
@@ -2537,7 +2561,12 @@ async fn run_gh_raw_api(
         if !b.is_empty() {
             cmd.arg("--input");
             cmd.arg("-");
+            // Pipe all three streams: inherited stdout/stderr is a TTY under the
+            // ratatui alternate screen, which lets `gh` page JSON through $PAGER
+            // (e.g. less) and corrupt the TUI after POSTs like create_branch.
             cmd.stdin(std::process::Stdio::piped());
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
         }
     }
     cmd.arg(endpoint);

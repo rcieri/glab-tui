@@ -1285,6 +1285,20 @@ pub fn apply_selector_changes<B: Backend>(
                 });
             }
         }
+        "source_branch" | "target_branch" | "create_from" => {
+            // For branch selection fields, simply update the field value
+            if let Some(menu) = &mut app.edit_menu {
+                for f in menu.fields.iter_mut() {
+                    if f.label == "Source Branch" && field_type == "source_branch"
+                        || f.label == "Target Branch" && field_type == "target_branch"
+                        || f.label == "Create From" && field_type == "create_from"
+                    {
+                        f.value = values.first().cloned().unwrap_or_default();
+                        break;
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }

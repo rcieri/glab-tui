@@ -18,12 +18,14 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
         "PageDown" => event.code == KeyCode::PageDown,
         "F5" => event.code == KeyCode::F(5),
         "Ctrl+Enter" | "Ctrl+Return" => {
-            event
+            (event
                 .modifiers
                 .contains(crossterm::event::KeyModifiers::CONTROL)
                 && (event.code == KeyCode::Enter
+                    || event.code == KeyCode::Char('j')
                     || event.code == KeyCode::Char('\n')
-                    || event.code == KeyCode::Char('\r'))
+                    || event.code == KeyCode::Char('\r')))
+                || (event.code == KeyCode::Char('\n') && event.modifiers.is_empty())
         }
         other if other.starts_with("Ctrl+") && other.len() == 6 => {
             let c = (other.as_bytes()[5] as char).to_ascii_lowercase();
@@ -88,6 +90,12 @@ mod tests {
         let event_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
         assert!(keybinding_matches("Ctrl+Enter", &event_enter));
         assert!(keybinding_matches("Ctrl+Return", &event_enter));
+
+        let event_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+Enter", &event_j));
+
+        let event_nl = KeyEvent::new(KeyCode::Char('\n'), KeyModifiers::NONE);
+        assert!(keybinding_matches("Ctrl+Enter", &event_nl));
 
         let event_unmodified = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert!(!keybinding_matches("Ctrl+Enter", &event_unmodified));

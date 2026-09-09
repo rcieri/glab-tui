@@ -4389,8 +4389,11 @@ async fn main() -> Result<()> {
                                 &key_event,
                             ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
                                 && (key_event.code == KeyCode::Enter
+                                    || key_event.code == KeyCode::Char('j')
                                     || key_event.code == KeyCode::Char('\n')
-                                    || key_event.code == KeyCode::Char('\r')));
+                                    || key_event.code == KeyCode::Char('\r')))
+                                || (key_event.code == KeyCode::Char('\n')
+                                    && key_event.modifiers.is_empty());
 
                         if !is_submit_edit && menu.editing {
                             match key_event.code {

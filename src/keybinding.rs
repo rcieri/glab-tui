@@ -27,6 +27,36 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
                     || event.code == KeyCode::Char('\r')))
                 || (event.code == KeyCode::Char('\n') && event.modifiers.is_empty())
         }
+        "Alt+Enter" | "Alt+Return" => {
+            event
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::ALT)
+                && event.code == KeyCode::Enter
+        }
+        other if other.starts_with('F') && other.len() <= 3 => {
+            if let Ok(n) = other[1..].parse::<u8>() {
+                event.code == KeyCode::F(n)
+            } else {
+                false
+            }
+        }
+        other
+            if (other.starts_with("Alt+")
+                || other.starts_with("alt+")
+                || other.starts_with("ALT+"))
+                && other.len() == 5 =>
+        {
+            let c = (other.as_bytes()[4] as char).to_ascii_lowercase();
+            match event.code {
+                KeyCode::Char(ch) => {
+                    ch.to_ascii_lowercase() == c
+                        && event
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::ALT)
+                }
+                _ => false,
+            }
+        }
         other
             if (other.starts_with("Ctrl+")
                 || other.starts_with("ctrl+")

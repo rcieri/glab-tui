@@ -4380,35 +4380,14 @@ async fn main() -> Result<()> {
                                 &app.config.keybindings.global.submit_edit,
                                 &key_event,
                             ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
-                                && key_event.code == KeyCode::Enter);
+                                && (key_event.code == KeyCode::Enter
+                                    || key_event.code == KeyCode::Char('m')
+                                    || key_event.code == KeyCode::Char('j')
+                                    || key_event.code == KeyCode::Char('s')
+                                    || key_event.code == KeyCode::Char('\n')
+                                    || key_event.code == KeyCode::Char('\r')));
 
-                        if is_submit_edit {
-                            menu.editing = false;
-                            let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
-                            if is_new {
-                                menu.selected_idx = menu.fields.len() + 1;
-                            } else {
-                                app.details_zoomed = app.prev_details_zoomed;
-                                app.edit_menu = None;
-                                continue;
-                            }
-                        }
-
-                        if key_event.modifiers.contains(KeyModifiers::CONTROL)
-                            && key_event.code == KeyCode::Char('s')
-                        {
-                            menu.editing = false;
-                            let is_new = menu.entity_iid == 0 || menu.entity_kind.needs_submit();
-                            if is_new {
-                                menu.selected_idx = menu.fields.len() + 1;
-                            } else {
-                                app.details_zoomed = app.prev_details_zoomed;
-                                app.edit_menu = None;
-                                continue;
-                            }
-                        }
-
-                        if menu.editing {
+                        if !is_submit_edit && menu.editing {
                             match key_event.code {
                                 KeyCode::Esc | KeyCode::Enter => {
                                     menu.editing = false;
@@ -4666,19 +4645,16 @@ async fn main() -> Result<()> {
                                 }
                                 app.edit_menu = Some(menu);
                             }
-                            KeyCode::Enter => {
+                            _ if is_submit_edit || key_event.code == KeyCode::Enter => {
+                                if is_submit_edit {
+                                    menu.editing = false;
+                                }
                                 let entity_iid = menu.entity_iid;
                                 let entity_type = menu.entity_kind.legacy_string();
                                 let is_new_entity =
                                     entity_iid == 0 || entity_type.starts_with("new_");
-                                let is_submit_edit_key =
-                                    keybinding_matches(
-                                        &app.config.keybindings.global.submit_edit,
-                                        &key_event,
-                                    ) || (key_event.modifiers.contains(KeyModifiers::CONTROL)
-                                        && key_event.code == KeyCode::Enter);
-                                let is_on_submit = (menu.selected_idx == menu.fields.len() + 1)
-                                    || is_submit_edit_key;
+                                let is_on_submit =
+                                    (menu.selected_idx == menu.fields.len() + 1) || is_submit_edit;
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {

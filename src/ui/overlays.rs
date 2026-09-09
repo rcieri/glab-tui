@@ -1195,11 +1195,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!(
-                "{} / {}",
-                app.config.keybindings.global.jump_to_id,
-                app.config.keybindings.global.global_search
-            )),
+            key: d(format!("{}", app.config.keybindings.global.jump_to_id)),
             action: "Jump to issue/MR by ID; fetch if not cached",
         },
         Shortcut {
@@ -1214,11 +1210,6 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Global & Nav",
             key: s("Ctrl+S"),
             action: "Switch repository",
-        },
-        Shortcut {
-            category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.global_search)),
-            action: "Global search across all tabs",
         },
         Shortcut {
             category: "Global & Nav",

@@ -2804,7 +2804,7 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Enter => {
                                     let field_type = selector.field_type.clone();
-                                    if field_type == "global_search" {
+                                    if field_type == "jump_to_id" {
                                         let filtered_items = selector.get_filtered_items();
                                         let selected_val = if !selector.selected_items.is_empty() {
                                             selector.selected_items.iter().next().cloned()
@@ -7926,13 +7926,8 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if (keybinding_matches(
-                        &app.config.keybindings.global.global_search,
-                        &key_event,
-                    ) || keybinding_matches(
-                        &app.config.keybindings.global.jump_to_id,
-                        &key_event,
-                    )) && !app.is_typing_search
+                    if keybinding_matches(&app.config.keybindings.global.jump_to_id, &key_event)
+                        && !app.is_typing_search
                         && app.text_input.is_none()
                         && app.edit_menu.is_none()
                         && app.selector.is_none()
@@ -7955,8 +7950,8 @@ async fn main() -> Result<()> {
                             is_filtering: false,
                             is_loading: false,
                             entity_iid: 0,
-                            entity_type: "global_search".to_string(),
-                            field_type: "global_search".to_string(),
+                            entity_type: "jump_to_id".to_string(),
+                            field_type: "jump_to_id".to_string(),
                             multi_select: false,
                             state: {
                                 let mut s = ratatui::widgets::ListState::default();

@@ -136,6 +136,14 @@ mod tests {
     }
 
     #[test]
+    fn alt_prefixed_binding_matches_alt_modified_key() {
+        let event = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::ALT);
+        assert!(keybinding_matches("Alt+w", &event));
+        let event_upper = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::ALT);
+        assert!(keybinding_matches("Alt+w", &event_upper));
+    }
+
+    #[test]
     fn ctrl_enter_matches_ctrl_modified_enter() {
         let event_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
         assert!(keybinding_matches("Ctrl+Enter", &event_enter));

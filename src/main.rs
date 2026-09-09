@@ -1644,25 +1644,7 @@ async fn main() -> Result<()> {
                                 text_input.cursor_idx += 1;
                                 app.text_input = Some(text_input);
                             }
-                            _ if key_event.code == KeyCode::Enter
-                                || (key_event.modifiers.contains(KeyModifiers::CONTROL)
-                                    && matches!(
-                                        key_event.code,
-                                        KeyCode::Char('x')
-                                            | KeyCode::Char('X')
-                                            | KeyCode::Char('\x18')
-                                    ))
-                                || (key_event.modifiers.contains(KeyModifiers::ALT)
-                                    && matches!(
-                                        key_event.code,
-                                        KeyCode::Enter
-                                            | KeyCode::Char('s')
-                                            | KeyCode::Char('S')
-                                            | KeyCode::Char('x')
-                                            | KeyCode::Char('X')
-                                    ))
-                                || key_event.code == KeyCode::F(2) =>
-                            {
+                            KeyCode::Enter => {
                                 let value = text_input.value.clone();
                                 match text_input.action {
                                     crate::app::TextInputAction::EditPageSize => {
@@ -4401,30 +4383,16 @@ async fn main() -> Result<()> {
                     }
 
                     if let Some(mut menu) = app.edit_menu.take() {
-                        let is_alt_submit = key_event.modifiers.contains(KeyModifiers::ALT)
+                        let is_ctrl_x = (key_event.modifiers.contains(KeyModifiers::CONTROL)
                             && matches!(
                                 key_event.code,
-                                KeyCode::Enter
-                                    | KeyCode::Char('s')
-                                    | KeyCode::Char('S')
-                                    | KeyCode::Char('x')
-                                    | KeyCode::Char('X')
-                                    | KeyCode::Char('w')
-                                    | KeyCode::Char('W')
-                            );
-                        let is_f2 = key_event.code == KeyCode::F(2);
-                        let is_ctrl_x = (key_event.modifiers.contains(KeyModifiers::CONTROL)
-                            && (matches!(
-                                key_event.code,
                                 KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('\x18')
-                            )))
+                            ))
                             || key_event.code == KeyCode::Char('\x18');
                         let is_submit_edit = keybinding_matches(
                             &app.config.keybindings.global.submit_edit,
                             &key_event,
-                        ) || is_ctrl_x
-                            || is_alt_submit
-                            || is_f2;
+                        ) || is_ctrl_x;
 
                         if !is_submit_edit && menu.editing {
                             match key_event.code {

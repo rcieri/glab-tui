@@ -27,16 +27,28 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
                     || event.code == KeyCode::Char('\r')))
                 || (event.code == KeyCode::Char('\n') && event.modifiers.is_empty())
         }
-        other if other.starts_with("Ctrl+") && other.len() == 6 => {
+        other
+            if (other.starts_with("Ctrl+")
+                || other.starts_with("ctrl+")
+                || other.starts_with("CTRL+"))
+                && other.len() == 6 =>
+        {
             let c = (other.as_bytes()[5] as char).to_ascii_lowercase();
-            let event_c = match event.code {
-                KeyCode::Char(ch) => Some(ch.to_ascii_lowercase()),
-                _ => None,
-            };
-            event_c == Some(c)
-                && event
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL)
+            if c.is_ascii_lowercase() {
+                let ascii_ctrl = (c as u8 - b'a' + 1) as char;
+                match event.code {
+                    KeyCode::Char(ch) => {
+                        (ch.to_ascii_lowercase() == c
+                            && event
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL))
+                            || ch == ascii_ctrl
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
         }
         other if other.len() == 1 => {
             let c = other.chars().next().unwrap();
@@ -83,6 +95,14 @@ mod tests {
     fn ctrl_prefixed_binding_matches_control_modified_key() {
         let event = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
         assert!(keybinding_matches("Ctrl+r", &event));
+        let event_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+w", &event_w));
+        let event_upper_w = KeyEvent::new(KeyCode::Char('W'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+w", &event_upper_w));
+        let event_ascii_ctrl_w = KeyEvent::new(KeyCode::Char('\x17'), KeyModifiers::NONE);
+        assert!(keybinding_matches("Ctrl+w", &event_ascii_ctrl_w));
+        let event_ascii_ctrl_w_ctrl = KeyEvent::new(KeyCode::Char('\x17'), KeyModifiers::CONTROL);
+        assert!(keybinding_matches("Ctrl+w", &event_ascii_ctrl_w_ctrl));
     }
 
     #[test]

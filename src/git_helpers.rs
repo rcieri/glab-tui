@@ -166,6 +166,81 @@ pub fn get_default_branch() -> Option<String> {
     None
 }
 
+/// Ensure `branch` exists locally and on `origin` without interactive prompts.
+///
+/// Creates the local branch from `HEAD` when missing. Skips `git push` when
+/// `origin` already has `refs/heads/<branch>`. Sets `GIT_TERMINAL_PROMPT=0` so
+/// HTTPS credential prompts fail fast instead of hanging a TUI that owns the tty.
+pub fn ensure_source_branch_pushed(branch: &str) -> anyhow::Result<()> {
+    if branch.is_empty() {
+        return Ok(());
+    }
+
+    let exists = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", branch])
+        .output()
+        .ok()
+        .is_some_and(|o| o.status.success());
+    if !exists {
+        let output = std::process::Command::new("git")
+            .args(["branch", branch, "HEAD"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to create local branch '{branch}': {e}"))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            anyhow::bail!(
+                "Failed to create branch '{branch}': {}",
+                if err.is_empty() {
+                    "unknown error"
+                } else {
+                    &err
+                }
+            );
+        }
+    }
+
+    let remote_ref = format!("refs/heads/{branch}");
+    let probe = std::process::Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["ls-remote", "--exit-code", "origin", &remote_ref])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run git ls-remote: {e}"))?;
+
+    match probe.status.code() {
+        Some(0) => return Ok(()),
+        Some(2) => {}
+        _ => {
+            let err = String::from_utf8_lossy(&probe.stderr).trim().to_string();
+            anyhow::bail!(
+                "Could not check remote branch '{branch}': {}. Configure git credentials (e.g. `gh auth setup-git`) or use SSH.",
+                if err.is_empty() {
+                    "authentication or network error"
+                } else {
+                    &err
+                }
+            );
+        }
+    }
+
+    let output = std::process::Command::new("git")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["push", "-u", "origin", branch])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to push branch '{branch}': {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!(
+            "Failed to push branch '{branch}': {}. Configure git credentials (e.g. `gh auth setup-git`) or use SSH.",
+            if err.is_empty() {
+                "unknown error"
+            } else {
+                &err
+            }
+        );
+    }
+    Ok(())
+}
+
 pub fn get_branches() -> Vec<String> {
     let output = std::process::Command::new("git")
         .args(["branch", "-a"])

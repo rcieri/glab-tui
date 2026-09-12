@@ -4820,22 +4820,6 @@ async fn main() -> Result<()> {
                                             .map(|f| f.value.trim().to_string())
                                             .unwrap_or_default();
 
-                                        if !source.is_empty() {
-                                            let exists = std::process::Command::new("git")
-                                                .args(["rev-parse", "--verify", "--quiet", &source])
-                                                .output()
-                                                .ok()
-                                                .map_or(false, |o| o.status.success());
-                                            if !exists {
-                                                let _ = std::process::Command::new("git")
-                                                    .args(["branch", &source, "HEAD"])
-                                                    .output();
-                                            }
-                                            let _ = std::process::Command::new("git")
-                                                .args(["push", "-u", "origin", &source])
-                                                .output();
-                                        }
-
                                         let issue_iid = if menu.entity_iid > 0 {
                                             Some(menu.entity_iid)
                                         } else {
@@ -4848,6 +4832,34 @@ async fn main() -> Result<()> {
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
+                                            if !source.is_empty() {
+                                                let branch = source.clone();
+                                                let push_result =
+                                                    tokio::task::spawn_blocking(move || {
+                                                        crate::git_helpers::ensure_source_branch_pushed(
+                                                            &branch,
+                                                        )
+                                                    })
+                                                    .await;
+                                                match push_result {
+                                                    Ok(Ok(())) => {}
+                                                    Ok(Err(e)) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            tab,
+                                                            Err(e.to_string()),
+                                                        ));
+                                                        return;
+                                                    }
+                                                    Err(e) => {
+                                                        let _ = tx.send(Event::CommandCompleted(
+                                                            tab,
+                                                            Err(e.to_string()),
+                                                        ));
+                                                        return;
+                                                    }
+                                                }
+                                            }
+
                                             match client
                                                 .create_mr(
                                                     &project,

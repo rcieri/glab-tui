@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::app::{EditMenu, EntityDocument, Field, FieldTone, FieldType, InspectorContent};
 use crate::config::{ICONS, THEME};
-use crate::ui::helpers::get_label_color;
+use crate::ui::helpers::{get_label_color, rendered_line_count};
 use crate::utils::format::parse_ansi_trace;
 use crate::utils::markdown::render_markdown;
 
@@ -49,7 +49,7 @@ pub(crate) fn render_entity_inspector(
     area: Rect,
     mut mode: InspectorMode<'_>,
     label_colors: &HashMap<String, Color>,
-) {
+) -> u16 {
     let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
 
@@ -95,7 +95,7 @@ pub(crate) fn render_entity_inspector(
     f.render_widget(block, area);
 
     if inner.width == 0 || inner.height == 0 {
-        return;
+        return 0;
     }
 
     // Reserve a footer for the submit/save button in edit mode.
@@ -140,7 +140,7 @@ pub(crate) fn render_entity_inspector(
 
     let has_fields = !doc.fields.is_empty();
 
-    if has_content && has_fields {
+    let max_scroll = if has_content && has_fields {
         // Single column: metadata fields on top, full-width markdown below.
         // Replaces the old side-by-side duplex (and the narrow stacked)
         // layouts — the description now owns the full width beneath the
@@ -176,10 +176,10 @@ pub(crate) fn render_entity_inspector(
             is_interactive,
             &theme,
         );
-        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP);
+        render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP)
     } else if has_content {
         // Only content.
-        render_content_pane(f, &mut mode, doc, main_area, Borders::NONE);
+        render_content_pane(f, &mut mode, doc, main_area, Borders::NONE)
     } else {
         // Only fields.
         render_fields_list(
@@ -195,12 +195,15 @@ pub(crate) fn render_entity_inspector(
             is_interactive,
             &theme,
         );
-    }
+        0
+    };
 
     // Submit/save footer (edit mode only).
     if is_interactive {
         render_submit_footer(f, &mut mode, submit_area, &theme, &icons);
     }
+
+    max_scroll
 }
 
 /// Render the shared field list. In edit mode the list is driven by the menu's
@@ -252,7 +255,7 @@ fn render_content_pane(
     doc: &EntityDocument,
     area: Rect,
     borders: ratatui::widgets::Borders,
-) {
+) -> u16 {
     let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
 
@@ -291,7 +294,7 @@ fn render_content_pane(
             f.render_widget(desc_block, area);
 
             if desc_inner.width == 0 || desc_inner.height == 0 {
-                return;
+                return 0;
             }
 
             let desc_lines = if is_desc_selected && menu.editing {
@@ -368,6 +371,7 @@ fn render_content_pane(
                     .wrap(ratatui::widgets::Wrap { trim: false }),
                 desc_inner,
             );
+            0
         }
         InspectorMode::ReadOnly { scroll, .. } => {
             let content_block = Block::default()
@@ -375,7 +379,7 @@ fn render_content_pane(
                 .border_style(Style::default().fg(theme.border));
             let content_inner = content_block.inner(area);
             f.render_widget(content_block, area);
-            render_inspector_content(f, &doc.content, content_inner, *scroll);
+            render_inspector_content(f, &doc.content, content_inner, *scroll)
         }
     }
 }
@@ -1132,7 +1136,7 @@ pub(crate) fn render_inspector_content(
     content: &InspectorContent,
     area: Rect,
     scroll: u16,
-) {
+) -> u16 {
     let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
 
@@ -1148,20 +1152,28 @@ pub(crate) fn render_inspector_content(
             } else {
                 render_markdown(md, &theme, area.width)
             };
+            let total_lines = rendered_line_count(&lines, area.width as usize, true);
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             f.render_widget(
                 Paragraph::new(lines)
                     .scroll((scroll, 0))
                     .wrap(ratatui::widgets::Wrap { trim: false }),
                 area,
             );
+            max_scroll
         }
         InspectorContent::AnsiTrace { trace, wrap } => {
             let formatted_lines = parse_ansi_trace(trace, &theme);
+            let total_lines = rendered_line_count(&formatted_lines, area.width as usize, *wrap);
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             let mut paragraph = Paragraph::new(formatted_lines).scroll((scroll, 0));
             if *wrap {
                 paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
             }
             f.render_widget(paragraph, area);
+            max_scroll
         }
         InspectorContent::PipelineStages(jobs) => {
             let mut lines = Vec::new();
@@ -1215,20 +1227,28 @@ pub(crate) fn render_inspector_content(
                     Span::styled(status_text, status_style),
                 ]));
             }
+            let total_lines = rendered_line_count(&lines, area.width as usize, true);
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             f.render_widget(
                 Paragraph::new(lines)
                     .scroll((scroll, 0))
                     .wrap(ratatui::widgets::Wrap { trim: true }),
                 area,
             );
+            max_scroll
         }
         InspectorContent::Custom(lines) => {
+            let total_lines = rendered_line_count(lines, area.width as usize, true);
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
             f.render_widget(
                 Paragraph::new(lines.clone())
                     .scroll((scroll, 0))
                     .wrap(ratatui::widgets::Wrap { trim: true }),
                 area,
             );
+            max_scroll
         }
         InspectorContent::Empty(msg) => {
             f.render_widget(
@@ -1241,6 +1261,7 @@ pub(crate) fn render_inspector_content(
                 .alignment(Alignment::Center),
                 area,
             );
+            0
         }
     }
 }
@@ -1399,7 +1420,9 @@ mod tests {
         let content = InspectorContent::Markdown("- Parent\n    - Nested\n\n> Quoted".to_string());
 
         terminal
-            .draw(|f| render_inspector_content(f, &content, f.area(), 0))
+            .draw(|f| {
+                render_inspector_content(f, &content, f.area(), 0);
+            })
             .unwrap();
 
         let buffer = terminal.backend().buffer();
@@ -1414,6 +1437,31 @@ mod tests {
         assert!(rendered.contains("• Parent"));
         assert!(rendered.contains("  • Nested"));
         assert!(rendered.contains("  ▌ Quoted"));
+    }
+
+    #[test]
+    fn test_render_inspector_content_returns_max_scroll_for_custom_lines() {
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let content = InspectorContent::Custom(vec![
+            Line::from("one"),
+            Line::from("two"),
+            Line::from("three"),
+            Line::from("four"),
+            Line::from("five"),
+            Line::from("six"),
+            Line::from("seven"),
+        ]);
+
+        let mut max_scroll = 0;
+        terminal
+            .draw(|f| {
+                max_scroll = render_inspector_content(f, &content, f.area(), 0);
+            })
+            .unwrap();
+
+        // 7 lines in a 5-row area: 2 rows can't be scrolled into view.
+        assert_eq!(max_scroll, 2);
     }
 
     #[test]

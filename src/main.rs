@@ -4298,6 +4298,7 @@ async fn main() -> Result<()> {
                                                 "pipeline_branch" => "Branch / Ref",
                                                 "workflow_file" => "Workflow File",
                                                 "tag" => "Tag",
+                                                "create_from" => "Create From",
                                                 other if other.starts_with("Input: ") => other,
                                                 _ => "",
                                             };
@@ -5298,6 +5299,47 @@ async fn main() -> Result<()> {
                                             });
                                         }
                                         continue;
+                                    } else if entity_type == "new_branch" {
+                                        let branch_name = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Branch Name")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+                                        let create_from = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Create From")
+                                            .map(|f| f.value.trim().to_string())
+                                            .unwrap_or_default();
+
+                                        app.edit_menu = None;
+                                        let client = app.gitlab_client.clone().unwrap();
+                                        let project = app.scope.as_str().to_string();
+                                        let tx = events.sender();
+                                        let tab = app.active_tab;
+                                        tokio::spawn(async move {
+                                            match crate::domain::branches::create_branch(
+                                                &client,
+                                                &project,
+                                                &branch_name,
+                                                &create_from,
+                                            )
+                                            .await
+                                            {
+                                                Ok(_) => {
+                                                    let _ = tx
+                                                        .send(Event::CommandCompleted(tab, Ok(())));
+                                                }
+                                                Err(e) => {
+                                                    let _ = tx.send(Event::CommandCompleted(
+                                                        tab,
+                                                        Err(e.to_string()),
+                                                    ));
+                                                }
+                                            }
+                                        });
+                                        continue;
                                     } else if entity_type == "release" {
                                         let tag = menu
                                             .fields
@@ -6084,6 +6126,7 @@ async fn main() -> Result<()> {
                                     || field_name == "Source Branch"
                                     || field_name == "Target Branch"
                                     || field_name == "Branch / Ref"
+                                    || field_name == "Create From"
                                     || field_name == "Workflow File"
                                     || field_name == "Tag"
                                     || field_name == "Create from Issue"
@@ -6427,7 +6470,7 @@ async fn main() -> Result<()> {
                                                         client.fetch_milestones(&scope).await
                                                     }
                                                     "source_branch" | "target_branch"
-                                                    | "pipeline_branch" => {
+                                                    | "pipeline_branch" | "create_from" => {
                                                         client.fetch_branches(&scope).await
                                                     }
                                                     _ => Ok(Vec::new()),

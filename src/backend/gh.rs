@@ -166,6 +166,22 @@ fn split_review_authors(latest_reviews: &[serde_json::Value]) -> (Vec<String>, V
     (all_authors, approved_authors)
 }
 
+/// Map GitHub's PR `state` JSON field onto the host-neutral state string.
+///
+/// GitHub's `gh pr list --state all` returns `"OPEN"`, `"CLOSED"`, or
+/// `"MERGED"`. Only `"OPEN"` and `"MERGED"` map onto themselves; everything
+/// else collapses to `"closed"`. Without the `"MERGED"` arm, the
+/// downstream MRs table — and the State column filter — would render a
+/// merged PR as CLOSED, hiding the badge `src/ui/tabs.rs:406` already
+/// draws for `m.state == "merged"`.
+pub(crate) fn map_gh_pr_state(raw: &str) -> &'static str {
+    match raw {
+        "OPEN" => "opened",
+        "MERGED" => "merged",
+        _ => "closed",
+    }
+}
+
 /// Map GitHub's list fields onto the host-neutral state structs.
 ///
 /// `mergeStateStatus == "BLOCKED"` means blocked by branch protection, NOT a
@@ -811,12 +827,7 @@ impl Backend for GhBackend {
                 Ok(gh_prs
                     .into_iter()
                     .map(|gp| {
-                        let state = if gp.state == "OPEN" {
-                            "opened"
-                        } else {
-                            "closed"
-                        }
-                        .to_string();
+                        let state = map_gh_pr_state(&gp.state).to_string();
                         let labels: Vec<String> = gp
                             .labels
                             .iter()
@@ -1044,12 +1055,7 @@ impl Backend for GhBackend {
             title: String,
         }
         let gp: GhPr = serde_json::from_str(&raw)?;
-        let state = if gp.state == "OPEN" {
-            "opened"
-        } else {
-            "closed"
-        }
-        .to_string();
+        let state = map_gh_pr_state(&gp.state).to_string();
         let labels: Vec<String> = gp
             .labels
             .iter()
@@ -3048,6 +3054,31 @@ mod tests {
             1,
             "the initializer must run once total, not once per backend instance"
         );
+    }
+
+    #[test]
+    fn map_gh_pr_state_pins_three_way_classification() {
+        // REGRESSION GUARD for #435. GitHub's `gh pr list --state all` and
+        // `gh pr view --json state,...` return one of "OPEN", "CLOSED", or
+        // "MERGED". The MRs table renders a purple MERGED badge for
+        // `m.state == "merged"` (`src/ui/tabs.rs:406`), and the State column
+        // filter exposes a "MERGED" value (`src/app.rs:4078`) — but those
+        // both read the `state` string the backend hands them. If the
+        // backend collapses "MERGED" to "closed", the merged PR silently
+        // shows up as CLOSED with no error.
+        assert_eq!(map_gh_pr_state("OPEN"), "opened");
+        assert_eq!(map_gh_pr_state("MERGED"), "merged");
+        assert_eq!(map_gh_pr_state("CLOSED"), "closed");
+    }
+
+    #[test]
+    fn map_gh_pr_state_unknown_values_collapse_to_closed() {
+        // Forward-compat: GitHub has historically used uppercase ("OPEN") but
+        // if a future API response includes an unrecognised variant, fall
+        // through to "closed" rather than panic or surface a wrong badge.
+        assert_eq!(map_gh_pr_state(""), "closed");
+        assert_eq!(map_gh_pr_state("open"), "closed"); // case-sensitive on purpose
+        assert_eq!(map_gh_pr_state("DRAFT"), "closed");
     }
 
     #[test]

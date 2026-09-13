@@ -268,6 +268,15 @@ impl GhBackend {
         Self { tx: None }
     }
 
+    /// Percent-encode every `/` in `name` so a branch like `feature/foo`
+    /// becomes `feature%2Ffoo` in the URL path. GitHub's `/git/refs/heads/{}`
+    /// endpoint treats `/` as a path separator, so a literal slash in the
+    /// branch name produces a malformed URL and a 404/422 from the API.
+    /// Mirrors `GlabBackend::encode_path` (`src/backend/glab.rs:412`).
+    fn encode_branch(name: &str) -> String {
+        name.replace('/', "%2F")
+    }
+
     /// `None` if the lookup fails — an unknown user must yield an unknown
     /// workflow status, never a wrong one. The failure itself is cached
     /// alongside a success, so this never re-issues the `gh api user` call
@@ -2243,7 +2252,8 @@ impl Backend for GhBackend {
             ref_branch.to_string()
         } else {
             // Try to resolve branch name to SHA via GitHub API
-            let endpoint = format!("/repos/{}/git/refs/heads/{}", project, ref_branch);
+            let encoded = Self::encode_branch(ref_branch);
+            let endpoint = format!("/repos/{}/git/refs/heads/{}", project, encoded);
             let resp = self
                 .raw_api(&endpoint, "GET", None, "Resolving Branch SHA")
                 .await?;
@@ -2273,7 +2283,8 @@ impl Backend for GhBackend {
     }
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
-        let endpoint = format!("/repos/{}/git/refs/heads/{}", project, branch_name);
+        let encoded = Self::encode_branch(branch_name);
+        let endpoint = format!("/repos/{}/git/refs/heads/{}", project, encoded);
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
@@ -2750,6 +2761,26 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encode_branch_passes_simple_names_through() {
+        // A branch name with no slashes must round-trip unchanged so common
+        // cases like "main" or "release-1.2" keep working without surprises.
+        assert_eq!(GhBackend::encode_branch("main"), "main");
+        assert_eq!(GhBackend::encode_branch("release-1.2"), "release-1.2");
+        assert_eq!(GhBackend::encode_branch(""), "");
+    }
+
+    #[test]
+    fn encode_branch_percent_encodes_every_slash() {
+        // REGRESSION GUARD for #448: a branch like "feature/foo" must be
+        // percent-encoded to "feature%2Ffoo" before it goes into the URL
+        // path of `/git/refs/heads/{}`, otherwise GitHub treats the slash
+        // as a path separator and returns 404/422.
+        assert_eq!(GhBackend::encode_branch("feature/foo"), "feature%2Ffoo");
+        // Nested slashes — every slash must be encoded, not just the first.
+        assert_eq!(GhBackend::encode_branch("a/b/c"), "a%2Fb%2Fc");
+    }
 
     #[test]
     fn parse_closed_by_pull_requests_references() {

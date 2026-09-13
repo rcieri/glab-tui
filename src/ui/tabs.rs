@@ -3359,11 +3359,31 @@ mod tests {
             })
             .unwrap();
 
-        assert!(
-            app.detail_scroll < 999,
-            "detail_scroll should have been clamped to the content's max, was {}",
-            app.detail_scroll
+        // Pinned exact value for this fixture:
+        //
+        //   detail_rect      = Rect::new(0, 10, 100, 10)
+        //   description      = Some("line\n\n".repeat(100))
+        //   app.detail_scroll= 999  (input, before clamp)
+        //
+        // render_entity_inspector returns max_detail_scroll = total_lines -
+        // visible_content_height for the description pane (see
+        // src/ui/inspector.rs:1156). The exact integer pins the math that
+        // converts rendered markdown line count + pane height into max_scroll —
+        // so an off-by-one regression in rendered_line_count
+        // (src/ui/helpers.rs:937) is caught here, not just in the pure-helper
+        // unit tests. Update this number if the inspector layout or markdown
+        // renderer changes.
+        const EXPECTED_MAX_DETAIL_SCROLL: u16 = 196;
+
+        assert_eq!(
+            app.detail_scroll, EXPECTED_MAX_DETAIL_SCROLL,
+            "detail_scroll should have been clamped to the content's exact max \
+             for this fixture (100x10 detail_rect, description = \"line\\n\\n\".repeat(100))"
         );
+        // Sanity floor: if the exact assertion ever breaks because the
+        // inspector layout shifts, the old "< 999" check still tells us
+        // clamping happened at all.
+        assert!(app.detail_scroll < 999);
     }
 
     #[test]

@@ -2007,22 +2007,18 @@ pub async fn handle_active_tab_key(
 
     if !handled {
         if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_down, &key_event)
+            && (keybinding_matches(&app.config.keybindings.global.scroll_down, &key_event)
+                || key_event.code == KeyCode::Char('J'))
         {
             app.detail_scroll = app.detail_scroll.saturating_add(1);
         } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_up, &key_event)
+            && (keybinding_matches(&app.config.keybindings.global.scroll_up, &key_event)
+                || key_event.code == KeyCode::Char('K'))
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
         }
 
         match key_event.code {
-            KeyCode::Char('J') if app.detail_visible => {
-                app.detail_scroll = app.detail_scroll.saturating_add(1);
-            }
-            KeyCode::Char('K') if app.detail_visible => {
-                app.detail_scroll = app.detail_scroll.saturating_sub(1);
-            }
             KeyCode::Char('?') | KeyCode::F(1) => {
                 app.show_help = true;
             }
@@ -2556,4 +2552,94 @@ pub(crate) fn jump_to_mr_tab_from_selector(
     client: &crate::domain::client::GitlabClient,
 ) {
     jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crossterm::event::{KeyEvent, KeyModifiers};
+
+    /// Constructs the real `AppTerminal` and dispatches `key_event` through
+    /// `handle_active_tab_key`, discarding any events it sends.
+    ///
+    /// Uses `Viewport::Fixed` so construction never queries the backend's
+    /// terminal size - `cargo test` has no controlling tty in CI.
+    async fn dispatch(app: &mut App, key_event: &KeyEvent) {
+        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+        let options = ratatui::TerminalOptions {
+            viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
+        };
+        let mut terminal = ratatui::Terminal::with_options(backend, options)
+            .expect("terminal construction failed");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        handle_active_tab_key(app, key_event, &mut terminal, tx).await;
+    }
+
+    #[tokio::test]
+    async fn j_and_k_scroll_the_detail_pane_by_one_line_with_default_config() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 6);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    #[tokio::test]
+    async fn j_and_k_are_ignored_while_the_detail_pane_is_hidden() {
+        let mut app = App::default();
+        app.detail_visible = false;
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// With `scroll_down` remapped away from the hardcoded "J", both halves
+    /// of the merged condition remain reachable: the remapped key and the
+    /// hardcoded 'J' fallback each move the pane by exactly one line.
+    #[tokio::test]
+    async fn remapped_scroll_down_and_hardcoded_j_each_scroll_one_line() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_down = "z".to_string();
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 6);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 7);
+    }
 }

@@ -66,6 +66,14 @@ pub enum Event {
     /// the item so the handler can insert it into the loaded set if absent.
     IssueFetched(u64, Result<crate::domain::issues::Issue, String>),
     MrFetched(u64, Result<crate::domain::mr::MergeRequest, String>),
+    /// A optimistic UI mutation for `runner_id` failed; restore the row's
+    /// prior `status`/`active` fields. Sender fills `status`/`active` with
+    /// the values that were on screen before the user pressed pause/resume.
+    RunnerStateRevert {
+        runner_id: u64,
+        status: String,
+        active: bool,
+    },
 }
 
 #[derive(Debug)]

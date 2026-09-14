@@ -1,5 +1,6 @@
 use crate::backend::{Backend, BackendKind, IssueUpdate, MrUpdate};
 use crate::config::Config;
+use crate::scope::Scope;
 use anyhow::{Context, Result};
 
 pub struct GitlabClient {
@@ -280,12 +281,23 @@ impl GitlabClient {
     }
 
     // ── Runner mutations ──
-    pub async fn pause_runner(&self, project: &str, runner_id: u64) -> Result<()> {
-        self.backend.pause_runner(project, runner_id).await
+    pub async fn pause_runner(&self, scope: &Scope, runner_id: u64) -> Result<()> {
+        self.backend.pause_runner(scope, runner_id).await
     }
 
-    pub async fn resume_runner(&self, project: &str, runner_id: u64) -> Result<()> {
-        self.backend.resume_runner(project, runner_id).await
+    pub async fn resume_runner(&self, scope: &Scope, runner_id: u64) -> Result<()> {
+        self.backend.resume_runner(scope, runner_id).await
+    }
+
+    pub async fn update_runner_description(
+        &self,
+        scope: &Scope,
+        runner_id: u64,
+        description: &str,
+    ) -> Result<()> {
+        self.backend
+            .update_runner_description(scope, runner_id, description)
+            .await
     }
 
     // ── Release mutations ──
@@ -496,6 +508,17 @@ impl GitlabClient {
     }
     pub async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
         self.backend.open_milestone_in_browser(project, id).await
+    }
+    pub async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
+        self.backend.open_runner_in_browser(scope, runner_id).await
+    }
+    pub async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
+        self.backend.open_branch_in_browser(project, branch).await
+    }
+    pub async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()> {
+        self.backend
+            .open_environment_in_browser(project, name)
+            .await
     }
 
     pub async fn bulk_update_issues_labels(

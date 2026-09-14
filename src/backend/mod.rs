@@ -443,6 +443,9 @@ pub trait Backend: Send + Sync {
     async fn open_workflow_in_browser(&self, project: &str, workflow: &str) -> Result<()>;
     async fn open_job_in_browser(&self, project: &str, id: &str) -> Result<()>;
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()>;
+    async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()>;
+    async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()>;
+    async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()>;
 
     // ── Pipelines ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
@@ -482,11 +485,11 @@ pub trait Backend: Send + Sync {
 
     // ── Runners ──
     async fn list_runners(&self, scope: &Scope, page_size: usize) -> Result<Vec<Runner>>;
-    async fn pause_runner(&self, project: &str, runner_id: u64) -> Result<()>;
-    async fn resume_runner(&self, project: &str, runner_id: u64) -> Result<()>;
+    async fn pause_runner(&self, scope: &Scope, runner_id: u64) -> Result<()>;
+    async fn resume_runner(&self, scope: &Scope, runner_id: u64) -> Result<()>;
     async fn update_runner_description(
         &self,
-        project: &str,
+        scope: &Scope,
         runner_id: u64,
         description: &str,
     ) -> Result<()>;

@@ -1637,6 +1637,16 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+                Event::RunnerStateRevert {
+                    runner_id,
+                    status,
+                    active,
+                } => {
+                    if let Some(runner) = app.runners.items.iter_mut().find(|r| r.id == runner_id) {
+                        runner.status = status;
+                        runner.active = active;
+                    }
+                }
                 Event::Mouse(mouse_event) => {
                     handle_mouse_event(&mut app, &mouse_event);
                 }

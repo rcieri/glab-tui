@@ -1511,6 +1511,8 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
+                            let prev = item.status.clone();
+                            let prev_active = item.active;
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
@@ -1518,11 +1520,17 @@ pub async fn handle_active_tab_key(
                                 runner.active = false;
                             }
                             if let Some(client) = app.gitlab_client.clone() {
-                                let project_path = app.scope.as_str().to_string();
+                                let scope = app.scope.clone();
                                 let tx2 = tx.clone();
                                 tokio::spawn(async move {
-                                    let result =
-                                        client.pause_runner(&project_path, runner_id).await;
+                                    let result = client.pause_runner(&scope, runner_id).await;
+                                    if result.is_err() {
+                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                            runner_id,
+                                            status: prev,
+                                            active: prev_active,
+                                        });
+                                    }
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
@@ -1535,6 +1543,8 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
+                            let prev = item.status.clone();
+                            let prev_active = item.active;
                             if let Some(runner) =
                                 app.runners.items.iter_mut().find(|r| r.id == runner_id)
                             {
@@ -1542,11 +1552,17 @@ pub async fn handle_active_tab_key(
                                 runner.active = true;
                             }
                             if let Some(client) = app.gitlab_client.clone() {
-                                let project_path = app.scope.as_str().to_string();
+                                let scope = app.scope.clone();
                                 let tx2 = tx.clone();
                                 tokio::spawn(async move {
-                                    let result =
-                                        client.resume_runner(&project_path, runner_id).await;
+                                    let result = client.resume_runner(&scope, runner_id).await;
+                                    if result.is_err() {
+                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                            runner_id,
+                                            status: prev,
+                                            active: prev_active,
+                                        });
+                                    }
                                     let _ = tx2.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
@@ -1569,6 +1585,27 @@ pub async fn handle_active_tab_key(
                                     entity_type: "runner".to_string(),
                                     field_type: "runner_description".to_string(),
                                 },
+                            });
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.runners.open_in_browser,
+                            key_event,
+                        ) =>
+                        {
+                            let runner_id_local = runner_id;
+                            let client = app.gitlab_client.clone();
+                            let scope = app.scope.clone();
+                            let tx2 = tx.clone();
+                            tokio::spawn(async move {
+                                let Some(client) = client else {
+                                    return;
+                                };
+                                let result =
+                                    client.open_runner_in_browser(&scope, runner_id_local).await;
+                                let _ = tx2.send(Event::CommandCompleted(
+                                    crate::app::Tab::Runners,
+                                    result.map_err(|e| e.to_string()),
+                                ));
                             });
                         }
                         _ => handled = false,
@@ -1940,6 +1977,26 @@ pub async fn handle_active_tab_key(
                             crate::app::ConfirmAction::DeleteBranch(branch_name.clone()),
                             app,
                         ));
+                    } else if keybinding_matches(
+                        &app.config.keybindings.branches.open_in_browser,
+                        key_event,
+                    ) {
+                        let branch_local = branch_name.clone();
+                        let client = app.gitlab_client.clone();
+                        let project_path = app.scope.as_str().to_string();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let Some(client) = client else {
+                                return;
+                            };
+                            let result = client
+                                .open_branch_in_browser(&project_path, &branch_local)
+                                .await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::Branches,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
                     }
                 }
             }
@@ -1949,6 +2006,30 @@ pub async fn handle_active_tab_key(
             let mut matched = false;
             if let Some(selected_idx) = app.environments.state.selected() {
                 if keybinding_matches(
+                    &app.config.keybindings.environments.open_in_browser,
+                    key_event,
+                ) {
+                    matched = true;
+                    let filtered = app.filtered_environments();
+                    if let Some(env) = filtered.get(selected_idx) {
+                        let env_name = env.name.clone();
+                        let project_path = app.scope.as_str().to_string();
+                        let client = app.gitlab_client.clone();
+                        let tx2 = tx.clone();
+                        tokio::spawn(async move {
+                            let Some(client) = client else {
+                                return;
+                            };
+                            let result = client
+                                .open_environment_in_browser(&project_path, &env_name)
+                                .await;
+                            let _ = tx2.send(Event::CommandCompleted(
+                                crate::app::Tab::Environments,
+                                result.map_err(|e| e.to_string()),
+                            ));
+                        });
+                    }
+                } else if keybinding_matches(
                     &app.config.keybindings.environments.view_deployments,
                     key_event,
                 ) {

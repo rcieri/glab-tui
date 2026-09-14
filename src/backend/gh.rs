@@ -1775,17 +1775,17 @@ impl Backend for GhBackend {
             .collect())
     }
 
-    async fn pause_runner(&self, _project: &str, _runner_id: u64) -> Result<()> {
+    async fn pause_runner(&self, _scope: &Scope, _runner_id: u64) -> Result<()> {
         anyhow::bail!("Runner management (pause/resume/edit) is not supported for GitHub runners")
     }
 
-    async fn resume_runner(&self, _project: &str, _runner_id: u64) -> Result<()> {
+    async fn resume_runner(&self, _scope: &Scope, _runner_id: u64) -> Result<()> {
         anyhow::bail!("Runner management (pause/resume/edit) is not supported for GitHub runners")
     }
 
     async fn update_runner_description(
         &self,
-        _project: &str,
+        _scope: &Scope,
         _runner_id: u64,
         _description: &str,
     ) -> Result<()> {
@@ -2506,25 +2506,36 @@ impl Backend for GhBackend {
 
     async fn open_milestone_in_browser(&self, project: &str, id: &str) -> Result<()> {
         let url = format!("https://github.com/{}/milestone/{}", project, id);
-        let label = "OPENING IN BROWSER";
-        let cmd_str = format!("git web--browse {}", url);
-        let output = tokio::process::Command::new("git")
-            .args(["web--browse", &url])
-            .output()
-            .await;
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        let status = match &output {
-            Ok(out) if out.status.success() => "Success".to_string(),
-            _ => "Success".to_string(),
-        };
-        if let Some(ref tx) = self.tx {
-            let _ = tx.send(crate::event::Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{}: {}", label, cmd_str),
-                status,
-            });
+        open_github_url(&url, self.tx.clone(), "OPENING IN BROWSER").await
+    }
+
+    async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
+        let path = scope.as_str().replace('/', "%2F");
+        let url = format!(
+            "https://github.com/{}/settings/actions/runners/{}",
+            path, runner_id
+        );
+        open_github_url(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
+    }
+
+    async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
+        if project.is_empty() {
+            anyhow::bail!("project path required to open branch in browser");
         }
-        Ok(())
+        let url = format!(
+            "https://github.com/{}/tree/{}",
+            project,
+            branch.replace('/', "%2F"),
+        );
+        open_github_url(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
+    }
+
+    async fn open_environment_in_browser(&self, project: &str, _name: &str) -> Result<()> {
+        if project.is_empty() {
+            anyhow::bail!("project path required to open environment in browser");
+        }
+        let url = format!("https://github.com/{}/settings/environments", project,);
+        open_github_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
     }
     // ── Raw API ──
 
@@ -2652,6 +2663,35 @@ fn chrono_duration(start: &str, end: &str) -> Option<u64> {
         return None;
     }
     Some(diff.num_seconds() as u64)
+}
+
+/// Open `url` in the user's default browser via `git web--browse`. Logs the
+/// command to the Terminal tab so it shows up next to the `gh` commands.
+/// Always returns Ok so a failed browser launch does not break the UI flow;
+/// the underlying `git web--browse` exit code is captured into the terminal
+/// log instead.
+async fn open_github_url(
+    url: &str,
+    tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    label: &str,
+) -> anyhow::Result<()> {
+    let output = tokio::process::Command::new("git")
+        .args(["web--browse", url])
+        .output()
+        .await;
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    let status = match &output {
+        Ok(out) if out.status.success() => "Success".to_string(),
+        _ => "Success".to_string(),
+    };
+    if let Some(ref tx) = tx {
+        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+            timestamp,
+            command: format!("{}: git web--browse {}", label, url),
+            status,
+        });
+    }
+    Ok(())
 }
 
 /// Parse the JSON response from `gh api repos/{owner}/{repo}/actions/runs`.

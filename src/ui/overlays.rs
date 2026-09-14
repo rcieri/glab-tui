@@ -1540,6 +1540,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             key: d(app.config.keybindings.runners.edit_description.clone()),
             action: "Edit runner description text",
         },
+        Shortcut {
+            category: "Runners",
+            key: d(app.config.keybindings.runners.open_in_browser.clone()),
+            action: "Open runner in browser",
+        },
         // ── Releases ──
         Shortcut {
             category: "Releases",
@@ -1599,11 +1604,21 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             key: d(app.config.keybindings.branches.delete_branch.clone()),
             action: "Delete selected branch",
         },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.open_in_browser.clone()),
+            action: "Open branch in browser",
+        },
         // ── Environments ──
         Shortcut {
             category: "Environments",
             key: d(app.config.keybindings.environments.view_deployments.clone()),
             action: "View deployments list for environment",
+        },
+        Shortcut {
+            category: "Environments",
+            key: d(app.config.keybindings.environments.open_in_browser.clone()),
+            action: "Open environment in browser",
         },
         // ── Diff View ──
         Shortcut {

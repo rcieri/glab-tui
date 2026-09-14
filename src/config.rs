@@ -833,6 +833,8 @@ pub struct KeybindingRunners {
     pub resume: String,
     #[serde(default)]
     pub edit_description: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -849,12 +851,16 @@ pub struct KeybindingBranches {
     pub create_branch: String,
     #[serde(default)]
     pub delete_branch: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingEnvironments {
     #[serde(default)]
     pub view_deployments: String,
+    #[serde(default = "def_open_in_browser")]
+    pub open_in_browser: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1096,6 +1102,7 @@ impl Default for KeybindingRunners {
             pause: def_pause_runner(),
             resume: def_resume_runner(),
             edit_description: def_edit_description(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }
@@ -1114,6 +1121,7 @@ impl Default for KeybindingBranches {
         Self {
             create_branch: def_create_branch(),
             delete_branch: def_delete_branch(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }
@@ -1122,6 +1130,7 @@ impl Default for KeybindingEnvironments {
     fn default() -> Self {
         Self {
             view_deployments: def_view_deployments(),
+            open_in_browser: def_open_in_browser(),
         }
     }
 }

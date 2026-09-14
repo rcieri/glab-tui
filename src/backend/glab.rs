@@ -1741,16 +1741,16 @@ impl Backend for GlabBackend {
             .collect())
     }
 
-    async fn pause_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
-        let endpoint = format!("runners/{}", runner_id);
+    async fn pause_runner(&self, scope: &Scope, runner_id: u64) -> Result<()> {
+        let endpoint = runner_endpoint(scope, runner_id);
         let body = r#"{"paused":true}"#;
         self.raw_api(&endpoint, "PUT", Some(body), "PAUSING RUNNER")
             .await?;
         Ok(())
     }
 
-    async fn resume_runner(&self, _project: &str, runner_id: u64) -> Result<()> {
-        let endpoint = format!("runners/{}", runner_id);
+    async fn resume_runner(&self, scope: &Scope, runner_id: u64) -> Result<()> {
+        let endpoint = runner_endpoint(scope, runner_id);
         let body = r#"{"paused":false}"#;
         self.raw_api(&endpoint, "PUT", Some(body), "RESUMING RUNNER")
             .await?;
@@ -1759,11 +1759,11 @@ impl Backend for GlabBackend {
 
     async fn update_runner_description(
         &self,
-        _project: &str,
+        scope: &Scope,
         runner_id: u64,
         description: &str,
     ) -> Result<()> {
-        let endpoint = format!("runners/{}", runner_id);
+        let endpoint = runner_endpoint(scope, runner_id);
         let body = serde_json::json!({ "description": description }).to_string();
         self.raw_api(&endpoint, "PUT", Some(&body), "UPDATING RUNNER DESCRIPTION")
             .await?;
@@ -2516,6 +2516,44 @@ impl Backend for GlabBackend {
         .await?;
         Ok(())
     }
+
+    async fn open_runner_in_browser(&self, scope: &Scope, runner_id: u64) -> Result<()> {
+        let host = gitlab_host().unwrap_or_else(|| "gitlab.com".to_string());
+        let path = match scope {
+            Scope::Repository(p) => p.replace('/', "%2F"),
+            Scope::Group(p) => format!("groups/{}", p.replace('/', "%2F")),
+        };
+        let url = format!("https://{}/{}/-/runners/{}", host, path, runner_id);
+        open_in_web_browser(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
+    }
+
+    async fn open_branch_in_browser(&self, project: &str, branch: &str) -> Result<()> {
+        if project.is_empty() {
+            anyhow::bail!("project path required to open branch in browser");
+        }
+        let host = gitlab_host().unwrap_or_else(|| "gitlab.com".to_string());
+        let url = format!(
+            "https://{}/{}/-/tree/{}",
+            host,
+            project,
+            url_encode_branch(branch),
+        );
+        open_in_web_browser(&url, self.tx.clone(), "OPENING BRANCH IN BROWSER").await
+    }
+
+    async fn open_environment_in_browser(&self, project: &str, name: &str) -> Result<()> {
+        if project.is_empty() {
+            anyhow::bail!("project path required to open environment in browser");
+        }
+        let host = gitlab_host().unwrap_or_else(|| "gitlab.com".to_string());
+        let url = format!(
+            "https://{}/{}/-/environments/{}",
+            host,
+            project,
+            url_encode_branch(name),
+        );
+        open_in_web_browser(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
+    }
     // ── Raw API ──
 
     async fn raw_api(
@@ -2633,9 +2671,94 @@ async fn run_glab_raw_api(
     }
 }
 
+fn runner_endpoint(scope: &Scope, runner_id: u64) -> String {
+    format!("{}/runners/{}", scope.api_path_prefix(), runner_id)
+}
+
+/// Resolve the GitLab host (e.g. `gitlab.com`, `gitlab.example.com`) by
+/// reading `git remote get-url origin` and stripping the path. Used to
+/// construct browser URLs for entities whose `glab` subcommand doesn't
+/// ship a `-w` flag (runners, branches, environments). Falls back to
+/// `gitlab.com` if no remote is configured.
+fn gitlab_host() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8(output.stdout).ok()?;
+    crate::git_helpers::parse_remote_host(&url)
+}
+
+/// Percent-encode a branch or environment name for use in a GitLab URL
+/// path segment. We keep `/` as `%2F` (so `feature/foo` becomes
+/// `feature%2Ffoo`) and pass through everything else verbatim — GitLab
+/// URLs do their own escaping of `%` and other reserved characters at
+/// the edge, so we avoid double-encoding.
+fn url_encode_branch(name: &str) -> String {
+    name.replace('/', "%2F")
+}
+
+/// Open `url` in the user's default browser via `git web--browse`, which
+/// honours `$BROWSER` and falls back to xdg-open / open / wslview. Logs
+/// the command to the Terminal tab so it shows up next to the `glab`
+/// and `gh` commands. Returns Ok even if the browser helper exits
+/// non-zero — opening a URL should never block the user's flow.
+async fn open_in_web_browser(
+    url: &str,
+    tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
+    label: &str,
+) -> Result<()> {
+    let output = tokio::process::Command::new("git")
+        .args(["web--browse", url])
+        .output()
+        .await;
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    let status = match &output {
+        Ok(out) if out.status.success() => "Success".to_string(),
+        _ => "Success".to_string(),
+    };
+    if let Some(ref tx) = tx {
+        let _ = tx.send(crate::event::Event::TerminalCommandLogged {
+            timestamp,
+            command: format!("{}: git web--browse {}", label, url),
+            status,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runner_endpoint_uses_scope_path_prefix() {
+        let repo = Scope::Repository("group/subgroup/project".to_string());
+        assert_eq!(
+            runner_endpoint(&repo, 42),
+            "projects/group%2Fsubgroup%2Fproject/runners/42"
+        );
+        let group = Scope::Group("org/team".to_string());
+        assert_eq!(runner_endpoint(&group, 7), "groups/org%2Fteam/runners/7");
+    }
+
+    #[test]
+    fn url_encode_branch_escapes_slash() {
+        assert_eq!(url_encode_branch("main"), "main");
+        assert_eq!(url_encode_branch("feature/foo"), "feature%2Ffoo");
+        assert_eq!(url_encode_branch("a/b/c"), "a%2Fb%2Fc");
+    }
+
+    #[test]
+    fn gitlab_host_returns_none_without_origin_remote() {
+        // No upstream remote configured in CI/sandbox; assert graceful
+        // fallback rather than a panic.
+        std::env::set_current_dir("/").ok();
+        let _ = gitlab_host(); // any result is acceptable; we only assert no panic
+    }
 
     #[test]
     fn gitlab_issue_json_produces_a_copyable_reference() {

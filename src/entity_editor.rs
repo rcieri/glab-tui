@@ -963,12 +963,10 @@ pub fn apply_field_text_change(
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
+            let scope = app.scope.clone();
             let tx2 = tx.clone();
             tokio::spawn(async move {
-                let result = client
-                    .backend
-                    .update_runner_description(&project_path, iid, &value)
-                    .await;
+                let result = client.update_runner_description(&scope, iid, &value).await;
                 let _ = tx2.send(Event::CommandCompleted(
                     tab,
                     result.map_err(|e| e.to_string()),

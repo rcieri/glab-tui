@@ -774,6 +774,16 @@ async fn main() -> Result<()> {
         client.api_per_page = app.config.api_per_page_clamped();
         client.tx = Some(events.sender());
         app.gitlab_client = Some(client.clone());
+        // Remember the group implied by the current repo scope so the
+        // Switch view accumulates every group worked in, not just explicit
+        // group switches. GitHub orgs aren't group-scoped, so skip them.
+        if !client.is_github {
+            if let crate::scope::Scope::Repository(r) = &app.scope {
+                if let Some(group) = r.rsplit_once('/').map(|(g, _)| g.to_string()) {
+                    crate::utils::cache::add_recent_group(&group);
+                }
+            }
+        }
         let tx = events.sender();
         if app.issues.items.is_empty() {
             app.start_loading_tab(app.active_tab);
@@ -807,6 +817,7 @@ async fn main() -> Result<()> {
                 switch_repo_paths.insert(entry.display.clone(), entry.absolute_path.clone());
             }
             app.switch_repo_paths = switch_repo_paths;
+            app.switch_repo_groups = std::collections::HashSet::new();
             app.selector = Some(crate::app::Selector {
                 title: " No Repo Detected — Select a Repository ".to_string(),
                 all_items: switchable.iter().map(|e| e.display.clone()).collect(),
@@ -2968,31 +2979,19 @@ async fn main() -> Result<()> {
                                             let target_path_str =
                                                 target_path.to_string_lossy().into_owned();
 
-                                            let group_opt = path
-                                                .strip_prefix("Group: ")
-                                                .or_else(|| path.strip_prefix("group: "))
-                                                .or_else(|| path.strip_prefix("Org: "))
-                                                .or_else(|| path.strip_prefix("org: "))
-                                                .map(|s| s.to_string())
-                                                .or_else(|| {
-                                                    if !path.contains('/')
-                                                        && !crate::utils::cache::is_git_repo(
-                                                            &target_path_str,
-                                                        )
-                                                    {
-                                                        Some(path.clone())
-                                                    } else {
-                                                        None
-                                                    }
-                                                });
+                                            let is_group = app.switch_repo_groups.contains(&path)
+                                                || (!path.contains('/')
+                                                    && !crate::utils::cache::is_git_repo(
+                                                        &target_path_str,
+                                                    ));
 
-                                            if let Some(group_name) = group_opt {
-                                                if group_name.trim().is_empty() {
+                                            if is_group {
+                                                let group_name = path.trim().to_string();
+                                                if group_name.is_empty() {
                                                     continue;
                                                 }
-                                                app.scope = crate::scope::Scope::Group(
-                                                    group_name.to_string(),
-                                                );
+                                                app.scope =
+                                                    crate::scope::Scope::Group(group_name.clone());
                                                 app.reset_on_scope_change();
                                                 crate::utils::cache::add_recent_group(&group_name);
                                                 if let Ok(mut client) =
@@ -3071,6 +3070,22 @@ async fn main() -> Result<()> {
                                                         client.tx = Some(events.sender());
                                                         client.backend.set_tx(events.sender());
                                                         app.gitlab_client = Some(client.clone());
+                                                        // Remember the group implied by the
+                                                        // switched-to repo (see startup).
+                                                        if !client.is_github {
+                                                            if let crate::scope::Scope::Repository(
+                                                                r,
+                                                            ) = &app.scope
+                                                            {
+                                                                if let Some(group) = r
+                                                                    .rsplit_once('/')
+                                                                    .map(|(g, _)| g.to_string())
+                                                                {
+                                                                    crate::utils::cache::
+                                                                        add_recent_group(&group);
+                                                                }
+                                                            }
+                                                        }
                                                     } else {
                                                         app.gitlab_client = None;
                                                     }

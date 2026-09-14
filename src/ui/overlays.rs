@@ -213,6 +213,21 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                     .add_modifier(Modifier::BOLD),
                             )];
 
+                            // Group rows in the Switch Repository overlay get
+                            // a group icon; repo rows keep their basename plus
+                            // a muted absolute path.
+                            let is_group = selector.field_type == "switch_repo"
+                                && app.switch_repo_groups.contains(item);
+
+                            if is_group {
+                                line_spans.push(Span::styled(
+                                    format!("{} ", icons.label_group),
+                                    Style::default()
+                                        .fg(THEME.read().unwrap().text_muted)
+                                        .bg(item_bg),
+                                ));
+                            }
+
                             if let Some(indices) = indices {
                                 line_spans.extend(highlight_fuzzy_match(
                                     item,
@@ -228,7 +243,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                             // absolute on-disk path alongside the basename
                             // (display name) in muted text so users can
                             // distinguish repos that share a basename.
-                            if selector.field_type == "switch_repo" {
+                            if selector.field_type == "switch_repo" && !is_group {
                                 if let Some(abs_path) = app.switch_repo_paths.get(item) {
                                     if !abs_path.is_empty() && abs_path != item {
                                         line_spans.push(Span::styled(

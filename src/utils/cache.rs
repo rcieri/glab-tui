@@ -121,6 +121,50 @@ pub fn get_recent_groups() -> Vec<String> {
     Vec::new()
 }
 
+/// Every group the Switch view can offer: groups that were explicitly
+/// switched to (most recent first) plus the group implied by each cached
+/// repo's remote. Deriving from the cached repos is what surfaces groups
+/// whose repos are in `recent_repos.json` even when the user never switched
+/// to the group explicitly. GitHub remotes are skipped — orgs aren't
+/// group-scoped in glab-tui, so they'd be dead-end choices.
+pub fn get_available_groups() -> Vec<String> {
+    let mut groups: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for g in get_recent_groups() {
+        if !g.trim().is_empty() && seen.insert(g.clone()) {
+            groups.push(g);
+        }
+    }
+
+    for repo in get_recent_repos() {
+        let Some(url) = get_remote_url(&repo) else {
+            continue;
+        };
+        let Some(context) = crate::git_helpers::parse_project_path(&url) else {
+            continue;
+        };
+        let Some((group, _)) = context.rsplit_once('/') else {
+            continue;
+        };
+        // Avoid the auth probes when this repo's group is already known.
+        if seen.contains(group) {
+            continue;
+        }
+        if !matches!(
+            crate::git_helpers::detect_backend(&url, None),
+            crate::backend::BackendKind::GitLab
+        ) {
+            continue;
+        }
+        if seen.insert(group.to_string()) {
+            groups.push(group.to_string());
+        }
+    }
+
+    groups
+}
+
 pub fn add_recent_group(group: &str) {
     if group.trim().is_empty() {
         return;
@@ -245,7 +289,7 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
     result
 }
 
-fn get_project_context_for_path(repo_path: &str) -> Option<String> {
+fn get_remote_url(repo_path: &str) -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["-C", repo_path, "remote", "get-url", "origin"])
         .output()
@@ -253,8 +297,12 @@ fn get_project_context_for_path(repo_path: &str) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    let url = String::from_utf8_lossy(&output.stdout);
-    crate::git_helpers::parse_project_path(&url)
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!url.is_empty()).then_some(url)
+}
+
+fn get_project_context_for_path(repo_path: &str) -> Option<String> {
+    get_remote_url(repo_path).and_then(|url| crate::git_helpers::parse_project_path(&url))
 }
 
 pub fn is_git_repo(path: &str) -> bool {
@@ -460,5 +508,86 @@ mod tests {
             entries.iter().all(|e| e.absolute_path != fake_str),
             "non-git entries must be filtered out"
         );
+    }
+
+    #[test]
+    fn test_get_available_groups_derives_from_cache_repos() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        // Isolate the cache dir so recent_repos.json / recent_groups.json
+        // land under HOME/USERPROFILE.
+        let home = tempdir().unwrap();
+        let home_str = home.path().to_str().unwrap().to_string();
+        let old_home = std::env::var("HOME").ok();
+        let old_profile = std::env::var("USERPROFILE").ok();
+        unsafe {
+            std::env::set_var("HOME", &home_str);
+            std::env::set_var("USERPROFILE", &home_str);
+        }
+
+        // A real GitLab-backed repo: its namespace prefix must surface as a
+        // switchable group even though recent_groups.json is empty.
+        let gitlab_repo = home.path().join("project_a");
+        fs::create_dir_all(&gitlab_repo).unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&gitlab_repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://gitlab.com/mygroup/project_a.git",
+            ])
+            .current_dir(&gitlab_repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        // A GitHub-backed repo: orgs are not group-scoped, so the owner must
+        // never surface as a group.
+        let gh_repo = home.path().join("project_b");
+        fs::create_dir_all(&gh_repo).unwrap();
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&gh_repo)
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/octo/project_b.git",
+            ])
+            .current_dir(&gh_repo)
+            .status()
+            .unwrap();
+
+        add_recent_repo(&gitlab_repo.to_string_lossy());
+        add_recent_repo(&gh_repo.to_string_lossy());
+
+        let groups = get_available_groups();
+        assert!(
+            groups.iter().any(|g| g == "mygroup"),
+            "GitLab group derived from cached repo must be available: {groups:?}"
+        );
+        assert!(
+            !groups.iter().any(|g| g == "octo"),
+            "GitHub org must not surface as a group: {groups:?}"
+        );
+
+        if let Some(old) = old_home {
+            unsafe { std::env::set_var("HOME", old) };
+        } else {
+            unsafe { std::env::remove_var("HOME") };
+        }
+        if let Some(old) = old_profile {
+            unsafe { std::env::set_var("USERPROFILE", old) };
+        } else {
+            unsafe { std::env::remove_var("USERPROFILE") };
+        }
     }
 }

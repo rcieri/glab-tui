@@ -60,6 +60,9 @@ struct GhIssueLogin {
 #[derive(Deserialize)]
 struct GhIssueMilestone {
     title: String,
+    number: u64,
+    #[serde(default)]
+    state: Option<String>,
 }
 
 fn issue_from_gh_json(issue: GhIssueJson) -> Issue {
@@ -90,6 +93,9 @@ fn issue_from_gh_json(issue: GhIssueJson) -> Issue {
             .milestone
             .map(|milestone| crate::domain::issues::Milestone {
                 title: milestone.title,
+                iid: milestone.number,
+                id: 0,
+                state: milestone.state.unwrap_or_default(),
             }),
         assignees: issue
             .assignees
@@ -479,6 +485,9 @@ impl Backend for GhBackend {
                 #[derive(Deserialize)]
                 struct GhSearchIssueMs {
                     title: String,
+                    number: u64,
+                    #[serde(default)]
+                    state: Option<String>,
                 }
                 #[derive(Deserialize)]
                 struct GhSearchIssueLabel {
@@ -543,9 +552,12 @@ impl Backend for GhBackend {
                             author: crate::domain::issues::Author {
                                 username: item.user.map(|u| u.login).unwrap_or_default(),
                             },
-                            milestone: item
-                                .milestone
-                                .map(|m| crate::domain::issues::Milestone { title: m.title }),
+                            milestone: item.milestone.map(|m| crate::domain::issues::Milestone {
+                                title: m.title,
+                                iid: m.number,
+                                id: 0,
+                                state: m.state.unwrap_or_default(),
+                            }),
                             assignees: item
                                 .assignees
                                 .into_iter()

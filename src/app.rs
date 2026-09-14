@@ -3032,6 +3032,11 @@ pub struct App {
     pub selected_milestone_issues: Option<Vec<crate::domain::issues::Issue>>,
     pub selected_milestone_iid: Option<u64>,
     pub milestone_issues_cache: std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
+    /// `(closed, total)` issue counts per milestone iid, derived from
+    /// `issues.items.iter().filter_map(|i| i.milestone.as_ref())`.
+    /// Populated on every IssuesFetched and on cache load. Used by the
+    /// Milestones progress column to avoid per-row API calls.
+    pub milestone_progress_cache: std::collections::HashMap<u64, (usize, usize)>,
     pub terminal_scroll: usize,
     pub branches: StatefulTable<crate::domain::branches::Branch>,
     pub environments: StatefulTable<crate::domain::deployments::Environment>,
@@ -3152,6 +3157,7 @@ impl Default for App {
             selected_milestone_issues: None,
             selected_milestone_iid: None,
             milestone_issues_cache: std::collections::HashMap::new(),
+            milestone_progress_cache: std::collections::HashMap::new(),
             terminal_scroll: 0,
             branches: StatefulTable::with_items(vec![]),
             environments: StatefulTable::with_items(vec![]),
@@ -3174,6 +3180,65 @@ impl Default for App {
             pending_delete_release_tag: None,
         }
     }
+}
+
+/// Build the zero-padded percent string used as the sort/group key for the
+/// Milestones "Progress" column. Prefers the cheap aggregate derived from
+/// `Issue.milestone` (see `App::rebuild_milestone_progress_cache`) and
+/// falls back to the per-milestone issue list when that has been fetched
+/// on demand (e.g. the user drilled in). Anything missing either way is
+/// "000%".
+
+/// Map a milestone's raw `state` field to the uppercase display text shown
+/// in the table cell. Used by both `milestone_filter_values` (the column
+/// filter picker) and `render_tab_milestones` so they cannot drift.
+pub(crate) fn milestone_state_display(raw: &str) -> &'static str {
+    match raw {
+        "active" => "ACTIVE",
+        "closed" => "CLOSED",
+        // Unknown states fall back to the raw value uppercased. Empty
+        // string for unset (the API defaults to "active" but the field
+        // may be missing for very old cached data).
+        other => "",
+    }
+}
+
+/// Map a runner's raw `status` field to the uppercase display text shown
+/// in the table cell. Used by both `runner_filter_values` (the column
+/// filter picker) and `render_tab_runners`.
+pub(crate) fn runner_status_display(raw: &str) -> &'static str {
+    match raw {
+        "online" => "ONLINE",
+        "paused" => "PAUSED",
+        "offline" => "OFFLINE",
+        other => "UNKNOWN",
+    }
+}
+
+/// Build the zero-padded percent string used as the sort/group key for the
+/// Milestones "Progress" column. Prefers the cheap aggregate derived from
+/// `Issue.milestone` (see `App::rebuild_milestone_progress_cache`) and
+/// falls back to the per-milestone issue list when that has been fetched
+/// on demand (e.g. the user drilled in). Anything missing either way is
+/// "000%".
+fn milestone_progress_sort_key(
+    iid: u64,
+    progress_cache: &std::collections::HashMap<u64, (usize, usize)>,
+    issues_cache: &std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
+) -> String {
+    if let Some((closed, total)) = progress_cache.get(&iid) {
+        if *total > 0 {
+            return format!("{:03}%", (closed * 100) / total);
+        }
+    }
+    if let Some(issues) = issues_cache.get(&iid) {
+        let total = issues.len();
+        if total > 0 {
+            let closed = issues.iter().filter(|i| i.state == "closed").count();
+            return format!("{:03}%", (closed * 100) / total);
+        }
+    }
+    "000%".to_string()
 }
 
 impl App {
@@ -4527,7 +4592,11 @@ impl App {
     pub fn runner_filter_values(item: &crate::domain::runners::Runner, col: &str) -> Vec<String> {
         match col {
             "ID" => vec![item.id.to_string()],
-            "Status" => vec![item.status.clone()],
+            // Match the table cell text (`render_tab_runners` shows
+            // "ONLINE"/"PAUSED"/"OFFLINE"/"UNKNOWN"), not the raw API
+            // value. The picker is a multi-select on displayed text, so a
+            // lowercase entry would never match anything in the column.
+            "Status" => vec![runner_status_display(&item.status).to_string()],
             "Active" => vec![item.active.to_string()],
             "Description" => item
                 .description
@@ -4858,6 +4927,7 @@ impl App {
         ascending: bool,
         group_by_column: &Option<String>,
         milestone_issues_cache: &std::collections::HashMap<u64, Vec<crate::domain::issues::Issue>>,
+        milestone_progress_cache: &std::collections::HashMap<u64, (usize, usize)>,
     ) -> Vec<&'a crate::domain::milestones::Milestone> {
         let default_set = std::collections::HashSet::new();
         let enabled_cols = enabled_columns
@@ -4872,20 +4942,11 @@ impl App {
                     "State" => a.state.clone(),
                     "Start Date" => a.start_date.clone().unwrap_or_default(),
                     "Due Date" => a.due_date.clone().unwrap_or_default(),
-                    "Progress" => {
-                        if let Some(issues) = milestone_issues_cache.get(&a.iid) {
-                            let total = issues.len();
-                            if total > 0 {
-                                let closed = issues.iter().filter(|i| i.state == "closed").count();
-                                let percent = (closed * 100) / total;
-                                format!("{:03}%", percent)
-                            } else {
-                                "000%".to_string()
-                            }
-                        } else {
-                            "000%".to_string()
-                        }
-                    }
+                    "Progress" => milestone_progress_sort_key(
+                        a.iid,
+                        milestone_progress_cache,
+                        milestone_issues_cache,
+                    ),
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -4894,20 +4955,11 @@ impl App {
                     "State" => b.state.clone(),
                     "Start Date" => b.start_date.clone().unwrap_or_default(),
                     "Due Date" => b.due_date.clone().unwrap_or_default(),
-                    "Progress" => {
-                        if let Some(issues) = milestone_issues_cache.get(&b.iid) {
-                            let total = issues.len();
-                            if total > 0 {
-                                let closed = issues.iter().filter(|i| i.state == "closed").count();
-                                let percent = (closed * 100) / total;
-                                format!("{:03}%", percent)
-                            } else {
-                                "000%".to_string()
-                            }
-                        } else {
-                            "000%".to_string()
-                        }
-                    }
+                    "Progress" => milestone_progress_sort_key(
+                        b.iid,
+                        milestone_progress_cache,
+                        milestone_issues_cache,
+                    ),
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -4927,9 +4979,36 @@ impl App {
         match col {
             "ID" => vec![item.iid.to_string()],
             "Title" => vec![item.title.clone()],
-            "State" => vec![item.state.clone()],
+            // Match the table cell text (`render_tab_milestones` shows
+            // "ACTIVE"/"CLOSED"), not the raw API value. The picker is a
+            // multi-select on displayed text, so a lowercase entry would
+            // never match anything in the column.
+            "State" => vec![milestone_state_display(&item.state).to_string()],
             _ => vec![],
         }
+    }
+
+    /// Recompute `milestone_progress_cache` from `issues.items`. Walks the
+    /// issue list once and groups by `issue.milestone.iid`, counting closed
+    /// vs total. Issues without a milestone (or with iid == 0) are skipped.
+    /// Cheap enough to call on every IssuesFetched and on cache load.
+    pub fn rebuild_milestone_progress_cache(&mut self) {
+        let mut map: std::collections::HashMap<u64, (usize, usize)> =
+            std::collections::HashMap::new();
+        for issue in &self.issues.items {
+            let Some(m) = issue.milestone.as_ref() else {
+                continue;
+            };
+            if m.iid == 0 {
+                continue;
+            }
+            let entry = map.entry(m.iid).or_insert((0, 0));
+            entry.1 += 1;
+            if issue.state == "closed" {
+                entry.0 += 1;
+            }
+        }
+        self.milestone_progress_cache = map;
     }
 
     pub fn filtered_milestones(&self) -> Vec<&crate::domain::milestones::Milestone> {
@@ -4943,6 +5022,7 @@ impl App {
                 .unwrap_or(true),
             self.group_by_column.get(&Tab::Milestones).unwrap_or(&None),
             &self.milestone_issues_cache,
+            &self.milestone_progress_cache,
         );
         Self::apply_column_filters(
             &mut list,
@@ -5877,6 +5957,124 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::issues::{Author, Issue};
+    use crate::domain::milestones::Milestone;
+
+    #[test]
+    fn milestone_state_display_uppercases_known_states() {
+        assert_eq!(milestone_state_display("active"), "ACTIVE");
+        assert_eq!(milestone_state_display("closed"), "CLOSED");
+        assert_eq!(milestone_state_display(""), "");
+    }
+
+    #[test]
+    fn runner_status_display_uppercases_known_states() {
+        assert_eq!(runner_status_display("online"), "ONLINE");
+        assert_eq!(runner_status_display("paused"), "PAUSED");
+        assert_eq!(runner_status_display("offline"), "OFFLINE");
+        assert_eq!(runner_status_display("not_a_state"), "UNKNOWN");
+    }
+
+    #[test]
+    fn milestone_filter_values_returns_display_state_not_raw() {
+        let m = Milestone {
+            id: 0,
+            iid: 7,
+            title: "v1.0".to_string(),
+            description: None,
+            state: "active".to_string(),
+            start_date: None,
+            due_date: None,
+            created_at: String::new(),
+            project_path: String::new(),
+        };
+        let values = App::milestone_filter_values(&m, "State");
+        assert_eq!(values, vec!["ACTIVE".to_string()]);
+
+        let closed = Milestone {
+            state: "closed".to_string(),
+            ..m.clone()
+        };
+        let values = App::milestone_filter_values(&closed, "State");
+        assert_eq!(values, vec!["CLOSED".to_string()]);
+    }
+
+    #[test]
+    fn rebuild_milestone_progress_cache_aggregates_by_iid() {
+        let mut app = App::default();
+        app.issues.items = vec![
+            issue_with_milestone(101, "closed", 7),
+            issue_with_milestone(102, "opened", 7),
+            issue_with_milestone(103, "closed", 7),
+            issue_with_milestone(104, "opened", 7),
+            issue_with_milestone(105, "closed", 7),
+            issue_with_milestone(110, "opened", 8),
+        ];
+        app.rebuild_milestone_progress_cache();
+        assert_eq!(app.milestone_progress_cache.get(&7), Some(&(3, 5)));
+        assert_eq!(app.milestone_progress_cache.get(&8), Some(&(0, 1)));
+    }
+
+    #[test]
+    fn rebuild_milestone_progress_cache_ignores_unset_milestones() {
+        let mut app = App::default();
+        app.issues.items = vec![
+            issue_with_no_milestone("closed"),
+            issue_with_milestone(7, "closed", 7),
+        ];
+        app.rebuild_milestone_progress_cache();
+        assert_eq!(app.milestone_progress_cache.len(), 1);
+        assert_eq!(app.milestone_progress_cache.get(&7), Some(&(1, 1)));
+    }
+
+    fn issue_with_milestone(iid: u64, state: &str, milestone_iid: u64) -> Issue {
+        Issue {
+            iid,
+            title: format!("Issue {}", iid),
+            state: state.to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: Author {
+                username: "u".to_string(),
+            },
+            milestone: Some(crate::domain::issues::Milestone {
+                title: format!("M{}", milestone_iid),
+                iid: milestone_iid,
+                id: 0,
+                state: "active".to_string(),
+            }),
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        }
+    }
+
+    fn issue_with_no_milestone(state: &str) -> Issue {
+        Issue {
+            iid: 999,
+            title: "No milestone".to_string(),
+            state: state.to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: Author {
+                username: "u".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        }
+    }
 
     #[test]
     fn parse_jump_input_handles_issue_forms() {

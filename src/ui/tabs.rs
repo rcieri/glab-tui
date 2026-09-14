@@ -1904,28 +1904,29 @@ pub(crate) fn render_tab_runners(
 
         let rows = filtered_runners.iter().enumerate().map(|(idx, r)| {
             let is_row_highlighted = app.runners.state.selected() == Some(idx);
-            let (status_text, status_color, bg_color) = match r.status.as_str() {
-                "online" => (
-                    format!("{} ONLINE", icons.runner_online),
-                    theme.green,
-                    theme.green_bg,
-                ),
-                "paused" => (
-                    format!("{} PAUSED", icons.runner_paused),
-                    theme.yellow,
-                    theme.yellow_bg,
-                ),
-                "offline" => (
-                    format!("{} OFFLINE", icons.runner_offline),
-                    theme.red,
-                    theme.red_bg,
-                ),
-                _ => (
-                    format!("{} UNKNOWN", icons.status_unknown),
-                    theme.text_muted,
-                    theme.inactive_bg,
-                ),
-            };
+            let (status_text, status_color, bg_color) =
+                match crate::app::runner_status_display(&r.status) {
+                    "ONLINE" => (
+                        format!("{} ONLINE", icons.runner_online),
+                        theme.green,
+                        theme.green_bg,
+                    ),
+                    "PAUSED" => (
+                        format!("{} PAUSED", icons.runner_paused),
+                        theme.yellow,
+                        theme.yellow_bg,
+                    ),
+                    "OFFLINE" => (
+                        format!("{} OFFLINE", icons.runner_offline),
+                        theme.red,
+                        theme.red_bg,
+                    ),
+                    _ => (
+                        format!("{} UNKNOWN", icons.status_unknown),
+                        theme.text_muted,
+                        theme.inactive_bg,
+                    ),
+                };
             let desc = r.description.as_deref().unwrap_or("No description");
             let mut row_cells = Vec::new();
             if app.is_column_visible(Tab::Runners, "ID") {
@@ -2568,6 +2569,7 @@ pub(crate) fn render_tab_milestones(
                 .unwrap_or(true),
             app.group_by_column.get(&Tab::Milestones).unwrap_or(&None),
             &app.milestone_issues_cache,
+            &app.milestone_progress_cache,
         );
         App::apply_column_filters(
             &mut filtered_milestones,
@@ -2623,31 +2625,32 @@ pub(crate) fn render_tab_milestones(
                             ));
                         }
                         "State" => {
-                            let (state_text, state_style) = if m.state == "active" {
-                                (
-                                    "ACTIVE",
-                                    Style::default()
-                                        .fg(theme.green)
-                                        .bg(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.green_bg
-                                        })
-                                        .add_modifier(Modifier::BOLD),
-                                )
-                            } else {
-                                (
-                                    "CLOSED",
-                                    Style::default()
-                                        .fg(theme.red)
-                                        .bg(if is_selected {
-                                            theme.highlight_bg
-                                        } else {
-                                            theme.red_bg
-                                        })
-                                        .add_modifier(Modifier::BOLD),
-                                )
-                            };
+                            let (state_text, state_style) =
+                                if crate::app::milestone_state_display(&m.state) == "ACTIVE" {
+                                    (
+                                        "ACTIVE",
+                                        Style::default()
+                                            .fg(theme.green)
+                                            .bg(if is_selected {
+                                                theme.highlight_bg
+                                            } else {
+                                                theme.green_bg
+                                            })
+                                            .add_modifier(Modifier::BOLD),
+                                    )
+                                } else {
+                                    (
+                                        "CLOSED",
+                                        Style::default()
+                                            .fg(theme.red)
+                                            .bg(if is_selected {
+                                                theme.highlight_bg
+                                            } else {
+                                                theme.red_bg
+                                            })
+                                            .add_modifier(Modifier::BOLD),
+                                    )
+                                };
                             cells.push(
                                 Cell::from(Line::from(state_text).alignment(Alignment::Center))
                                     .style(state_style),
@@ -2677,39 +2680,62 @@ pub(crate) fn render_tab_milestones(
                             ));
                         }
                         "Progress" => {
-                            let (bar_text, color) =
-                                if let Some(issues) = app.milestone_issues_cache.get(&m.iid) {
-                                    let total = issues.len();
-                                    if total > 0 {
+                            // Prefer the cheap aggregate derived from
+                            // `Issue.milestone` (rebuilt on every IssuesFetched).
+                            // Fall back to the per-milestone issue list when the
+                            // user has drilled in. Never refetch: the bar must
+                            // show whatever we already have, even if stale.
+                            let (total, closed) = app
+                                .milestone_progress_cache
+                                .get(&m.iid)
+                                .copied()
+                                .unwrap_or((0, 0));
+                            let (bar_text, color) = if let Some((t, c)) = if total > 0 {
+                                Some((total, closed))
+                            } else {
+                                app.milestone_issues_cache
+                                    .get(&m.iid)
+                                    .filter(|v| !v.is_empty())
+                                    .map(|issues| {
+                                        let total = issues.len();
                                         let closed =
                                             issues.iter().filter(|i| i.state == "closed").count();
-                                        let pct = (closed as f32 / total as f32) * 100.0;
-                                        let color = if pct <= 33.0 {
-                                            theme.red
-                                        } else if pct <= 66.0 {
-                                            theme.yellow
-                                        } else {
-                                            theme.green
-                                        };
-                                        let bar_segments = 10;
-                                        let filled_len = (closed * bar_segments) / total;
-                                        (
-                                            format!(
-                                                "[{}{}] {:.0}%",
-                                                "█".repeat(filled_len),
-                                                "░".repeat(bar_segments - filled_len),
-                                                pct,
-                                            ),
-                                            color,
-                                        )
-                                    } else {
-                                        ("[░░░░░░░░░░] 0%".to_string(), theme.red)
-                                    }
-                                } else if app.selected_milestone_iid == Some(m.iid) {
-                                    ("Loading...".to_string(), theme.text_muted)
+                                        (total, closed)
+                                    })
+                            } {
+                                let (total, closed) = (t, c);
+                                let pct = if total > 0 {
+                                    (closed as f32 / total as f32) * 100.0
                                 } else {
-                                    ("-".to_string(), theme.text_muted)
+                                    0.0
                                 };
+                                let color = if pct <= 33.0 {
+                                    theme.red
+                                } else if pct <= 66.0 {
+                                    theme.yellow
+                                } else {
+                                    theme.green
+                                };
+                                let bar_segments = 10;
+                                let filled_len = if total > 0 {
+                                    (closed * bar_segments) / total
+                                } else {
+                                    0
+                                };
+                                (
+                                    format!(
+                                        "[{}{}] {:.0}%",
+                                        "█".repeat(filled_len),
+                                        "░".repeat(bar_segments - filled_len),
+                                        pct,
+                                    ),
+                                    color,
+                                )
+                            } else if app.selected_milestone_iid == Some(m.iid) {
+                                ("Loading...".to_string(), theme.text_muted)
+                            } else {
+                                ("-".to_string(), theme.text_muted)
+                            };
                             cells.push(Cell::from(bar_text).style(Style::default().fg(color)));
                         }
                         _ => {

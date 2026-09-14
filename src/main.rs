@@ -704,6 +704,7 @@ async fn main() -> Result<()> {
     let cache = crate::utils::cache::load_cache(app.scope.as_str());
     app.project_cache = cache.clone();
     app.issues.items = cache.issues;
+    app.rebuild_milestone_progress_cache();
     app.mrs.items = cache.mrs;
     // workflow is #[serde(skip)] — cached rows arrive with it unset even
     // though the approval state it derives from was persisted and just
@@ -923,16 +924,25 @@ async fn main() -> Result<()> {
                     if let Some((milestone_iid, milestone_title, m_proj)) = milestone {
                         if app.selected_milestone_iid != Some(milestone_iid) {
                             app.selected_milestone_iid = Some(milestone_iid);
-                            // Use cached data if available; only fetch if not yet cached.
-                            // An empty cached list is NOT treated as data: it is what a
-                            // failed/buggy fetch (e.g. `--milestone <iid>` matching nothing)
-                            // leaves behind, and trusting it would freeze progress at 0%.
+                            // Skip the fetch whenever we already have ANY data
+                            // for this milestone — either the issues cache (set
+                            // by an earlier drill-in) or the progress cache
+                            // (rebuilt from the Issues tab on every fetch). The
+                            // preview pane will populate from whichever cache
+                            // is present; the progress bar always reads the
+                            // progress cache first and never refetches.
                             let cached = app
                                 .milestone_issues_cache
                                 .get(&milestone_iid)
                                 .filter(|c| !c.is_empty());
                             if let Some(cached) = cached {
                                 app.selected_milestone_issues = Some(cached.clone());
+                            } else if app.milestone_progress_cache.contains_key(&milestone_iid) {
+                                // Progress cache already answers the bar. The
+                                // preview pane stays empty until the user
+                                // explicitly asks for the issue list (e.g. via
+                                // a future drill-in action). No fetch here.
+                                app.selected_milestone_issues = None;
                             } else {
                                 app.selected_milestone_issues = None;
                                 let client_clone = client.clone();
@@ -1125,6 +1135,7 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::Issues);
                     app.status_message = None;
                     app.issues.items = issues;
+                    app.rebuild_milestone_progress_cache();
                     app.update_filter_selection();
                     crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
                     app.project_cache.issues = app.issues.items.clone();
@@ -1303,6 +1314,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
                     app.status_message = None;
                     app.issues.items.clear();
+                    app.milestone_progress_cache.clear();
                     if let Some(client) = app.gitlab_client.clone() {
                         if !app.loading_tabs.contains(&app::Tab::Issues) {
                             app.start_loading_tab(app::Tab::Issues);
@@ -3033,6 +3045,7 @@ async fn main() -> Result<()> {
                                                     app.refreshed_tabs.clear();
                                                     app.status_message = None;
                                                     app.issues.items.clear();
+                                                    app.milestone_progress_cache.clear();
                                                     app.mrs.items.clear();
                                                     app.pipelines.items.clear();
                                                     app.runners.items.clear();
@@ -5517,7 +5530,12 @@ async fn main() -> Result<()> {
                                             }
                                             item.description = Some(description.clone());
                                             item.milestone = new_milestone.clone().map(|t| {
-                                                crate::domain::issues::Milestone { title: t }
+                                                crate::domain::issues::Milestone {
+                                                    title: t,
+                                                    iid: 0,
+                                                    id: 0,
+                                                    state: String::new(),
+                                                }
                                             });
                                         }
 
@@ -5681,7 +5699,12 @@ async fn main() -> Result<()> {
                                             }
                                             item.description = Some(description.clone());
                                             item.milestone = new_milestone.clone().map(|t| {
-                                                crate::domain::issues::Milestone { title: t }
+                                                crate::domain::issues::Milestone {
+                                                    title: t,
+                                                    iid: 0,
+                                                    id: 0,
+                                                    state: String::new(),
+                                                }
                                             });
                                         }
 

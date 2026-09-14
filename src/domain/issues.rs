@@ -10,6 +10,20 @@ pub struct Author {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Milestone {
     pub title: String,
+    /// GitLab `iid` (issue-scoped within project); GitHub `number` mapped
+    /// onto the same field. Used to key `App::milestone_progress_cache`
+    /// without re-fetching per-milestone issue lists.
+    #[serde(default)]
+    pub iid: u64,
+    /// GitLab `id` (global). Kept for parity with the API; not used by
+    /// the progress cache.
+    #[serde(default)]
+    pub id: u64,
+    /// GitLab `state` ("active"/"closed"); GitHub `state` ("open"/"closed").
+    /// Default-empty preserves backward compatibility with older cached
+    /// issue JSON that didn't carry the field.
+    #[serde(default)]
+    pub state: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

@@ -1229,6 +1229,9 @@ pub fn apply_selector_changes<B: Backend>(
                     } else {
                         Some(crate::domain::issues::Milestone {
                             title: first_val.clone(),
+                            iid: 0,
+                            id: 0,
+                            state: String::new(),
                         })
                     };
                 }
@@ -1839,6 +1842,9 @@ mod tests {
             },
             milestone: Some(crate::domain::issues::Milestone {
                 title: "v1.0".to_string(),
+                iid: 0,
+                id: 0,
+                state: String::new(),
             }),
             assignees: vec![],
             description: None,

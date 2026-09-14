@@ -180,7 +180,7 @@ pub fn build_issue_document(
     } else {
         crate::backend::BackendKind::GitLab
     };
-    let related_label = format!("Related {}", kind.term("mr_plural"));
+    let related_label = kind.term("mr_plural").to_string();
     fields.push(crate::app::Field::read_only(
         &related_label,
         format_related_mrs_value(issue.related_mrs.as_ref(), fetching_related_mrs),
@@ -194,14 +194,12 @@ pub fn build_issue_document(
     }
 }
 
-/// Render the value cell of the "Related MRs/PRs" row. Three states:
+/// Render the value cell of the "Merge Requests / Pull Requests" row.
 ///
-/// * `None` + not fetching → plain dash, matches the rest of the read-only
-///   preview for unset fields. The render path will kick off the fetch on the
-///   next tick.
-/// * `None` + fetching → "Loading…" so the user knows the row will fill in.
-/// * `Some(...)` → either a comma-separated list (with state badges when there
-///   are items), "None", or a short error string for the failed case.
+/// The field is either a list of related PRs/MRs, `--` when there are none
+/// (whether or not the fetch has run), or `Loading…` while one is in flight.
+/// On a fetch failure we surface a short error string so the user can
+/// distinguish it from the empty case.
 fn format_related_mrs_value(
     state: Option<&crate::domain::issues::RelatedMrsState>,
     fetching: bool,
@@ -209,8 +207,8 @@ fn format_related_mrs_value(
     use crate::domain::issues::RelatedMrsState;
     match state {
         None if fetching => "Loading…".to_string(),
-        None => "—".to_string(),
-        Some(RelatedMrsState::Empty) => "None".to_string(),
+        None => "--".to_string(),
+        Some(RelatedMrsState::Empty) => "--".to_string(),
         Some(RelatedMrsState::Failed(msg)) => format!("Failed: {}", truncate_inline(msg, 40)),
         Some(RelatedMrsState::Items(items)) => items
             .iter()
@@ -1758,15 +1756,12 @@ mod tests {
             gitlab_doc
                 .fields
                 .iter()
-                .any(|f| f.label == "Related Merge Requests"),
-            "GitLab issues must label the row 'Related Merge Requests'"
+                .any(|f| f.label == "Merge Requests"),
+            "GitLab issues must label the row 'Merge Requests'"
         );
         assert!(
-            gh_doc
-                .fields
-                .iter()
-                .any(|f| f.label == "Related Pull Requests"),
-            "GitHub issues must label the row 'Related Pull Requests'"
+            gh_doc.fields.iter().any(|f| f.label == "Pull Requests"),
+            "GitHub issues must label the row 'Pull Requests'"
         );
     }
 
@@ -1779,13 +1774,13 @@ mod tests {
         let field = doc
             .fields
             .iter()
-            .find(|f| f.label == "Related Merge Requests")
+            .find(|f| f.label == "Merge Requests")
             .expect("related-mrs field must be present");
         assert_eq!(field.value, "Loading…");
     }
 
     #[test]
-    fn build_issue_document_renders_empty_state_as_none() {
+    fn build_issue_document_renders_empty_state_as_dashes() {
         let mut issue = mk_issue();
         issue.related_mrs = Some(RelatedMrsState::Empty);
 
@@ -1793,9 +1788,9 @@ mod tests {
         let field = doc
             .fields
             .iter()
-            .find(|f| f.label == "Related Merge Requests")
+            .find(|f| f.label == "Merge Requests")
             .expect("related-mrs field must be present");
-        assert_eq!(field.value, "None");
+        assert_eq!(field.value, "--");
     }
 
     #[test]
@@ -1818,7 +1813,7 @@ mod tests {
         let field = doc
             .fields
             .iter()
-            .find(|f| f.label == "Related Merge Requests")
+            .find(|f| f.label == "Merge Requests")
             .expect("related-mrs field must be present");
         assert!(field.value.contains("!12 [MERGED] fix closing flow"));
         assert!(field.value.contains("!14 [OPEN] wire up webhooks"));

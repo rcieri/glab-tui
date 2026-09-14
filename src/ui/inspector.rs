@@ -562,6 +562,7 @@ pub(crate) fn build_field_list_items(
                     "Mergeable" => icons.merge_clean.as_str(),
                     "Workflow" => icons.workflow_review.as_str(),
                     "Threads" => icons.thread_unresolved.as_str(),
+                    "Merge Requests" | "Pull Requests" => icons.tab_pr.as_str(),
                     "Created" | "Updated" | "Date" | "Due Date" | "Start Date" | "Released"
                     | "Deployed" => "\u{f073}",
                     "Duration" | "Avg Wait" => "\u{f017}",
@@ -810,8 +811,7 @@ pub(crate) fn build_field_list_items(
                                     val_spans = spans;
                                 }
                             }
-                        } else if (label == "Related Merge Requests"
-                            || label == "Related Pull Requests")
+                        } else if (label == "Merge Requests" || label == "Pull Requests")
                             && (val.contains("[OPEN]")
                                 || val.contains("[CLOSED]")
                                 || val.contains("[MERGED]"))

@@ -641,7 +641,7 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             cli::Commands::Open { entity, id } => {
-                cli::run_open_in_browser(&entity, &id);
+                cli::run_open_in_browser(&entity, &id).await;
                 return Ok(());
             }
             cli::Commands::Repos => {
@@ -4389,6 +4389,8 @@ async fn main() -> Result<()> {
                                                     // its workflow_dispatch inputs and rebuild
                                                     // the edit menu fields to show per-input fields.
                                                     if is_workflow_file {
+                                                        // Safe on the UI thread: pure local
+                                                        // git object-DB resolve, no network.
                                                         let repo_root =
                                                             std::process::Command::new("git")
                                                                 .args([
@@ -6358,7 +6360,10 @@ async fn main() -> Result<()> {
                                             .map(|r| r.tag_name.clone())
                                             .collect();
                                         if let Ok(output) =
-                                            std::process::Command::new("git").args(["tag"]).output()
+                                            // Safe on the UI thread: pure local ref read.
+                                            std::process::Command::new("git")
+                                                .args(["tag"])
+                                                .output()
                                         {
                                             if output.status.success() {
                                                 for line in

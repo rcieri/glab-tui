@@ -993,6 +993,16 @@ async fn main() -> Result<()> {
             match event {
                 Event::Tick => {
                     app.tick();
+                    if let Some(client) = app.gitlab_client.clone() {
+                        let _ = crate::fetch::dispatch_pending_related_mrs_fetch(
+                            &client,
+                            &mut app,
+                            &events.sender(),
+                        );
+                    } else {
+                        app.pending_related_mrs_iid = None;
+                        app.pending_related_mrs_since = None;
+                    }
                     if app.active_tab == app::Tab::Jobs
                         && app.job_trace_follow
                         && app.job_trace.is_some()

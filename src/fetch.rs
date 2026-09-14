@@ -96,6 +96,84 @@ mod tests {
 
         assert_eq!(mrs[0].workflow, None);
     }
+
+    fn dummy_client() -> crate::domain::client::GitlabClient {
+        crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+        }
+    }
+
+    #[test]
+    fn dispatch_pending_related_mrs_returns_false_when_nothing_pending() {
+        let mut app = app::App::new();
+        let client = dummy_client();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        assert!(!dispatch_pending_related_mrs_fetch(&client, &mut app, &tx));
+    }
+
+    #[test]
+    fn dispatch_pending_related_mrs_returns_false_within_debounce_window() {
+        let mut app = app::App::new();
+        let client = dummy_client();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        app.pending_related_mrs_iid = Some(42);
+        app.pending_related_mrs_since = Some(std::time::Instant::now());
+
+        assert!(
+            !dispatch_pending_related_mrs_fetch(&client, &mut app, &tx),
+            "a fresh request must wait the full debounce window",
+        );
+        // Pending state must survive a no-op dispatch so the next tick can
+        // actually fire the request once the timer elapses.
+        assert_eq!(app.pending_related_mrs_iid, Some(42));
+        assert!(app.pending_related_mrs_since.is_some());
+        assert!(
+            app.fetching_related_mrs.is_empty(),
+            "the in-flight set must not be touched by a no-op dispatch",
+        );
+    }
+
+    #[test]
+    fn dispatch_pending_related_mrs_clears_state_when_iid_already_fetched() {
+        let mut app = app::App::new();
+        let client = dummy_client();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let now =
+            std::time::Instant::now() - RELATED_MRS_DEBOUNCE - std::time::Duration::from_millis(10);
+        app.pending_related_mrs_iid = Some(7);
+        app.pending_related_mrs_since = Some(now);
+        app.issues.items.push(crate::domain::issues::Issue {
+            iid: 7,
+            title: "already fetched".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "alice".into(),
+            },
+            project_path: "alice/repo".into(),
+            web_url: String::new(),
+            description: None,
+            milestone: None,
+            assignees: vec![],
+            due_date: None,
+            related_mrs: Some(crate::domain::issues::RelatedMrsState::Empty),
+        });
+
+        assert!(!dispatch_pending_related_mrs_fetch(&client, &mut app, &tx));
+        assert_eq!(app.pending_related_mrs_iid, None);
+        assert_eq!(app.pending_related_mrs_since, None);
+        assert!(app.fetching_related_mrs.is_empty());
+    }
 }
 
 pub fn spawn_fetch_repo_attributes(
@@ -131,6 +209,55 @@ pub fn spawn_fetch_related_mrs(
         let result = result.map_err(|e| e.to_string());
         let _ = tx.send(Event::RelatedMrsFetched { issue_iid, result });
     });
+}
+
+/// How long the related-MRs dispatcher waits after the last keypress before
+/// firing the actual `gh api graphql` (or `/projects/.../closed_by`) call.
+/// Tuned so a normal keypress lands within the next tick (250 ms), while a
+/// held-down `j`/`k` only ever fires one call per scroll-stop instead of one
+/// per issue scrolled past.
+pub const RELATED_MRS_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Dispatch the most recent pending related-MRs request, if the debounce has
+/// elapsed and the iid is still not cached. Called from `Event::Tick` in the
+/// main loop, so it runs at most every `EventHandler::tick_rate` (250 ms by
+/// default) regardless of how many j/k presses arrived between ticks.
+///
+/// Returns `true` when an actual `spawn_fetch_related_mrs` was dispatched in
+/// this call, so tests can assert the gating behavior without standing up a
+/// tokio runtime.
+pub fn dispatch_pending_related_mrs_fetch(
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+) -> bool {
+    let Some(iid) = app.pending_related_mrs_iid else {
+        return false;
+    };
+    let Some(since) = app.pending_related_mrs_since else {
+        app.pending_related_mrs_iid = None;
+        return false;
+    };
+    if since.elapsed() < RELATED_MRS_DEBOUNCE {
+        return false;
+    }
+    app.pending_related_mrs_iid = None;
+    app.pending_related_mrs_since = None;
+
+    if app
+        .issues
+        .items
+        .iter()
+        .any(|i| i.iid == iid && i.related_mrs.is_some())
+    {
+        return false;
+    }
+    if !app.fetching_related_mrs.insert(iid) {
+        return false;
+    }
+    let project_path = app.project_path_for_issue(iid);
+    spawn_fetch_related_mrs(client, &project_path, iid, tx.clone());
+    true
 }
 
 pub fn spawn_refresh_active_tab(

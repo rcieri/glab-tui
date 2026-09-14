@@ -2973,6 +2973,17 @@ pub struct App {
     /// from `Issue::related_mrs == None` (genuinely not fetched) — only set
     /// once a `spawn_fetch_related_mrs` task is in flight.
     pub fetching_related_mrs: std::collections::HashSet<u64>,
+    /// Issue iid whose related-MRs fetch has been *requested* by a keypress
+    /// but not yet dispatched. Set by `maybe_fetch_related_mrs`; cleared by
+    /// `dispatch_pending_related_mrs_fetch` once the debounce elapses. Lets
+    /// j/k scrolling request fetches cheaply without firing one
+    /// `gh api graphql` call per issue scrolled past.
+    pub pending_related_mrs_iid: Option<u64>,
+    /// Wall-clock timestamp of the most recent request in
+    /// `pending_related_mrs_iid`. The dispatcher only fires the actual fetch
+    /// once this is older than the debounce window, so the GraphQL call lands
+    /// for the issue the user actually stopped on.
+    pub pending_related_mrs_since: Option<std::time::Instant>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
     pub edit_menu: Option<EditMenu>,
@@ -3095,6 +3106,8 @@ impl Default for App {
             pipeline_jobs: std::collections::HashMap::new(),
             fetching_pipelines: std::collections::HashSet::new(),
             fetching_related_mrs: std::collections::HashSet::new(),
+            pending_related_mrs_iid: None,
+            pending_related_mrs_since: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
             edit_menu: None,

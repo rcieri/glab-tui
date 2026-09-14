@@ -2,17 +2,26 @@ use crate::AppTerminal;
 use crate::app::App;
 use crate::entity_editor::rebuild_edit_menu;
 use crate::event::Event;
-use crate::fetch::{spawn_fetch_related_mrs, spawn_refresh_active_tab};
+use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Spawn a related-MRs/PRs fetch for the currently selected issue, but only
-/// the first time it is selected. Uses the in-flight tracker so rapid
-/// navigation between issues does not pile up requests.
-pub(crate) fn maybe_fetch_related_mrs(app: &mut App, tx: &UnboundedSender<Event>) {
+/// Record a request to fetch related MRs/PRs for the currently selected issue.
+///
+/// This is intentionally *cheap*: it just stores the iid in
+/// `App::pending_related_mrs_iid` and a timestamp in
+/// `App::pending_related_mrs_since`. The actual `spawn_fetch_related_mrs` is
+/// deferred to `dispatch_pending_related_mrs_fetch`, which only fires once
+/// the debounce window has elapsed — so holding `j`/`k` through the issue
+/// list queues one request per scroll-stop, not one per issue scrolled past.
+///
+/// The `tx` parameter is accepted (not consumed) so existing keypress handler
+/// call sites keep passing their sender without churn; the dispatcher is what
+/// ultimately drives `spawn_fetch_related_mrs`.
+pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .issues
         .state
@@ -27,17 +36,14 @@ pub(crate) fn maybe_fetch_related_mrs(app: &mut App, tx: &UnboundedSender<Event>
         .iter()
         .any(|i| i.iid == iid && i.related_mrs.is_some())
     {
+        if app.pending_related_mrs_iid == Some(iid) {
+            app.pending_related_mrs_iid = None;
+            app.pending_related_mrs_since = None;
+        }
         return;
     }
-    if !app.fetching_related_mrs.insert(iid) {
-        return;
-    }
-    if let Some(client) = app.gitlab_client.as_ref() {
-        let project_path = app.project_path_for_issue(iid);
-        spawn_fetch_related_mrs(client, &project_path, iid, tx.clone());
-    } else {
-        app.fetching_related_mrs.remove(&iid);
-    }
+    app.pending_related_mrs_iid = Some(iid);
+    app.pending_related_mrs_since = Some(std::time::Instant::now());
 }
 
 /// Insert the currently-highlighted Issue/MR into its selection set. Used by

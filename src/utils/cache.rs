@@ -297,49 +297,48 @@ pub fn get_repos_dir() -> PathBuf {
     }
 }
 
-pub fn get_repos_in_dir(repos_dir: &std::path::Path) -> Vec<String> {
-    let mut repos = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(repos_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let mut git_path = path.clone();
-                git_path.push(".git");
-                if git_path.exists() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        repos.push(name.to_string());
-                    }
-                }
-            }
+/// Returns the Switch Repository overlay's row list. Driven entirely by
+/// `recent_repos.json` (every checkout glab-tui has ever been opened in):
+/// each entry pairs the basename the user sees with the absolute path the
+/// submit handler needs for `set_current_dir`. No on-disk directory scan —
+/// the list is independent of where glab-tui is currently running, and
+/// only contains repos the user has actually used.
+pub fn get_switchable_repos() -> Vec<RepoEntry> {
+    let mut entries: Vec<RepoEntry> = Vec::new();
+    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for abs_path in get_recent_repos() {
+        if seen_paths.contains(&abs_path) || !is_git_repo(&abs_path) {
+            continue;
         }
+        seen_paths.insert(abs_path.clone());
+        entries.push(RepoEntry {
+            display: basename_of(&abs_path),
+            absolute_path: abs_path,
+        });
     }
-    repos.sort();
-    repos
+
+    entries
 }
 
-pub fn get_switchable_repos() -> Vec<String> {
-    let repos_dir = get_repos_dir();
-    let available_repos = get_repos_in_dir(&repos_dir);
-    let recent_paths = get_recent_repos();
+/// Last path component of an absolute repo path. Falls back to the full
+/// path when the basename is empty (e.g. trailing-slash inputs) so the
+/// Switch Repository overlay always has a non-empty display label.
+fn basename_of(abs_path: &str) -> String {
+    std::path::Path::new(abs_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| abs_path.to_string())
+}
 
-    let mut sorted_repos = Vec::new();
-
-    // Recent repos are always absolute paths — show only valid git repos
-    for abs_path in recent_paths {
-        if !sorted_repos.contains(&abs_path) && is_git_repo(&abs_path) {
-            sorted_repos.push(abs_path);
-        }
-    }
-
-    // Add repos found in repos_dir as absolute paths
-    for dirname in available_repos {
-        let abs = repos_dir.join(&dirname).to_string_lossy().into_owned();
-        if !sorted_repos.contains(&abs) && !sorted_repos.contains(&dirname) {
-            sorted_repos.push(abs);
-        }
-    }
-
-    sorted_repos
+/// One row in the Switch Repository overlay. `display` is the basename
+/// the user sees; `absolute_path` is the on-disk location the selection
+/// actually switches into via `set_current_dir`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoEntry {
+    pub display: String,
+    pub absolute_path: String,
 }
 
 #[cfg(test)]
@@ -380,24 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_repos_in_dir() {
-        let parent = tempdir().unwrap();
-        let repo1 = parent.path().join("repo1");
-        let repo2 = parent.path().join("repo2");
-        let non_repo = parent.path().join("non_repo");
-
-        fs::create_dir_all(&repo1.join(".git")).unwrap();
-        fs::create_dir_all(&repo2.join(".git")).unwrap();
-        fs::create_dir_all(&non_repo).unwrap();
-
-        let repos = get_repos_in_dir(parent.path());
-        assert_eq!(repos.len(), 2);
-        assert!(repos.contains(&"repo1".to_string()));
-        assert!(repos.contains(&"repo2".to_string()));
-        assert!(!repos.contains(&"non_repo".to_string()));
-    }
-
-    #[test]
     fn test_repos_dir_env_var() {
         let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
         let temp_dir = tempdir().unwrap();
@@ -424,5 +405,56 @@ mod tests {
 
         assert_eq!(deserialized.labels[0], "bug");
         assert_eq!(deserialized.members[1], "@user2");
+    }
+
+    #[test]
+    fn test_get_switchable_repos_uses_recent_cache_only() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        // A nearby-but-never-opened repo must NOT appear in the switch
+        // list. The overlay is driven entirely by recent_repos.json — the
+        // on-disk directory layout should not influence it.
+        let repos_root = tempdir().unwrap();
+        let ghost = repos_root.path().join("ghost");
+        fs::create_dir_all(ghost.join(".git")).unwrap();
+
+        // But the actual repo was opened on a different root entirely
+        // and recorded in the recent cache.
+        let opened_root = tempdir().unwrap();
+        let opened = opened_root.path().join("opened");
+        fs::create_dir_all(opened.join(".git")).unwrap();
+        let opened_str = opened.to_str().unwrap().to_string();
+        add_recent_repo(&opened_str);
+
+        let entries = get_switchable_repos();
+        let paths: Vec<&str> = entries.iter().map(|e| e.absolute_path.as_str()).collect();
+
+        assert!(paths.contains(&opened_str.as_str()));
+        assert!(
+            !paths.iter().any(|p| p.contains("ghost")),
+            "never-opened sibling should not appear"
+        );
+    }
+
+    #[test]
+    fn test_get_switchable_repos_skips_non_git_entries() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        // The recent_repos.json cache should never hold a non-git path
+        // (add_recent_repo filters those out), but defend in depth:
+        // corrupt entries must not surface as rows in the overlay.
+        let parent = tempdir().unwrap();
+        let fake_repo = parent.path().join("fake_repo");
+        fs::create_dir_all(&fake_repo).unwrap(); // no .git/
+
+        let fake_str = fake_repo.to_str().unwrap().to_string();
+        // Inject the entry directly via the cache file.
+        let cache_path = get_recent_repos_file_path();
+        let _ = std::fs::create_dir_all(cache_path.parent().unwrap());
+        std::fs::write(&cache_path, format!("[\"{}\"]", fake_str)).unwrap();
+
+        let entries = get_switchable_repos();
+        assert!(
+            entries.iter().all(|e| e.absolute_path != fake_str),
+            "non-git entries must be filtered out"
+        );
     }
 }

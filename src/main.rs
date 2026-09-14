@@ -802,9 +802,14 @@ async fn main() -> Result<()> {
                 command: "Startup: Not in a git repository".to_string(),
                 status: "Failed: No repo detected — select one below or press Esc".to_string(),
             });
+            let mut switch_repo_paths = std::collections::HashMap::new();
+            for entry in &switchable {
+                switch_repo_paths.insert(entry.display.clone(), entry.absolute_path.clone());
+            }
+            app.switch_repo_paths = switch_repo_paths;
             app.selector = Some(crate::app::Selector {
                 title: " No Repo Detected — Select a Repository ".to_string(),
-                all_items: switchable,
+                all_items: switchable.iter().map(|e| e.display.clone()).collect(),
                 selected_items: std::collections::HashSet::new(),
                 cursor_idx: 0,
                 search_query: String::new(),
@@ -2943,12 +2948,22 @@ async fn main() -> Result<()> {
                                                 path = selector.search_query.trim().to_string();
                                             }
 
+                                            // Resolve the short basename back to its
+                                            // absolute on-disk path. Synthetic items
+                                            // ("+ Create …", group entries) are not in
+                                            // the map, so they fall through to the
+                                            // repos_dir fallback below.
+                                            let resolved = app
+                                                .switch_repo_paths
+                                                .get(&path)
+                                                .cloned()
+                                                .unwrap_or_else(|| path.clone());
                                             let repos_dir = crate::utils::cache::get_repos_dir();
                                             let target_path =
-                                                if std::path::Path::new(&path).is_absolute() {
-                                                    std::path::PathBuf::from(&path)
+                                                if std::path::Path::new(&resolved).is_absolute() {
+                                                    std::path::PathBuf::from(&resolved)
                                                 } else {
-                                                    repos_dir.join(&path)
+                                                    repos_dir.join(&resolved)
                                                 };
                                             let target_path_str =
                                                 target_path.to_string_lossy().into_owned();

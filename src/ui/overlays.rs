@@ -224,6 +224,23 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 line_spans.push(Span::styled(item.clone(), style));
                             }
 
+                            // For the Switch Repository overlay, render the
+                            // absolute on-disk path alongside the basename
+                            // (display name) in muted text so users can
+                            // distinguish repos that share a basename.
+                            if selector.field_type == "switch_repo" {
+                                if let Some(abs_path) = app.switch_repo_paths.get(item) {
+                                    if !abs_path.is_empty() && abs_path != item {
+                                        line_spans.push(Span::styled(
+                                            format!(" {}", abs_path),
+                                            Style::default()
+                                                .fg(THEME.read().unwrap().text_muted)
+                                                .bg(item_bg),
+                                        ));
+                                    }
+                                }
+                            }
+
                             ListItem::new(vec![Line::from(line_spans)])
                                 .style(Style::default().bg(item_bg))
                         })

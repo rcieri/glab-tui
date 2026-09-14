@@ -2988,6 +2988,12 @@ pub struct App {
     pub loaded_tabs: std::collections::HashSet<Tab>,
     pub edit_menu: Option<EditMenu>,
     pub selector: Option<Selector>,
+    /// Mapping from the `all_items` display strings to the absolute on-disk
+    /// path for the active `switch_repo` selector. Lets the overlay render
+    /// the basename (and a muted absolute path) in each row while the
+    /// submit handler still gets the path it needs for `set_current_dir`.
+    /// Populated when the overlay opens, drained with `selector = None`.
+    pub switch_repo_paths: std::collections::HashMap<String, String>,
     pub text_input: Option<TextInput>,
     pub editing_page_size: bool,
     pub page_size_input: String,
@@ -3112,6 +3118,7 @@ impl Default for App {
             loaded_tabs: std::collections::HashSet::new(),
             edit_menu: None,
             selector: None,
+            switch_repo_paths: std::collections::HashMap::new(),
             text_input: None,
             editing_page_size: false,
             page_size_input: String::new(),

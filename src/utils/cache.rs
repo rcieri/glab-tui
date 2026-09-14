@@ -426,9 +426,13 @@ mod tests {
         add_recent_repo(&opened_str);
 
         let entries = get_switchable_repos();
-        let paths: Vec<&str> = entries.iter().map(|e| e.absolute_path.as_str()).collect();
+        let paths: Vec<String> = entries.iter().map(|e| e.absolute_path.clone()).collect();
 
-        assert!(paths.contains(&opened_str.as_str()));
+        // add_recent_repo persists the canonicalized form (symlinks resolved,
+        // \\?\ prefix on Windows), so compare canonicalized-to-canonicalized.
+        let opened_canon = opened.canonicalize().unwrap();
+        let opened_canon_str = opened_canon.to_string_lossy().into_owned();
+        assert!(paths.contains(&opened_canon_str));
         assert!(
             !paths.iter().any(|p| p.contains("ghost")),
             "never-opened sibling should not appear"

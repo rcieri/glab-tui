@@ -2685,14 +2685,15 @@ pub(crate) fn render_tab_milestones(
                             // Fall back to the per-milestone issue list when the
                             // user has drilled in. Never refetch: the bar must
                             // show whatever we already have, even if stale.
-                            let (total, closed) = app
+                            //
+                            // `milestone_progress_cache` stores `(closed, total)`.
+                            // If neither cache has data, render a dash.
+                            let cached = app
                                 .milestone_progress_cache
                                 .get(&m.iid)
                                 .copied()
-                                .unwrap_or((0, 0));
-                            let (bar_text, color) = if let Some((t, c)) = if total > 0 {
-                                Some((total, closed))
-                            } else {
+                                .filter(|(closed, total)| *total > 0);
+                            let (closed, total) = cached.unwrap_or_else(|| {
                                 app.milestone_issues_cache
                                     .get(&m.iid)
                                     .filter(|v| !v.is_empty())
@@ -2700,15 +2701,12 @@ pub(crate) fn render_tab_milestones(
                                         let total = issues.len();
                                         let closed =
                                             issues.iter().filter(|i| i.state == "closed").count();
-                                        (total, closed)
+                                        (closed, total)
                                     })
-                            } {
-                                let (total, closed) = (t, c);
-                                let pct = if total > 0 {
-                                    (closed as f32 / total as f32) * 100.0
-                                } else {
-                                    0.0
-                                };
+                                    .unwrap_or((0, 0))
+                            });
+                            let (bar_text, color) = if total > 0 {
+                                let pct = (closed as f32 / total as f32) * 100.0;
                                 let color = if pct <= 33.0 {
                                     theme.red
                                 } else if pct <= 66.0 {
@@ -2717,16 +2715,13 @@ pub(crate) fn render_tab_milestones(
                                     theme.green
                                 };
                                 let bar_segments = 10;
-                                let filled_len = if total > 0 {
-                                    (closed * bar_segments) / total
-                                } else {
-                                    0
-                                };
+                                let filled_len = (closed * bar_segments) / total;
+                                let empty_len = bar_segments - filled_len;
                                 (
                                     format!(
                                         "[{}{}] {:.0}%",
                                         "█".repeat(filled_len),
-                                        "░".repeat(bar_segments - filled_len),
+                                        "░".repeat(empty_len),
                                         pct,
                                     ),
                                     color,
@@ -3430,5 +3425,92 @@ mod tests {
         clamp_detail_scroll(&mut app, 10);
 
         assert_eq!(app.detail_scroll, 3);
+    }
+
+    /// Regression test for the slice::repeat capacity overflow: when
+    /// `milestone_progress_cache` had data, the renderer used to destructure
+    /// `(total, closed)` from a tuple that actually held `(closed, total)`,
+    /// so any milestone with open issues produced `filled_len > bar_segments`
+    /// and `bar_segments - filled_len` underflowed into `usize::MAX`. Calling
+    /// `"░".repeat(usize::MAX)` panicked with "capacity overflow".
+    #[test]
+    fn render_milestone_progress_handles_open_issues_without_panic() {
+        use crate::domain::milestones::Milestone;
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.milestones.items = vec![Milestone {
+            id: 0,
+            iid: 7,
+            title: "v1.0".to_string(),
+            description: None,
+            state: "active".to_string(),
+            start_date: None,
+            due_date: None,
+            created_at: String::new(),
+            project_path: String::new(),
+        }];
+        // 3 closed of 5 total — the case that triggered the panic.
+        app.milestone_progress_cache.insert(7, (3, 5));
+        app.milestones.state.select(Some(0));
+        app.active_tab = Tab::Milestones;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 40);
+                let detail_rect = Rect::new(0, 40, area.width, 30);
+                render_tab_milestones(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+    }
+
+    /// Same regression for the all-closed case: filled_len == bar_segments,
+    /// empty_len == 0 — must not panic on `String::repeat(0)`.
+    #[test]
+    fn render_milestone_progress_handles_all_closed_without_panic() {
+        use crate::domain::milestones::Milestone;
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.milestones.items = vec![Milestone {
+            id: 0,
+            iid: 9,
+            title: "v2.0".to_string(),
+            description: None,
+            state: "closed".to_string(),
+            start_date: None,
+            due_date: None,
+            created_at: String::new(),
+            project_path: String::new(),
+        }];
+        app.milestone_progress_cache.insert(9, (4, 4));
+        app.milestones.state.select(Some(0));
+        app.active_tab = Tab::Milestones;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 40);
+                let detail_rect = Rect::new(0, 40, area.width, 30);
+                render_tab_milestones(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
     }
 }

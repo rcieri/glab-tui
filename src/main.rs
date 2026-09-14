@@ -669,12 +669,13 @@ async fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-    )?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+    }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -8148,11 +8149,13 @@ async fn main() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
+    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+    }
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture,
-        PopKeyboardEnhancementFlags
+        DisableMouseCapture
     )?;
     terminal.show_cursor()?;
 

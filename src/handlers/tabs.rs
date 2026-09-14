@@ -1426,11 +1426,16 @@ pub async fn handle_active_tab_key(
                             }
                             crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
                             let _ = crossterm::terminal::disable_raw_mode();
+                            if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+                                let _ = crossterm::execute!(
+                                    std::io::stdout(),
+                                    crossterm::event::PopKeyboardEnhancementFlags,
+                                );
+                            }
                             let _ = crossterm::execute!(
                                 std::io::stdout(),
                                 crossterm::terminal::LeaveAlternateScreen,
                                 crossterm::event::DisableMouseCapture,
-                                crossterm::event::PopKeyboardEnhancementFlags,
                             );
                             let editor = std::env::var("EDITOR")
                                 .or_else(|_| std::env::var("VISUAL"))
@@ -1448,10 +1453,15 @@ pub async fn handle_active_tab_key(
                                 std::io::stdout(),
                                 crossterm::terminal::EnterAlternateScreen,
                                 crossterm::event::EnableMouseCapture,
-                                crossterm::event::PushKeyboardEnhancementFlags(
-                                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                                ),
                             );
+                            if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+                                let _ = crossterm::execute!(
+                                    std::io::stdout(),
+                                    crossterm::event::PushKeyboardEnhancementFlags(
+                                        crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                                    ),
+                                );
+                            }
                             let _ = terminal.clear();
                             crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
                         }

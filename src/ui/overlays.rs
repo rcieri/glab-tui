@@ -1148,6 +1148,12 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     }
 
     let icons = ICONS.read().unwrap();
+    let is_github = app.is_github();
+    let mr_label: &'static str = if is_github {
+        "Pull Requests"
+    } else {
+        "Merge Requests"
+    };
 
     struct Shortcut {
         category: &'static str,
@@ -1295,88 +1301,128 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Issues",
             key: d(app.config.keybindings.issues.create_mr.clone()),
-            action: "Create Merge Request from selected Issue",
+            action: if is_github {
+                "Create Pull Request from selected Issue"
+            } else {
+                "Create Merge Request from selected Issue"
+            },
         },
         Shortcut {
             category: "Issues",
             key: d(app.config.keybindings.issues.jump_related_mrs.clone()),
             action: "Jump to related Merge Requests / Pull Requests",
         },
-        // ── Merge Requests ──
+        // ── Merge Requests / Pull Requests ──
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.create_mr.clone()),
-            action: "Create new Merge Request",
+            action: if is_github {
+                "Create new Pull Request"
+            } else {
+                "Create new Merge Request"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.select_mr.clone()),
             action: "Toggle MR/PR selection (bulk edit/merge with e/m)",
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.selection_toggle.clone()),
             action: "Toggle select mode (paint selection while navigating)",
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.edit_entity.clone()),
             action: "Open parameter edit menu",
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.approve_mr.clone()),
-            action: "Approve selected MR",
+            action: if is_github {
+                "Approve selected PR"
+            } else {
+                "Approve selected MR"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.revoke_mr.clone()),
             action: "Revoke your approval (GitLab only)",
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.rebase_mr.clone()),
             action: "Rebase source branch onto target",
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.merge_mr.clone()),
-            action: "Merge selected MR (configure squash/delete)",
+            action: if is_github {
+                "Merge selected PR (configure squash/delete)"
+            } else {
+                "Merge selected MR (configure squash/delete)"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.toggle_draft.clone()),
             action: "Toggle Draft / Ready status",
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.view_diff.clone()),
-            action: "View Merge Request diff changes",
+            action: if is_github {
+                "View Pull Request diff changes"
+            } else {
+                "View Merge Request diff changes"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.view_related_pipelines.clone()),
-            action: "View related pipelines for selected MR",
+            action: if is_github {
+                "View related Actions for selected PR"
+            } else {
+                "View related pipelines for selected MR"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.close_entity.clone()),
-            action: "Close selected MR",
+            action: if is_github {
+                "Close selected PR"
+            } else {
+                "Close selected MR"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.reopen_entity.clone()),
-            action: "Reopen selected MR",
+            action: if is_github {
+                "Reopen selected PR"
+            } else {
+                "Reopen selected MR"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.delete_entity.clone()),
-            action: "Delete selected MR",
+            action: if is_github {
+                "Delete selected PR"
+            } else {
+                "Delete selected MR"
+            },
         },
         Shortcut {
-            category: "Merge Requests",
+            category: mr_label,
             key: d(app.config.keybindings.mrs.open_in_browser.clone()),
-            action: "Open selected MR in browser",
+            action: if is_github {
+                "Open selected PR in browser"
+            } else {
+                "Open selected MR in browser"
+            },
         },
         // ── Pipelines ──
         Shortcut {
@@ -1840,7 +1886,13 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     } else {
         match app.active_tab {
             Tab::Issues => &["Global & Nav", "Issues"],
-            Tab::MergeRequests => &["Global & Nav", "Merge Requests"],
+            Tab::MergeRequests => {
+                if is_github {
+                    &["Global & Nav", "Pull Requests"]
+                } else {
+                    &["Global & Nav", "Merge Requests"]
+                }
+            }
             Tab::Pipelines => &["Global & Nav", "Pipelines"],
             Tab::Jobs => &["Global & Nav", "Jobs"],
             Tab::Milestones => &["Global & Nav", "Milestones"],
@@ -2049,4 +2101,86 @@ fn textwrap(text: &str, width: usize) -> Vec<Line<'static>> {
         .into_iter()
         .map(Line::from)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::create_backend;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol().chars().next().unwrap_or(' '))
+            .collect()
+    }
+
+    #[test]
+    fn render_help_labels_merge_requests_on_gitlab() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::MergeRequests;
+
+        terminal
+            .draw(|f| {
+                render_help(f, &mut app, f.area());
+            })
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("Merge Requests"),
+            "expected MR label on gitlab, got: {text:?}",
+        );
+        assert!(
+            !text.contains("Pull Requests"),
+            "PR label leaked into gitlab help: {text:?}",
+        );
+        assert!(text.contains("Approve selected MR"));
+        assert!(text.contains("Open selected MR in browser"));
+        assert!(text.contains("View related pipelines for selected MR"));
+    }
+
+    #[test]
+    fn render_help_labels_pull_requests_on_github() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: create_backend(true),
+            tx: None,
+            page_size: 50,
+            api_per_page: 50,
+        });
+        app.show_help = true;
+        app.active_tab = Tab::MergeRequests;
+
+        terminal
+            .draw(|f| {
+                render_help(f, &mut app, f.area());
+            })
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("Pull Requests"),
+            "expected PR label on github, got: {text:?}",
+        );
+        assert!(
+            !text.contains("Merge Requests"),
+            "MR label leaked into github help: {text:?}",
+        );
+        assert!(text.contains("Approve selected PR"));
+        assert!(text.contains("Open selected PR in browser"));
+        assert!(text.contains("View related Actions for selected PR"));
+        assert!(text.contains("Create new Pull Request"));
+    }
 }

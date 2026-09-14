@@ -776,12 +776,10 @@ async fn main() -> Result<()> {
         app.gitlab_client = Some(client.clone());
         // Remember the group implied by the current repo scope so the
         // Switch view accumulates every group worked in, not just explicit
-        // group switches. GitHub orgs aren't group-scoped, so skip them.
-        if !client.is_github {
-            if let crate::scope::Scope::Repository(r) = &app.scope {
-                if let Some(group) = r.rsplit_once('/').map(|(g, _)| g.to_string()) {
-                    crate::utils::cache::add_recent_group(&group);
-                }
+        // group switches. GitLab groups and GitHub orgs both qualify.
+        if let crate::scope::Scope::Repository(r) = &app.scope {
+            if let Some(group) = r.rsplit_once('/').map(|(g, _)| g.to_string()) {
+                crate::utils::cache::add_recent_group(&group);
             }
         }
         let tx = events.sender();
@@ -3072,18 +3070,15 @@ async fn main() -> Result<()> {
                                                         app.gitlab_client = Some(client.clone());
                                                         // Remember the group implied by the
                                                         // switched-to repo (see startup).
-                                                        if !client.is_github {
-                                                            if let crate::scope::Scope::Repository(
-                                                                r,
-                                                            ) = &app.scope
+                                                        if let crate::scope::Scope::Repository(r) =
+                                                            &app.scope
+                                                        {
+                                                            if let Some(group) = r
+                                                                .rsplit_once('/')
+                                                                .map(|(g, _)| g.to_string())
                                                             {
-                                                                if let Some(group) = r
-                                                                    .rsplit_once('/')
-                                                                    .map(|(g, _)| g.to_string())
-                                                                {
-                                                                    crate::utils::cache::
-                                                                        add_recent_group(&group);
-                                                                }
+                                                                crate::utils::cache::
+                                                                    add_recent_group(&group);
                                                             }
                                                         }
                                                     } else {

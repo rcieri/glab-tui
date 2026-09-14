@@ -125,8 +125,8 @@ pub fn get_recent_groups() -> Vec<String> {
 /// switched to (most recent first) plus the group implied by each cached
 /// repo's remote. Deriving from the cached repos is what surfaces groups
 /// whose repos are in `recent_repos.json` even when the user never switched
-/// to the group explicitly. GitHub remotes are skipped — orgs aren't
-/// group-scoped in glab-tui, so they'd be dead-end choices.
+/// to the group explicitly. GitLab groups and GitHub orgs both qualify —
+/// the GH backend lists org-scoped issues/PRs via the search API.
 pub fn get_available_groups() -> Vec<String> {
     let mut groups: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -147,16 +147,6 @@ pub fn get_available_groups() -> Vec<String> {
         let Some((group, _)) = context.rsplit_once('/') else {
             continue;
         };
-        // Avoid the auth probes when this repo's group is already known.
-        if seen.contains(group) {
-            continue;
-        }
-        if !matches!(
-            crate::git_helpers::detect_backend(&url, None),
-            crate::backend::BackendKind::GitLab
-        ) {
-            continue;
-        }
         if seen.insert(group.to_string()) {
             groups.push(group.to_string());
         }
@@ -546,8 +536,8 @@ mod tests {
             .unwrap();
         assert!(status.success());
 
-        // A GitHub-backed repo: orgs are not group-scoped, so the owner must
-        // never surface as a group.
+        // A GitHub-backed repo: the owner behaves as a group scope on the
+        // GH backend (org-scoped search listing), so it must surface too.
         let gh_repo = home.path().join("project_b");
         fs::create_dir_all(&gh_repo).unwrap();
         std::process::Command::new("git")
@@ -575,8 +565,8 @@ mod tests {
             "GitLab group derived from cached repo must be available: {groups:?}"
         );
         assert!(
-            !groups.iter().any(|g| g == "octo"),
-            "GitHub org must not surface as a group: {groups:?}"
+            groups.iter().any(|g| g == "octo"),
+            "GitHub org derived from cached repo must be available: {groups:?}"
         );
 
         if let Some(old) = old_home {

@@ -195,15 +195,11 @@ pub fn build_issue_document(
 }
 
 /// Render the value cell of the "Merge Requests / Pull Requests" row.
-/// Three states:
 ///
-/// * `None` + not fetching → plain dash, matches the rest of the read-only
-///   preview for unset fields. The render path will kick off the fetch on the
-///   next tick.
-/// * `None` + fetching → "Loading…" so the user knows the row will fill in.
-/// * `Some(...)` → either a comma-separated list (with state badges when there
-///   are items), `--` for the fetched-but-empty case, or a short error string
-///   for the failed case.
+/// The field is either a list of related PRs/MRs, `--` when there are none
+/// (whether or not the fetch has run), or `Loading…` while one is in flight.
+/// On a fetch failure we surface a short error string so the user can
+/// distinguish it from the empty case.
 fn format_related_mrs_value(
     state: Option<&crate::domain::issues::RelatedMrsState>,
     fetching: bool,
@@ -211,7 +207,7 @@ fn format_related_mrs_value(
     use crate::domain::issues::RelatedMrsState;
     match state {
         None if fetching => "Loading…".to_string(),
-        None => "—".to_string(),
+        None => "--".to_string(),
         Some(RelatedMrsState::Empty) => "--".to_string(),
         Some(RelatedMrsState::Failed(msg)) => format!("Failed: {}", truncate_inline(msg, 40)),
         Some(RelatedMrsState::Items(items)) => items

@@ -1,5 +1,8 @@
 use crate::backend::BackendKind;
 
+/// Safe to run on the UI thread: `git symbolic-ref --short HEAD` and
+/// `git branch --show-current` are pure local object-DB reads and finish
+/// in microseconds. No network roundtrip, no prompt for credentials.
 pub fn get_current_branch() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["symbolic-ref", "--short", "HEAD"])
@@ -102,7 +105,7 @@ pub fn parse_remote_host(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
-pub fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> BackendKind {
+pub async fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> BackendKind {
     if let Some(kind) = override_kind {
         return kind;
     }
@@ -115,8 +118,10 @@ pub fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> B
         return BackendKind::GitHub;
     }
 
-    let gh_authenticated = auth_status("gh", &raw_host, true);
-    let glab_authenticated = auth_status("glab", &raw_host, false);
+    let (gh_authenticated, glab_authenticated) = tokio::join!(
+        auth_status("gh", &raw_host, true),
+        auth_status("glab", &raw_host, false),
+    );
     if gh_authenticated && !glab_authenticated {
         BackendKind::GitHub
     } else if glab_authenticated && !gh_authenticated {
@@ -126,14 +131,29 @@ pub fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>) -> B
     }
 }
 
-fn auth_status(program: &str, host: &str, active: bool) -> bool {
-    let mut command = std::process::Command::new(program);
-    command.args(["auth", "status"]);
-    if active {
-        command.arg("--active");
-    }
-    command.args(["--hostname", host]);
-    command.output().is_ok_and(|output| output.status.success())
+/// Probe `<program> auth status --hostname <host>`. Runs in `spawn_blocking`
+/// because both `gh auth status` and `glab auth status` can talk to the
+/// host (HTTPS call) and a hung credential prompt on a misconfigured
+/// machine would freeze the TUI.
+///
+/// Sets `GIT_TERMINAL_PROMPT=0` so any HTTPS credential prompt fails
+/// fast rather than blocking the spawned thread indefinitely, mirroring
+/// the convention established in `ensure_source_branch_pushed`.
+async fn auth_status(program: &str, host: &str, active: bool) -> bool {
+    let program = program.to_string();
+    let host = host.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut command = std::process::Command::new(&program);
+        command.env("GIT_TERMINAL_PROMPT", "0");
+        command.args(["auth", "status"]);
+        if active {
+            command.arg("--active");
+        }
+        command.args(["--hostname", &host]);
+        command.output().is_ok_and(|output| output.status.success())
+    })
+    .await
+    .unwrap_or(false)
 }
 
 pub fn slugify(s: &str) -> String {
@@ -148,6 +168,12 @@ pub fn slugify(s: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
+/// Safe to run on the UI thread: `git rev-parse --abbrev-ref origin/HEAD`
+/// resolves the symbolic ref from the local object DB once `origin/HEAD`
+/// has been set by a previous `git fetch`/`clone`. No network roundtrip,
+/// no prompt for credentials. Returns `None` when the remote has not
+/// been initialized yet, in which case the caller falls back to the
+/// default "main"/"master" heuristic.
 pub fn get_default_branch() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
@@ -241,6 +267,10 @@ pub fn ensure_source_branch_pushed(branch: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Safe to run on the UI thread: `git branch -a` enumerates the refs in
+/// the local `.git` directory. No network roundtrip — remote-only branches
+/// appear by name because git caches them locally after `fetch` — and
+/// no prompt for credentials.
 pub fn get_branches() -> Vec<String> {
     let output = std::process::Command::new("git")
         .args(["branch", "-a"])
@@ -282,6 +312,10 @@ pub fn get_branches() -> Vec<String> {
 /// Returns a list of workflow/CI files available in the repo.
 /// For GitHub repos: scans `.github/workflows/*.yml` and `*.yaml`.
 /// For GitLab repos: returns `.gitlab-ci.yml` if it exists, else empty.
+/// Safe to run on the UI thread: `git rev-parse --show-toplevel` is a
+/// pure local resolve and the workflow scan afterwards only opens files
+/// under `.github/workflows/` or `.gitlab-ci*.yml`. No network roundtrip,
+/// no prompt for credentials.
 pub fn get_workflow_files(is_github: bool) -> Vec<String> {
     // Determine the repo root via `git rev-parse --show-toplevel`
     let root = std::process::Command::new("git")
@@ -390,13 +424,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn backend_override_takes_precedence() {
+    #[tokio::test]
+    async fn backend_override_takes_precedence() {
         assert_eq!(
             detect_backend(
                 "git@github.example.com:org/repo.git",
                 Some(BackendKind::GitLab)
-            ),
+            )
+            .await,
             BackendKind::GitLab
         );
     }
@@ -468,26 +503,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn www_prefix_resolves_to_github() {
+    #[tokio::test]
+    async fn www_prefix_resolves_to_github() {
         assert_eq!(
-            detect_backend("https://www.github.com/rcieri/glab-tui", None),
+            detect_backend("https://www.github.com/rcieri/glab-tui", None).await,
             BackendKind::GitHub
         );
     }
 
-    #[test]
-    fn www_prefix_on_gitlab_host_stays_gitlab() {
+    #[tokio::test]
+    async fn www_prefix_on_gitlab_host_stays_gitlab() {
         assert_eq!(
-            detect_backend("https://www.gitlab.com/org/repo.git", None),
+            detect_backend("https://www.gitlab.com/org/repo.git", None).await,
             BackendKind::GitLab
         );
     }
 
-    #[test]
-    fn www_prefix_scp_style_resolves_to_github() {
+    #[tokio::test]
+    async fn www_prefix_scp_style_resolves_to_github() {
         assert_eq!(
-            detect_backend("git@www.github.com:org/repo.git", None),
+            detect_backend("git@www.github.com:org/repo.git", None).await,
             BackendKind::GitHub
         );
     }

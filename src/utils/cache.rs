@@ -317,29 +317,61 @@ pub fn get_repos_in_dir(repos_dir: &std::path::Path) -> Vec<String> {
     repos
 }
 
-pub fn get_switchable_repos() -> Vec<String> {
+pub fn get_switchable_repos() -> Vec<RepoEntry> {
     let repos_dir = get_repos_dir();
     let available_repos = get_repos_in_dir(&repos_dir);
     let recent_paths = get_recent_repos();
 
-    let mut sorted_repos = Vec::new();
+    let mut entries: Vec<RepoEntry> = Vec::new();
+    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Recent repos are always absolute paths — show only valid git repos
+    // Recent repos are always absolute paths — keep only valid git repos.
     for abs_path in recent_paths {
-        if !sorted_repos.contains(&abs_path) && is_git_repo(&abs_path) {
-            sorted_repos.push(abs_path);
+        if seen_paths.contains(&abs_path) || !is_git_repo(&abs_path) {
+            continue;
         }
+        seen_paths.insert(abs_path.clone());
+        entries.push(RepoEntry {
+            display: basename_of(&abs_path),
+            absolute_path: abs_path,
+        });
     }
 
-    // Add repos found in repos_dir as absolute paths
+    // Add repos found in repos_dir.
     for dirname in available_repos {
         let abs = repos_dir.join(&dirname).to_string_lossy().into_owned();
-        if !sorted_repos.contains(&abs) && !sorted_repos.contains(&dirname) {
-            sorted_repos.push(abs);
+        if seen_paths.contains(&abs) {
+            continue;
         }
+        seen_paths.insert(abs.clone());
+        entries.push(RepoEntry {
+            display: dirname,
+            absolute_path: abs,
+        });
     }
 
-    sorted_repos
+    entries
+}
+
+/// Last path component of an absolute repo path. Falls back to the full
+/// path when the basename is empty (e.g. trailing-slash inputs) so the
+/// Switch Repository overlay always has a non-empty display label.
+fn basename_of(abs_path: &str) -> String {
+    std::path::Path::new(abs_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| abs_path.to_string())
+}
+
+/// One row in the Switch Repository overlay. `display` is the short name
+/// the user sees (basename for recent repos, directory name for siblings
+/// discovered in `repos_dir`); `absolute_path` is the on-disk location the
+/// selection actually switches into via `set_current_dir`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoEntry {
+    pub display: String,
+    pub absolute_path: String,
 }
 
 #[cfg(test)]
@@ -424,5 +456,72 @@ mod tests {
 
         assert_eq!(deserialized.labels[0], "bug");
         assert_eq!(deserialized.members[1], "@user2");
+    }
+
+    #[test]
+    fn test_get_switchable_repos_uses_basename_for_display() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let repos_root = tempdir().unwrap();
+        let repos_root_str = repos_root.path().to_str().unwrap().to_string();
+        let work = repos_root.path().join("work").join("glab-tui");
+        let personal = repos_root.path().join("personal").join("glab-tui");
+
+        fs::create_dir_all(work.join(".git")).unwrap();
+        fs::create_dir_all(personal.join(".git")).unwrap();
+
+        unsafe {
+            std::env::set_var("GLAB_TUI_REPOS_DIR", &repos_root_str);
+        }
+
+        let work_str = work.to_str().unwrap().to_string();
+        let personal_str = personal.to_str().unwrap().to_string();
+        add_recent_repo(&work_str);
+        add_recent_repo(&personal_str);
+
+        let entries = get_switchable_repos();
+        let by_path: std::collections::HashMap<String, String> = entries
+            .iter()
+            .map(|e| (e.absolute_path.clone(), e.display.clone()))
+            .collect();
+
+        // Recent repos show their basename as the display name, and carry
+        // the full absolute path in `absolute_path` so the selector can
+        // render it as muted secondary text.
+        assert_eq!(by_path.get(&work_str).map(String::as_str), Some("glab-tui"));
+        assert_eq!(
+            by_path.get(&personal_str).map(String::as_str),
+            Some("glab-tui")
+        );
+
+        unsafe {
+            std::env::remove_var("GLAB_TUI_REPOS_DIR");
+        }
+    }
+
+    #[test]
+    fn test_get_switchable_repos_dedupes_overlap_between_recent_and_sibling_dirs() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let parent = tempdir().unwrap();
+        let parent_str = parent.path().to_str().unwrap().to_string();
+        let repo = parent.path().join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+
+        unsafe {
+            std::env::set_var("GLAB_TUI_REPOS_DIR", &parent_str);
+        }
+
+        let repo_str = repo.to_str().unwrap().to_string();
+        add_recent_repo(&repo_str);
+
+        let entries = get_switchable_repos();
+        let matches = entries
+            .iter()
+            .filter(|e| e.absolute_path == repo_str)
+            .count();
+        assert_eq!(matches, 1, "recent + sibling should not produce duplicates");
+
+        unsafe {
+            std::env::remove_var("GLAB_TUI_REPOS_DIR");
+        }
     }
 }

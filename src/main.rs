@@ -641,7 +641,7 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             cli::Commands::Open { entity, id } => {
-                cli::run_open_in_browser(&entity, &id);
+                cli::run_open_in_browser(&entity, &id).await;
                 return Ok(());
             }
             cli::Commands::Repos => {
@@ -802,9 +802,14 @@ async fn main() -> Result<()> {
                 command: "Startup: Not in a git repository".to_string(),
                 status: "Failed: No repo detected — select one below or press Esc".to_string(),
             });
+            let mut switch_repo_paths = std::collections::HashMap::new();
+            for entry in &switchable {
+                switch_repo_paths.insert(entry.display.clone(), entry.absolute_path.clone());
+            }
+            app.switch_repo_paths = switch_repo_paths;
             app.selector = Some(crate::app::Selector {
                 title: " No Repo Detected — Select a Repository ".to_string(),
-                all_items: switchable,
+                all_items: switchable.iter().map(|e| e.display.clone()).collect(),
                 selected_items: std::collections::HashSet::new(),
                 cursor_idx: 0,
                 search_query: String::new(),
@@ -2943,12 +2948,22 @@ async fn main() -> Result<()> {
                                                 path = selector.search_query.trim().to_string();
                                             }
 
+                                            // Resolve the short display name back to
+                                            // its absolute on-disk path. Falls back to
+                                            // the original `path` for synthetic items
+                                            // like "+ Create …" or anything else that
+                                            // was never registered.
+                                            let resolved = app
+                                                .switch_repo_paths
+                                                .get(&path)
+                                                .cloned()
+                                                .unwrap_or_else(|| path.clone());
                                             let repos_dir = crate::utils::cache::get_repos_dir();
                                             let target_path =
-                                                if std::path::Path::new(&path).is_absolute() {
-                                                    std::path::PathBuf::from(&path)
+                                                if std::path::Path::new(&resolved).is_absolute() {
+                                                    std::path::PathBuf::from(&resolved)
                                                 } else {
-                                                    repos_dir.join(&path)
+                                                    repos_dir.join(&resolved)
                                                 };
                                             let target_path_str =
                                                 target_path.to_string_lossy().into_owned();
@@ -4374,6 +4389,8 @@ async fn main() -> Result<()> {
                                                     // its workflow_dispatch inputs and rebuild
                                                     // the edit menu fields to show per-input fields.
                                                     if is_workflow_file {
+                                                        // Safe on the UI thread: pure local
+                                                        // git object-DB resolve, no network.
                                                         let repo_root =
                                                             std::process::Command::new("git")
                                                                 .args([
@@ -6343,7 +6360,10 @@ async fn main() -> Result<()> {
                                             .map(|r| r.tag_name.clone())
                                             .collect();
                                         if let Ok(output) =
-                                            std::process::Command::new("git").args(["tag"]).output()
+                                            // Safe on the UI thread: pure local ref read.
+                                            std::process::Command::new("git")
+                                                .args(["tag"])
+                                                .output()
                                         {
                                             if output.status.success() {
                                                 for line in

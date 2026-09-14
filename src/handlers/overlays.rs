@@ -618,11 +618,14 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
         }
 
         // 3. Add repositories
+        let mut switch_repo_paths = std::collections::HashMap::new();
         for repo in crate::utils::cache::get_switchable_repos() {
-            if seen.insert(repo.clone()) {
-                items.push(repo);
+            if seen.insert(repo.display.clone()) {
+                switch_repo_paths.insert(repo.display.clone(), repo.absolute_path);
+                items.push(repo.display);
             }
         }
+        app.switch_repo_paths = switch_repo_paths;
 
         app.selector = Some(crate::app::Selector {
             title: " Switch Repository / Group ".to_string(),

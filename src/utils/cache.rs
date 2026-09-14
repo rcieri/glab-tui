@@ -121,6 +121,40 @@ pub fn get_recent_groups() -> Vec<String> {
     Vec::new()
 }
 
+/// Every group the Switch view can offer: groups that were explicitly
+/// switched to (most recent first) plus the group implied by each cached
+/// repo's remote. Deriving from the cached repos is what surfaces groups
+/// whose repos are in `recent_repos.json` even when the user never switched
+/// to the group explicitly. GitLab groups and GitHub orgs both qualify —
+/// the GH backend lists org-scoped issues/PRs via the search API.
+pub fn get_available_groups() -> Vec<String> {
+    let mut groups: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for g in get_recent_groups() {
+        if !g.trim().is_empty() && seen.insert(g.clone()) {
+            groups.push(g);
+        }
+    }
+
+    for repo in get_recent_repos() {
+        let Some(url) = get_remote_url(&repo) else {
+            continue;
+        };
+        let Some(context) = crate::git_helpers::parse_project_path(&url) else {
+            continue;
+        };
+        let Some((group, _)) = context.rsplit_once('/') else {
+            continue;
+        };
+        if seen.insert(group.to_string()) {
+            groups.push(group.to_string());
+        }
+    }
+
+    groups
+}
+
 pub fn add_recent_group(group: &str) {
     if group.trim().is_empty() {
         return;
@@ -245,7 +279,7 @@ pub fn clean_cache(dry_run: bool) -> CleanCacheResult {
     result
 }
 
-fn get_project_context_for_path(repo_path: &str) -> Option<String> {
+fn get_remote_url(repo_path: &str) -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["-C", repo_path, "remote", "get-url", "origin"])
         .output()
@@ -253,8 +287,12 @@ fn get_project_context_for_path(repo_path: &str) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    let url = String::from_utf8_lossy(&output.stdout);
-    crate::git_helpers::parse_project_path(&url)
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!url.is_empty()).then_some(url)
+}
+
+fn get_project_context_for_path(repo_path: &str) -> Option<String> {
+    get_remote_url(repo_path).and_then(|url| crate::git_helpers::parse_project_path(&url))
 }
 
 pub fn is_git_repo(path: &str) -> bool {
@@ -297,49 +335,48 @@ pub fn get_repos_dir() -> PathBuf {
     }
 }
 
-pub fn get_repos_in_dir(repos_dir: &std::path::Path) -> Vec<String> {
-    let mut repos = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(repos_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let mut git_path = path.clone();
-                git_path.push(".git");
-                if git_path.exists() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        repos.push(name.to_string());
-                    }
-                }
-            }
+/// Returns the Switch Repository overlay's row list. Driven entirely by
+/// `recent_repos.json` (every checkout glab-tui has ever been opened in):
+/// each entry pairs the basename the user sees with the absolute path the
+/// submit handler needs for `set_current_dir`. No on-disk directory scan —
+/// the list is independent of where glab-tui is currently running, and
+/// only contains repos the user has actually used.
+pub fn get_switchable_repos() -> Vec<RepoEntry> {
+    let mut entries: Vec<RepoEntry> = Vec::new();
+    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for abs_path in get_recent_repos() {
+        if seen_paths.contains(&abs_path) || !is_git_repo(&abs_path) {
+            continue;
         }
+        seen_paths.insert(abs_path.clone());
+        entries.push(RepoEntry {
+            display: basename_of(&abs_path),
+            absolute_path: abs_path,
+        });
     }
-    repos.sort();
-    repos
+
+    entries
 }
 
-pub fn get_switchable_repos() -> Vec<String> {
-    let repos_dir = get_repos_dir();
-    let available_repos = get_repos_in_dir(&repos_dir);
-    let recent_paths = get_recent_repos();
+/// Last path component of an absolute repo path. Falls back to the full
+/// path when the basename is empty (e.g. trailing-slash inputs) so the
+/// Switch Repository overlay always has a non-empty display label.
+fn basename_of(abs_path: &str) -> String {
+    std::path::Path::new(abs_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| abs_path.to_string())
+}
 
-    let mut sorted_repos = Vec::new();
-
-    // Recent repos are always absolute paths — show only valid git repos
-    for abs_path in recent_paths {
-        if !sorted_repos.contains(&abs_path) && is_git_repo(&abs_path) {
-            sorted_repos.push(abs_path);
-        }
-    }
-
-    // Add repos found in repos_dir as absolute paths
-    for dirname in available_repos {
-        let abs = repos_dir.join(&dirname).to_string_lossy().into_owned();
-        if !sorted_repos.contains(&abs) && !sorted_repos.contains(&dirname) {
-            sorted_repos.push(abs);
-        }
-    }
-
-    sorted_repos
+/// One row in the Switch Repository overlay. `display` is the basename
+/// the user sees; `absolute_path` is the on-disk location the selection
+/// actually switches into via `set_current_dir`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoEntry {
+    pub display: String,
+    pub absolute_path: String,
 }
 
 #[cfg(test)]
@@ -380,24 +417,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_repos_in_dir() {
-        let parent = tempdir().unwrap();
-        let repo1 = parent.path().join("repo1");
-        let repo2 = parent.path().join("repo2");
-        let non_repo = parent.path().join("non_repo");
-
-        fs::create_dir_all(&repo1.join(".git")).unwrap();
-        fs::create_dir_all(&repo2.join(".git")).unwrap();
-        fs::create_dir_all(&non_repo).unwrap();
-
-        let repos = get_repos_in_dir(parent.path());
-        assert_eq!(repos.len(), 2);
-        assert!(repos.contains(&"repo1".to_string()));
-        assert!(repos.contains(&"repo2".to_string()));
-        assert!(!repos.contains(&"non_repo".to_string()));
-    }
-
-    #[test]
     fn test_repos_dir_env_var() {
         let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
         let temp_dir = tempdir().unwrap();
@@ -424,5 +443,141 @@ mod tests {
 
         assert_eq!(deserialized.labels[0], "bug");
         assert_eq!(deserialized.members[1], "@user2");
+    }
+
+    #[test]
+    fn test_get_switchable_repos_uses_recent_cache_only() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        // A nearby-but-never-opened repo must NOT appear in the switch
+        // list. The overlay is driven entirely by recent_repos.json — the
+        // on-disk directory layout should not influence it.
+        let repos_root = tempdir().unwrap();
+        let ghost = repos_root.path().join("ghost");
+        fs::create_dir_all(ghost.join(".git")).unwrap();
+
+        // But the actual repo was opened on a different root entirely
+        // and recorded in the recent cache.
+        let opened_root = tempdir().unwrap();
+        let opened = opened_root.path().join("opened");
+        fs::create_dir_all(opened.join(".git")).unwrap();
+        let opened_str = opened.to_str().unwrap().to_string();
+        add_recent_repo(&opened_str);
+
+        let entries = get_switchable_repos();
+        let paths: Vec<String> = entries.iter().map(|e| e.absolute_path.clone()).collect();
+
+        // add_recent_repo persists the canonicalized form (symlinks resolved,
+        // \\?\ prefix on Windows), so compare canonicalized-to-canonicalized.
+        let opened_canon = opened.canonicalize().unwrap();
+        let opened_canon_str = opened_canon.to_string_lossy().into_owned();
+        assert!(paths.contains(&opened_canon_str));
+        assert!(
+            !paths.iter().any(|p| p.contains("ghost")),
+            "never-opened sibling should not appear"
+        );
+    }
+
+    #[test]
+    fn test_get_switchable_repos_skips_non_git_entries() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        // The recent_repos.json cache should never hold a non-git path
+        // (add_recent_repo filters those out), but defend in depth:
+        // corrupt entries must not surface as rows in the overlay.
+        let parent = tempdir().unwrap();
+        let fake_repo = parent.path().join("fake_repo");
+        fs::create_dir_all(&fake_repo).unwrap(); // no .git/
+
+        let fake_str = fake_repo.to_str().unwrap().to_string();
+        // Inject the entry directly via the cache file.
+        let cache_path = get_recent_repos_file_path();
+        let _ = std::fs::create_dir_all(cache_path.parent().unwrap());
+        std::fs::write(&cache_path, format!("[\"{}\"]", fake_str)).unwrap();
+
+        let entries = get_switchable_repos();
+        assert!(
+            entries.iter().all(|e| e.absolute_path != fake_str),
+            "non-git entries must be filtered out"
+        );
+    }
+
+    #[test]
+    fn test_get_available_groups_derives_from_cache_repos() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        // Isolate the cache dir so recent_repos.json / recent_groups.json
+        // land under HOME/USERPROFILE.
+        let home = tempdir().unwrap();
+        let home_str = home.path().to_str().unwrap().to_string();
+        let old_home = std::env::var("HOME").ok();
+        let old_profile = std::env::var("USERPROFILE").ok();
+        unsafe {
+            std::env::set_var("HOME", &home_str);
+            std::env::set_var("USERPROFILE", &home_str);
+        }
+
+        // A real GitLab-backed repo: its namespace prefix must surface as a
+        // switchable group even though recent_groups.json is empty.
+        let gitlab_repo = home.path().join("project_a");
+        fs::create_dir_all(&gitlab_repo).unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&gitlab_repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://gitlab.com/mygroup/project_a.git",
+            ])
+            .current_dir(&gitlab_repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        // A GitHub-backed repo: the owner behaves as a group scope on the
+        // GH backend (org-scoped search listing), so it must surface too.
+        let gh_repo = home.path().join("project_b");
+        fs::create_dir_all(&gh_repo).unwrap();
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&gh_repo)
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/octo/project_b.git",
+            ])
+            .current_dir(&gh_repo)
+            .status()
+            .unwrap();
+
+        add_recent_repo(&gitlab_repo.to_string_lossy());
+        add_recent_repo(&gh_repo.to_string_lossy());
+
+        let groups = get_available_groups();
+        assert!(
+            groups.iter().any(|g| g == "mygroup"),
+            "GitLab group derived from cached repo must be available: {groups:?}"
+        );
+        assert!(
+            groups.iter().any(|g| g == "octo"),
+            "GitHub org derived from cached repo must be available: {groups:?}"
+        );
+
+        if let Some(old) = old_home {
+            unsafe { std::env::set_var("HOME", old) };
+        } else {
+            unsafe { std::env::remove_var("HOME") };
+        }
+        if let Some(old) = old_profile {
+            unsafe { std::env::set_var("USERPROFILE", old) };
+        } else {
+            unsafe { std::env::remove_var("USERPROFILE") };
+        }
     }
 }

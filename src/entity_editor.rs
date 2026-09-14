@@ -885,6 +885,18 @@ pub fn apply_field_text_change(
             });
         }
         "target_branch" => {
+            // Intentional eager path for the *inline per-row edit* form
+            // (reached when the user types a branch name and presses Enter
+            // outside of the edit/create form). The change is applied to
+            // both the row's cached value and the remote in one step so the
+            // MR table refreshes immediately — no second submit.
+            //
+            // Contrast with the `target_branch` arm in
+            // `apply_selector_changes` further down, which only mutates the
+            // in-memory `edit_menu` field and waits for the form's overall
+            // `submit_edit` to drive the API. The split is intentional:
+            // inline edits are single-field, selector edits are part of a
+            // multi-field form.
             if entity_type == "mr" || entity_type == "edit_mr" || entity_type == "edit_mr" {
                 let project_path = app.project_path_for_mr(iid);
                 if let Some(item) = app.mrs.items.iter_mut().find(|m| m.iid == iid) {
@@ -1285,7 +1297,16 @@ pub fn apply_selector_changes<B: Backend>(
             }
         }
         "source_branch" | "target_branch" | "create_from" => {
-            // For branch selection fields, simply update the field value
+            // Intentional lazy path for the *edit/create form* selector.
+            // We only mutate the in-memory `edit_menu` field here; the API
+            // call is driven later by `submit_edit` once the user commits
+            // the entire form (which can carry several other fields at
+            // once and is the only authoritative trigger for the form
+            // path). Do not also fire `update_mr_target_branch` here — the
+            // submit step already does it, and double-firing would race
+            // the form's own optimistic-update. See the matching `eager`
+            // note on the `target_branch` arm in `apply_field_text_change`
+            // for the inline-edit counterpart.
             if let Some(menu) = &mut app.edit_menu {
                 for f in menu.fields.iter_mut() {
                     if f.label == "Source Branch" && field_type == "source_branch"

@@ -22,10 +22,7 @@ pub mod utils;
 use anyhow::Result;
 use app::{App, SaveMenu};
 use crossterm::{
-    event::{
-        DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-    },
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -669,12 +666,8 @@ async fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-    )?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    crate::editor::try_push_keyboard_enhancement_flags(&mut stdout);
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -8148,11 +8141,11 @@ async fn main() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
+    crate::editor::try_pop_keyboard_enhancement_flags(terminal.backend_mut());
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture,
-        PopKeyboardEnhancementFlags
+        DisableMouseCapture
     )?;
     terminal.show_cursor()?;
 

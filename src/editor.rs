@@ -1,4 +1,22 @@
 use crate::AppTerminal;
+use std::io::Write;
+
+pub(crate) fn try_push_keyboard_enhancement_flags<W: Write>(w: &mut W) {
+    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+        let _ = crossterm::execute!(
+            w,
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            ),
+        );
+    }
+}
+
+pub(crate) fn try_pop_keyboard_enhancement_flags<W: Write>(w: &mut W) {
+    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+        let _ = crossterm::execute!(w, crossterm::event::PopKeyboardEnhancementFlags);
+    }
+}
 
 pub fn editor_name() -> String {
     std::env::var("EDITOR")
@@ -27,11 +45,12 @@ pub fn edit_in_editor_with_suffix(
 
     let result = (|| {
         crossterm::terminal::disable_raw_mode().ok()?;
+        let mut stdout = std::io::stdout();
+        try_pop_keyboard_enhancement_flags(&mut stdout);
         crossterm::execute!(
-            std::io::stdout(),
+            stdout,
             crossterm::terminal::LeaveAlternateScreen,
             crossterm::event::DisableMouseCapture,
-            crossterm::event::PopKeyboardEnhancementFlags,
         )
         .ok()?;
 
@@ -56,15 +75,14 @@ pub fn edit_in_editor_with_suffix(
 
     // Restore terminal for the TUI. Each operation is best-effort: even if one
     // fails we attempt the next — all three are independent raw-mode gates.
+    let mut stdout = std::io::stdout();
     let _ = crossterm::terminal::enable_raw_mode();
     let _ = crossterm::execute!(
-        std::io::stdout(),
+        stdout,
         crossterm::terminal::EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
-        crossterm::event::PushKeyboardEnhancementFlags(
-            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-        ),
     );
+    try_push_keyboard_enhancement_flags(&mut stdout);
     while crossterm::event::poll(std::time::Duration::from_secs(0)).unwrap_or(false) {
         let _ = crossterm::event::read();
     }

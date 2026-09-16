@@ -22,10 +22,7 @@ pub mod utils;
 use anyhow::Result;
 use app::{App, SaveMenu};
 use crossterm::{
-    event::{
-        DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-    },
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -670,12 +667,7 @@ async fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
-        let _ = execute!(
-            stdout,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
-    }
+    crate::editor::try_push_keyboard_enhancement_flags(&mut stdout);
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -8149,9 +8141,7 @@ async fn main() -> Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
-    if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
-        let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
-    }
+    crate::editor::try_pop_keyboard_enhancement_flags(terminal.backend_mut());
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,

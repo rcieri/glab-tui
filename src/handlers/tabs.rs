@@ -1426,14 +1426,10 @@ pub async fn handle_active_tab_key(
                             }
                             crate::event::PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
                             let _ = crossterm::terminal::disable_raw_mode();
-                            if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
-                                let _ = crossterm::execute!(
-                                    std::io::stdout(),
-                                    crossterm::event::PopKeyboardEnhancementFlags,
-                                );
-                            }
+                            let mut editor_stdout = std::io::stdout();
+                            crate::editor::try_pop_keyboard_enhancement_flags(&mut editor_stdout);
                             let _ = crossterm::execute!(
-                                std::io::stdout(),
+                                editor_stdout,
                                 crossterm::terminal::LeaveAlternateScreen,
                                 crossterm::event::DisableMouseCapture,
                             );
@@ -1449,19 +1445,13 @@ pub async fn handle_active_tab_key(
                                 let _ = child.wait();
                             }
                             let _ = crossterm::terminal::enable_raw_mode();
+                            let mut editor_stdout = std::io::stdout();
                             let _ = crossterm::execute!(
-                                std::io::stdout(),
+                                editor_stdout,
                                 crossterm::terminal::EnterAlternateScreen,
                                 crossterm::event::EnableMouseCapture,
                             );
-                            if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
-                                let _ = crossterm::execute!(
-                                    std::io::stdout(),
-                                    crossterm::event::PushKeyboardEnhancementFlags(
-                                        crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                                    ),
-                                );
-                            }
+                            crate::editor::try_push_keyboard_enhancement_flags(&mut editor_stdout);
                             let _ = terminal.clear();
                             crate::event::PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
                         }

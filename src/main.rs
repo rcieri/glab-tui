@@ -2977,6 +2977,12 @@ async fn main() -> Result<()> {
                                             let target_path_str =
                                                 target_path.to_string_lossy().into_owned();
 
+                                            // Fallback heuristic for top-level group/org
+                                            // names typed without a leading slash: a bare
+                                            // token that does not resolve to a local git
+                                            // repo is treated as a group scope. Subgroups
+                                            // (e.g. "group/subgroup") fall through and
+                                            // surface a set_current_dir error toast.
                                             let is_group = app.switch_repo_groups.contains(&path)
                                                 || (!path.contains('/')
                                                     && !crate::utils::cache::is_git_repo(

@@ -125,8 +125,9 @@ pub fn get_recent_groups() -> Vec<String> {
 /// switched to (most recent first) plus the group implied by each cached
 /// repo's remote. Deriving from the cached repos is what surfaces groups
 /// whose repos are in `recent_repos.json` even when the user never switched
-/// to the group explicitly. GitLab groups and GitHub orgs both qualify —
-/// the GH backend lists org-scoped issues/PRs via the search API.
+/// to the group explicitly. GitLab groups and GitHub orgs both qualify;
+/// note that on GitHub only Issues/MRs/Pipelines/Members are populated for
+/// an org scope — other tabs return `Err` (see AGENTS.md §1).
 pub fn get_available_groups() -> Vec<String> {
     let mut groups: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -169,6 +170,41 @@ pub fn add_recent_group(group: &str) {
 
     let path = get_recent_groups_file_path();
     if let Ok(content) = serde_json::to_string(&groups) {
+        let _ = fs::write(path, content);
+    }
+}
+
+/// Batched counterpart of `add_recent_group`. Mirrors its semantics:
+/// groups are processed in slice order, each moves to position 0, the
+/// list is truncated to 20 entries, and a single `fs::write` happens
+/// at the end (or none at all when the slice is empty/whitespace).
+/// Callers building a "new groups to persist" list inside a loop should
+/// prefer this over N individual `add_recent_group` calls — the per-call
+/// variant does a full read-modify-write of `recent_groups.json`.
+pub fn add_recent_groups(groups: &[String]) {
+    if groups.is_empty() {
+        return;
+    }
+    let mut existing = get_recent_groups();
+    let mut inserted_any = false;
+    for g in groups {
+        if g.trim().is_empty() {
+            continue;
+        }
+        let g = g.trim().to_string();
+        if let Some(pos) = existing.iter().position(|r| r == &g) {
+            existing.remove(pos);
+        }
+        existing.insert(0, g);
+        inserted_any = true;
+    }
+    if !inserted_any {
+        return;
+    }
+    existing.truncate(20);
+
+    let path = get_recent_groups_file_path();
+    if let Ok(content) = serde_json::to_string(&existing) {
         let _ = fs::write(path, content);
     }
 }
@@ -448,6 +484,9 @@ mod tests {
     #[test]
     fn test_get_switchable_repos_uses_recent_cache_only() {
         let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+
         // A nearby-but-never-opened repo must NOT appear in the switch
         // list. The overlay is driven entirely by recent_repos.json — the
         // on-disk directory layout should not influence it.
@@ -480,6 +519,9 @@ mod tests {
     #[test]
     fn test_get_switchable_repos_skips_non_git_entries() {
         let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+
         // The recent_repos.json cache should never hold a non-git path
         // (add_recent_repo filters those out), but defend in depth:
         // corrupt entries must not surface as rows in the overlay.
@@ -506,13 +548,7 @@ mod tests {
         // Isolate the cache dir so recent_repos.json / recent_groups.json
         // land under HOME/USERPROFILE.
         let home = tempdir().unwrap();
-        let home_str = home.path().to_str().unwrap().to_string();
-        let old_home = std::env::var("HOME").ok();
-        let old_profile = std::env::var("USERPROFILE").ok();
-        unsafe {
-            std::env::set_var("HOME", &home_str);
-            std::env::set_var("USERPROFILE", &home_str);
-        }
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
 
         // A real GitLab-backed repo: its namespace prefix must surface as a
         // switchable group even though recent_groups.json is empty.
@@ -568,16 +604,5 @@ mod tests {
             groups.iter().any(|g| g == "octo"),
             "GitHub org derived from cached repo must be available: {groups:?}"
         );
-
-        if let Some(old) = old_home {
-            unsafe { std::env::set_var("HOME", old) };
-        } else {
-            unsafe { std::env::remove_var("HOME") };
-        }
-        if let Some(old) = old_profile {
-            unsafe { std::env::set_var("USERPROFILE", old) };
-        } else {
-            unsafe { std::env::remove_var("USERPROFILE") };
-        }
     }
 }

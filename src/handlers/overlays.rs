@@ -614,11 +614,13 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
         // Then every group the user can reach — recently switched groups
         // plus the group implied by each cached repo's remote. Newly
         // discovered groups are persisted so the next opener doesn't need
-        // the git/auth probes again.
+        // the git/auth probes again. Persist in one batched write instead
+        // of one read-modify-write per new group.
         let recent_groups: std::collections::HashSet<String> =
             crate::utils::cache::get_recent_groups()
                 .into_iter()
                 .collect();
+        let mut new_groups: Vec<String> = Vec::new();
         for g in crate::utils::cache::get_available_groups() {
             if g.trim().is_empty() || !seen.insert(g.clone()) {
                 continue;
@@ -626,9 +628,10 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
             switch_repo_groups.insert(g.clone());
             items.push(g.clone());
             if !recent_groups.contains(&g) {
-                crate::utils::cache::add_recent_group(&g);
+                new_groups.push(g);
             }
         }
+        crate::utils::cache::add_recent_groups(&new_groups);
 
         // Finally the repositories. A repo that shares a display name with
         // an already-listed group yields to the group.

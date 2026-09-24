@@ -39,6 +39,12 @@ pub struct MergeRequest {
     pub target_branch: String,
     #[serde(default)]
     pub source_branch: String,
+    /// Diff head SHA of the source branch, returned by `glab mr list`. Required
+    /// by `glab mr merge --sha` on GitLab 19.2+ instances and repos with the
+    /// "Require a commit SHA when merging" merge-request API setting. `None`
+    /// for GitHub (which has no equivalent field) and for older cached entries.
+    #[serde(default)]
+    pub sha: Option<String>,
     pub draft: bool,
     pub description: Option<String>,
     #[serde(default)]
@@ -182,6 +188,7 @@ mod tests {
         "author": { "username": "chandler.anderson" },
         "milestone": null,
         "target_branch": "main",
+        "sha": "b968d3bc753974a475d5475b7ca46639f9ec3cba",
         "draft": false,
         "description": null,
         "blocking_discussions_resolved": false
@@ -191,6 +198,15 @@ mod tests {
     fn deserializes_blocking_discussions_resolved_from_glab_list() {
         let mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
         assert_eq!(mr.blocking_discussions_resolved, Some(false));
+    }
+
+    #[test]
+    fn deserializes_sha_from_glab_list() {
+        let mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
+        assert_eq!(
+            mr.sha.as_deref(),
+            Some("b968d3bc753974a475d5475b7ca46639f9ec3cba")
+        );
     }
 
     #[test]

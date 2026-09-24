@@ -1851,6 +1851,7 @@ mod tests {
             reviewers: vec![],
             target_branch: "main".to_string(),
             source_branch: "feature".to_string(),
+            sha: None,
             draft: false,
             description: None,
             head_pipeline: None,

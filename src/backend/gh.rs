@@ -902,6 +902,10 @@ impl Backend for GhBackend {
                             reviewers,
                             target_branch: gp.base_ref_name.unwrap_or_default(),
                             source_branch: gp.head_ref_name.unwrap_or_default(),
+                            // GitHub has no equivalent of GitLab's diff head SHA —
+                            // `gh pr merge` decides locally and the `--sha`
+                            // plumbing simply ignores this at the backend.
+                            sha: None,
                             draft: gp.is_draft.unwrap_or(false),
                             description: gp.body,
                             head_pipeline: None,
@@ -1009,6 +1013,8 @@ impl Backend for GhBackend {
                             reviewers: vec![],
                             target_branch: String::new(),
                             source_branch: String::new(),
+                            // GitHub has no equivalent of GitLab's diff head SHA.
+                            sha: None,
                             draft: item.draft,
                             description: item.body,
                             head_pipeline: None,
@@ -1107,6 +1113,8 @@ impl Backend for GhBackend {
             reviewers: vec![],
             target_branch: gp.base_ref_name.unwrap_or_default(),
             source_branch: gp.head_ref_name.unwrap_or_default(),
+            // GitHub has no equivalent of GitLab's diff head SHA.
+            sha: None,
             draft: gp.is_draft.unwrap_or(false),
             description: gp.body,
             head_pipeline: None,
@@ -1283,6 +1291,9 @@ impl Backend for GhBackend {
         delete_branch: bool,
         strategy: Option<&str>,
         auto_merge: bool,
+        // GitHub's `gh pr merge` has no `--sha` equivalent — the CLI works
+        // off the PR's HEAD ref rather than a specific commit SHA. Ignore it.
+        _sha: Option<&str>,
     ) -> Result<()> {
         let mut args: Vec<String> = vec![
             "pr".into(),

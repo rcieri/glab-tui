@@ -300,6 +300,13 @@ pub trait Backend: Send + Sync {
     async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Rebase the source branch onto the target. Supported on both hosts.
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
+    /// Merge the MR/PR.
+    ///
+    /// `sha` is the head commit SHA of the source branch. Forwarded to GitLab
+    /// as `glab mr merge --sha=<sha>` to satisfy GitLab 19.2+ instances and
+    /// repos that require it for the merge API. GitLab-only — `GhBackend`
+    /// ignores it. `None` skips the flag and lets `glab` fall back to its
+    /// own heuristic on legacy installs (older GitLab returns 400 otherwise).
     async fn merge_mr(
         &self,
         project: &str,
@@ -308,6 +315,7 @@ pub trait Backend: Send + Sync {
         delete_branch: bool,
         strategy: Option<&str>,
         auto_merge: bool,
+        sha: Option<&str>,
     ) -> Result<()>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
     async fn create_mr(

@@ -463,6 +463,7 @@ impl GlabBackend {
         delete_branch: bool,
         strategy: Option<&str>,
         auto_merge: bool,
+        sha: Option<&str>,
     ) -> Vec<String> {
         let mut args = vec![
             "mr".into(),
@@ -496,6 +497,13 @@ impl GlabBackend {
         // Passing --auto-merge=false forces an immediate merge attempt which
         // causes glab to exhaust its internal retry loop ("All attempts fail")
         // whenever a pipeline is still in progress (#372).
+        if let Some(sha) = sha {
+            // GitLab 19.2+ and any repo with the group "Require a commit SHA
+            // when merging" setting reject merges without --sha
+            // (`400 SHA must be provided when merging`). Pass it through
+            // verbatim so callers don't have to know the flag name (#470).
+            args.push(format!("--sha={sha}"));
+        }
         args.push("--yes".into());
         args
     }
@@ -840,8 +848,9 @@ impl Backend for GlabBackend {
                         target_branch: String,
                         #[serde(default)]
                         source_branch: String,
-                        draft: bool,
                         #[serde(default)]
+                        sha: Option<String>,
+                        draft: bool,
                         description: Option<String>,
                         #[serde(default)]
                         head_pipeline: Option<GiPipeline>,
@@ -906,6 +915,7 @@ impl Backend for GlabBackend {
                                 .collect(),
                             target_branch: m.target_branch,
                             source_branch: m.source_branch,
+                            sha: m.sha,
                             draft: m.draft,
                             description: m.description,
                             head_pipeline: m.head_pipeline.map(|p| Pipeline {
@@ -1011,6 +1021,8 @@ impl Backend for GlabBackend {
             target_branch: String,
             #[serde(default)]
             source_branch: String,
+            #[serde(default)]
+            sha: Option<String>,
             draft: bool,
             #[serde(default)]
             description: Option<String>,
@@ -1076,6 +1088,7 @@ impl Backend for GlabBackend {
                 .collect(),
             target_branch: m.target_branch,
             source_branch: m.source_branch,
+            sha: m.sha,
             draft: m.draft,
             description: m.description,
             head_pipeline: m.head_pipeline.map(|p| Pipeline {
@@ -1278,8 +1291,17 @@ impl Backend for GlabBackend {
         delete_branch: bool,
         strategy: Option<&str>,
         auto_merge: bool,
+        sha: Option<&str>,
     ) -> Result<()> {
-        let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
+        let args = Self::merge_args(
+            project,
+            iid,
+            squash,
+            delete_branch,
+            strategy,
+            auto_merge,
+            sha,
+        );
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "MERGING MR").await?;
         Ok(())
@@ -2862,7 +2884,7 @@ mod tests {
 
     #[test]
     fn merge_args_skip_confirmation_prompt() {
-        let args = GlabBackend::merge_args("group/project", 42, true, true, None, false);
+        let args = GlabBackend::merge_args("group/project", 42, true, true, None, false, None);
 
         assert_eq!(
             args,
@@ -2885,7 +2907,7 @@ mod tests {
 
     #[test]
     fn merge_args_auto_merge_true_adds_flag() {
-        let args = GlabBackend::merge_args("group/project", 42, false, false, None, true);
+        let args = GlabBackend::merge_args("group/project", 42, false, false, None, true, None);
         assert!(args.contains(&"--auto-merge=true".to_string()));
         assert!(!args.contains(&"--auto-merge=false".to_string()));
     }
@@ -2896,23 +2918,65 @@ mod tests {
         // --auto-merge=false because that forces glab to attempt an immediate
         // merge even when a pipeline is still running, causing it to exhaust
         // its internal retry loop with "All attempts fail" (#372).
-        let args = GlabBackend::merge_args("group/project", 42, false, false, None, false);
+        let args = GlabBackend::merge_args("group/project", 42, false, false, None, false, None);
         assert!(!args.iter().any(|a| a.starts_with("--auto-merge")));
     }
 
     #[test]
     fn merge_args_rebase_strategy_adds_rebase_flag() {
-        let args =
-            GlabBackend::merge_args("group/project", 42, false, false, Some("rebase"), false);
+        let args = GlabBackend::merge_args(
+            "group/project",
+            42,
+            false,
+            false,
+            Some("rebase"),
+            false,
+            None,
+        );
         assert!(args.contains(&"--rebase".to_string()));
         assert!(!args.contains(&"--squash".to_string()));
     }
 
     #[test]
     fn merge_args_merge_strategy_is_default() {
-        let args = GlabBackend::merge_args("group/project", 42, false, false, Some("merge"), false);
+        let args = GlabBackend::merge_args(
+            "group/project",
+            42,
+            false,
+            false,
+            Some("merge"),
+            false,
+            None,
+        );
         assert!(!args.contains(&"--rebase".to_string()));
         assert!(!args.contains(&"--squash".to_string()));
+    }
+
+    #[test]
+    fn merge_args_passes_sha_when_provided() {
+        // GitLab 19.2+ and any group with the "Require a commit SHA when
+        // merging" setting reject merges without --sha
+        // (`400 SHA must be provided when merging`). The flag must be present
+        // and carry the exact SHA the caller supplied (#470).
+        let args = GlabBackend::merge_args(
+            "group/project",
+            42,
+            false,
+            false,
+            None,
+            false,
+            Some("b968d3bc753974a475d5475b7ca46639f9ec3cba"),
+        );
+        assert!(args.contains(&"--sha=b968d3bc753974a475d5475b7ca46639f9ec3cba".to_string()));
+    }
+
+    #[test]
+    fn merge_args_omits_sha_flag_when_none() {
+        // Cached MRs that pre-date this field deserialize without a SHA.
+        // We must not invent or pass an empty --sha; instead omit the flag
+        // and let glab behave as it did pre-19.2.
+        let args = GlabBackend::merge_args("group/project", 42, false, false, None, false, None);
+        assert!(!args.iter().any(|a| a.starts_with("--sha")));
     }
 
     // ── iid batching (GraphQL 100-node connection cap) ──

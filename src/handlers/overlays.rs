@@ -591,6 +591,9 @@ pub fn handle_switch_repo(app: &mut App, key_event: &KeyEvent) -> bool {
         && app.text_input.is_none()
         && app.edit_menu.is_none()
         && app.selector.is_none()
+        && !app.is_typing_search
+        && !app.job_trace_searching
+        && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
     {
         let mut items = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -705,6 +708,9 @@ pub fn handle_refresh(
         && app.date_picker.is_none()
         && app.edit_menu.is_none()
         && app.selector.is_none()
+        && !app.is_typing_search
+        && !app.job_trace_searching
+        && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
     {
         *last_refresh = Instant::now();
         app.last_attr_refresh = Instant::now();
@@ -811,6 +817,30 @@ mod tests {
         assert!(handled);
         assert_eq!(app.help_search_query, "q");
         assert!(app.show_help);
+    }
+
+    #[test]
+    fn search_mode_blocks_switch_repo_and_refresh() {
+        use std::time::Instant;
+        use tokio::sync::mpsc::unbounded_channel;
+        let (tx, _rx) = unbounded_channel();
+        let mut app = App::default();
+        app.is_typing_search = true;
+
+        let mut last_refresh = Instant::now();
+        let handled_refresh = super::handle_refresh(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+            &mut last_refresh,
+            tx,
+        );
+        assert!(!handled_refresh);
+
+        let handled_switch = super::handle_switch_repo(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        );
+        assert!(!handled_switch);
     }
 
     #[test]

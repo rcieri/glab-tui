@@ -1684,6 +1684,9 @@ async fn main() -> Result<()> {
                         && app.selector.is_none()
                         && !app.show_help
                         && !app.focus_column_checklist
+                        && !app.is_typing_search
+                        && !app.job_trace_searching
+                        && !app.diff_view.as_ref().is_some_and(|d| d.search_active)
                     {
                         app.quit();
                         continue;

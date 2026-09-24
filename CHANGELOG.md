@@ -2,11 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.9.2]
 
+### Features
 - **Jump to issue/MR by ID** — Press `g` (`keybindings.global.jump_to_id`) from any tab to open an ID-focused search over issues and MRs (rows shown compactly as `#123: title` / `!456: title`). Pick a listed item, or type an ID (`#123` issue, `!123` MR, bare `123` scoped to the active tab); an ID that isn't already loaded is fetched directly from the API. The fuzzy searcher shows a `+ Fetch … from API` row for such IDs instead of the generic `+ Create` row (#434).
 - **Jump to related MRs/PRs from the Issue preview** — Added a backend-aware "Related Merge Requests" / "Related Pull Requests" row to the issue preview. The closing relationship is fetched eagerly (`glab api projects/.../issues/<iid>/closed_by` on GitLab, `gh api graphql` over `closedByPullRequestsReferences` on GitHub). Press `M` (`keybindings.issues.jump_related_mrs`) to jump straight to the single MR/PR, or pick from a selector list when there are several — even when the target is currently filtered out of the MR/PR table (#409).
 - **Shortcut to submit edit forms** — Configurable global shortcut `submit_edit = "Ctrl+x"` to submit/save Issue/MR/Milestone/Release edit and create forms from anywhere in the form, including while actively editing text boxes (#410).
+
+### Bug Fixes
+- **Cap detail scroll to rendered content height** — Scrolling in `ReadOnly` preview panes no longer pushes the content out of view, and multi-paragraph previews now reach their last lines. `app.detail_scroll` is clamped against the per-call `max_scroll` returned by `render_inspector_content` / `render_entity_inspector`, and the underlying line count uses a new `rendered_line_count()` helper that no longer undercounts `Line` rows — preventing the inverted-byte-range panic on `] [` and recovering the previously unreachable last lines in `PipelineStages`-style pages (#441).
+- **`fix(branches):` Create Branch works on GitHub without crashing the TUI** — Resolves `Create From` → SHA, wires `Create From` through the selector (`apply_selector_changes`), and pipes stdin/stdout/stderr on raw API POSTs so CLI output can no longer leak into the TUI (#443, closes #442).
+- **`fix(github):` no TUI freeze on PR create when Git prompts for credentials** — The source-branch `ensure`/`push` step runs off the UI thread, the push is skipped when the remote already has the branch, and interactive Git prompts are disabled so HTTPS auth failures surface as errors instead of hanging the event loop (#445, fixes #444).
 
 ---
 

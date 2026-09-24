@@ -214,13 +214,14 @@ pub(crate) fn render_tab_issues(
             } else {
                 Style::default()
             };
-            // yazi-style leftmost selection bar: a 1-wide colored stripe on
-            // selected rows instead of highlighting the whole row.
-            let bar_cell = Cell::from(" ").style(if is_checked {
-                Style::default().bg(THEME.read().unwrap().checked_bg)
-            } else {
-                Style::default()
-            });
+            let bar_cell = Cell::from(ratatui::text::Span::styled(
+                " ",
+                if is_checked {
+                    Style::default().bg(THEME.read().unwrap().checked_bg)
+                } else {
+                    Style::default()
+                },
+            ));
             cells.insert(0, bar_cell);
             Row::new(cells).style(row_style).height(1)
         });
@@ -276,7 +277,7 @@ pub(crate) fn render_tab_issues(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block)
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.issues.state);
@@ -768,13 +769,14 @@ pub(crate) fn render_tab_merge_requests(
             } else {
                 Style::default()
             };
-            // yazi-style leftmost selection bar: a 1-wide colored stripe on
-            // selected rows instead of highlighting the whole row.
-            let bar_cell = Cell::from(" ").style(if is_checked {
-                Style::default().bg(theme.checked_bg)
-            } else {
-                Style::default()
-            });
+            let bar_cell = Cell::from(ratatui::text::Span::styled(
+                " ",
+                if is_checked {
+                    Style::default().bg(theme.checked_bg)
+                } else {
+                    Style::default()
+                },
+            ));
             cells.insert(0, bar_cell);
             Row::new(cells).style(row_style).height(1)
         });
@@ -865,7 +867,7 @@ pub(crate) fn render_tab_merge_requests(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block)
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.mrs.state);
@@ -1161,11 +1163,14 @@ pub(crate) fn render_tab_pipelines(
             } else {
                 Style::default()
             };
-            let bar_cell = Cell::from(" ").style(if is_checked {
-                Style::default().bg(theme.checked_bg)
-            } else {
-                Style::default()
-            });
+            let bar_cell = Cell::from(ratatui::text::Span::styled(
+                " ",
+                if is_checked {
+                    Style::default().bg(theme.checked_bg)
+                } else {
+                    Style::default()
+                },
+            ));
             row_cells.insert(0, bar_cell);
             Row::new(row_cells).style(row_style).height(1)
         });
@@ -1235,7 +1240,7 @@ pub(crate) fn render_tab_pipelines(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block)
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.pipelines.state);
@@ -1477,11 +1482,14 @@ pub(crate) fn render_tab_jobs(
             } else {
                 Style::default()
             };
-            let bar_cell = Cell::from(" ").style(if is_checked {
-                Style::default().bg(theme.checked_bg)
-            } else {
-                Style::default()
-            });
+            let bar_cell = Cell::from(ratatui::text::Span::styled(
+                " ",
+                if is_checked {
+                    Style::default().bg(theme.checked_bg)
+                } else {
+                    Style::default()
+                },
+            ));
             row_cells.insert(0, bar_cell);
             Row::new(row_cells).style(row_style).height(1)
         });
@@ -1537,7 +1545,7 @@ pub(crate) fn render_tab_jobs(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block.clone().title(format!(" {} ", jobs_title)))
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         let mut state = app.jobs.state.clone();
@@ -1943,7 +1951,7 @@ pub(crate) fn render_tab_runners(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block)
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.runners.state);
@@ -2171,7 +2179,7 @@ pub(crate) fn render_tab_releases(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block)
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.releases.state);
@@ -2409,7 +2417,7 @@ pub(crate) fn render_tab_todos(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block)
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.todos.state);
@@ -2674,7 +2682,7 @@ pub(crate) fn render_tab_milestones(
         let table = Table::new(rows, widths)
             .header(Row::new(header_cells).style(header_style).height(1))
             .block(main_block)
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.milestones.state);
@@ -2869,7 +2877,7 @@ pub(crate) fn render_tab_branches(
                 .height(1),
             )
             .block(main_block.clone())
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.branches.state);
@@ -3048,7 +3056,7 @@ pub(crate) fn render_tab_environments(
                 .height(1),
             )
             .block(main_block.clone())
-            .row_highlight_style(highlight_style)
+            .row_highlight_style(Style::default())
             .highlight_symbol(format!(" {} ", icons.highlight_arrow));
 
         f.render_stateful_widget(table, content_area, &mut app.environments.state);
@@ -3499,5 +3507,61 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let content: String = buffer.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains("Loading merge requests..."));
+    }
+
+    #[test]
+    fn test_selected_and_checked_row_buffer() {
+        let backend = TestBackend::new(50, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.issues.items = vec![Issue {
+            iid: 1,
+            title: "Issue 1".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: Author {
+                username: "alice".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: "".to_string(),
+            project_path: "owner/repo".to_string(),
+            related_mrs: None,
+        }];
+        app.issues.state.select(Some(0));
+        app.selected_issues.insert(("owner/repo".to_string(), 1));
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 5);
+                let detail_rect = Rect::new(0, 5, area.width, 5);
+                let theme = THEME.read().unwrap();
+                let highlight_style = Style::default().bg(theme.highlight_bg);
+                let header_style = Style::default().fg(theme.text_normal);
+                render_tab_issues(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    highlight_style,
+                    header_style,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let theme = THEME.read().unwrap();
+        // Row 1 is the first data row.
+        // x=3 is the leftmost selection bar cell (after 3-char highlight arrow gutter).
+        assert_eq!(buffer[(3, 1)].bg, theme.checked_bg);
+        // x=5 is the ID "#1" cell, which should have the cursor highlight background.
+        assert_eq!(buffer[(5, 1)].bg, theme.highlight_bg);
     }
 }

@@ -8226,6 +8226,24 @@ async fn main() -> Result<()> {
                     if app.is_typing_search {
                         match key_event.code {
                             KeyCode::Enter | KeyCode::Esc => app.is_typing_search = false,
+                            KeyCode::Char('g')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                // Ctrl+G cancels search mode without quitting the app —
+                                // standard readline "abort" semantics.
+                                app.clear_search_query();
+                                app.is_typing_search = false;
+                            }
+                            KeyCode::Char('u')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.clear_search_query();
+                            }
+                            KeyCode::Char('w')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.pop_search_word();
+                            }
                             KeyCode::Backspace => {
                                 app.search_query.pop();
                                 app.update_filter_selection();

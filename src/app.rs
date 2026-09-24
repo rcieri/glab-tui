@@ -3480,6 +3480,32 @@ impl App {
         self.scope.as_str().to_string()
     }
 
+    /// Drop the trailing whitespace and the preceding word from
+    /// `search_query`, mirroring readline's `Ctrl+W` semantics. Splits on
+    /// Unicode whitespace so multi-byte spaces and tabs are stripped too.
+    /// No-ops on an empty query or one made entirely of whitespace.
+    pub fn pop_search_word(&mut self) {
+        let trimmed_len = self.search_query.trim_end().len();
+        self.search_query.truncate(trimmed_len);
+        let cut = self
+            .search_query
+            .trim_end()
+            .rfind(|c: char| c.is_whitespace())
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        self.search_query.truncate(cut);
+        self.update_filter_selection();
+    }
+
+    /// Wipe the active search query. Mirrors readline's `Ctrl+U` and is also
+    /// used by `Ctrl+C` to abort search mode from inside the input.
+    pub fn clear_search_query(&mut self) {
+        if !self.search_query.is_empty() {
+            self.search_query.clear();
+            self.update_filter_selection();
+        }
+    }
+
     pub fn selected_issue_reference(&self) -> Option<String> {
         self.issues
             .state
@@ -6344,6 +6370,60 @@ mod tests {
             app.bulk_selection_summary(),
             vec![(1, "Issue 1".to_string()), (2, "Issue 2".to_string())]
         );
+    }
+
+    #[test]
+    fn pop_search_word_drops_trailing_word_and_whitespace() {
+        let mut app = App::default();
+        app.search_query = "foo bar  baz ".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "foo bar  ");
+    }
+
+    #[test]
+    fn pop_search_word_removes_unicode_word() {
+        let mut app = App::default();
+        app.search_query = "héllo wörld".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "héllo ");
+    }
+
+    #[test]
+    fn pop_search_word_on_only_whitespace_is_noop() {
+        let mut app = App::default();
+        app.search_query = "   ".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "");
+    }
+
+    #[test]
+    fn pop_search_word_on_empty_query_is_noop() {
+        let mut app = App::default();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "");
+    }
+
+    #[test]
+    fn pop_search_word_handles_tab_separated_words() {
+        let mut app = App::default();
+        app.search_query = "one\ttwo\tthree".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "one\ttwo\t");
+    }
+
+    #[test]
+    fn clear_search_query_wipes_query_and_refreshes_filter() {
+        let mut app = App::default();
+        app.search_query = "anything".to_string();
+        app.clear_search_query();
+        assert_eq!(app.search_query, "");
+    }
+
+    #[test]
+    fn clear_search_query_on_empty_is_a_noop() {
+        let mut app = App::default();
+        app.clear_search_query();
+        assert_eq!(app.search_query, "");
     }
 
     #[test]

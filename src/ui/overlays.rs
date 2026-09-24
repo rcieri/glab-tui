@@ -1233,6 +1233,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
+            key: s("Ctrl+W / Ctrl+U"),
+            action: "Search: delete previous word / clear line",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: s("Ctrl+G"),
+            action: "Search: cancel and exit search mode",
+        },
+        Shortcut {
+            category: "Global & Nav",
             key: d(format!("{}", app.config.keybindings.global.jump_to_id)),
             action: "Jump to issue/MR by ID; fetch if not cached",
         },

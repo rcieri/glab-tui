@@ -228,7 +228,7 @@ pub async fn run_doctor() {
     match crate::domain::client::get_project_context().await {
         Ok(context) => {
             println!("  Remote:  {}", styled(&context, C_BOLD));
-            let is_github = detect_github();
+            let is_github = detect_github().await;
             let backend = if is_github {
                 styled("GitHub", C_BLUE)
             } else {
@@ -428,8 +428,8 @@ pub fn run_cache_list() {
     );
 }
 
-pub fn run_open_in_browser(entity: &str, id: &str) {
-    let is_github = detect_github();
+pub async fn run_open_in_browser(entity: &str, id: &str) {
+    let is_github = detect_github().await;
 
     let (program, subcommand) = match entity {
         "issue" => {
@@ -558,7 +558,7 @@ pub async fn run_update() {
     }
 }
 
-fn detect_github() -> bool {
+async fn detect_github() -> bool {
     match Command::new("git")
         .args(["remote", "get-url", "origin"])
         .output()
@@ -567,6 +567,7 @@ fn detect_github() -> bool {
             &String::from_utf8_lossy(&o.stdout),
             crate::config::Config::load().backend,
         )
+        .await
         .is_github(),
         _ => false,
     }

@@ -24,7 +24,9 @@ impl GitlabClient {
         {
             Ok(output) if output.status.success() => {
                 let url = String::from_utf8_lossy(&output.stdout);
-                crate::git_helpers::detect_backend(&url, config.backend).is_github()
+                crate::git_helpers::detect_backend(&url, config.backend)
+                    .await
+                    .is_github()
             }
             _ => config.backend.is_some_and(BackendKind::is_github),
         };

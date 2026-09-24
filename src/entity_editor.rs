@@ -98,8 +98,8 @@ pub fn mr_fields(
             "Status (Draft/Ready)",
             draft_status,
         ));
-        fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
     }
+    fields.push(crate::app::Field::ref_field("Target Branch", target_branch));
     fields.push(crate::app::Field::ref_field(
         "Create from Issue",
         String::new(),
@@ -376,13 +376,13 @@ pub fn build_mr_document(
             mr.labels.join(", ")
         },
     ));
+    fields.push(crate::app::Field::read_only(
+        "Source Branch",
+        display_branch(&mr.source_branch).to_string(),
+    ));
     fields.push(crate::app::Field::ref_field(
-        "Branch",
-        format!(
-            "{} \u{2192} {}",
-            display_branch(&mr.source_branch),
-            display_branch(&mr.target_branch)
-        ),
+        "Target Branch",
+        display_branch(&mr.target_branch).to_string(),
     ));
     fields.push(crate::app::Field::read_only(
         "Updated",

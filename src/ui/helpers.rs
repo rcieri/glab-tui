@@ -846,9 +846,8 @@ pub(crate) fn badge_style_for(
                 )
             }
         }
-        "Milestone" | "Branch" | "Ref" | "Deploy Ref" | "Stage" => {
-            (theme.purple, None, false, None)
-        }
+        "Milestone" | "Branch" | "Source Branch" | "Target Branch" | "Ref" | "Deploy Ref"
+        | "Stage" => (theme.purple, None, false, None),
         "Author" | "Assignees" | "Reviewers" | "Deployer" | "Target" | "Project" => {
             (theme.blue, None, false, None)
         }

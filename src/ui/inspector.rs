@@ -556,7 +556,9 @@ pub(crate) fn build_field_list_items(
                     "Can Push" => icons.check_on.as_str(),
                     "URL" => "\u{f0c1}",
                     "Milestone" => icons.label_milestone.as_str(),
-                    "Branch" | "Ref" | "Deploy Ref" => icons.label_branch.as_str(),
+                    "Branch" | "Source Branch" | "Target Branch" | "Ref" | "Deploy Ref" => {
+                        icons.label_branch.as_str()
+                    }
                     "Environment" => icons.label_environment.as_str(),
                     "Approval" => icons.approval_approved.as_str(),
                     "Mergeable" => icons.merge_clean.as_str(),
@@ -579,6 +581,8 @@ pub(crate) fn build_field_list_items(
             if label == "Title"
                 || label == "Name"
                 || label == "Branch"
+                || label == "Source Branch"
+                || label == "Target Branch"
                 || label == "Commit"
                 || label == "SHA"
                 || label == "URL"

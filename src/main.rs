@@ -1407,7 +1407,8 @@ async fn main() -> Result<()> {
                                         .map(|m| m.title.clone())
                                         .collect(),
                                 ),
-                                "source_branch" | "target_branch" | "pipeline_branch" => Some(
+                                "source_branch" | "target_branch" | "pipeline_branch"
+                                | "create_from" => Some(
                                     app.branches.items.iter().map(|b| b.name.clone()).collect(),
                                 ),
                                 _ => None,
@@ -6304,13 +6305,42 @@ async fn main() -> Result<()> {
                                         || field_type == "pipeline_branch"
                                         || field_type == "create_from"
                                     {
-                                        let branch_names: Vec<String> = app
+                                        let mut branch_names: Vec<String> = app
                                             .branches
                                             .items
                                             .iter()
                                             .map(|b| b.name.clone())
                                             .collect();
-                                        if field_type == "pipeline_branch" {
+                                        if branch_names.is_empty() {
+                                            if let Ok(output) = std::process::Command::new("git")
+                                                .args(["branch", "-a", "--format=%(refname:short)"])
+                                                .output()
+                                            {
+                                                if output.status.success() {
+                                                    for line in
+                                                        String::from_utf8_lossy(&output.stdout)
+                                                            .lines()
+                                                    {
+                                                        let b = line.trim();
+                                                        let b =
+                                                            b.strip_prefix("origin/").unwrap_or(b);
+                                                        if !b.is_empty()
+                                                            && b != "HEAD"
+                                                            && !b.starts_with("origin/")
+                                                            && !branch_names
+                                                                .contains(&b.to_string())
+                                                        {
+                                                            branch_names.push(b.to_string());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if field_type == "pipeline_branch"
+                                            || field_type == "target_branch"
+                                            || field_type == "source_branch"
+                                            || field_type == "create_from"
+                                        {
                                             let current_val =
                                                 menu.fields[menu.selected_idx].value.clone();
                                             if !current_val.is_empty() {

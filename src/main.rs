@@ -3779,7 +3779,46 @@ async fn main() -> Result<()> {
                                         }
 
                                         if let Some(val) = selected_val {
-                                            if let Some(id_str) = val
+                                            // The list can contain both pushed
+                                            // comments (`ID: <n> | …`) and
+                                            // drafts (`DRAFT #<n> | …`) when
+                                            // the cursor sits at a line that
+                                            // carries a mix (#483). Route
+                                            // each prefix to its own action
+                                            // selector.
+                                            if let Some(idx_str) = val
+                                                .strip_prefix("DRAFT #")
+                                                .and_then(|s| s.split('|').next())
+                                            {
+                                                if let Ok(n) = idx_str.trim().parse::<usize>() {
+                                                    let draft_idx = n.saturating_sub(1);
+                                                    if draft_idx < app.draft_comments.len() {
+                                                        app.selector = Some(crate::app::Selector {
+                                                            title: format!(
+                                                                " Actions for Draft #{} ",
+                                                                n
+                                                            ),
+                                                            all_items: vec![
+                                                                "Edit Draft".to_string(),
+                                                                "Delete Draft".to_string(),
+                                                            ],
+                                                            selected_items:
+                                                                std::collections::HashSet::new(),
+                                                            cursor_idx: 0,
+                                                            search_query: String::new(),
+                                                            is_filtering: false,
+                                                            is_loading: false,
+                                                            entity_iid: draft_idx as u64,
+                                                            entity_type: "draft".to_string(),
+                                                            field_type: "comment_action_select"
+                                                                .to_string(),
+                                                            multi_select: false,
+                                                            state: ListState::default(),
+                                                        });
+                                                        continue;
+                                                    }
+                                                }
+                                            } else if let Some(id_str) = val
                                                 .strip_prefix("ID: ")
                                                 .and_then(|s| s.split(" |").next())
                                             {
@@ -3857,6 +3896,48 @@ async fn main() -> Result<()> {
                                         app.selector = None;
 
                                         if let Some(action_str) = selected_val {
+                                            // The single-match `a` path and
+                                            // the multi-match `comment_select`
+                                            // path both dispatch through this
+                                            // handler. Drafts come back
+                                            // tagged with `entity_type =
+                                            // "draft"` and a 0-based
+                                            // `entity_iid`; current comments
+                                            // carry the comment id and the
+                                            // MR iid as a `String` (#483).
+                                            if selector.entity_type == "draft" {
+                                                let draft_idx = selector.entity_iid as usize;
+                                                if draft_idx < app.draft_comments.len() {
+                                                    match action_str.as_str() {
+                                                        "Edit Draft" => {
+                                                            let body = app.draft_comments
+                                                                [draft_idx]
+                                                                .body
+                                                                .clone();
+                                                            let ext = "md";
+                                                            let suffix = format!(".{ext}");
+                                                            let new_body =
+                                                                edit_in_editor_with_suffix(
+                                                                    &body,
+                                                                    &suffix,
+                                                                    &mut terminal,
+                                                                );
+                                                            if let Some(body) = new_body {
+                                                                if !body.trim().is_empty() {
+                                                                    app.draft_comments[draft_idx]
+                                                                        .body = body;
+                                                                }
+                                                            }
+                                                        }
+                                                        "Delete Draft" => {
+                                                            app.draft_comments.remove(draft_idx);
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                continue;
+                                            }
+
                                             let comment_id = selector.entity_iid;
                                             let mr_iid =
                                                 selector.entity_type.parse::<u64>().unwrap_or(0);
@@ -7372,7 +7453,17 @@ async fn main() -> Result<()> {
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('a') => {
-                                if !diff_view.focus_on_files {
+                                if diff_view.focus_on_files {
+                                    // `a` only acts on diff-side lines; the
+                                    // tree opening with focus on files makes
+                                    // the very first press silently no-op.
+                                    // Surface that explicitly via the floating
+                                    // toast (#483).
+                                    app.show_error(
+                                        "Press `l` or `Tab` to focus the diff before pressing `a` on a line."
+                                            .to_string(),
+                                    );
+                                } else {
                                     let sline = if diff_view.side_by_side {
                                         diff_view
                                             .side_by_side_lines
@@ -7389,7 +7480,9 @@ async fn main() -> Result<()> {
                                     };
 
                                     if let Some(sline) = sline {
-                                        let matching_current: Vec<_> = app
+                                        let matching_current: Vec<
+                                            crate::domain::mr::DiscussionNote,
+                                        > = app
                                             .current_comments
                                             .iter()
                                             .filter(|c| {
@@ -7398,11 +7491,10 @@ async fn main() -> Result<()> {
                                                 }
                                                 if let Some(ref pos) = c.position {
                                                     let path_matches =
-                                                        sline.left.as_ref().map_or(false, |l| {
+                                                        sline.left.as_ref().is_some_and(|l| {
                                                             pos.old_path.as_deref()
                                                                 == Some(&l.file_path)
-                                                        }) || sline.right.as_ref().map_or(
-                                                            false,
+                                                        }) || sline.right.as_ref().is_some_and(
                                                             |r| {
                                                                 pos.new_path.as_deref()
                                                                     == Some(&r.file_path)
@@ -7427,51 +7519,100 @@ async fn main() -> Result<()> {
                                                     false
                                                 }
                                             })
+                                            .cloned()
                                             .collect();
 
-                                        if matching_current.is_empty() {
-                                            app.status_message = Some(
+                                        let matching_drafts: Vec<usize> = app
+                                            .draft_comments
+                                            .iter()
+                                            .enumerate()
+                                            .filter(|(_, d)| d.matches_side(&sline))
+                                            .map(|(idx, _)| idx)
+                                            .collect();
+
+                                        if matching_current.is_empty() && matching_drafts.is_empty()
+                                        {
+                                            // The diff overlay covers the
+                                            // status line in the bottom bar,
+                                            // so surface this via the same
+                                            // floating toast that API errors
+                                            // use (#483).
+                                            app.show_error(
                                                 "No comments on this line to interact with."
                                                     .to_string(),
                                             );
-                                        } else if matching_current.len() == 1 {
-                                            let comment = matching_current[0];
-                                            let comment_id = comment.id;
-                                            let is_github = app.is_github();
+                                        } else if matching_current.len() + matching_drafts.len()
+                                            == 1
+                                        {
+                                            if let Some(comment) = matching_current.first() {
+                                                let comment_id = comment.id;
+                                                let is_github = app.is_github();
 
-                                            let mut actions = vec!["Reply to Thread".to_string()];
+                                                let mut actions =
+                                                    vec!["Reply to Thread".to_string()];
 
-                                            if !is_github {
-                                                let is_resolved = comment.resolved.unwrap_or(false);
-                                                if is_resolved {
-                                                    actions.push("Unresolve Thread".to_string());
-                                                } else {
-                                                    actions.push("Resolve Thread".to_string());
+                                                if !is_github {
+                                                    let is_resolved =
+                                                        comment.resolved.unwrap_or(false);
+                                                    if is_resolved {
+                                                        actions
+                                                            .push("Unresolve Thread".to_string());
+                                                    } else {
+                                                        actions.push("Resolve Thread".to_string());
+                                                    }
                                                 }
+
+                                                actions.push("Edit Comment".to_string());
+                                                actions.push("Delete Comment".to_string());
+
+                                                app.selector = Some(crate::app::Selector {
+                                                    title: format!(
+                                                        " Actions for Comment {} ",
+                                                        comment_id
+                                                    ),
+                                                    all_items: actions,
+                                                    selected_items: std::collections::HashSet::new(
+                                                    ),
+                                                    cursor_idx: 0,
+                                                    search_query: String::new(),
+                                                    is_filtering: false,
+                                                    is_loading: false,
+                                                    entity_iid: comment_id,
+                                                    entity_type: diff_view.mr_iid.to_string(),
+                                                    field_type: "comment_action_select".to_string(),
+                                                    multi_select: false,
+                                                    state: ListState::default(),
+                                                });
+                                            } else if let Some(&idx) = matching_drafts.first() {
+                                                // Drafts only support edit and
+                                                // delete — the upstream API
+                                                // reply/resolve semantics
+                                                // don't apply until the draft
+                                                // has been pushed.
+                                                app.selector = Some(crate::app::Selector {
+                                                    title: format!(
+                                                        " Actions for Draft #{} ",
+                                                        idx + 1
+                                                    ),
+                                                    all_items: vec![
+                                                        "Edit Draft".to_string(),
+                                                        "Delete Draft".to_string(),
+                                                    ],
+                                                    selected_items: std::collections::HashSet::new(
+                                                    ),
+                                                    cursor_idx: 0,
+                                                    search_query: String::new(),
+                                                    is_filtering: false,
+                                                    is_loading: false,
+                                                    entity_iid: idx as u64,
+                                                    entity_type: "draft".to_string(),
+                                                    field_type: "comment_action_select".to_string(),
+                                                    multi_select: false,
+                                                    state: ListState::default(),
+                                                });
                                             }
-
-                                            actions.push("Edit Comment".to_string());
-                                            actions.push("Delete Comment".to_string());
-
-                                            app.selector = Some(crate::app::Selector {
-                                                title: format!(
-                                                    " Actions for Comment {} ",
-                                                    comment_id
-                                                ),
-                                                all_items: actions,
-                                                selected_items: std::collections::HashSet::new(),
-                                                cursor_idx: 0,
-                                                search_query: String::new(),
-                                                is_filtering: false,
-                                                is_loading: false,
-                                                entity_iid: comment_id,
-                                                entity_type: diff_view.mr_iid.to_string(),
-                                                field_type: "comment_action_select".to_string(),
-                                                multi_select: false,
-                                                state: ListState::default(),
-                                            });
                                         } else {
-                                            let items: Vec<String> = matching_current
+                                            let mut items: Vec<String> = matching_current
                                                 .iter()
                                                 .map(|c| {
                                                     let clean_body = c.body.replace('\n', " ");
@@ -7486,6 +7627,20 @@ async fn main() -> Result<()> {
                                                     )
                                                 })
                                                 .collect();
+                                            for &idx in &matching_drafts {
+                                                let body =
+                                                    app.draft_comments[idx].body.replace('\n', " ");
+                                                let truncated = if body.len() > 40 {
+                                                    format!("{}...", &body[..40])
+                                                } else {
+                                                    body
+                                                };
+                                                items.push(format!(
+                                                    "DRAFT #{} | {}",
+                                                    idx + 1,
+                                                    truncated
+                                                ));
+                                            }
 
                                             app.selector = Some(crate::app::Selector {
                                                 title: " Select Comment to Interact ".to_string(),

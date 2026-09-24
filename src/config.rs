@@ -11,6 +11,55 @@ use std::sync::RwLock;
 #[cfg(test)]
 pub(crate) static TEST_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// RAII guard that swaps `HOME` and `USERPROFILE` to a test-owned tempdir
+/// for the duration of a scope. The cache layer reads both, so any test
+/// that triggers a cache write (`add_recent_repo`, `add_recent_group`,
+/// direct `fs::write` to `get_recent_repos_file_path()`, …) must isolate
+/// the cache dir from the user's real `~/.cache/glab-tui/` or risk
+/// clobbering it. On drop (including panic) the previous values are
+/// restored. Always pair with `TEST_ENV_MUTEX` so tests do not race each
+/// other's env swaps.
+#[cfg(test)]
+pub(crate) struct EnvGuard {
+    old_home: Option<String>,
+    old_profile: Option<String>,
+}
+
+#[cfg(test)]
+impl EnvGuard {
+    /// Set both `HOME` and `USERPROFILE` to `new_home`, saving the
+    /// previous values for restoration on drop.
+    pub(crate) fn isolate_home(new_home: &std::path::Path) -> Self {
+        let new_home_str = new_home.to_string_lossy().into_owned();
+        let old_home = std::env::var("HOME").ok();
+        let old_profile = std::env::var("USERPROFILE").ok();
+        unsafe {
+            std::env::set_var("HOME", &new_home_str);
+            std::env::set_var("USERPROFILE", &new_home_str);
+        }
+        Self {
+            old_home,
+            old_profile,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.old_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.old_profile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     pub bg: Color,

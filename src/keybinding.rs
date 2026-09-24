@@ -1,4 +1,15 @@
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
+
+/// The modifiers a binding character's own KeyEvent must carry: `SHIFT` for
+/// an uppercase letter (crossterm 0.29 attaches it to every uppercase
+/// character event), none otherwise.
+fn expected_modifiers(c: char) -> KeyModifiers {
+    if c.is_uppercase() {
+        KeyModifiers::SHIFT
+    } else {
+        KeyModifiers::NONE
+    }
+}
 
 pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> bool {
     match binding {
@@ -82,7 +93,7 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
         }
         other if other.len() == 1 => {
             let c = other.chars().next().unwrap();
-            event.code == KeyCode::Char(c) && event.modifiers.is_empty()
+            event.code == KeyCode::Char(c) && event.modifiers == expected_modifiers(c)
         }
         _ => false,
     }
@@ -100,25 +111,21 @@ mod tests {
     }
 
     #[test]
-    fn uppercase_single_char_binding_does_not_match_shifted_key() {
+    fn uppercase_single_char_binding_matches_shifted_key() {
         // crossterm 0.29 attaches KeyModifiers::SHIFT to every uppercase
-        // character event, but the `other.len() == 1` arm above requires
-        // `event.modifiers.is_empty()`. So a binding configured as the
-        // literal uppercase letter (e.g. "A") never matches the KeyEvent a
-        // user actually generates by pressing Shift+A.
-        //
-        // This is documented, current, intentional behavior: per
-        // AGENTS.md's "Keybinding System" section, every uppercase
-        // user-facing action must be dispatched with a paired bare
-        // `KeyCode::Char(...)` check alongside `keybinding_matches(...)`,
-        // e.g.:
-        //   _ if key_event.code == KeyCode::Char('A')
-        //       || keybinding_matches(&app.config.keybindings.mrs.revoke_mr, key_event) => { ... }
-        //
-        // Do not "fix" this assertion to expect `true` — that would assert
-        // a false expectation. Fix the call site instead.
+        // character event. Per AGENTS.md's "Keybinding System" section,
+        // every keypress must be matched through `keybinding_matches()` so
+        // users can remap it; a binding configured as the literal uppercase
+        // letter (e.g. "A") must therefore match the KeyEvent a user
+        // actually generates by pressing Shift+A.
         let event = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT);
-        assert!(!keybinding_matches("A", &event));
+        assert!(keybinding_matches("A", &event));
+    }
+
+    #[test]
+    fn lowercase_single_char_binding_does_not_match_shifted_key() {
+        let event = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SHIFT);
+        assert!(!keybinding_matches("a", &event));
     }
 
     #[test]

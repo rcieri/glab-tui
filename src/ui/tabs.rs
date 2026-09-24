@@ -347,8 +347,9 @@ pub(crate) fn render_tab_merge_requests(
     if app.mrs.items.is_empty() && app.loading_tabs.contains(&app.active_tab) {
         f.render_widget(
             Paragraph::new(format!(
-                "\n\n {} Loading merge requests...",
-                icons.label_loading
+                "\n\n {} Loading {}...",
+                icons.label_loading,
+                app.kind().term("mr_plural").to_lowercase()
             ))
             .alignment(Alignment::Center)
             .block(main_block.clone())
@@ -3512,5 +3513,80 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[test]
+    fn render_tab_mrs_loading_text_is_host_aware() {
+        use crate::backend::gh::GhBackend;
+        use crate::backend::glab::GlabBackend;
+        use crate::domain::client::GitlabClient;
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // GitHub mode -> "Loading pull requests..."
+        let mut app = App::default();
+        app.gitlab_client = Some(GitlabClient {
+            is_github: true,
+            backend: Box::new(GhBackend::new()),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+        });
+        app.active_tab = Tab::MergeRequests;
+        app.loading_tabs.insert(Tab::MergeRequests);
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 40);
+                let detail_rect = Rect::new(0, 40, area.width, 30);
+                render_tab_merge_requests(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let content: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Loading pull requests..."));
+
+        // GitLab mode -> "Loading merge requests..."
+        let mut app = App::default();
+        app.gitlab_client = Some(GitlabClient {
+            is_github: false,
+            backend: Box::new(GlabBackend::new()),
+            tx: None,
+            page_size: 30,
+            api_per_page: 30,
+        });
+        app.active_tab = Tab::MergeRequests;
+        app.loading_tabs.insert(Tab::MergeRequests);
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 40);
+                let detail_rect = Rect::new(0, 40, area.width, 30);
+                render_tab_merge_requests(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let content: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Loading merge requests..."));
     }
 }

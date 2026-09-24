@@ -168,28 +168,101 @@ pub fn slugify(s: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
-/// Safe to run on the UI thread: `git rev-parse --abbrev-ref origin/HEAD`
-/// resolves the symbolic ref from the local object DB once `origin/HEAD`
+/// The default repository the GitHub CLI was pointed at for this checkout.
+///
+/// `gh repo set-default` — and `gh repo clone` of a fork — record the choice as
+/// `remote.<name>.gh-resolved`, either as the literal `base` when the target is
+/// one of the local remotes, or as an explicit `namespace/project` when it is not.
+#[derive(Debug, PartialEq, Eq)]
+pub enum GhDefaultRepo {
+    Remote(String),
+    Project(String),
+}
+
+/// Reads the first `gh-resolved` entry out of `git config --get-regexp` output.
+///
+/// Remote names may themselves contain dots, so the name is whatever sits
+/// between the `remote.` prefix and the `.gh-resolved` suffix.
+pub fn parse_gh_resolved(config_output: &str) -> Option<GhDefaultRepo> {
+    config_output.lines().find_map(|line| {
+        let (key, value) = line.trim().split_once(' ')?;
+        let name = key.strip_prefix("remote.")?.strip_suffix(".gh-resolved")?;
+        if name.is_empty() || value.is_empty() {
+            return None;
+        }
+        Some(if value == "base" {
+            GhDefaultRepo::Remote(name.to_string())
+        } else {
+            GhDefaultRepo::Project(value.to_string())
+        })
+    })
+}
+
+fn gh_resolved() -> Option<GhDefaultRepo> {
+    let output = std::process::Command::new("git")
+        .args(["config", "--get-regexp", r"^remote\..*\.gh-resolved$"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_gh_resolved(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Extracts `namespace/project` from the URL of the named remote.
+pub fn remote_project_path(remote: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", remote])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_project_path(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// The project the user pointed `gh` at, or `None` when they never did.
+pub fn gh_resolved_project() -> Option<String> {
+    match gh_resolved()? {
+        GhDefaultRepo::Project(path) => Some(path),
+        GhDefaultRepo::Remote(name) => remote_project_path(&name),
+    }
+}
+
+fn strip_remote_prefix(head: &str, remote: &str) -> Option<String> {
+    let branch = head.trim();
+    let branch = branch
+        .strip_prefix(&format!("{}/", remote))
+        .unwrap_or(branch);
+    (!branch.is_empty() && branch != "HEAD").then(|| branch.to_string())
+}
+
+fn default_branch_of(remote: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", &format!("{}/HEAD", remote)])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    strip_remote_prefix(&String::from_utf8_lossy(&output.stdout), remote)
+}
+
+/// Safe to run on the UI thread: `git config` and `git rev-parse --abbrev-ref
+/// <remote>/HEAD` read the local config and object DB once `<remote>/HEAD`
 /// has been set by a previous `git fetch`/`clone`. No network roundtrip,
 /// no prompt for credentials. Returns `None` when the remote has not
 /// been initialized yet, in which case the caller falls back to the
 /// default "main"/"master" heuristic.
 pub fn get_default_branch() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "origin/HEAD"])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let branch = branch
-            .strip_prefix("origin/")
-            .unwrap_or(&branch)
-            .to_string();
-        if !branch.is_empty() && branch != "HEAD" {
-            return Some(branch);
+    // A remote that is not `origin` frequently has no HEAD ref — clone only
+    // creates one for the remote it cloned from — so `origin` stays the fallback.
+    match gh_resolved() {
+        Some(GhDefaultRepo::Remote(name)) if name != "origin" => {
+            default_branch_of(&name).or_else(|| default_branch_of("origin"))
         }
+        _ => default_branch_of("origin"),
     }
-    None
 }
 
 /// Ensure `branch` exists locally and on `origin` without interactive prompts.
@@ -387,7 +460,10 @@ pub fn get_workflow_files(is_github: bool) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_backend, parse_project_path, parse_remote_host};
+    use super::{
+        GhDefaultRepo, detect_backend, parse_gh_resolved, parse_project_path, parse_remote_host,
+        strip_remote_prefix,
+    };
     use crate::backend::BackendKind;
 
     #[test]
@@ -532,5 +608,72 @@ mod tests {
         assert_eq!(parse_project_path("https://gitlab.example.com/"), None);
         assert_eq!(parse_project_path("not-a-url"), None);
         assert_eq!(parse_project_path(""), None);
+    }
+
+    #[test]
+    fn gh_resolved_base_names_the_remote() {
+        assert_eq!(
+            parse_gh_resolved("remote.upstream.gh-resolved base\n"),
+            Some(GhDefaultRepo::Remote("upstream".to_string()))
+        );
+    }
+
+    #[test]
+    fn gh_resolved_explicit_value_names_the_project() {
+        assert_eq!(
+            parse_gh_resolved("remote.origin.gh-resolved rcieri/glab-tui\n"),
+            Some(GhDefaultRepo::Project("rcieri/glab-tui".to_string()))
+        );
+    }
+
+    #[test]
+    fn gh_resolved_keeps_dots_in_remote_names() {
+        assert_eq!(
+            parse_gh_resolved("remote.my.fork.gh-resolved base\n"),
+            Some(GhDefaultRepo::Remote("my.fork".to_string()))
+        );
+    }
+
+    #[test]
+    fn gh_resolved_takes_the_first_entry() {
+        assert_eq!(
+            parse_gh_resolved("remote.origin.gh-resolved base\nremote.upstream.gh-resolved base\n"),
+            Some(GhDefaultRepo::Remote("origin".to_string()))
+        );
+    }
+
+    #[test]
+    fn gh_resolved_skips_malformed_lines() {
+        assert_eq!(
+            parse_gh_resolved("remote.origin.gh-resolved\nremote.upstream.gh-resolved base\n"),
+            Some(GhDefaultRepo::Remote("upstream".to_string()))
+        );
+    }
+
+    #[test]
+    fn absent_gh_resolved_yields_nothing() {
+        assert_eq!(parse_gh_resolved(""), None);
+        assert_eq!(
+            parse_gh_resolved("remote.origin.url git@github.com:o/r.git"),
+            None
+        );
+    }
+
+    #[test]
+    fn default_branch_strips_the_remote_it_was_read_from() {
+        assert_eq!(
+            strip_remote_prefix("upstream/main", "upstream").as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            strip_remote_prefix("origin/master", "origin").as_deref(),
+            Some("master")
+        );
+    }
+
+    #[test]
+    fn default_branch_rejects_unresolved_head() {
+        assert_eq!(strip_remote_prefix("HEAD", "origin"), None);
+        assert_eq!(strip_remote_prefix("", "origin"), None);
     }
 }

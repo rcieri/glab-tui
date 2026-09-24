@@ -123,7 +123,7 @@ Inline entity editing with searchable multi-select overlays for labels, assignee
 |---|---|
 | **Rust** (stable, edition 2024) | Install via [rustup](https://rustup.rs/) |
 | **[`glab`](https://gitlab.com/gitlab-org/cli)** / **[`gh`](https://cli.github.com/)** | Either `glab` (for GitLab repos, authenticated via `glab auth login`) or `gh` (for GitHub repos, authenticated via `gh auth login`) must be on `$PATH`. You only need the CLI for the service you use. |
-| **`git`** | Used to auto-detect the current project from `git remote get-url origin` |
+| **`git`** | Used to auto-detect the current project from the `origin` remote, or from the default repository `gh` recorded for the clone |
 | **A terminal emulator** | Any terminal that supports 256 colours and Unicode |
 
 > **Windows note:** the binary works on Windows. Editor integration uses `cmd /c` automatically when `$OS` is Windows.
@@ -236,6 +236,9 @@ gh auth login     # for GitHub repos
 ```
 
 The active project is detected automatically from the `origin` remote in the current working directory.
+If `gh` has recorded a default repository for the clone, that one is used instead. `gh repo fork --clone`
+records the original repository as default, so a fork opens its upstream project. `gh repo set-default`
+changes the choice, and `--repo` overrides both.
 For GitHub Enterprise or unusual hosting setups, set the backend explicitly in the repo-local config:
 
 ```toml

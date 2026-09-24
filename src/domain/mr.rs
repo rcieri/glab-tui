@@ -71,6 +71,27 @@ pub struct MergeRequest {
     pub web_url: Option<String>,
 }
 
+impl MergeRequest {
+    pub fn markdown_reference(&self, kind: crate::backend::BackendKind) -> String {
+        let title = self
+            .title
+            .replace('\\', "\\\\")
+            .replace('[', "\\[")
+            .replace(']', "\\]");
+        let prefix = match kind {
+            crate::backend::BackendKind::GitLab => '!',
+            crate::backend::BackendKind::GitHub => '#',
+        };
+        format!(
+            "[{}{}: {}]({})",
+            prefix,
+            self.iid,
+            title,
+            self.web_url.as_deref().unwrap_or("")
+        )
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct NotePosition {
     #[serde(default)]
@@ -222,5 +243,22 @@ mod tests {
         let json = GLAB_MR_JSON.replace(",\n        \"blocking_discussions_resolved\": false", "");
         let mr: MergeRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(mr.blocking_discussions_resolved, None);
+    }
+
+    #[test]
+    fn markdown_reference_formats_for_gitlab_and_github_with_escaping() {
+        let mut mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
+        mr.title = r"feat(core): support [nested] \brackets\".to_string();
+        mr.web_url = Some("https://gitlab.com/acme/project/-/merge_requests/1471".to_string());
+
+        assert_eq!(
+            mr.markdown_reference(crate::backend::BackendKind::GitLab),
+            r"[!1471: feat(core): support \[nested\] \\brackets\\](https://gitlab.com/acme/project/-/merge_requests/1471)"
+        );
+
+        assert_eq!(
+            mr.markdown_reference(crate::backend::BackendKind::GitHub),
+            r"[#1471: feat(core): support \[nested\] \\brackets\\](https://gitlab.com/acme/project/-/merge_requests/1471)"
+        );
     }
 }

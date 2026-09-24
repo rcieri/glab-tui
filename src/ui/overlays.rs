@@ -1215,8 +1215,8 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: s("j / k / ↓ / ↑"),
-            action: "Select item / Scroll page",
+            key: s("j / k / ↓ / ↑ / Home / End"),
+            action: "Select item / Scroll page / Jump to top or bottom",
         },
         Shortcut {
             category: "Global & Nav",
@@ -1449,6 +1449,15 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: mr_label,
+            key: d(app.config.keybindings.mrs.copy_reference.clone()),
+            action: if is_github {
+                "Copy selected PR as Markdown link"
+            } else {
+                "Copy selected MR as Markdown link"
+            },
+        },
+        Shortcut {
+            category: mr_label,
             key: d(app.config.keybindings.mrs.open_in_browser.clone()),
             action: if is_github {
                 "Open selected PR in browser"
@@ -1496,6 +1505,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Pipelines",
             key: d(app.config.keybindings.pipelines.open_in_browser.clone()),
             action: "Open pipeline in browser",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.copy_sha.clone()),
+            action: "Copy selected pipeline commit SHA",
         },
         // ── Jobs ──
         Shortcut {
@@ -1572,6 +1586,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Jobs",
             key: s("m"),
             action: "Collapse / expand matrix jobs",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.copy_sha.clone()),
+            action: "Copy pipeline commit SHA",
         },
         // ── Milestones ──
         Shortcut {
@@ -1686,6 +1705,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Branches",
             key: d(app.config.keybindings.branches.open_in_browser.clone()),
             action: "Open branch in browser",
+        },
+        Shortcut {
+            category: "Branches",
+            key: d(app.config.keybindings.branches.copy_branch.clone()),
+            action: "Copy selected branch name",
         },
         // ── Environments ──
         Shortcut {

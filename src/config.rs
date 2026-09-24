@@ -822,6 +822,12 @@ pub struct KeybindingPipelines {
     pub open_in_browser: String,
     #[serde(default = "def_copy_sha")]
     pub copy_sha: String,
+    #[serde(default = "def_select_pipeline")]
+    pub select_pipeline: String,
+    #[serde(default = "def_selection_toggle")]
+    pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -882,6 +888,10 @@ pub struct KeybindingJobs {
     pub toggle_trace_follow: String,
     #[serde(default = "def_copy_sha")]
     pub copy_sha: String,
+    #[serde(default = "def_selection_toggle")]
+    pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -998,6 +1008,7 @@ keybind_defaults! {
     def_view_related_pipelines = "P",
     def_jump_related_mrs = "M",
     def_trigger_pipeline = "p",
+    def_select_pipeline = "Space",
     def_retry = "r",
     def_cancel = "d",
     def_open_workflow = "W",
@@ -1116,6 +1127,9 @@ impl Default for KeybindingPipelines {
             open_workflow: def_open_workflow(),
             open_in_browser: def_open_in_browser(),
             copy_sha: def_copy_sha(),
+            select_pipeline: def_select_pipeline(),
+            selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
         }
     }
 }
@@ -1161,6 +1175,8 @@ impl Default for KeybindingJobs {
             trace_search: def_trace_search(),
             toggle_trace_follow: def_toggle_trace_follow(),
             copy_sha: def_copy_sha(),
+            selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
         }
     }
 }
@@ -1443,9 +1459,11 @@ selection_toggle = "v"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"
+select_pipeline = "Space"
 retry = "r"
 cancel = "d"
 open_workflow = "W"
+selection_toggle = "v"
 
 [keybindings.releases]
 create_release = "n"
@@ -1475,6 +1493,7 @@ view_trace = "Enter"
 toggle_trace_wrap = "w"
 trace_search = "/"
 toggle_trace_follow = "f"
+selection_toggle = "v"
 
 [keybindings.runners]
 pause = "p"

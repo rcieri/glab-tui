@@ -288,12 +288,16 @@ impl Tab {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "issues" => Some(Tab::Issues),
-            "mrs" | "mergerequests" => Some(Tab::MergeRequests),
+            "mrs" | "mergerequests" | "pr" | "prs" | "pullrequests" | "pull_requests" => {
+                Some(Tab::MergeRequests)
+            }
             "pipelines" => Some(Tab::Pipelines),
+            "actions" => Some(Tab::Pipelines),
             "jobs" => Some(Tab::Jobs),
             "runners" => Some(Tab::Runners),
             "releases" => Some(Tab::Releases),
             "todos" => Some(Tab::Todos),
+            "notifications" => Some(Tab::Todos),
             "milestones" => Some(Tab::Milestones),
             "branches" => Some(Tab::Branches),
             "environments" => Some(Tab::Environments),
@@ -7174,6 +7178,93 @@ diff --git a/foo.txt b/foo.txt
         assert_eq!(Tab::from_str("mrs"), Some(Tab::MergeRequests));
         assert_eq!(Tab::from_str("mergerequests"), Some(Tab::MergeRequests));
         assert_eq!(Tab::from_str("invalid_tab"), None);
+    }
+
+    #[test]
+    fn test_default_tab_from_str_supports_case_insensitive_aliases() {
+        // Case-insensitive lookup
+        assert_eq!(Tab::from_str("ISSUES"), Some(Tab::Issues));
+        assert_eq!(Tab::from_str("Pipelines"), Some(Tab::Pipelines));
+
+        // PR / Pull-Request aliases all resolve to MergeRequests.
+        for alias in ["pr", "PR", "Pr", "prs", "pullrequests", "pull_requests"] {
+            assert_eq!(
+                Tab::from_str(alias),
+                Some(Tab::MergeRequests),
+                "alias {alias:?} must resolve to MergeRequests"
+            );
+        }
+
+        // GitHub-flavoured aliases.
+        assert_eq!(Tab::from_str("actions"), Some(Tab::Pipelines));
+        assert_eq!(Tab::from_str("notifications"), Some(Tab::Todos));
+    }
+
+    #[test]
+    fn test_default_tab_from_str_round_trips() {
+        for tab in Tab::ALL {
+            assert_eq!(Tab::from_str(tab.to_str()), Some(tab));
+        }
+    }
+
+    #[test]
+    fn test_app_new_honours_active_tab_config() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
+        unsafe {
+            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
+        }
+        std::fs::write(
+            &config_path,
+            r#"active_tab = "milestones"
+"#,
+        )
+        .unwrap();
+
+        let app = App::new();
+        assert_eq!(app.active_tab, Tab::Milestones);
+
+        if let Some(prev) = previous {
+            unsafe {
+                std::env::set_var("GLAB_TUI_CONFIG", prev);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("GLAB_TUI_CONFIG");
+            }
+        }
+    }
+
+    #[test]
+    fn test_app_new_falls_back_to_issues_for_unknown_active_tab() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let previous = std::env::var("GLAB_TUI_CONFIG").ok();
+        unsafe {
+            std::env::set_var("GLAB_TUI_CONFIG", &config_path);
+        }
+        std::fs::write(
+            &config_path,
+            r#"active_tab = "this-is-not-a-tab"
+"#,
+        )
+        .unwrap();
+
+        let app = App::new();
+        assert_eq!(app.active_tab, Tab::Issues);
+
+        if let Some(prev) = previous {
+            unsafe {
+                std::env::set_var("GLAB_TUI_CONFIG", prev);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("GLAB_TUI_CONFIG");
+            }
+        }
     }
 
     #[test]

@@ -68,6 +68,15 @@ pub struct Cli {
     #[arg(short = 'u', long = "update", help = "Check and install updates")]
     pub update: bool,
 
+    #[arg(
+        long = "tab",
+        value_name = "TAB",
+        help = "Tab to open on launch. Overrides any default_tab in config.toml. \
+                Valid: issues, mrs, pr, pipelines, jobs, runners, releases, todos, \
+                milestones, branches, environments, terminal."
+    )]
+    pub tab: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }

@@ -673,6 +673,18 @@ async fn main() -> Result<()> {
 
     // Create app and event handler
     let mut app = App::new();
+    if let Some(ref tab_str) = cli.tab {
+        match crate::app::Tab::from_str(tab_str) {
+            Some(tab) => app.active_tab = tab,
+            None => {
+                eprintln!(
+                    "Error: --tab '{}' is not a recognised tab.\nValid values: issues, mrs, pr, pipelines, jobs, runners, releases, todos, milestones, branches, environments, terminal.",
+                    tab_str
+                );
+                std::process::exit(2);
+            }
+        }
+    }
     let mut events = EventHandler::new(250);
     app.tx = Some(events.sender());
 

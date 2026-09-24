@@ -210,13 +210,8 @@ pub fn add_recent_groups(groups: &[String]) {
 }
 
 pub fn get_cache_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    let mut path = PathBuf::from(home);
-    path.push(".cache");
-    path.push("glab-tui");
-    path
+    let home = crate::config::home_dir();
+    home.join(".cache").join("glab-tui")
 }
 
 pub fn cache_file_name(project_context: &str) -> String {

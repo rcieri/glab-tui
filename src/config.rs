@@ -537,23 +537,23 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("rose-pine-dawn", include_str!("themes/rose-pine-dawn.toml")),
 ];
 
+pub(crate) fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
 fn config_dir() -> PathBuf {
     if let Ok(path) = std::env::var("GLAB_TUI_CONFIG") {
         let mut p = PathBuf::from(path);
         p.pop();
         return p;
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     let xdg_config = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let mut p = PathBuf::from(&home);
-            p.push(".config");
-            p
-        });
-    let mut path = xdg_config;
-    path.push("glab-tui");
-    path
+        .unwrap_or_else(|_| home_dir().join(".config"));
+    xdg_config.join("glab-tui")
 }
 
 fn themes_dir() -> PathBuf {
@@ -2054,5 +2054,23 @@ page_size = 250
                 "all_theme_presets() missing bundled theme '{name}'"
             );
         }
+    }
+
+    #[test]
+    fn test_home_dir_resolution() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let guard = EnvGuard::isolate_home(temp_dir.path());
+
+        // When HOME is set
+        assert_eq!(home_dir(), temp_dir.path());
+
+        // When HOME is unset but USERPROFILE is set (Windows scenario)
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::set_var("USERPROFILE", temp_dir.path());
+        }
+        assert_eq!(home_dir(), temp_dir.path());
+        drop(guard);
     }
 }

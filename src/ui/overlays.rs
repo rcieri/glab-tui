@@ -1752,7 +1752,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Diff View",
             key: s("a"),
-            action: "Interact with comments on current line",
+            action: "Interact with comments on current line (focus the diff with `l`/`Tab` first; pushes and drafts both)",
         },
         Shortcut {
             category: "Diff View",

@@ -2284,6 +2284,34 @@ pub struct DraftComment {
     pub body: String,
 }
 
+impl DraftComment {
+    /// Matches a draft comment against the currently-focused diff line, sharing
+    /// the line-matching logic in `main.rs`'s `KeyCode::Char('a')` handler so
+    /// `a` can interact with drafts in addition to pushed comments (#483).
+    pub fn matches_side(&self, line: &SideBySideLine) -> bool {
+        let path_matches = line
+            .left
+            .as_ref()
+            .is_some_and(|l| l.file_path == self.file_path)
+            || line
+                .right
+                .as_ref()
+                .is_some_and(|r| r.file_path == self.file_path);
+        if !path_matches {
+            return false;
+        }
+        let new_line_match = self
+            .line_num
+            .zip(line.right.as_ref().and_then(|r| r.new_line_num))
+            .is_some_and(|(a, b)| a == b);
+        let old_line_match = self
+            .old_line_num
+            .zip(line.left.as_ref().and_then(|l| l.old_line_num))
+            .is_some_and(|(a, b)| a == b);
+        new_line_match || old_line_match
+    }
+}
+
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum TextInputAction {
@@ -6864,6 +6892,95 @@ diff --git a/foo.txt b/foo.txt
         assert_eq!(range_2.lines.len(), 2);
         assert_eq!(range_2.lines[0].content, "-deleted line 2");
         assert_eq!(range_2.lines[1].content, "-deleted line 3");
+    }
+
+    /// Builds a `SideBySideLine` carrying `file_path` + line numbers on
+    /// both sides, mirroring what `DiffView` produces for an `+added` line.
+    fn side_for(
+        file_path: &str,
+        new_line_num: Option<u32>,
+        old_line_num: Option<u32>,
+    ) -> SideBySideLine {
+        SideBySideLine {
+            left: Some(DiffLine {
+                line_type: DiffLineType::Normal,
+                content: String::new(),
+                old_line_num,
+                new_line_num,
+                file_path: file_path.to_string(),
+                syntax_highlighted: None,
+                fuzzy_indices: None,
+            }),
+            right: Some(DiffLine {
+                line_type: DiffLineType::Normal,
+                content: String::new(),
+                old_line_num,
+                new_line_num,
+                file_path: file_path.to_string(),
+                syntax_highlighted: None,
+                fuzzy_indices: None,
+            }),
+            line_type: DiffLineType::Normal,
+        }
+    }
+
+    #[test]
+    fn draft_matches_side_yes_when_path_and_new_line_align() {
+        let draft = DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: Some(42),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "Looks good.".to_string(),
+        };
+        let line = side_for("src/lib.rs", Some(42), None);
+        assert!(draft.matches_side(&line));
+    }
+
+    #[test]
+    fn draft_matches_side_no_on_different_file() {
+        let draft = DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: Some(42),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "Looks good.".to_string(),
+        };
+        let line = side_for("src/other.rs", Some(42), None);
+        assert!(!draft.matches_side(&line));
+    }
+
+    #[test]
+    fn draft_matches_side_no_on_different_line() {
+        let draft = DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: Some(42),
+            old_line_num: None,
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "Looks good.".to_string(),
+        };
+        let line = side_for("src/lib.rs", Some(43), None);
+        assert!(!draft.matches_side(&line));
+    }
+
+    #[test]
+    fn draft_matches_side_yes_on_old_line_only() {
+        // Deletions have `new_line_num = None`; the draft anchored to the
+        // old-side line number must still match so `a` works on lines that
+        // only exist on the left of side-by-side (#483).
+        let draft = DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: None,
+            old_line_num: Some(7),
+            end_line_num: None,
+            end_old_line_num: None,
+            body: "Why was this removed?".to_string(),
+        };
+        let line = side_for("src/lib.rs", None, Some(7));
+        assert!(draft.matches_side(&line));
     }
 
     #[test]

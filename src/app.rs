@@ -3481,12 +3481,31 @@ impl App {
     }
 
     pub fn selected_issue_reference(&self) -> Option<String> {
-        self.issues
-            .state
-            .selected()
-            .and_then(|index| self.filtered_issues().get(index).copied())
-            .filter(|issue| !issue.web_url.is_empty())
-            .map(crate::domain::issues::Issue::markdown_reference)
+        let index = self.issues.state.selected()?;
+        let issue = self.filtered_issues().get(index).copied()?;
+        let mut issue_copy = issue.clone();
+        if issue_copy.web_url.is_empty() {
+            let project = if !issue.project_path.is_empty() {
+                &issue.project_path
+            } else {
+                self.scope.as_str()
+            };
+            if !project.is_empty() {
+                issue_copy.web_url = match self.kind() {
+                    BackendKind::GitHub => {
+                        format!("https://github.com/{project}/issues/{}", issue.iid)
+                    }
+                    BackendKind::GitLab => {
+                        format!("https://gitlab.com/{project}/-/issues/{}", issue.iid)
+                    }
+                };
+            }
+        }
+        if issue_copy.web_url.is_empty() {
+            None
+        } else {
+            Some(issue_copy.markdown_reference())
+        }
     }
 
     pub fn copy_selected_issue_reference(&mut self) -> anyhow::Result<()> {
@@ -3494,6 +3513,99 @@ impl App {
             .selected_issue_reference()
             .ok_or_else(|| anyhow::anyhow!("Issue URL unavailable; refresh the Issues tab"))?;
         self.clipboard.set_text(reference)?;
+        Ok(())
+    }
+
+    pub fn selected_mr_reference(&self) -> Option<String> {
+        let kind = self.kind();
+        let index = self.mrs.state.selected()?;
+        let mr = self.filtered_mrs().get(index).copied()?;
+        let web_url = mr
+            .web_url
+            .clone()
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| {
+                let project = if !mr.project_path.is_empty() {
+                    mr.project_path.clone()
+                } else {
+                    self.scope.as_str().to_string()
+                };
+                if !project.is_empty() {
+                    match kind {
+                        BackendKind::GitHub => {
+                            format!("https://github.com/{project}/pull/{}", mr.iid)
+                        }
+                        BackendKind::GitLab => {
+                            format!("https://gitlab.com/{project}/-/merge_requests/{}", mr.iid)
+                        }
+                    }
+                } else {
+                    String::new()
+                }
+            });
+        if web_url.is_empty() {
+            None
+        } else {
+            let mut mr_copy = mr.clone();
+            mr_copy.web_url = Some(web_url);
+            Some(mr_copy.markdown_reference(kind))
+        }
+    }
+
+    pub fn copy_selected_mr_reference(&mut self) -> anyhow::Result<()> {
+        let reference = self
+            .selected_mr_reference()
+            .ok_or_else(|| anyhow::anyhow!("MR URL unavailable; refresh the Merge Requests tab"))?;
+        self.clipboard.set_text(reference)?;
+        Ok(())
+    }
+
+    pub fn selected_pipeline_sha(&self) -> Option<String> {
+        self.pipelines
+            .state
+            .selected()
+            .and_then(|index| self.filtered_pipelines().get(index).copied())
+            .map(|p| p.head_sha().to_string())
+            .filter(|sha| !sha.is_empty())
+    }
+
+    pub fn copy_selected_pipeline_sha(&mut self) -> anyhow::Result<()> {
+        let sha = self
+            .selected_pipeline_sha()
+            .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Pipelines tab"))?;
+        self.clipboard.set_text(sha)?;
+        Ok(())
+    }
+
+    pub fn selected_job_sha(&self) -> Option<String> {
+        self.active_pipeline_id
+            .and_then(|pipe_id| self.pipelines.items.iter().find(|p| p.id() == pipe_id))
+            .map(|p| p.head_sha().to_string())
+            .filter(|sha| !sha.is_empty())
+    }
+
+    pub fn copy_selected_job_sha(&mut self) -> anyhow::Result<()> {
+        let sha = self
+            .selected_job_sha()
+            .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Jobs tab"))?;
+        self.clipboard.set_text(sha)?;
+        Ok(())
+    }
+
+    pub fn selected_branch_name(&self) -> Option<String> {
+        self.branches
+            .state
+            .selected()
+            .and_then(|index| self.filtered_branches().get(index).copied())
+            .map(|b| b.name.clone())
+            .filter(|name| !name.is_empty())
+    }
+
+    pub fn copy_selected_branch_name(&mut self) -> anyhow::Result<()> {
+        let branch = self
+            .selected_branch_name()
+            .ok_or_else(|| anyhow::anyhow!("Branch name unavailable; refresh the Branches tab"))?;
+        self.clipboard.set_text(branch)?;
         Ok(())
     }
 
@@ -6264,6 +6376,163 @@ mod tests {
         app.issues.state.select(Some(0));
 
         assert_eq!(app.selected_issue_reference(), None);
+    }
+
+    #[test]
+    fn selected_mr_reference_uses_the_highlighted_mr_and_preserves_status() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        app.mrs.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 101,
+                    "title": "Add feature [v2]",
+                    "state": "opened",
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "developer"},
+                    "target_branch": "main",
+                    "draft": false,
+                    "web_url": "https://gitlab.com/acme/project/-/merge_requests/101"
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.mrs.state.select(Some(0));
+        app.status_message = Some("Offline".to_string());
+
+        assert_eq!(
+            app.selected_mr_reference().as_deref(),
+            Some(
+                r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
+            )
+        );
+
+        app.copy_selected_mr_reference().unwrap();
+
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some(
+                r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
+            )
+        );
+        assert_eq!(app.status_message.as_deref(), Some("Offline"));
+    }
+
+    #[test]
+    fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        app.mrs.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 77,
+                    "title": "Fallback PR",
+                    "state": "opened",
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "octocat"},
+                    "target_branch": "main",
+                    "draft": false
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.mrs.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_mr_reference().as_deref(),
+            Some("[!77: Fallback PR](https://gitlab.com/owner/repo/-/merge_requests/77)")
+        );
+    }
+
+    #[test]
+    fn selected_pipeline_and_job_sha_copying() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 555,
+            status: "success".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "2026-08-29T11:00:00Z".to_string(),
+            name: "CI".to_string(),
+            display_title: "CI Run".to_string(),
+            event: "push".to_string(),
+            head_sha: "abc1234def5678".to_string(),
+            actor_login: "ci-bot".to_string(),
+            duration_seconds: Some(120),
+            created_at: None,
+            source: None,
+            project_path: "acme/project".to_string(),
+            web_url: None,
+        }];
+        app.pipelines.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_pipeline_sha().as_deref(),
+            Some("abc1234def5678")
+        );
+        app.copy_selected_pipeline_sha().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("abc1234def5678"));
+
+        // Job SHA uses active_pipeline_id
+        app.active_pipeline_id = Some(555);
+        assert_eq!(app.selected_job_sha().as_deref(), Some("abc1234def5678"));
+        *copied.borrow_mut() = None;
+        app.copy_selected_job_sha().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("abc1234def5678"));
+    }
+
+    #[test]
+    fn selected_branch_name_copying() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+
+        app.branches.items = vec![crate::domain::branches::Branch {
+            name: "feature/new-api".to_string(),
+            default: false,
+            protected: true,
+            can_push: true,
+            commit_sha: "abc1234".to_string(),
+            web_url: "https://gitlab.com/acme/project/-/tree/feature/new-api".to_string(),
+        }];
+        app.branches.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_branch_name().as_deref(),
+            Some("feature/new-api")
+        );
+        app.copy_selected_branch_name().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("feature/new-api"));
     }
 
     #[test]

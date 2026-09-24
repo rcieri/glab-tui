@@ -3497,8 +3497,9 @@ impl App {
         self.update_filter_selection();
     }
 
-    /// Wipe the active search query. Mirrors readline's `Ctrl+U`, and is
-    /// also called by the second Esc press to drop the active filter.
+    /// Wipe the active search query. Mirrors readline's `Ctrl+U`; also
+    /// called by the Esc cascade to drop the active filter when no other
+    /// modal action consumes the press.
     pub fn clear_search_query(&mut self) {
         if !self.search_query.is_empty() {
             self.search_query.clear();

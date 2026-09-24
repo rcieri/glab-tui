@@ -2776,7 +2776,17 @@ async fn main() -> Result<()> {
                             let filtered_items = selector.get_filtered_items();
                             match key_event.code {
                                 KeyCode::Esc => {
-                                    // Close selector, go back to EditMenu (it is already in app.edit_menu)
+                                    // First Esc with an active query clears it (the
+                                    // user already exited filter mode via the inner
+                                    // match arm). Second Esc closes the selector.
+                                    if !selector.search_query.is_empty() {
+                                        selector.search_query.clear();
+                                        selector.cursor_idx = 0;
+                                        selector.state.select(Some(0));
+                                        app.selector = Some(selector);
+                                    }
+                                    // else: leave the selector taken out so the
+                                    // caller closes it (EditMenu stays open).
                                 }
                                 KeyCode::Char('f') | KeyCode::Char('/') | KeyCode::Char('i') => {
                                     let has_filter = selector.field_type != "comment_action_select"
@@ -8211,6 +8221,15 @@ async fn main() -> Result<()> {
                                 }
                             }
                         }
+                        continue;
+                    }
+
+                    if app.active_tab == app::Tab::Jobs
+                        && app.job_trace.is_some()
+                        && key_event.code == KeyCode::Esc
+                        && !app.job_trace_search_query.is_empty()
+                    {
+                        app.job_trace_search_query.clear();
                         continue;
                     }
 

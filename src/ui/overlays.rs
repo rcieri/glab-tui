@@ -1238,8 +1238,8 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: s("Esc (twice)"),
-            action: "Search: exit input, then clear the active filter",
+            key: s("Esc"),
+            action: "Exit input / clear the active filter",
         },
         Shortcut {
             category: "Global & Nav",

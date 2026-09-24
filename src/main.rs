@@ -3340,18 +3340,18 @@ async fn main() -> Result<()> {
                                                             .map(|f| f.value.clone())
                                                     })
                                                     .unwrap_or_default()
-                                            } else if entity_type == "issue"
-                                                || entity_type == "edit_issue"
-                                            {
+                                            } else if crate::entity_editor::entity_is_issue(
+                                                &entity_type,
+                                            ) {
                                                 app.issues
                                                     .items
                                                     .iter()
                                                     .find(|i| i.iid == entity_iid)
                                                     .and_then(|i| i.description.clone())
                                                     .unwrap_or_default()
-                                            } else if entity_type == "milestone"
-                                                || entity_type == "edit_milestone"
-                                            {
+                                            } else if crate::entity_editor::entity_is_milestone(
+                                                &entity_type,
+                                            ) {
                                                 app.milestones
                                                     .items
                                                     .iter()
@@ -3387,9 +3387,7 @@ async fn main() -> Result<()> {
                                                     continue;
                                                 };
                                                 let project_path = app.scope.as_str().to_string();
-                                                let result = if entity_type == "issue"
-                                                    || entity_type == "edit_issue"
-                                                {
+                                                let result = if crate::entity_editor::entity_is_issue(&entity_type) {
                                                     client
                                                         .update_issue_description(
                                                             &project_path,
@@ -3397,9 +3395,7 @@ async fn main() -> Result<()> {
                                                             &new_desc,
                                                         )
                                                         .await
-                                                } else if entity_type == "milestone"
-                                                    || entity_type == "edit_milestone"
-                                                {
+                                                } else if crate::entity_editor::entity_is_milestone(&entity_type) {
                                                     crate::domain::milestones::update_milestone(
                                                         &client,
                                                         &project_path,
@@ -3461,18 +3457,18 @@ async fn main() -> Result<()> {
                                                             .map(|f| f.value.clone())
                                                     })
                                                     .unwrap_or_default()
-                                            } else if entity_type == "issue"
-                                                || entity_type == "edit_issue"
-                                            {
+                                            } else if crate::entity_editor::entity_is_issue(
+                                                &entity_type,
+                                            ) {
                                                 app.issues
                                                     .items
                                                     .iter()
                                                     .find(|i| i.iid == entity_iid)
                                                     .and_then(|i| i.description.clone())
                                                     .unwrap_or_default()
-                                            } else if entity_type == "milestone"
-                                                || entity_type == "edit_milestone"
-                                            {
+                                            } else if crate::entity_editor::entity_is_milestone(
+                                                &entity_type,
+                                            ) {
                                                 app.milestones
                                                     .items
                                                     .iter()
@@ -5496,8 +5492,7 @@ async fn main() -> Result<()> {
                                             });
                                         }
                                         continue;
-                                    } else if entity_type == "issue" || entity_type == "edit_issue"
-                                    {
+                                    } else if crate::entity_editor::entity_is_issue(&entity_type) {
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5778,7 +5773,7 @@ async fn main() -> Result<()> {
                                             ));
                                         });
                                         continue;
-                                    } else if entity_type == "mr" || entity_type == "edit_mr" {
+                                    } else if crate::entity_editor::entity_is_mr(&entity_type) {
                                         let title = menu
                                             .fields
                                             .iter()
@@ -6037,9 +6032,9 @@ async fn main() -> Result<()> {
                                             ));
                                         });
                                         continue;
-                                    } else if entity_type == "milestone"
-                                        || entity_type == "edit_milestone"
-                                    {
+                                    } else if crate::entity_editor::entity_is_milestone(
+                                        &entity_type,
+                                    ) {
                                         let title = menu
                                             .fields
                                             .iter()

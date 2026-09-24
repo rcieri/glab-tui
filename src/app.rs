@@ -3481,12 +3481,31 @@ impl App {
     }
 
     pub fn selected_issue_reference(&self) -> Option<String> {
-        self.issues
-            .state
-            .selected()
-            .and_then(|index| self.filtered_issues().get(index).copied())
-            .filter(|issue| !issue.web_url.is_empty())
-            .map(crate::domain::issues::Issue::markdown_reference)
+        let index = self.issues.state.selected()?;
+        let issue = self.filtered_issues().get(index).copied()?;
+        let mut issue_copy = issue.clone();
+        if issue_copy.web_url.is_empty() {
+            let project = if !issue.project_path.is_empty() {
+                &issue.project_path
+            } else {
+                self.scope.as_str()
+            };
+            if !project.is_empty() {
+                issue_copy.web_url = match self.kind() {
+                    BackendKind::GitHub => {
+                        format!("https://github.com/{project}/issues/{}", issue.iid)
+                    }
+                    BackendKind::GitLab => {
+                        format!("https://gitlab.com/{project}/-/issues/{}", issue.iid)
+                    }
+                };
+            }
+        }
+        if issue_copy.web_url.is_empty() {
+            None
+        } else {
+            Some(issue_copy.markdown_reference())
+        }
     }
 
     pub fn copy_selected_issue_reference(&mut self) -> anyhow::Result<()> {
@@ -3499,17 +3518,38 @@ impl App {
 
     pub fn selected_mr_reference(&self) -> Option<String> {
         let kind = self.kind();
-        self.mrs
-            .state
-            .selected()
-            .and_then(|index| self.filtered_mrs().get(index).copied())
-            .filter(|mr| {
-                mr.web_url
-                    .as_deref()
-                    .map(|u| !u.is_empty())
-                    .unwrap_or(false)
-            })
-            .map(|mr| mr.markdown_reference(kind))
+        let index = self.mrs.state.selected()?;
+        let mr = self.filtered_mrs().get(index).copied()?;
+        let web_url = mr
+            .web_url
+            .clone()
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| {
+                let project = if !mr.project_path.is_empty() {
+                    mr.project_path.clone()
+                } else {
+                    self.scope.as_str().to_string()
+                };
+                if !project.is_empty() {
+                    match kind {
+                        BackendKind::GitHub => {
+                            format!("https://github.com/{project}/pull/{}", mr.iid)
+                        }
+                        BackendKind::GitLab => {
+                            format!("https://gitlab.com/{project}/-/merge_requests/{}", mr.iid)
+                        }
+                    }
+                } else {
+                    String::new()
+                }
+            });
+        if web_url.is_empty() {
+            None
+        } else {
+            let mut mr_copy = mr.clone();
+            mr_copy.web_url = Some(web_url);
+            Some(mr_copy.markdown_reference(kind))
+        }
     }
 
     pub fn copy_selected_mr_reference(&mut self) -> anyhow::Result<()> {
@@ -6386,6 +6426,32 @@ mod tests {
             )
         );
         assert_eq!(app.status_message.as_deref(), Some("Offline"));
+    }
+
+    #[test]
+    fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        app.mrs.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 77,
+                    "title": "Fallback PR",
+                    "state": "opened",
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "octocat"},
+                    "target_branch": "main",
+                    "draft": false
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.mrs.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_mr_reference().as_deref(),
+            Some("[!77: Fallback PR](https://gitlab.com/owner/repo/-/merge_requests/77)")
+        );
     }
 
     #[test]

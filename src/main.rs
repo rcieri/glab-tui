@@ -3567,7 +3567,7 @@ async fn main() -> Result<()> {
                                     if field_type == "merge_options" {
                                         let is_bulk_merge =
                                             selector.entity_type == "bulk_merge_mrs";
-                                        let merge_items = if is_bulk_merge {
+                                        let merge_items: Vec<(String, u64)> = if is_bulk_merge {
                                             let mut items: Vec<(String, u64)> =
                                                 app.selected_mrs.iter().cloned().collect();
                                             items.sort_unstable();
@@ -3578,6 +3578,31 @@ async fn main() -> Result<()> {
                                                 selector.entity_iid,
                                             )]
                                         };
+                                        // Snapshot each MR's source-branch head SHA from
+                                        // the loaded MR list so `glab mr merge --sha` can
+                                        // satisfy GitLab 19.2+ merge checks (#470). GitHub
+                                        // (`gh pr merge`) has no equivalent flag and
+                                        // silently ignores this argument.
+                                        let merge_items_with_sha: Vec<(
+                                            String,
+                                            u64,
+                                            Option<String>,
+                                        )> = merge_items
+                                            .iter()
+                                            .map(|(proj, mr_iid)| {
+                                                let sha = app
+                                                    .mrs
+                                                    .items
+                                                    .iter()
+                                                    .find(|m| {
+                                                        m.iid == *mr_iid
+                                                            && (proj.is_empty()
+                                                                || m.project_path == *proj)
+                                                    })
+                                                    .and_then(|m| m.sha.clone());
+                                                (proj.clone(), *mr_iid, sha)
+                                            })
+                                            .collect();
                                         let mut squash = false;
                                         let mut delete_branch = false;
                                         let mut merge_strategy: Option<&str> = None;
@@ -3608,7 +3633,7 @@ async fn main() -> Result<()> {
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
                                             let mut failures = Vec::new();
-                                            for (proj, mr_iid) in merge_items {
+                                            for (proj, mr_iid, sha) in merge_items_with_sha {
                                                 let p =
                                                     if !proj.is_empty() { &proj } else { &project };
                                                 if let Err(e) = client
@@ -3619,6 +3644,7 @@ async fn main() -> Result<()> {
                                                         delete_branch,
                                                         merge_strategy,
                                                         false,
+                                                        sha.as_deref(),
                                                     )
                                                     .await
                                                 {

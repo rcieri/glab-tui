@@ -368,6 +368,16 @@ fn run_submit_action(
         crate::app::ConfirmAction::MergeMr(iid) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
             let project_path = app.project_path_for_mr(iid);
+            // Capture the source-branch head SHA before removing the row so
+            // `glab mr merge --sha=<sha>` can satisfy GitLab 19.2+ merge
+            // requirements (#470). Pre-19.2 instances ignore it; GitHub's
+            // `GhBackend::merge_mr` also ignores it.
+            let mr_sha = app
+                .mrs
+                .items
+                .iter()
+                .find(|m| m.iid == iid)
+                .and_then(|m| m.sha.clone());
             if let Some(pos) = app.mrs.items.iter().position(|m| m.iid == iid) {
                 app.mrs.items.remove(pos);
             }
@@ -385,6 +395,7 @@ fn run_submit_action(
                         delete_branch,
                         merge_strategy,
                         auto_merge,
+                        mr_sha.as_deref(),
                     )
                     .await;
                 let _ = tx2.send(Event::CommandCompleted(
@@ -403,7 +414,21 @@ fn run_submit_action(
         }
         crate::app::ConfirmAction::BulkMergeMrs(items) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
+            // Snapshot each MR's head SHA before removing the rows so the
+            // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
+            let mut items_with_sha: Vec<(String, u64, Option<String>)> =
+                Vec::with_capacity(items.len());
             for (project_path, mr_iid) in &items {
+                let sha = app
+                    .mrs
+                    .items
+                    .iter()
+                    .find(|m| {
+                        m.iid == *mr_iid
+                            && (project_path.is_empty() || m.project_path == *project_path)
+                    })
+                    .and_then(|m| m.sha.clone());
+                items_with_sha.push((project_path.clone(), *mr_iid, sha));
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)
                 }) {
@@ -419,7 +444,7 @@ fn run_submit_action(
             let total = items.len();
             tokio::spawn(async move {
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, (project_path, mr_iid)) in items.into_iter().enumerate() {
+                for (i, (project_path, mr_iid, sha)) in items_with_sha.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
@@ -436,6 +461,7 @@ fn run_submit_action(
                             delete_branch,
                             merge_strategy,
                             auto_merge,
+                            sha.as_deref(),
                         )
                         .await
                     {

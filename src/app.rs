@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
-use crate::config::{Config, THEME, Theme};
+use crate::config::{Config, Theme, THEME};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::format::expand_tabs;
 use crate::utils::ui::StatefulTable;
-use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::ListState;
@@ -3497,8 +3497,8 @@ impl App {
         self.update_filter_selection();
     }
 
-    /// Wipe the active search query. Mirrors readline's `Ctrl+U` and is also
-    /// used by `Ctrl+G` to abort search mode from inside the input.
+    /// Wipe the active search query. Mirrors readline's `Ctrl+U`, and is
+    /// also called by the second Esc press to drop the active filter.
     pub fn clear_search_query(&mut self) {
         if !self.search_query.is_empty() {
             self.search_query.clear();
@@ -4149,7 +4149,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -4449,7 +4453,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -4621,7 +4629,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -4752,7 +4764,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -4767,11 +4783,10 @@ impl App {
             "Matrix" => vec![item.matrix().map(|m| m.to_string()).unwrap_or_default()],
             "Runner" => vec![item.runner().unwrap_or("-").to_string()],
             "Needs" => item.needs().to_vec(),
-            "Duration" => vec![
-                item.duration_seconds()
-                    .map(|d| d.to_string())
-                    .unwrap_or_default(),
-            ],
+            "Duration" => vec![item
+                .duration_seconds()
+                .map(|d| d.to_string())
+                .unwrap_or_default()],
             _ => vec![],
         }
     }
@@ -4944,7 +4959,11 @@ impl App {
                     _ => String::new(),
                 };
                 let cmp = val_a.cmp(&val_b);
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -5078,7 +5097,11 @@ impl App {
                     (Ok(a), Ok(b)) => a.cmp(&b),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -5213,7 +5236,11 @@ impl App {
                     (Ok(a_num), Ok(b_num)) => a_num.cmp(&b_num),
                     _ => val_a.cmp(&val_b),
                 };
-                if !ascending { cmp.reverse() } else { cmp }
+                if !ascending {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
         }
         list
@@ -5515,7 +5542,11 @@ impl App {
             "unread" | "done" => {
                 // "unread"→"NEW", "done"→"READ" — handled via pipeline_status_display
                 // but normalize maps them too for saved-filter compat
-                if v == "unread" { "NEW" } else { "READ" }
+                if v == "unread" {
+                    "NEW"
+                } else {
+                    "READ"
+                }
             }
             other => other,
         }
@@ -6370,9 +6401,8 @@ mod tests {
     #[test]
     fn selected_issue_reference_uses_the_highlighted_issue() {
         let mut app = App::default();
-        app.issues.items = vec![
-            serde_json::from_str(
-                r#"{
+        app.issues.items = vec![serde_json::from_str(
+            r#"{
                     "iid": 42,
                     "title": "Fix parser",
                     "state": "opened",
@@ -6381,9 +6411,8 @@ mod tests {
                     "author": {"username": "octocat"},
                     "web_url": "https://github.com/acme/project/issues/42"
                 }"#,
-            )
-            .unwrap(),
-        ];
+        )
+        .unwrap()];
         app.issues.state.select(Some(0));
 
         assert_eq!(
@@ -6406,9 +6435,8 @@ mod tests {
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
         let mut app = App::default();
         app.clipboard = Box::new(RecordingClipboard(copied.clone()));
-        app.issues.items = vec![
-            serde_json::from_str(
-                r#"{
+        app.issues.items = vec![serde_json::from_str(
+            r#"{
                     "iid": 42,
                     "title": "Fix parser",
                     "state": "opened",
@@ -6417,9 +6445,8 @@ mod tests {
                     "author": {"username": "octocat"},
                     "web_url": "https://github.com/acme/project/issues/42"
                 }"#,
-            )
-            .unwrap(),
-        ];
+        )
+        .unwrap()];
         app.issues.state.select(Some(0));
         app.status_message = Some("Loaded from offline cache".to_string());
 
@@ -6438,9 +6465,8 @@ mod tests {
     #[test]
     fn selected_issue_reference_is_unavailable_without_a_url() {
         let mut app = App::default();
-        app.issues.items = vec![
-            serde_json::from_str(
-                r#"{
+        app.issues.items = vec![serde_json::from_str(
+            r#"{
                     "iid": 42,
                     "title": "Cached issue",
                     "state": "opened",
@@ -6448,9 +6474,8 @@ mod tests {
                     "updated_at": "2026-08-29T11:00:00Z",
                     "author": {"username": "octocat"}
                 }"#,
-            )
-            .unwrap(),
-        ];
+        )
+        .unwrap()];
         app.issues.state.select(Some(0));
 
         assert_eq!(app.selected_issue_reference(), None);
@@ -6470,9 +6495,8 @@ mod tests {
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
         let mut app = App::default();
         app.clipboard = Box::new(RecordingClipboard(copied.clone()));
-        app.mrs.items = vec![
-            serde_json::from_str(
-                r#"{
+        app.mrs.items = vec![serde_json::from_str(
+            r#"{
                     "iid": 101,
                     "title": "Add feature [v2]",
                     "state": "opened",
@@ -6482,9 +6506,8 @@ mod tests {
                     "draft": false,
                     "web_url": "https://gitlab.com/acme/project/-/merge_requests/101"
                 }"#,
-            )
-            .unwrap(),
-        ];
+        )
+        .unwrap()];
         app.mrs.state.select(Some(0));
         app.status_message = Some("Offline".to_string());
 
@@ -6510,9 +6533,8 @@ mod tests {
     fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
         let mut app = App::default();
         app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
-        app.mrs.items = vec![
-            serde_json::from_str(
-                r#"{
+        app.mrs.items = vec![serde_json::from_str(
+            r#"{
                     "iid": 77,
                     "title": "Fallback PR",
                     "state": "opened",
@@ -6521,9 +6543,8 @@ mod tests {
                     "target_branch": "main",
                     "draft": false
                 }"#,
-            )
-            .unwrap(),
-        ];
+        )
+        .unwrap()];
         app.mrs.state.select(Some(0));
 
         assert_eq!(
@@ -6850,9 +6871,8 @@ mod tests {
     #[test]
     fn select_all_filtered_works_on_mrs_tab() {
         let mut app = App::default();
-        app.mrs.items = vec![
-            serde_json::from_str(
-                r#"{
+        app.mrs.items = vec![serde_json::from_str(
+            r#"{
                 "iid": 1,
                 "title": "First MR",
                 "state": "opened",
@@ -6861,9 +6881,8 @@ mod tests {
                 "target_branch": "main",
                 "draft": false
             }"#,
-            )
-            .unwrap(),
-        ];
+        )
+        .unwrap()];
         app.active_tab = Tab::MergeRequests;
 
         let added = app.select_all_filtered();
@@ -7004,12 +7023,10 @@ mod tests {
         assert!(merge.is_on_submit());
         assert_eq!(merge.options.len(), 5);
         assert!(merge.options.iter().any(|o| o.label == "Strategy: Squash"));
-        assert!(
-            merge
-                .options
-                .iter()
-                .any(|o| o.label == "Delete source branch")
-        );
+        assert!(merge
+            .options
+            .iter()
+            .any(|o| o.label == "Delete source branch"));
 
         let rebase = SubmitDialog::build(ConfirmAction::RebaseMr(12), &app);
         assert!(rebase.is_on_submit());
@@ -8728,11 +8745,9 @@ index 123456..789012 100644
             );
         }
         // Default-off: eight default columns collapse Title at 80 cols.
-        assert!(
-            !Tab::MergeRequests
-                .default_columns(BackendKind::GitLab, false)
-                .contains(&"Workflow")
-        );
+        assert!(!Tab::MergeRequests
+            .default_columns(BackendKind::GitLab, false)
+            .contains(&"Workflow"));
     }
 
     #[test]
@@ -8833,14 +8848,12 @@ index 123456..789012 100644
         let filtered = app.filtered_pipelines();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, 1);
-        assert!(
-            app.collect_unique_column_values(Tab::Pipelines, "Duration")
-                .contains(&"2m 5s".to_string())
-        );
-        assert!(
-            app.collect_unique_column_values(Tab::Pipelines, "Source")
-                .contains(&"schedule".to_string())
-        );
+        assert!(app
+            .collect_unique_column_values(Tab::Pipelines, "Duration")
+            .contains(&"2m 5s".to_string()));
+        assert!(app
+            .collect_unique_column_values(Tab::Pipelines, "Source")
+            .contains(&"schedule".to_string()));
     }
 
     #[test]
@@ -8976,21 +8989,15 @@ index 123456..789012 100644
         assert!(!Tab::MergeRequests.columns(kind, false).contains(&"Project"));
         assert!(!Tab::Pipelines.columns(kind, false).contains(&"Project"));
 
-        assert!(
-            !Tab::Issues
-                .default_columns(kind, false)
-                .contains(&"Project")
-        );
-        assert!(
-            !Tab::MergeRequests
-                .default_columns(kind, false)
-                .contains(&"Project")
-        );
-        assert!(
-            !Tab::Pipelines
-                .default_columns(kind, false)
-                .contains(&"Project")
-        );
+        assert!(!Tab::Issues
+            .default_columns(kind, false)
+            .contains(&"Project"));
+        assert!(!Tab::MergeRequests
+            .default_columns(kind, false)
+            .contains(&"Project"));
+        assert!(!Tab::Pipelines
+            .default_columns(kind, false)
+            .contains(&"Project"));
 
         let mut app = App::default();
         app.scope = crate::scope::Scope::Repository("group/repo".to_string());
@@ -9003,16 +9010,12 @@ index 123456..789012 100644
         assert!(Tab::Pipelines.columns(kind, true).contains(&"Project"));
 
         assert!(Tab::Issues.default_columns(kind, true).contains(&"Project"));
-        assert!(
-            Tab::MergeRequests
-                .default_columns(kind, true)
-                .contains(&"Project")
-        );
-        assert!(
-            Tab::Pipelines
-                .default_columns(kind, true)
-                .contains(&"Project")
-        );
+        assert!(Tab::MergeRequests
+            .default_columns(kind, true)
+            .contains(&"Project"));
+        assert!(Tab::Pipelines
+            .default_columns(kind, true)
+            .contains(&"Project"));
 
         app.scope = crate::scope::Scope::Group("group".to_string());
         app.reset_on_scope_change();

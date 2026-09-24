@@ -2230,6 +2230,13 @@ pub async fn handle_active_tab_key(
                         app.jobs.state.select(None);
                         app.selected_jobs.clear();
                     }
+                } else if !app.search_query.is_empty() {
+                    // Last-resort Esc action: drop the active filter. The
+                    // previous Esc press already exited the search input
+                    // box (handled by the is_typing_search match arm above),
+                    // so this second press clears the query that was
+                    // keeping the table filtered.
+                    app.clear_search_query();
                 }
             }
             KeyCode::Char('f') => {

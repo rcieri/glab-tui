@@ -1302,6 +1302,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Issues",
+            key: d(app.config.keybindings.issues.select_all.clone()),
+            action: "Select all filtered issues (in select mode)",
+        },
+        Shortcut {
+            category: "Issues",
             key: d(app.config.keybindings.issues.edit_entity.clone()),
             action: "Open parameter edit menu",
         },
@@ -1363,6 +1368,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: mr_label,
             key: d(app.config.keybindings.mrs.selection_toggle.clone()),
             action: "Toggle select mode (paint selection while navigating)",
+        },
+        Shortcut {
+            category: mr_label,
+            key: d(app.config.keybindings.mrs.select_all.clone()),
+            action: "Select all filtered MRs / PRs (in select mode)",
         },
         Shortcut {
             category: mr_label,

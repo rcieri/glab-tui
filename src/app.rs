@@ -3480,6 +3480,59 @@ impl App {
         self.scope.as_str().to_string()
     }
 
+    /// Insert every row currently visible in the active tab's filtered list
+    /// into the bulk-selection set. Returns the number of items added.
+    /// Honours the active search query and column filters so a `Ctrl+A` after
+    /// typing a search term selects only the matching rows.
+    pub fn select_all_filtered(&mut self) -> usize {
+        let keys: Vec<(String, u64)> = match self.active_tab {
+            Tab::Issues => self
+                .filtered_issues()
+                .into_iter()
+                .map(|i| (i.project_path.clone(), i.iid))
+                .collect(),
+            Tab::MergeRequests => self
+                .filtered_mrs()
+                .into_iter()
+                .map(|m| (m.project_path.clone(), m.iid))
+                .collect(),
+            _ => return 0,
+        };
+        match self.active_tab {
+            Tab::Issues => {
+                let before = self.selected_issues.len();
+                for key in keys {
+                    self.selected_issues.insert(key);
+                }
+                self.selected_issues.len().saturating_sub(before)
+            }
+            Tab::MergeRequests => {
+                let before = self.selected_mrs.len();
+                for key in keys {
+                    self.selected_mrs.insert(key);
+                }
+                self.selected_mrs.len().saturating_sub(before)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Drop every bulk-selected entity across all supported tabs and exit
+    /// select mode. Mirrors the behaviour of `Esc` in the main key handler.
+    /// Returns `true` when there was at least one selection to clear.
+    pub fn clear_selections(&mut self) -> bool {
+        let cleared = !self.selected_issues.is_empty()
+            || !self.selected_mrs.is_empty()
+            || !self.selected_pipelines.is_empty()
+            || !self.selected_jobs.is_empty();
+        self.selected_issues.clear();
+        self.selected_mrs.clear();
+        self.selected_pipelines.clear();
+        self.selected_jobs.clear();
+        self.select_mode = false;
+        cleared
+    }
+
     pub fn selected_issue_reference(&self) -> Option<String> {
         let index = self.issues.state.selected()?;
         let issue = self.filtered_issues().get(index).copied()?;
@@ -6613,6 +6666,163 @@ mod tests {
             app.bulk_selection_summary(),
             vec![(1, "Issue 1".to_string()), (2, "Issue 2".to_string())]
         );
+    }
+
+    #[test]
+    fn select_all_filtered_picks_up_every_visible_issue() {
+        let mut app = App::default();
+        let mk_issue = |iid: u64| crate::domain::issues::Issue {
+            iid,
+            title: format!("Issue {iid}"),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        };
+        app.issues.items = vec![mk_issue(1), mk_issue(2), mk_issue(3)];
+        app.active_tab = Tab::Issues;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 3);
+        assert_eq!(app.selected_issues.len(), 3);
+    }
+
+    #[test]
+    fn select_all_filtered_honours_active_search_query() {
+        let mut app = App::default();
+        let mk = |iid: u64, title: &str| crate::domain::issues::Issue {
+            iid,
+            title: title.to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        };
+        app.issues.items = vec![
+            mk(1, "Fix parser"),
+            mk(2, "Refactor cache"),
+            mk(3, "Parser regression"),
+        ];
+        app.active_tab = Tab::Issues;
+        app.search_query = "parser".to_string();
+        app.update_filter_selection();
+
+        let added = app.select_all_filtered();
+        // Only issues 1 and 3 contain "parser".
+        assert_eq!(added, 2);
+        assert!(app.selected_issues.contains(&(String::new(), 1)));
+        assert!(app.selected_issues.contains(&(String::new(), 3)));
+        assert!(!app.selected_issues.contains(&(String::new(), 2)));
+    }
+
+    #[test]
+    fn select_all_filtered_deduplicates_existing_selection() {
+        let mut app = App::default();
+        let mk_issue = |iid: u64| crate::domain::issues::Issue {
+            iid,
+            title: format!("Issue {iid}"),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        };
+        app.issues.items = vec![mk_issue(1), mk_issue(2)];
+        app.active_tab = Tab::Issues;
+        app.selected_issues.insert((String::new(), 1));
+
+        let added = app.select_all_filtered();
+        // Issue 1 was already selected, so only issue 2 is "new".
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_issues.len(), 2);
+    }
+    #[test]
+    fn select_all_filtered_works_on_mrs_tab() {
+        let mut app = App::default();
+        app.mrs.items = vec![
+            serde_json::from_str(
+                r#"{
+                "iid": 1,
+                "title": "First MR",
+                "state": "opened",
+                "updated_at": "2026-08-01T00:00:00Z",
+                "author": {"username": "octocat"},
+                "target_branch": "main",
+                "draft": false
+            }"#,
+            )
+            .unwrap(),
+        ];
+        app.active_tab = Tab::MergeRequests;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_mrs.len(), 1);
+    }
+    #[test]
+    fn select_all_filtered_is_a_noop_outside_issues_and_mrs() {
+        let mut app = App::default();
+        app.active_tab = Tab::Pipelines;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 0);
+    }
+
+    #[test]
+    fn clear_selections_empties_every_set_and_exits_select_mode() {
+        let mut app = App::default();
+        app.selected_issues.insert((String::new(), 1));
+        app.selected_mrs.insert((String::new(), 2));
+        app.selected_pipelines.insert(42);
+        app.selected_jobs.insert(7);
+        app.select_mode = true;
+
+        let cleared = app.clear_selections();
+        assert!(cleared);
+        assert!(app.selected_issues.is_empty());
+        assert!(app.selected_mrs.is_empty());
+        assert!(app.selected_pipelines.is_empty());
+        assert!(app.selected_jobs.is_empty());
+        assert!(!app.select_mode);
+    }
+
+    #[test]
+    fn clear_selections_on_empty_returns_false() {
+        let mut app = App::default();
+        let cleared = app.clear_selections();
+        assert!(!cleared);
     }
 
     #[test]

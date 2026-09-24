@@ -758,6 +758,8 @@ pub struct KeybindingIssues {
     pub copy_reference: String,
     #[serde(default)]
     pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
     #[serde(default = "def_drill_into_scope")]
     pub drill_into_scope: String,
     #[serde(default = "def_jump_related_mrs")]
@@ -796,6 +798,8 @@ pub struct KeybindingMrs {
     pub open_in_browser: String,
     #[serde(default)]
     pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
     #[serde(default = "def_drill_into_scope")]
     pub drill_into_scope: String,
     #[serde(default = "def_copy_reference")]
@@ -984,6 +988,7 @@ keybind_defaults! {
     def_create_mr = "n",
     def_select_mr = "Space",
     def_selection_toggle = "v",
+    def_select_all = "Ctrl+a",
     def_approve_mr = "a",
     def_revoke_mr = "A",
     def_rebase_mr = "R",
@@ -1069,6 +1074,7 @@ impl Default for KeybindingIssues {
             open_in_browser: def_open_in_browser(),
             copy_reference: def_copy_reference(),
             selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
             drill_into_scope: def_drill_into_scope(),
             jump_related_mrs: def_jump_related_mrs(),
         }
@@ -1093,6 +1099,7 @@ impl Default for KeybindingMrs {
             select_mr: def_select_mr(),
             open_in_browser: def_open_in_browser(),
             selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
             drill_into_scope: def_drill_into_scope(),
             copy_reference: def_copy_reference(),
         }

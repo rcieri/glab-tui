@@ -375,6 +375,16 @@ pub async fn handle_active_tab_key(
                     mark_current_selected(app);
                 }
             }
+            _ if keybinding_matches(&app.config.keybindings.issues.select_all, key_event) => {
+                let added = app.select_all_filtered();
+                if added > 0 {
+                    app.status_message = Some(format!(
+                        "Selected all {} item{}",
+                        added,
+                        if added == 1 { "" } else { "s" }
+                    ));
+                }
+            }
             _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
                     let filtered = app.filtered_issues();
@@ -539,6 +549,15 @@ pub async fn handle_active_tab_key(
                 app.select_mode = !app.select_mode;
                 if app.select_mode {
                     mark_current_selected(app);
+                }
+            } else if keybinding_matches(&app.config.keybindings.mrs.select_all, key_event) {
+                let added = app.select_all_filtered();
+                if added > 0 {
+                    app.status_message = Some(format!(
+                        "Selected all {} item{}",
+                        added,
+                        if added == 1 { "" } else { "s" }
+                    ));
                 }
             } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
                 if app.selected_mrs.len() > 1 {
@@ -2187,16 +2206,8 @@ pub async fn handle_active_tab_key(
                 }
             }
             KeyCode::Esc | KeyCode::Backspace => {
-                let has_selections = !app.selected_issues.is_empty()
-                    || !app.selected_mrs.is_empty()
-                    || !app.selected_pipelines.is_empty()
-                    || !app.selected_jobs.is_empty();
-                if has_selections {
-                    app.selected_issues.clear();
-                    app.selected_mrs.clear();
-                    app.selected_pipelines.clear();
-                    app.selected_jobs.clear();
-                    app.select_mode = false;
+                if app.clear_selections() {
+                    // Selections cleared; fall through to other Esc semantics below.
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {

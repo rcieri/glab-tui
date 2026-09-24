@@ -758,6 +758,8 @@ pub struct KeybindingIssues {
     pub copy_reference: String,
     #[serde(default)]
     pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
     #[serde(default = "def_drill_into_scope")]
     pub drill_into_scope: String,
     #[serde(default = "def_jump_related_mrs")]
@@ -796,8 +798,12 @@ pub struct KeybindingMrs {
     pub open_in_browser: String,
     #[serde(default)]
     pub selection_toggle: String,
+    #[serde(default = "def_select_all")]
+    pub select_all: String,
     #[serde(default = "def_drill_into_scope")]
     pub drill_into_scope: String,
+    #[serde(default = "def_copy_reference")]
+    pub copy_reference: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -814,6 +820,8 @@ pub struct KeybindingPipelines {
     pub open_workflow: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_copy_sha")]
+    pub copy_sha: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -872,6 +880,8 @@ pub struct KeybindingJobs {
     pub trace_search: String,
     #[serde(default)]
     pub toggle_trace_follow: String,
+    #[serde(default = "def_copy_sha")]
+    pub copy_sha: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -902,6 +912,8 @@ pub struct KeybindingBranches {
     pub delete_branch: String,
     #[serde(default = "def_open_in_browser")]
     pub open_in_browser: String,
+    #[serde(default = "def_copy_branch")]
+    pub copy_branch: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -976,6 +988,7 @@ keybind_defaults! {
     def_create_mr = "n",
     def_select_mr = "Space",
     def_selection_toggle = "v",
+    def_select_all = "Ctrl+a",
     def_approve_mr = "a",
     def_revoke_mr = "A",
     def_rebase_mr = "R",
@@ -1024,6 +1037,8 @@ keybind_defaults! {
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
     def_submit_edit = "Ctrl+x",
+    def_copy_branch = "y",
+    def_copy_sha = "y",
 }
 
 impl Default for KeybindingGlobal {
@@ -1059,6 +1074,7 @@ impl Default for KeybindingIssues {
             open_in_browser: def_open_in_browser(),
             copy_reference: def_copy_reference(),
             selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
             drill_into_scope: def_drill_into_scope(),
             jump_related_mrs: def_jump_related_mrs(),
         }
@@ -1083,7 +1099,9 @@ impl Default for KeybindingMrs {
             select_mr: def_select_mr(),
             open_in_browser: def_open_in_browser(),
             selection_toggle: def_selection_toggle(),
+            select_all: def_select_all(),
             drill_into_scope: def_drill_into_scope(),
+            copy_reference: def_copy_reference(),
         }
     }
 }
@@ -1097,6 +1115,7 @@ impl Default for KeybindingPipelines {
             cancel: def_cancel(),
             open_workflow: def_open_workflow(),
             open_in_browser: def_open_in_browser(),
+            copy_sha: def_copy_sha(),
         }
     }
 }
@@ -1141,6 +1160,7 @@ impl Default for KeybindingJobs {
             toggle_trace_wrap: def_toggle_trace_wrap(),
             trace_search: def_trace_search(),
             toggle_trace_follow: def_toggle_trace_follow(),
+            copy_sha: def_copy_sha(),
         }
     }
 }
@@ -1171,6 +1191,7 @@ impl Default for KeybindingBranches {
             create_branch: def_create_branch(),
             delete_branch: def_delete_branch(),
             open_in_browser: def_open_in_browser(),
+            copy_branch: def_copy_branch(),
         }
     }
 }
@@ -1973,6 +1994,22 @@ page_size = 250
     #[test]
     fn copy_issue_reference_defaults_to_y() {
         assert_eq!(Config::default().keybindings.issues.copy_reference, "y");
+    }
+
+    #[test]
+    fn copy_mr_reference_defaults_to_y() {
+        assert_eq!(Config::default().keybindings.mrs.copy_reference, "y");
+    }
+
+    #[test]
+    fn copy_sha_defaults_to_y() {
+        assert_eq!(Config::default().keybindings.pipelines.copy_sha, "y");
+        assert_eq!(Config::default().keybindings.jobs.copy_sha, "y");
+    }
+
+    #[test]
+    fn copy_branch_defaults_to_y() {
+        assert_eq!(Config::default().keybindings.branches.copy_branch, "y");
     }
 
     #[test]

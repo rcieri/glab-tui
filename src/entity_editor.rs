@@ -27,15 +27,18 @@ fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
     }
 }
 
-fn entity_is_mr(entity_type: &str) -> bool {
+#[inline]
+pub(crate) fn entity_is_mr(entity_type: &str) -> bool {
     entity_type == "mr" || entity_type == "edit_mr"
 }
 
-fn entity_is_issue(entity_type: &str) -> bool {
+#[inline]
+pub(crate) fn entity_is_issue(entity_type: &str) -> bool {
     entity_type == "issue" || entity_type == "edit_issue"
 }
 
-fn entity_is_milestone(entity_type: &str) -> bool {
+#[inline]
+pub(crate) fn entity_is_milestone(entity_type: &str) -> bool {
     entity_type == "milestone" || entity_type == "edit_milestone"
 }
 
@@ -1891,5 +1894,23 @@ mod tests {
         );
 
         assert!(app.mrs.items[0].milestone.is_none());
+    }
+
+    #[test]
+    fn test_entity_is_helpers() {
+        assert!(entity_is_mr("mr"));
+        assert!(entity_is_mr("edit_mr"));
+        assert!(!entity_is_mr("issue"));
+        assert!(!entity_is_mr("milestone"));
+
+        assert!(entity_is_issue("issue"));
+        assert!(entity_is_issue("edit_issue"));
+        assert!(!entity_is_issue("mr"));
+        assert!(!entity_is_issue("milestone"));
+
+        assert!(entity_is_milestone("milestone"));
+        assert!(entity_is_milestone("edit_milestone"));
+        assert!(!entity_is_milestone("mr"));
+        assert!(!entity_is_milestone("issue"));
     }
 }

@@ -6755,6 +6755,8 @@ mod tests {
             source: None,
             project_path: "acme/project".to_string(),
             web_url: None,
+
+            downstream_of: None,
         }];
         app.pipelines.state.select(Some(0));
 
@@ -8916,6 +8918,8 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+
+            downstream_of: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -8932,6 +8936,8 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
+
+            downstream_of: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -9127,6 +9133,8 @@ index 123456..789012 100644
                 source: Some("push".to_string()),
                 project_path: String::new(),
                 web_url: None,
+
+                downstream_of: None,
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -9143,6 +9151,8 @@ index 123456..789012 100644
                 source: Some("schedule".to_string()),
                 project_path: String::new(),
                 web_url: None,
+
+                downstream_of: None,
             },
         ];
         app.column_filters
@@ -9252,6 +9262,8 @@ index 123456..789012 100644
             source: Some("merge_request_event".to_string()),
             project_path: String::new(),
             web_url: None,
+
+            downstream_of: None,
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();
@@ -9532,6 +9544,8 @@ index 123456..789012 100644
                 source: None,
                 project_path: "owner/repo".to_string(),
                 web_url: None,
+
+                downstream_of: None,
             })
             .collect();
         app.pipelines.state.select(Some(2));

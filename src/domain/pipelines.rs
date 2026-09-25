@@ -28,6 +28,12 @@ pub struct Pipeline {
     pub project_path: String,
     #[serde(default)]
     pub web_url: Option<String>,
+    /// When this pipeline was reached through a parent bridge, the id of
+    /// that parent pipeline. `None` for top-level pipelines; set on child
+    /// pipelines so the UI can render them as descendants and walk back
+    /// up.
+    #[serde(default)]
+    pub downstream_of: Option<u64>,
 }
 
 impl Pipeline {

@@ -3128,6 +3128,7 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
+            downstream_of: None,
         };
         app.pipelines.items = vec![pipe];
         app.pipelines.state.select(Some(0));

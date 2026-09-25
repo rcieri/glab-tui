@@ -472,6 +472,23 @@ pub trait Backend: Send + Sync {
         pipeline_id: u64,
         page_size: usize,
     ) -> Result<Vec<Job>>;
+    /// Downstream pipelines spawned by the `trigger:` jobs of a parent
+    /// pipeline. GitLab keeps these out of `list_pipeline_jobs` and serves
+    /// them separately through `/pipelines/:id/bridges`. Backends without
+    /// a bridge concept (GitHub) report none.
+    ///
+    /// Returns the embedded `downstream_pipeline` from each bridge; the
+    /// UI marks them with `downstream_of = Some(parent_pipeline_id)` so
+    /// it can walk back up. Triggers that have not spawned anything yet
+    /// are dropped — they have nothing to navigate into.
+    async fn list_downstream_pipelines(
+        &self,
+        project: &str,
+        pipeline_id: u64,
+        page_size: usize,
+    ) -> Result<Vec<crate::domain::pipelines::Pipeline>> {
+        Ok(Vec::new())
+    }
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String>;
 
     // ── Pipeline / Job actions ──

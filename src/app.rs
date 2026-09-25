@@ -3048,6 +3048,7 @@ pub struct App {
     /// item into the selection set (yazi-style "select mode"). `Space` still
     /// toggles the current item individually regardless of this flag.
     pub select_mode: bool,
+    pub select_anchor: Option<usize>,
     pub details_zoomed: bool,
     /// Captured when the edit menu opens so Esc can restore the previous
     /// zoom state (e.g. back to the zoomed PREVIEW if the user entered
@@ -3171,6 +3172,7 @@ impl Default for App {
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
             select_mode: false,
+            select_anchor: None,
             details_zoomed: false,
             prev_details_zoomed: false,
             detail_visible: false,
@@ -3360,6 +3362,7 @@ impl App {
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.select_mode = false;
+        self.select_anchor = None;
         self.loaded_tabs.clear();
         self.loading_tabs.clear();
         self.refreshed_tabs.clear();
@@ -3484,13 +3487,194 @@ impl App {
         self.scope.as_str().to_string()
     }
 
+    /// Insert every row currently visible in the active tab's filtered list
+    /// into the bulk-selection set. Returns the number of items added.
+    /// Honours the active search query and column filters so a `Ctrl+A` after
+    /// typing a search term selects only the matching rows.
+    pub fn select_all_filtered(&mut self) -> usize {
+        match self.active_tab {
+            Tab::Issues => {
+                let keys: Vec<(String, u64)> = self
+                    .filtered_issues()
+                    .into_iter()
+                    .map(|i| (i.project_path.clone(), i.iid))
+                    .collect();
+                let before = self.selected_issues.len();
+                for key in keys {
+                    self.selected_issues.insert(key);
+                }
+                self.selected_issues.len().saturating_sub(before)
+            }
+            Tab::MergeRequests => {
+                let keys: Vec<(String, u64)> = self
+                    .filtered_mrs()
+                    .into_iter()
+                    .map(|m| (m.project_path.clone(), m.iid))
+                    .collect();
+                let before = self.selected_mrs.len();
+                for key in keys {
+                    self.selected_mrs.insert(key);
+                }
+                self.selected_mrs.len().saturating_sub(before)
+            }
+            Tab::Pipelines => {
+                let keys: Vec<u64> = self
+                    .filtered_pipelines()
+                    .into_iter()
+                    .map(|p| p.id())
+                    .collect();
+                let before = self.selected_pipelines.len();
+                for key in keys {
+                    self.selected_pipelines.insert(key);
+                }
+                self.selected_pipelines.len().saturating_sub(before)
+            }
+            Tab::Jobs => {
+                let keys: Vec<u64> = self.filtered_jobs().into_iter().map(|j| j.id()).collect();
+                let before = self.selected_jobs.len();
+                for key in keys {
+                    self.selected_jobs.insert(key);
+                }
+                self.selected_jobs.len().saturating_sub(before)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Drop every bulk-selected entity across all supported tabs and exit
+    /// select mode. Mirrors the behaviour of `Esc` in the main key handler.
+    /// Returns `true` when there was at least one selection to clear.
+    pub fn clear_selections(&mut self) -> bool {
+        let cleared = !self.selected_issues.is_empty()
+            || !self.selected_mrs.is_empty()
+            || !self.selected_pipelines.is_empty()
+            || !self.selected_jobs.is_empty();
+        self.selected_issues.clear();
+        self.selected_mrs.clear();
+        self.selected_pipelines.clear();
+        self.selected_jobs.clear();
+        self.select_mode = false;
+        self.select_anchor = None;
+        cleared
+    }
+
+    /// Toggle visual select mode on or off. When enabled, anchors the start
+    /// index at the current cursor position and initializes the selection.
+    pub fn toggle_select_mode(&mut self) {
+        self.select_mode = !self.select_mode;
+        if self.select_mode {
+            let curr = match self.active_tab {
+                Tab::Issues => self.issues.state.selected(),
+                Tab::MergeRequests => self.mrs.state.selected(),
+                Tab::Pipelines => self.pipelines.state.selected(),
+                Tab::Jobs => self.jobs.state.selected(),
+                _ => None,
+            };
+            self.select_anchor = curr;
+            self.update_visual_selection();
+        } else {
+            self.select_anchor = None;
+        }
+    }
+
+    /// Update the contiguous selection range between the anchor and the
+    /// current cursor position. Scrolling down expands the selection;
+    /// scrolling back shrinks it so only items between anchor and cursor
+    /// remain selected.
+    pub fn update_visual_selection(&mut self) {
+        if !self.select_mode {
+            return;
+        }
+        let Some(anchor) = self.select_anchor else {
+            return;
+        };
+        match self.active_tab {
+            Tab::Issues => {
+                if let Some(curr) = self.issues.state.selected() {
+                    let filtered = self.filtered_issues();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_issues = filtered[start..=end]
+                                .iter()
+                                .map(|i| (i.project_path.clone(), i.iid))
+                                .collect();
+                        }
+                    }
+                }
+            }
+            Tab::MergeRequests => {
+                if let Some(curr) = self.mrs.state.selected() {
+                    let filtered = self.filtered_mrs();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_mrs = filtered[start..=end]
+                                .iter()
+                                .map(|m| (m.project_path.clone(), m.iid))
+                                .collect();
+                        }
+                    }
+                }
+            }
+            Tab::Pipelines => {
+                if let Some(curr) = self.pipelines.state.selected() {
+                    let filtered = self.filtered_pipelines();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_pipelines =
+                                filtered[start..=end].iter().map(|p| p.id()).collect();
+                        }
+                    }
+                }
+            }
+            Tab::Jobs => {
+                if let Some(curr) = self.jobs.state.selected() {
+                    let filtered = self.filtered_jobs();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_jobs =
+                                filtered[start..=end].iter().map(|j| j.id()).collect();
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn selected_issue_reference(&self) -> Option<String> {
-        self.issues
-            .state
-            .selected()
-            .and_then(|index| self.filtered_issues().get(index).copied())
-            .filter(|issue| !issue.web_url.is_empty())
-            .map(crate::domain::issues::Issue::markdown_reference)
+        let index = self.issues.state.selected()?;
+        let issue = self.filtered_issues().get(index).copied()?;
+        let mut issue_copy = issue.clone();
+        if issue_copy.web_url.is_empty() {
+            let project = if !issue.project_path.is_empty() {
+                &issue.project_path
+            } else {
+                self.scope.as_str()
+            };
+            if !project.is_empty() {
+                issue_copy.web_url = match self.kind() {
+                    BackendKind::GitHub => {
+                        format!("https://github.com/{project}/issues/{}", issue.iid)
+                    }
+                    BackendKind::GitLab => {
+                        format!("https://gitlab.com/{project}/-/issues/{}", issue.iid)
+                    }
+                };
+            }
+        }
+        if issue_copy.web_url.is_empty() {
+            None
+        } else {
+            Some(issue_copy.markdown_reference())
+        }
     }
 
     pub fn copy_selected_issue_reference(&mut self) -> anyhow::Result<()> {
@@ -3498,6 +3682,99 @@ impl App {
             .selected_issue_reference()
             .ok_or_else(|| anyhow::anyhow!("Issue URL unavailable; refresh the Issues tab"))?;
         self.clipboard.set_text(reference)?;
+        Ok(())
+    }
+
+    pub fn selected_mr_reference(&self) -> Option<String> {
+        let kind = self.kind();
+        let index = self.mrs.state.selected()?;
+        let mr = self.filtered_mrs().get(index).copied()?;
+        let web_url = mr
+            .web_url
+            .clone()
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| {
+                let project = if !mr.project_path.is_empty() {
+                    mr.project_path.clone()
+                } else {
+                    self.scope.as_str().to_string()
+                };
+                if !project.is_empty() {
+                    match kind {
+                        BackendKind::GitHub => {
+                            format!("https://github.com/{project}/pull/{}", mr.iid)
+                        }
+                        BackendKind::GitLab => {
+                            format!("https://gitlab.com/{project}/-/merge_requests/{}", mr.iid)
+                        }
+                    }
+                } else {
+                    String::new()
+                }
+            });
+        if web_url.is_empty() {
+            None
+        } else {
+            let mut mr_copy = mr.clone();
+            mr_copy.web_url = Some(web_url);
+            Some(mr_copy.markdown_reference(kind))
+        }
+    }
+
+    pub fn copy_selected_mr_reference(&mut self) -> anyhow::Result<()> {
+        let reference = self
+            .selected_mr_reference()
+            .ok_or_else(|| anyhow::anyhow!("MR URL unavailable; refresh the Merge Requests tab"))?;
+        self.clipboard.set_text(reference)?;
+        Ok(())
+    }
+
+    pub fn selected_pipeline_sha(&self) -> Option<String> {
+        self.pipelines
+            .state
+            .selected()
+            .and_then(|index| self.filtered_pipelines().get(index).copied())
+            .map(|p| p.head_sha().to_string())
+            .filter(|sha| !sha.is_empty())
+    }
+
+    pub fn copy_selected_pipeline_sha(&mut self) -> anyhow::Result<()> {
+        let sha = self
+            .selected_pipeline_sha()
+            .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Pipelines tab"))?;
+        self.clipboard.set_text(sha)?;
+        Ok(())
+    }
+
+    pub fn selected_job_sha(&self) -> Option<String> {
+        self.active_pipeline_id
+            .and_then(|pipe_id| self.pipelines.items.iter().find(|p| p.id() == pipe_id))
+            .map(|p| p.head_sha().to_string())
+            .filter(|sha| !sha.is_empty())
+    }
+
+    pub fn copy_selected_job_sha(&mut self) -> anyhow::Result<()> {
+        let sha = self
+            .selected_job_sha()
+            .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Jobs tab"))?;
+        self.clipboard.set_text(sha)?;
+        Ok(())
+    }
+
+    pub fn selected_branch_name(&self) -> Option<String> {
+        self.branches
+            .state
+            .selected()
+            .and_then(|index| self.filtered_branches().get(index).copied())
+            .map(|b| b.name.clone())
+            .filter(|name| !name.is_empty())
+    }
+
+    pub fn copy_selected_branch_name(&mut self) -> anyhow::Result<()> {
+        let branch = self
+            .selected_branch_name()
+            .ok_or_else(|| anyhow::anyhow!("Branch name unavailable; refresh the Branches tab"))?;
+        self.clipboard.set_text(branch)?;
         Ok(())
     }
 
@@ -3811,6 +4088,7 @@ impl App {
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.select_mode = false;
+        self.select_anchor = None;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -3833,6 +4111,7 @@ impl App {
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.select_mode = false;
+        self.select_anchor = None;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -6271,6 +6550,163 @@ mod tests {
     }
 
     #[test]
+    fn selected_mr_reference_uses_the_highlighted_mr_and_preserves_status() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        app.mrs.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 101,
+                    "title": "Add feature [v2]",
+                    "state": "opened",
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "developer"},
+                    "target_branch": "main",
+                    "draft": false,
+                    "web_url": "https://gitlab.com/acme/project/-/merge_requests/101"
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.mrs.state.select(Some(0));
+        app.status_message = Some("Offline".to_string());
+
+        assert_eq!(
+            app.selected_mr_reference().as_deref(),
+            Some(
+                r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
+            )
+        );
+
+        app.copy_selected_mr_reference().unwrap();
+
+        assert_eq!(
+            copied.borrow().as_deref(),
+            Some(
+                r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
+            )
+        );
+        assert_eq!(app.status_message.as_deref(), Some("Offline"));
+    }
+
+    #[test]
+    fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        app.mrs.items = vec![
+            serde_json::from_str(
+                r#"{
+                    "iid": 77,
+                    "title": "Fallback PR",
+                    "state": "opened",
+                    "updated_at": "2026-08-29T11:00:00Z",
+                    "author": {"username": "octocat"},
+                    "target_branch": "main",
+                    "draft": false
+                }"#,
+            )
+            .unwrap(),
+        ];
+        app.mrs.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_mr_reference().as_deref(),
+            Some("[!77: Fallback PR](https://gitlab.com/owner/repo/-/merge_requests/77)")
+        );
+    }
+
+    #[test]
+    fn selected_pipeline_and_job_sha_copying() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 555,
+            status: "success".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "2026-08-29T11:00:00Z".to_string(),
+            name: "CI".to_string(),
+            display_title: "CI Run".to_string(),
+            event: "push".to_string(),
+            head_sha: "abc1234def5678".to_string(),
+            actor_login: "ci-bot".to_string(),
+            duration_seconds: Some(120),
+            created_at: None,
+            source: None,
+            project_path: "acme/project".to_string(),
+            web_url: None,
+        }];
+        app.pipelines.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_pipeline_sha().as_deref(),
+            Some("abc1234def5678")
+        );
+        app.copy_selected_pipeline_sha().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("abc1234def5678"));
+
+        // Job SHA uses active_pipeline_id
+        app.active_pipeline_id = Some(555);
+        assert_eq!(app.selected_job_sha().as_deref(), Some("abc1234def5678"));
+        *copied.borrow_mut() = None;
+        app.copy_selected_job_sha().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("abc1234def5678"));
+    }
+
+    #[test]
+    fn selected_branch_name_copying() {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+
+        app.branches.items = vec![crate::domain::branches::Branch {
+            name: "feature/new-api".to_string(),
+            default: false,
+            protected: true,
+            can_push: true,
+            commit_sha: "abc1234".to_string(),
+            web_url: "https://gitlab.com/acme/project/-/tree/feature/new-api".to_string(),
+        }];
+        app.branches.state.select(Some(0));
+
+        assert_eq!(
+            app.selected_branch_name().as_deref(),
+            Some("feature/new-api")
+        );
+        app.copy_selected_branch_name().unwrap();
+        assert_eq!(copied.borrow().as_deref(), Some("feature/new-api"));
+    }
+
+    #[test]
     fn bulk_selection_summary_lists_full_selection_sorted_by_iid() {
         let mut app = App::default();
         let mk_issue = |iid: u64, title: &str| crate::domain::issues::Issue {
@@ -6348,6 +6784,206 @@ mod tests {
             app.bulk_selection_summary(),
             vec![(1, "Issue 1".to_string()), (2, "Issue 2".to_string())]
         );
+    }
+
+    #[test]
+    fn select_all_filtered_picks_up_every_visible_issue() {
+        let mut app = App::default();
+        let mk_issue = |iid: u64| crate::domain::issues::Issue {
+            iid,
+            title: format!("Issue {iid}"),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        };
+        app.issues.items = vec![mk_issue(1), mk_issue(2), mk_issue(3)];
+        app.active_tab = Tab::Issues;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 3);
+        assert_eq!(app.selected_issues.len(), 3);
+    }
+
+    #[test]
+    fn select_all_filtered_honours_active_search_query() {
+        let mut app = App::default();
+        let mk = |iid: u64, title: &str| crate::domain::issues::Issue {
+            iid,
+            title: title.to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        };
+        app.issues.items = vec![
+            mk(1, "Fix parser"),
+            mk(2, "Refactor cache"),
+            mk(3, "Parser regression"),
+        ];
+        app.active_tab = Tab::Issues;
+        app.search_query = "parser".to_string();
+        app.update_filter_selection();
+
+        let added = app.select_all_filtered();
+        // Only issues 1 and 3 contain "parser".
+        assert_eq!(added, 2);
+        assert!(app.selected_issues.contains(&(String::new(), 1)));
+        assert!(app.selected_issues.contains(&(String::new(), 3)));
+        assert!(!app.selected_issues.contains(&(String::new(), 2)));
+    }
+
+    #[test]
+    fn select_all_filtered_deduplicates_existing_selection() {
+        let mut app = App::default();
+        let mk_issue = |iid: u64| crate::domain::issues::Issue {
+            iid,
+            title: format!("Issue {iid}"),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user1".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        };
+        app.issues.items = vec![mk_issue(1), mk_issue(2)];
+        app.active_tab = Tab::Issues;
+        app.selected_issues.insert((String::new(), 1));
+
+        let added = app.select_all_filtered();
+        // Issue 1 was already selected, so only issue 2 is "new".
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_issues.len(), 2);
+    }
+    #[test]
+    fn select_all_filtered_works_on_mrs_tab() {
+        let mut app = App::default();
+        app.mrs.items = vec![
+            serde_json::from_str(
+                r#"{
+                "iid": 1,
+                "title": "First MR",
+                "state": "opened",
+                "updated_at": "2026-08-01T00:00:00Z",
+                "author": {"username": "octocat"},
+                "target_branch": "main",
+                "draft": false
+            }"#,
+            )
+            .unwrap(),
+        ];
+        app.active_tab = Tab::MergeRequests;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_mrs.len(), 1);
+    }
+    #[test]
+    fn select_all_filtered_works_on_pipelines_tab() {
+        let mut app = App::default();
+        let pipe: crate::domain::pipelines::Pipeline = serde_json::from_str(
+            r#"{
+                "id": 42,
+                "status": "success",
+                "ref": "main",
+                "updated_at": "2026-08-01T00:00:00Z"
+            }"#,
+        )
+        .unwrap();
+        app.pipelines.items = vec![pipe];
+        app.active_tab = Tab::Pipelines;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_pipelines.len(), 1);
+        assert!(app.selected_pipelines.contains(&42));
+    }
+
+    #[test]
+    fn select_all_filtered_works_on_jobs_tab() {
+        let mut app = App::default();
+        let job = crate::domain::pipelines::Job {
+            id: 99,
+            stage: "test".to_string(),
+            name: "unit-tests".to_string(),
+            status: "success".to_string(),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: vec![],
+        };
+        app.jobs.items = vec![job];
+        app.active_tab = Tab::Jobs;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_jobs.len(), 1);
+        assert!(app.selected_jobs.contains(&99));
+    }
+
+    #[test]
+    fn select_all_filtered_is_a_noop_outside_supported_tabs() {
+        let mut app = App::default();
+        app.active_tab = Tab::Runners;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 0);
+    }
+
+    #[test]
+    fn clear_selections_empties_every_set_and_exits_select_mode() {
+        let mut app = App::default();
+        app.selected_issues.insert((String::new(), 1));
+        app.selected_mrs.insert((String::new(), 2));
+        app.selected_pipelines.insert(42);
+        app.selected_jobs.insert(7);
+        app.select_mode = true;
+
+        let cleared = app.clear_selections();
+        assert!(cleared);
+        assert!(app.selected_issues.is_empty());
+        assert!(app.selected_mrs.is_empty());
+        assert!(app.selected_pipelines.is_empty());
+        assert!(app.selected_jobs.is_empty());
+        assert!(!app.select_mode);
+    }
+
+    #[test]
+    fn clear_selections_on_empty_returns_false() {
+        let mut app = App::default();
+        let cleared = app.clear_selections();
+        assert!(!cleared);
     }
 
     #[test]
@@ -8644,5 +9280,129 @@ index 123456..789012 100644
         let filtered = app.filtered_issues();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    #[test]
+    fn visual_select_mode_range_and_shrink() {
+        let mut app = App::default();
+        app.active_tab = Tab::Issues;
+        app.issues.items = (1..=20)
+            .map(|i| crate::domain::issues::Issue {
+                iid: i,
+                title: format!("Issue {i}"),
+                state: "opened".to_string(),
+                labels: vec![],
+                updated_at: "now".to_string(),
+                created_at: None,
+                closed_at: None,
+                author: crate::domain::issues::Author {
+                    username: "alice".to_string(),
+                },
+                milestone: None,
+                assignees: vec![],
+                description: None,
+                due_date: None,
+                web_url: "".to_string(),
+                project_path: "owner/repo".to_string(),
+                related_mrs: None,
+            })
+            .collect();
+        app.issues.state.select(Some(0));
+
+        // Enter select mode anchored at index 0
+        app.toggle_select_mode();
+        assert!(app.select_mode);
+        assert_eq!(app.select_anchor, Some(0));
+        assert_eq!(app.selected_issues.len(), 1);
+        assert!(app.selected_issues.contains(&("owner/repo".to_string(), 1)));
+
+        // Scroll down 10 lines (to index 10)
+        for _ in 0..10 {
+            app.issues.next(app.filtered_issues().len());
+            app.update_visual_selection();
+        }
+        assert_eq!(app.issues.state.selected(), Some(10));
+        // Items 0..=10 (11 total) are selected
+        assert_eq!(app.selected_issues.len(), 11);
+        for i in 1..=11 {
+            assert!(app.selected_issues.contains(&("owner/repo".to_string(), i)));
+        }
+
+        // Scroll back 3 lines (to index 7)
+        for _ in 0..3 {
+            app.issues.previous(app.filtered_issues().len());
+            app.update_visual_selection();
+        }
+        assert_eq!(app.issues.state.selected(), Some(7));
+        // Only items 0..=7 (8 total) remain selected
+        assert_eq!(app.selected_issues.len(), 8);
+        for i in 1..=8 {
+            assert!(app.selected_issues.contains(&("owner/repo".to_string(), i)));
+        }
+        assert!(!app.selected_issues.contains(&("owner/repo".to_string(), 9)));
+        assert!(
+            !app.selected_issues
+                .contains(&("owner/repo".to_string(), 10))
+        );
+        assert!(
+            !app.selected_issues
+                .contains(&("owner/repo".to_string(), 11))
+        );
+
+        // Exit select mode
+        app.toggle_select_mode();
+        assert!(!app.select_mode);
+        assert_eq!(app.select_anchor, None);
+    }
+
+    #[test]
+    fn visual_select_mode_pipelines_and_jobs() {
+        let mut app = App::default();
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = (100..110)
+            .map(|id| crate::domain::pipelines::Pipeline {
+                id,
+                status: "success".to_string(),
+                r#ref: "main".to_string(),
+                updated_at: "now".to_string(),
+                name: "CI".to_string(),
+                display_title: "build".to_string(),
+                event: "push".to_string(),
+                head_sha: "123".to_string(),
+                actor_login: "user".to_string(),
+                duration_seconds: None,
+                created_at: None,
+                source: None,
+                project_path: "owner/repo".to_string(),
+                web_url: None,
+            })
+            .collect();
+        app.pipelines.state.select(Some(2));
+
+        // Start visual select mode on Pipelines tab at index 2
+        app.toggle_select_mode();
+        assert!(app.select_mode);
+        assert_eq!(app.select_anchor, Some(2));
+        assert_eq!(app.selected_pipelines.len(), 1);
+        assert!(app.selected_pipelines.contains(&102));
+
+        // Scroll down 3 lines to index 5
+        for _ in 0..3 {
+            app.pipelines.next(app.filtered_pipelines().len());
+            app.update_visual_selection();
+        }
+        assert_eq!(app.pipelines.state.selected(), Some(5));
+        assert_eq!(app.selected_pipelines.len(), 4); // indices 2, 3, 4, 5
+        assert!(app.selected_pipelines.contains(&102));
+        assert!(app.selected_pipelines.contains(&103));
+        assert!(app.selected_pipelines.contains(&104));
+        assert!(app.selected_pipelines.contains(&105));
+
+        // Scroll up 1 line to index 4
+        app.pipelines.previous(app.filtered_pipelines().len());
+        app.update_visual_selection();
+        assert_eq!(app.pipelines.state.selected(), Some(4));
+        assert_eq!(app.selected_pipelines.len(), 3); // indices 2, 3, 4
+        assert!(!app.selected_pipelines.contains(&105));
     }
 }

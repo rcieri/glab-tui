@@ -1053,6 +1053,35 @@ mod tests {
     }
 
     #[test]
+    fn test_render_fuzzy_cell_applies_highlight_bg_when_selected() {
+        let badge_bg = Color::Rgb(10, 50, 10);
+        let base = Style::default().fg(Color::Green).bg(badge_bg);
+        let cell = render_fuzzy_cell("OPEN", "", true, false, base, Alignment::Center);
+        let cell_str = format!("{:?}", cell);
+        let highlight_bg = THEME.read().unwrap().highlight_bg;
+        match highlight_bg {
+            Color::Rgb(r, g, b) => {
+                assert!(cell_str.contains(&format!("{r}, {g}, {b}")));
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn test_render_fuzzy_cell_applies_highlight_bg_when_no_badge_bg() {
+        let base = Style::default().fg(Color::White);
+        let cell = render_fuzzy_cell("Some title", "", true, false, base, Alignment::Left);
+        let cell_str = format!("{:?}", cell);
+        let highlight_bg = THEME.read().unwrap().highlight_bg;
+        match highlight_bg {
+            Color::Rgb(r, g, b) => {
+                assert!(cell_str.contains(&format!("{r}, {g}, {b}")));
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
     fn test_format_comment_with_suggestions() {
         let body = "This is a comment\n```suggestion\nnew line content\n```\noutside suggestion";
         let file_path = "src/app.rs";

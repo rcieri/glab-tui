@@ -46,28 +46,6 @@ pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event
     app.pending_related_mrs_since = Some(std::time::Instant::now());
 }
 
-/// Insert the currently-highlighted Issue/MR into its selection set. Used by
-/// select mode: toggling the mode on and moving the cursor both mark items.
-fn mark_current_selected(app: &mut App) {
-    match app.active_tab {
-        crate::app::Tab::Issues => {
-            if let Some(idx) = app.issues.state.selected() {
-                if let Some(i) = app.filtered_issues().get(idx) {
-                    app.selected_issues.insert((i.project_path.clone(), i.iid));
-                }
-            }
-        }
-        crate::app::Tab::MergeRequests => {
-            if let Some(idx) = app.mrs.state.selected() {
-                if let Some(m) = app.filtered_mrs().get(idx) {
-                    app.selected_mrs.insert((m.project_path.clone(), m.iid));
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
 pub async fn handle_active_tab_key(
     app: &mut App,
     key_event: &KeyEvent,
@@ -370,9 +348,16 @@ pub async fn handle_active_tab_key(
                 }
             }
             _ if keybinding_matches(&app.config.keybindings.issues.selection_toggle, key_event) => {
-                app.select_mode = !app.select_mode;
-                if app.select_mode {
-                    mark_current_selected(app);
+                app.toggle_select_mode();
+            }
+            _ if keybinding_matches(&app.config.keybindings.issues.select_all, key_event) => {
+                let added = app.select_all_filtered();
+                if added > 0 {
+                    app.status_message = Some(format!(
+                        "Selected all {} item{}",
+                        added,
+                        if added == 1 { "" } else { "s" }
+                    ));
                 }
             }
             _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
@@ -536,9 +521,15 @@ pub async fn handle_active_tab_key(
                     }
                 }
             } else if keybinding_matches(&app.config.keybindings.mrs.selection_toggle, key_event) {
-                app.select_mode = !app.select_mode;
-                if app.select_mode {
-                    mark_current_selected(app);
+                app.toggle_select_mode();
+            } else if keybinding_matches(&app.config.keybindings.mrs.select_all, key_event) {
+                let added = app.select_all_filtered();
+                if added > 0 {
+                    app.status_message = Some(format!(
+                        "Selected all {} item{}",
+                        added,
+                        if added == 1 { "" } else { "s" }
+                    ));
                 }
             } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
                 if app.selected_mrs.len() > 1 {
@@ -864,6 +855,18 @@ pub async fn handle_active_tab_key(
                                 app,
                             ));
                         }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.copy_reference,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_mr_reference() {
+                                let label = if app.is_github() { "PR" } else { "MR" };
+                                app.show_error(format!(
+                                    "Failed to copy {label} reference: {error}"
+                                ));
+                            }
+                        }
                         _ => handled = false,
                     }
                 } else {
@@ -913,6 +916,20 @@ pub async fn handle_active_tab_key(
                     desc_scroll: 0,
                 });
             } else if keybinding_matches(
+                &app.config.keybindings.pipelines.selection_toggle,
+                &key_event,
+            ) {
+                app.toggle_select_mode();
+            } else if keybinding_matches(&app.config.keybindings.pipelines.select_all, &key_event) {
+                let added = app.select_all_filtered();
+                if added > 0 {
+                    app.status_message = Some(format!(
+                        "Selected all {} item{}",
+                        added,
+                        if added == 1 { "" } else { "s" }
+                    ));
+                }
+            } else if keybinding_matches(
                 &app.config.keybindings.pipelines.trigger_pipeline,
                 &key_event,
             ) {
@@ -935,7 +952,12 @@ pub async fn handle_active_tab_key(
                 if let Some(item) = app.filtered_pipelines().get(selected_idx) {
                     let pipe_id = item.id();
                     match key_event.code {
-                        KeyCode::Char(' ') => {
+                        _ if (key_event.code == KeyCode::Char(' ')
+                            || keybinding_matches(
+                                &app.config.keybindings.pipelines.select_pipeline,
+                                &key_event,
+                            )) =>
+                        {
                             if app.selected_pipelines.contains(&pipe_id) {
                                 app.selected_pipelines.remove(&pipe_id);
                             } else {
@@ -1107,6 +1129,15 @@ pub async fn handle_active_tab_key(
                                 ));
                             });
                         }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.pipelines.copy_sha,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_pipeline_sha() {
+                                app.show_error(format!("Failed to copy commit SHA: {error}"));
+                            }
+                        }
                         _ => handled = false,
                     }
                 } else {
@@ -1155,6 +1186,18 @@ pub async fn handle_active_tab_key(
                         s
                     },
                 });
+            } else if keybinding_matches(&app.config.keybindings.jobs.selection_toggle, &key_event)
+            {
+                app.toggle_select_mode();
+            } else if keybinding_matches(&app.config.keybindings.jobs.select_all, &key_event) {
+                let added = app.select_all_filtered();
+                if added > 0 {
+                    app.status_message = Some(format!(
+                        "Selected all {} item{}",
+                        added,
+                        if added == 1 { "" } else { "s" }
+                    ));
+                }
             } else if let Some(idx) = app.jobs.state.selected() {
                 let job_info = app
                     .filtered_jobs()
@@ -1496,6 +1539,15 @@ pub async fn handle_active_tab_key(
                             app.job_trace_follow = !app.job_trace_follow;
                             if app.job_trace_follow {
                                 app.job_trace_needs_scroll_to_bottom = true;
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.jobs.copy_sha,
+                            key_event,
+                        ) =>
+                        {
+                            if let Err(error) = app.copy_selected_job_sha() {
+                                app.show_error(format!("Failed to copy commit SHA: {error}"));
                             }
                         }
                         _ => handled = false,
@@ -2003,10 +2055,22 @@ pub async fn handle_active_tab_key(
                                 result.map_err(|e| e.to_string()),
                             ));
                         });
+                    } else if keybinding_matches(
+                        &app.config.keybindings.branches.copy_branch,
+                        key_event,
+                    ) {
+                        if let Err(error) = app.copy_selected_branch_name() {
+                            app.show_error(format!("Failed to copy branch name: {error}"));
+                        }
+                    } else {
+                        handled = false;
                     }
+                } else {
+                    handled = false;
                 }
+            } else {
+                handled = false;
             }
-            handled = false;
         }
         crate::app::Tab::Environments => {
             let mut matched = false;
@@ -2145,16 +2209,8 @@ pub async fn handle_active_tab_key(
                 }
             }
             KeyCode::Esc | KeyCode::Backspace => {
-                let has_selections = !app.selected_issues.is_empty()
-                    || !app.selected_mrs.is_empty()
-                    || !app.selected_pipelines.is_empty()
-                    || !app.selected_jobs.is_empty();
-                if has_selections {
-                    app.selected_issues.clear();
-                    app.selected_mrs.clear();
-                    app.selected_pipelines.clear();
-                    app.selected_jobs.clear();
-                    app.select_mode = false;
+                if app.clear_selections() {
+                    // Selections cleared; fall through to other Esc semantics below.
                 } else if app.job_trace_loading {
                     app.job_trace_loading = false;
                 } else if app.details_zoomed {
@@ -2539,7 +2595,7 @@ pub async fn handle_active_tab_key(
                         }
                     }
                     if app.select_mode {
-                        mark_current_selected(app);
+                        app.update_visual_selection();
                     }
                     if app.active_tab == crate::app::Tab::Issues {
                         maybe_fetch_related_mrs(app, &tx);
@@ -2590,7 +2646,109 @@ pub async fn handle_active_tab_key(
                         }
                     }
                     if app.select_mode {
-                        mark_current_selected(app);
+                        app.update_visual_selection();
+                    }
+                    if app.active_tab == crate::app::Tab::Issues {
+                        maybe_fetch_related_mrs(app, &tx);
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if app.details_zoomed {
+                    app.detail_scroll = 0;
+                } else {
+                    app.detail_scroll = 0;
+                    match app.active_tab {
+                        crate::app::Tab::Issues => {
+                            app.issues.first(app.filtered_issues().len());
+                        }
+                        crate::app::Tab::MergeRequests => {
+                            app.mrs.first(app.filtered_mrs().len());
+                        }
+                        crate::app::Tab::Pipelines => {
+                            app.pipelines.first(app.filtered_pipelines().len());
+                        }
+                        crate::app::Tab::Jobs => {
+                            let len = app.filtered_jobs().len();
+                            app.jobs.first(len);
+                            app.job_trace = None;
+                            app.job_trace_follow = false;
+                        }
+                        crate::app::Tab::Runners => {
+                            app.runners.first(app.filtered_runners().len());
+                        }
+                        crate::app::Tab::Releases => {
+                            app.releases.first(app.filtered_releases().len());
+                        }
+                        crate::app::Tab::Todos => {
+                            app.todos.first(app.filtered_todos().len());
+                        }
+                        crate::app::Tab::Milestones => {
+                            app.milestones.first(app.filtered_milestones().len());
+                        }
+                        crate::app::Tab::Branches => {
+                            app.branches.first(app.filtered_branches().len());
+                        }
+                        crate::app::Tab::Environments => {
+                            app.environments.first(app.filtered_environments().len());
+                        }
+                        crate::app::Tab::Terminal => {
+                            app.terminal_scroll = usize::MAX;
+                        }
+                    }
+                    if app.select_mode {
+                        app.update_visual_selection();
+                    }
+                    if app.active_tab == crate::app::Tab::Issues {
+                        maybe_fetch_related_mrs(app, &tx);
+                    }
+                }
+            }
+            KeyCode::End => {
+                if app.details_zoomed {
+                    app.detail_scroll = u16::MAX;
+                } else {
+                    app.detail_scroll = 0;
+                    match app.active_tab {
+                        crate::app::Tab::Issues => {
+                            app.issues.last(app.filtered_issues().len());
+                        }
+                        crate::app::Tab::MergeRequests => {
+                            app.mrs.last(app.filtered_mrs().len());
+                        }
+                        crate::app::Tab::Pipelines => {
+                            app.pipelines.last(app.filtered_pipelines().len());
+                        }
+                        crate::app::Tab::Jobs => {
+                            let len = app.filtered_jobs().len();
+                            app.jobs.last(len);
+                            app.job_trace = None;
+                            app.job_trace_follow = false;
+                        }
+                        crate::app::Tab::Runners => {
+                            app.runners.last(app.filtered_runners().len());
+                        }
+                        crate::app::Tab::Releases => {
+                            app.releases.last(app.filtered_releases().len());
+                        }
+                        crate::app::Tab::Todos => {
+                            app.todos.last(app.filtered_todos().len());
+                        }
+                        crate::app::Tab::Milestones => {
+                            app.milestones.last(app.filtered_milestones().len());
+                        }
+                        crate::app::Tab::Branches => {
+                            app.branches.last(app.filtered_branches().len());
+                        }
+                        crate::app::Tab::Environments => {
+                            app.environments.last(app.filtered_environments().len());
+                        }
+                        crate::app::Tab::Terminal => {
+                            app.terminal_scroll = 0;
+                        }
+                    }
+                    if app.select_mode {
+                        app.update_visual_selection();
                     }
                     if app.active_tab == crate::app::Tab::Issues {
                         maybe_fetch_related_mrs(app, &tx);
@@ -2728,5 +2886,43 @@ mod tests {
         )
         .await;
         assert_eq!(app.detail_scroll, 7);
+    }
+
+    #[tokio::test]
+    async fn home_and_end_navigate_table_selection() {
+        let mut app = App::default();
+        let mk_issue = |iid: u64| crate::domain::issues::Issue {
+            iid,
+            title: format!("Issue {iid}"),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: String::new(),
+            created_at: None,
+            closed_at: None,
+            author: crate::domain::issues::Author {
+                username: "user".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            description: None,
+            due_date: None,
+            web_url: String::new(),
+            project_path: String::new(),
+            related_mrs: None,
+        };
+
+        app.issues.items = vec![mk_issue(1), mk_issue(2), mk_issue(3), mk_issue(4)];
+        app.issues.state.select(Some(2));
+        app.detail_scroll = 3;
+
+        // End key jumps to last element and resets detail_scroll
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+        assert_eq!(app.issues.state.selected(), Some(3));
+        assert_eq!(app.detail_scroll, 0);
+
+        // Home key jumps to first element
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+        assert_eq!(app.issues.state.selected(), Some(0));
+        assert_eq!(app.detail_scroll, 0);
     }
 }

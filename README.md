@@ -123,7 +123,7 @@ Inline entity editing with searchable multi-select overlays for labels, assignee
 |---|---|
 | **Rust** (stable, edition 2024) | Install via [rustup](https://rustup.rs/) |
 | **[`glab`](https://gitlab.com/gitlab-org/cli)** / **[`gh`](https://cli.github.com/)** | Either `glab` (for GitLab repos, authenticated via `glab auth login`) or `gh` (for GitHub repos, authenticated via `gh auth login`) must be on `$PATH`. You only need the CLI for the service you use. |
-| **`git`** | Used to auto-detect the current project from `git remote get-url origin` |
+| **`git`** | Used to auto-detect the current project from the `origin` remote, or from the default repository `gh` recorded for the clone |
 | **A terminal emulator** | Any terminal that supports 256 colours and Unicode |
 
 > **Windows note:** the binary works on Windows. Editor integration uses `cmd /c` automatically when `$OS` is Windows.
@@ -236,6 +236,9 @@ gh auth login     # for GitHub repos
 ```
 
 The active project is detected automatically from the `origin` remote in the current working directory.
+If `gh` has recorded a default repository for the clone, that one is used instead. `gh repo fork --clone`
+records the original repository as default, so a fork opens its upstream project. `gh repo set-default`
+changes the choice, and `--repo` overrides both.
 For GitHub Enterprise or unusual hosting setups, set the backend explicitly in the repo-local config:
 
 ```toml
@@ -478,6 +481,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `A` | Revoke your approval *(GitLab only)* | `revoke_mr` |
 | `R` | Rebase source branch onto target | `rebase_mr` |
 | `m` | Merge selected MR (squash + remove source branch) | `merge_mr` |
+| `y` | Copy selected MR/PR as formatted Markdown link (`[!42: Title](URL)` / `[#42: Title](URL)`) | `copy_reference` |
 | `D` | View diff of selected MR in terminal | `view_diff` |
 | `P` | View related pipelines from MR detail | `view_related_pipelines` |
 | `Space` | Select MR for bulk editing | `select_mr` |
@@ -553,7 +557,8 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) | `trigger_pipeline` |
 | `r` | Retry selected pipeline (or all checked pipelines) | `retry` |
 | `d` | Cancel selected pipeline | `cancel` |
-| `o` | Open pipeline in browser | — |
+| `y` | Copy selected pipeline commit SHA | `copy_sha` |
+| `o` | Open pipeline in browser | `open_in_browser` |
 | `Space` | Check/uncheck pipeline for bulk retry | — |
 | `j` / `↓` | (in job view) move down | — |
 | `k` / `↑` | (in job view) move up | — |
@@ -569,6 +574,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `S` | Start manual (blocked) GitLab CI job | `start_job` |
 | `c` | Cancel selected job (or all checked jobs) | `cancel` |
 | `d` | Download job artifact | `download_artifact` |
+| `y` | Copy pipeline commit SHA | `copy_sha` |
 | `o` | Open job in browser | `open_in_browser` |
 | `e` | Open job trace in `$EDITOR` | `view_trace_editor` |
 | `p` | Switch to pipeline selector | `enter_pipeline` |
@@ -644,6 +650,8 @@ On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
 |---|---|---|
 | `n` | Create a new branch (prompts for name; based on the selected branch) | `create_branch` |
 | `d` | Delete selected branch (with confirmation) | `delete_branch` |
+| `y` | Copy selected branch name | `copy_branch` |
+| `o` | Open branch in browser | `open_in_browser` |
 
 ---
 

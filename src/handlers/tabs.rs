@@ -2190,6 +2190,16 @@ pub async fn handle_active_tab_key(
             // `max`, which no handler knows. `settle_detail_scroll` resolves
             // it in the same frame.
             app.detail_scroll_to_bottom = true;
+        } else if app.detail_visible
+            && crate::keybinding::matches_with_pending(
+                &app.config.keybindings.global.scroll_top,
+                pending,
+                &key_event,
+            )
+        {
+            // `scroll_top` jumps to the first line directly: 0 is a known
+            // index, no flag round-trip needed.
+            app.detail_scroll = 0;
         }
 
         match key_event.code {
@@ -2846,6 +2856,13 @@ mod tests {
     /// Uses `Viewport::Fixed` so construction never queries the backend's
     /// terminal size - `cargo test` has no controlling tty in CI.
     async fn dispatch(app: &mut App, key_event: &KeyEvent) {
+        dispatch_with_pending(app, key_event, None).await;
+    }
+
+    /// Like `dispatch`, but with an explicit `pending` first key, to
+    /// exercise the multi-key sequence branch at the top of
+    /// `handle_active_tab_key`.
+    async fn dispatch_with_pending(app: &mut App, key_event: &KeyEvent, pending: Option<char>) {
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let options = ratatui::TerminalOptions {
             viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
@@ -2853,7 +2870,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::with_options(backend, options)
             .expect("terminal construction failed");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_active_tab_key(app, key_event, &mut terminal, tx, None).await;
+        handle_active_tab_key(app, key_event, &mut terminal, tx, pending).await;
     }
 
     #[tokio::test]
@@ -3224,6 +3241,92 @@ mod tests {
         .await;
 
         assert!(app.detail_scroll_to_bottom);
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// `scroll_top` writes the scroll directly: 0 is a known index, so
+    /// unlike `scroll_to_end` there is no flag round-trip and the
+    /// dispatch sets the value in one shot.
+    #[tokio::test]
+    async fn scroll_top_zeroes_the_scroll() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_top = "Home".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// The default binding ships as `Home`, which is the same physical key
+    /// the hardcoded #492 arm already dispatches. The two paths land on
+    /// the same `detail_scroll = 0`, so the compound behaviour is
+    /// idempotent for the user.
+    #[tokio::test]
+    async fn scroll_top_default_does_not_raise_the_jump_to_bottom_flag() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+
+        assert_eq!(app.detail_scroll, 0);
+        assert!(!app.detail_scroll_to_bottom);
+    }
+
+    /// `gg` jumps to a known index, so it writes the scroll directly and
+    /// must not raise the jump-to-bottom flag on the way.
+    #[tokio::test]
+    async fn scroll_top_resolves_two_char_sequence_through_matches_with_pending() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_top = "gg".to_string();
+
+        dispatch_with_pending(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
+            Some('g'),
+        )
+        .await;
+
+        assert_eq!(app.detail_scroll, 0);
+        assert!(!app.detail_scroll_to_bottom);
+    }
+
+    /// The default `scroll_top = "Home"` shares its key with the hardcoded
+    /// #492 table-navigation arm, which fires regardless of
+    /// `detail_visible`. Confirm `dispatch` does not panic on the
+    /// default binding while the detail pane is hidden — the table
+    /// navigation either jumps to row 0 (when there's a row) or no-ops
+    /// on an empty table, and the `scroll_top` arm itself does not run.
+    #[tokio::test]
+    async fn scroll_top_default_dispatches_without_panic_in_hidden_detail() {
+        let mut app = App::default();
+        app.detail_visible = false;
+        app.config.keybindings.global.scroll_top = "Home".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+
+        // detail_scroll was never touched by `scroll_top` (which is
+        // gated on detail_visible); the hardcoded Home arm runs but
+        // resets to 0 unconditionally.
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// When the binding is remapped to a key with no other handler,
+    /// `scroll_top` is gated on `detail_visible` and stays out of the way
+    /// while the pane is hidden.
+    #[tokio::test]
+    async fn scroll_top_remapped_to_unbound_key_ignores_hidden_detail() {
+        let mut app = App::default();
+        app.detail_visible = false;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_top = "F1".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)).await;
+
         assert_eq!(app.detail_scroll, 5);
     }
 }

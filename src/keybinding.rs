@@ -107,7 +107,6 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
 /// resolves the all-plain-text two-character form. The single-key path
 /// delegates to `keybinding_matches` so its semantics are unchanged when
 /// `pending` is `None`.
-#[allow(dead_code)] // used by bindings that opt into two-character sequences
 pub fn matches_with_pending(
     binding: &str,
     pending: Option<char>,

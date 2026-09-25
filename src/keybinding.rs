@@ -165,4 +165,14 @@ mod tests {
         let event_unmodified = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert!(!keybinding_matches("Ctrl+Enter", &event_unmodified));
     }
+
+    #[test]
+    fn empty_binding_never_matches() {
+        let event = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(!keybinding_matches("", &event));
+        let event_shift = KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT);
+        assert!(!keybinding_matches("", &event_shift));
+        let event_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!keybinding_matches("", &event_enter));
+    }
 }

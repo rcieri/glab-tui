@@ -1271,11 +1271,6 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.save_view)),
-            action: "Save view layout to config",
-        },
-        Shortcut {
-            category: "Global & Nav",
             key: d(app.config.keybindings.global.quit.clone()),
             action: "Quit program",
         },
@@ -1943,11 +1938,6 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Column Config",
-            key: d(app.config.keybindings.global.save_view.clone()),
-            action: "Save layout to config",
-        },
-        Shortcut {
-            category: "Column Config",
             key: s("Esc"),
             action: "Close columns config popup",
         },
@@ -2018,7 +2008,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
 
     let filtered_shortcuts: Vec<&Shortcut> = shortcuts
         .iter()
-        .filter(|s| active_categories.contains(&s.category))
+        .filter(|s| active_categories.contains(&s.category) && !s.key.trim().is_empty())
         .collect();
 
     let block = Block::default()
@@ -2293,5 +2283,40 @@ mod tests {
         assert!(text.contains("Open selected PR in browser"));
         assert!(text.contains("View related Actions for selected PR"));
         assert!(text.contains("Create new Pull Request"));
+    }
+
+    #[test]
+    fn render_help_filters_out_empty_keybindings() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Issues;
+
+        terminal
+            .draw(|f| {
+                render_help(f, &mut app, f.area());
+            })
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            !text.contains("Save view layout to config"),
+            "save_view should not be listed in help: {text:?}",
+        );
+
+        // If a keybinding is set to empty string, it is filtered out from help
+        app.config.keybindings.issues.create_issue = "".to_string();
+        terminal
+            .draw(|f| {
+                render_help(f, &mut app, f.area());
+            })
+            .unwrap();
+
+        let text_empty = buffer_text(&terminal);
+        assert!(
+            !text_empty.contains("Create new issue"),
+            "empty keybinding shortcut should be filtered from help: {text_empty:?}",
+        );
     }
 }

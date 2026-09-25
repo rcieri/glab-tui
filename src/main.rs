@@ -20,7 +20,7 @@ mod ui;
 pub mod utils;
 
 use anyhow::Result;
-use app::{App, SaveMenu};
+use app::{App, PendingKey, SaveMenu};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
     execute,
@@ -1012,6 +1012,26 @@ async fn main() -> Result<()> {
             match event {
                 Event::Tick => {
                     app.tick();
+                    if let Some(pending_key) = app.pending_key.take() {
+                        if pending_key.since.elapsed()
+                            >= std::time::Duration::from_millis(app.config.keybinding_timeout_ms)
+                        {
+                            if let KeyCode::Char(c) = pending_key.event.code {
+                                if app.standalone_chars.contains(&c) {
+                                    handlers::tabs::handle_active_tab_key(
+                                        &mut app,
+                                        &pending_key.event,
+                                        &mut terminal,
+                                        events.sender(),
+                                        None,
+                                    )
+                                    .await;
+                                }
+                            }
+                        } else {
+                            app.pending_key = Some(pending_key);
+                        }
+                    }
                     if let Some(client) = app.gitlab_client.clone() {
                         let _ = crate::fetch::dispatch_pending_related_mrs_fetch(
                             &client,
@@ -8370,11 +8390,44 @@ async fn main() -> Result<()> {
                     }
 
                     let old_scope = app.scope.clone();
+
+                    if let Some(PendingKey {
+                        event: pending_event,
+                        ..
+                    }) = app.pending_key.take()
+                    {
+                        if let KeyCode::Char(pending_char) = pending_event.code {
+                            let resolved = handlers::tabs::handle_active_tab_key(
+                                &mut app,
+                                &key_event,
+                                &mut terminal,
+                                events.sender(),
+                                Some(pending_char),
+                            )
+                            .await;
+                            if resolved {
+                                continue;
+                            }
+                        }
+                        // Pending was a non-character (Tab, F-key, etc.) -
+                        // fall through and dispatch the current keypress as
+                        // a fresh event.
+                    } else if let KeyCode::Char(c) = key_event.code {
+                        if key_event.modifiers.is_empty() && app.sequence_prefixes.contains(&c) {
+                            app.pending_key = Some(PendingKey {
+                                event: key_event,
+                                since: std::time::Instant::now(),
+                            });
+                            continue;
+                        }
+                    }
+
                     handlers::tabs::handle_active_tab_key(
                         &mut app,
                         &key_event,
                         &mut terminal,
                         events.sender(),
+                        None,
                     )
                     .await;
 

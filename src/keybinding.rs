@@ -99,6 +99,31 @@ pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> 
     }
 }
 
+/// Like `keybinding_matches`, but also resolves two-character sequence
+/// bindings (e.g. `"gg"`) against a pending first keypress. `pending` is the
+/// character captured on the previous keystroke, if any.
+///
+/// Sequence spelling cannot contain a modifier (no `+`), so this only
+/// resolves the all-plain-text two-character form. The single-key path
+/// delegates to `keybinding_matches` so its semantics are unchanged when
+/// `pending` is `None`.
+#[allow(dead_code)] // used by bindings that opt into two-character sequences
+pub fn matches_with_pending(
+    binding: &str,
+    pending: Option<char>,
+    event: &crossterm::event::KeyEvent,
+) -> bool {
+    if binding.len() == 2 && !binding.contains('+') {
+        let mut chars = binding.chars();
+        if let (Some(first), Some(second)) = (chars.next(), chars.next()) {
+            return pending == Some(first)
+                && event.code == KeyCode::Char(second)
+                && event.modifiers.is_empty();
+        }
+    }
+    keybinding_matches(binding, event)
+}
+
 #[cfg(test)]
 mod tests {
     use super::keybinding_matches;
@@ -164,5 +189,52 @@ mod tests {
 
         let event_unmodified = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert!(!keybinding_matches("Ctrl+Enter", &event_unmodified));
+    }
+
+    #[test]
+    fn two_char_binding_matches_second_key_when_pending_holds_first() {
+        let event = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(super::matches_with_pending("gg", Some('g'), &event));
+    }
+
+    #[test]
+    fn two_char_binding_does_not_match_wrong_second_key() {
+        let event = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(!super::matches_with_pending("gg", Some('g'), &event));
+    }
+
+    #[test]
+    fn two_char_binding_does_not_match_without_pending() {
+        let event = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(!super::matches_with_pending("gg", None, &event));
+    }
+
+    /// The single-key path is unchanged when no pending key is held.
+    #[test]
+    fn single_char_binding_behaves_like_keybinding_matches_with_no_pending() {
+        let event = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(
+            super::matches_with_pending("q", None, &event),
+            keybinding_matches("q", &event)
+        );
+    }
+
+    /// When a pending key is held, a single-char binding still matches its
+    /// own key — the pending character is not silently consumed.
+    #[test]
+    fn single_char_binding_still_matches_when_pending_holds_different_key() {
+        let event = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(
+            super::matches_with_pending("q", Some('g'), &event),
+            keybinding_matches("q", &event)
+        );
+    }
+
+    /// Sequences can only spell plain characters; a `Ctrl+`-prefixed
+    /// binding never matches through the sequence path.
+    #[test]
+    fn ctrl_prefixed_binding_does_not_match_through_sequence_path() {
+        let event = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(!super::matches_with_pending("Ctrl+g", Some('g'), &event));
     }
 }

@@ -1294,6 +1294,10 @@ fn def_fetch_label_colors() -> bool {
     true
 }
 
+fn def_keybinding_timeout_ms() -> u64 {
+    1000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1324,6 +1328,11 @@ pub struct Config {
     pub page_size: usize,
     #[serde(default = "def_api_per_page")]
     pub api_per_page: usize,
+    /// How long a captured first keypress of a two-character sequence stays
+    /// pending before the timeout fires and the prefix is dispatched as a
+    /// single keypress.
+    #[serde(default = "def_keybinding_timeout_ms")]
+    pub keybinding_timeout_ms: u64,
     /// Use real label colors from `label list` when available; otherwise use
     /// the theme palette as fallback.
     #[serde(default = "def_fetch_label_colors")]
@@ -1353,6 +1362,7 @@ impl Default for Config {
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             api_per_page: def_api_per_page(),
+            keybinding_timeout_ms: def_keybinding_timeout_ms(),
             fetch_label_colors: def_fetch_label_colors(),
             disabled_tabs: None,
             ui: UiConfig::default(),
@@ -1410,6 +1420,10 @@ page_size = 100
 # Maximum items per API request (1-100). Lower this if your GitLab instance
 # truncates large JSON response bodies. Only affects GitLab backends.
 # api_per_page = 100
+
+# How long a captured first keypress of a two-character key sequence stays
+# pending before the prefix is dispatched as a single keypress.
+# keybinding_timeout_ms = 1000
 
 # Per-color overrides (takes precedence over theme_preset).
 # Uncomment the [theme] line and any colors you want to override.

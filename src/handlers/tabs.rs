@@ -51,7 +51,8 @@ pub async fn handle_active_tab_key(
     key_event: &KeyEvent,
     terminal: &mut AppTerminal,
     tx: UnboundedSender<Event>,
-) {
+    pending: Option<char>,
+) -> bool {
     let mut handled = true;
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
@@ -179,7 +180,7 @@ pub async fn handle_active_tab_key(
                     .selected()
                     .and_then(|idx| app.filtered_issues().get(idx).map(|i| i.iid))
                 else {
-                    return;
+                    return false;
                 };
                 use crate::domain::issues::RelatedMrsState;
                 let state = app
@@ -290,7 +291,7 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
                         let Some(client) = app.gitlab_client.clone() else {
-                            return;
+                            return false;
                         };
                         let project_path = if !issue.project_path.is_empty() {
                             issue.project_path.clone()
@@ -764,7 +765,7 @@ pub async fn handle_active_tab_key(
                             let is_github = app.is_github();
                             let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_path = if !mr.project_path.is_empty() {
                                 mr.project_path.clone()
@@ -1074,7 +1075,7 @@ pub async fn handle_active_tab_key(
                                     "Workflow browser is only available for GitHub Actions"
                                         .to_string(),
                                 );
-                                return;
+                                return false;
                             }
                             let workflow = app
                                 .pipelines
@@ -1086,10 +1087,10 @@ pub async fn handle_active_tab_key(
                             let Some(workflow) = workflow else {
                                 app.error_message =
                                     Some("Selected pipeline has no workflow name".to_string());
-                                return;
+                                return false;
                             };
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_context = app.scope.as_str().to_string();
                             let tx2 = tx.clone();
@@ -1111,7 +1112,7 @@ pub async fn handle_active_tab_key(
                         {
                             let is_github = app.is_github();
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_path = if !item.project_path.is_empty() {
                                 item.project_path.clone()
@@ -1431,7 +1432,7 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let active_pipe_path = app
                                 .active_pipeline_id
@@ -1742,7 +1743,7 @@ pub async fn handle_active_tab_key(
                     if let Some(release) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
-                            return;
+                            return false;
                         };
                         let project_path = app.scope.as_str().to_string();
                         let tag_name = release.tag_name.clone();
@@ -1819,7 +1820,7 @@ pub async fn handle_active_tab_key(
                                 "issue"
                             };
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_path = if !item.project_path.is_empty() {
                                 item.project_path.clone()
@@ -1980,7 +1981,7 @@ pub async fn handle_active_tab_key(
                     if let Some(milestone) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
-                            return;
+                            return false;
                         };
                         let project_path = app.scope.as_str().to_string();
                         let mid_str = milestone.iid.to_string();
@@ -2790,6 +2791,8 @@ pub async fn handle_active_tab_key(
             _ => {}
         }
     }
+
+    handled
 }
 
 /// Switch to the Merge Requests tab and focus the given MR/PR. If the MR is
@@ -2850,7 +2853,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::with_options(backend, options)
             .expect("terminal construction failed");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_active_tab_key(app, key_event, &mut terminal, tx).await;
+        handle_active_tab_key(app, key_event, &mut terminal, tx, None).await;
     }
 
     #[tokio::test]

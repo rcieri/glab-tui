@@ -613,7 +613,7 @@ pub use keybinding::keybinding_matches;
 pub use templates::*;
 
 pub use fetch::spawn_fetch_repo_attributes;
-pub use fetch::spawn_refresh_active_tab;
+pub use fetch::{spawn_refresh_active_tab, spawn_refresh_all_tabs};
 use handlers::overlays::*;
 
 #[tokio::main]
@@ -792,6 +792,16 @@ async fn main() -> Result<()> {
             app.start_loading_tab(app.active_tab);
         }
         spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+        // Active tab is in flight synchronously; queue the rest so a
+        // quick tab-switch lands on already-populated data. `R` only
+        // refreshes the active tab and does not re-run the queue.
+        spawn_refresh_all_tabs(
+            &client,
+            &app.scope,
+            app.active_tab,
+            app.loaded_tabs.clone(),
+            tx.clone(),
+        );
         spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
@@ -1265,7 +1275,7 @@ async fn main() -> Result<()> {
                             app.pipelines.items.push(child);
                         }
                     }
-                    // The user is typically on Tab::Jobs by the time Enter's
+// The user is typically on Tab::Jobs by the time Enter's
                     // bridge fetch answers (Enter switched to Jobs before
                     // the async fetch landed). Reflow the Pipelines
                     // selection regardless of the active tab so the
@@ -8491,6 +8501,16 @@ async fn main() -> Result<()> {
                                 &client,
                                 &app.scope,
                                 app.active_tab,
+                                tx.clone(),
+                            );
+                            // Re-trigger the background queue for the new
+                            // scope: every tab is now stale, so the active
+                            // tab's synchronous fetch isn't enough.
+                            spawn_refresh_all_tabs(
+                                &client,
+                                &app.scope,
+                                app.active_tab,
+                                app.loaded_tabs.clone(),
                                 tx.clone(),
                             );
                             spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);

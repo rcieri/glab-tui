@@ -251,7 +251,7 @@ and hosts serving both platforms require the override.
 
 ### Config file
 
-The config file is optional; the app boots from in-memory defaults when none exists. To create one, press the **save view** keybinding (default `s`), which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). Locations:
+The config file is optional; the app boots from in-memory defaults when none exists. To create one, open the **Configure View** popup (default `Tab`) and submit **Save View**, which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). Locations:
 
 ```
 ~/.config/glab-tui/config.toml          # Linux / macOS (XDG)
@@ -428,7 +428,6 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `g` | Jump to issue/MR by ID; fetches from the API if not cached | `jump_to_id` |
 | `Ctrl+S` | Switch repository | — |
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
-| `s` | Save view layout to config | `save_view` |
 | `u` | Check for updates | — |
 | `q` / `Esc` | Quit (or close current overlay) | `quit` |
 

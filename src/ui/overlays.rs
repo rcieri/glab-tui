@@ -1271,7 +1271,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.save_view)),
+            key: d(app.config.keybindings.global.save_view.clone()),
             action: "Save view layout to config",
         },
         Shortcut {
@@ -2018,7 +2018,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
 
     let filtered_shortcuts: Vec<&Shortcut> = shortcuts
         .iter()
-        .filter(|s| active_categories.contains(&s.category))
+        .filter(|s| active_categories.contains(&s.category) && !s.key.trim().is_empty())
         .collect();
 
     let block = Block::default()
@@ -2293,5 +2293,43 @@ mod tests {
         assert!(text.contains("Open selected PR in browser"));
         assert!(text.contains("View related Actions for selected PR"));
         assert!(text.contains("Create new Pull Request"));
+    }
+
+    #[test]
+    fn render_help_filters_out_empty_keybindings() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Issues;
+
+        // Default has save_view as empty string
+        assert_eq!(app.config.keybindings.global.save_view, "");
+
+        terminal
+            .draw(|f| {
+                render_help(f, &mut app, f.area());
+            })
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            !text.contains("Save view layout to config"),
+            "empty save_view binding should not be listed in help: {text:?}",
+        );
+
+        // When save_view is set, it should appear in help
+        app.config.keybindings.global.save_view = "s".to_string();
+        terminal
+            .draw(|f| {
+                render_help(f, &mut app, f.area());
+            })
+            .unwrap();
+
+        let text_with_save = buffer_text(&terminal);
+        assert!(
+            text_with_save.contains("Save view layout to config"),
+            "set save_view binding should be listed in help: {text_with_save:?}",
+        );
     }
 }

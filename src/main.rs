@@ -8338,7 +8338,8 @@ async fn main() -> Result<()> {
                         continue;
                     }
 
-                    if keybinding_matches(&app.config.keybindings.global.save_view, &key_event)
+                    if !app.config.keybindings.global.save_view.is_empty()
+                        && keybinding_matches(&app.config.keybindings.global.save_view, &key_event)
                         && !app.focus_column_checklist
                         && app.text_input.is_none()
                         && app.edit_menu.is_none()

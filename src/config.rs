@@ -986,7 +986,7 @@ keybind_defaults! {
     def_prev_tab = "h",
     def_scroll_down = "J",
     def_scroll_up = "K",
-    def_save_view = "s",
+    def_save_view = "",
     def_create_issue = "n",
     def_select_issue = "Space",
     def_create_mr_issue = "m",
@@ -1432,7 +1432,7 @@ next_tab = "l"
 prev_tab = "h"
 scroll_down = "J"
 scroll_up = "K"
-save_view = "s"
+save_view = ""
 jump_to_id = "g"
 
 [keybindings.issues]

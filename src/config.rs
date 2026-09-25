@@ -726,6 +726,10 @@ pub struct KeybindingGlobal {
     pub scroll_down: String,
     #[serde(default)]
     pub scroll_up: String,
+    #[serde(default = "def_scroll_page_down")]
+    pub scroll_page_down: String,
+    #[serde(default = "def_scroll_page_up")]
+    pub scroll_page_up: String,
     #[serde(default)]
     pub save_view: String,
     #[serde(default = "def_switch_repo")]
@@ -986,6 +990,8 @@ keybind_defaults! {
     def_prev_tab = "h",
     def_scroll_down = "J",
     def_scroll_up = "K",
+    def_scroll_page_down = "PageDown",
+    def_scroll_page_up = "PageUp",
     def_save_view = "s",
     def_create_issue = "n",
     def_select_issue = "Space",
@@ -1064,6 +1070,8 @@ impl Default for KeybindingGlobal {
             prev_tab: def_prev_tab(),
             scroll_down: def_scroll_down(),
             scroll_up: def_scroll_up(),
+            scroll_page_down: def_scroll_page_down(),
+            scroll_page_up: def_scroll_page_up(),
             save_view: def_save_view(),
             switch_repo: def_switch_repo(),
             jump_to_id: def_jump_to_id(),
@@ -1432,6 +1440,8 @@ next_tab = "l"
 prev_tab = "h"
 scroll_down = "J"
 scroll_up = "K"
+scroll_page_down = "PageDown"
+scroll_page_up = "PageUp"
 save_view = "s"
 jump_to_id = "g"
 

@@ -1033,7 +1033,8 @@ pub async fn handle_active_tab_key(
                                 }
                             }
                         }
-                        _ if (key_event.code == KeyCode::Char('d')
+                        _ if ((key_event.code == KeyCode::Char('d')
+                            && key_event.modifiers.is_empty())
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.cancel,
                                 &key_event,
@@ -2167,13 +2168,27 @@ pub async fn handle_active_tab_key(
                 || key_event.code == KeyCode::Char('K'))
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
+        } else if app.detail_visible
+            && keybinding_matches(&app.config.keybindings.global.scroll_page_down, &key_event)
+        {
+            if let Some(rect) = app.detail_rect {
+                let page = (rect.height as usize).saturating_sub(2).max(1);
+                app.detail_scroll = app.detail_scroll.saturating_add(page as u16);
+            }
+        } else if app.detail_visible
+            && keybinding_matches(&app.config.keybindings.global.scroll_page_up, &key_event)
+        {
+            if let Some(rect) = app.detail_rect {
+                let page = (rect.height as usize).saturating_sub(2).max(1);
+                app.detail_scroll = app.detail_scroll.saturating_sub(page as u16);
+            }
         }
 
         match key_event.code {
             KeyCode::Char('?') | KeyCode::F(1) => {
                 app.show_help = true;
             }
-            KeyCode::Char('u') => {
+            KeyCode::Char('u') if key_event.modifiers.is_empty() => {
                 app.error_message = Some("Checking for updates...".to_string());
                 let tx = tx.clone();
                 tokio::spawn(async move {
@@ -2242,7 +2257,7 @@ pub async fn handle_active_tab_key(
                     app.clear_search_query();
                 }
             }
-            KeyCode::Char('f') => {
+            KeyCode::Char('f') if key_event.modifiers.is_empty() => {
                 app.is_typing_search = true;
             }
             KeyCode::Enter => match app.active_tab {
@@ -2931,5 +2946,212 @@ mod tests {
         dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
         assert_eq!(app.issues.state.selected(), Some(0));
         assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// `PageDown` advances `detail_scroll` by the detail pane's usable
+    /// height (its `rect.height` minus the two border rows) — the convention
+    /// `less` and `man` share.
+    #[tokio::test]
+    async fn page_down_scrolls_detail_pane_by_one_viewport() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 25);
+    }
+
+    /// `PageUp` is the symmetric `PageDown` — subtracts the same page size.
+    #[tokio::test]
+    async fn page_up_scrolls_detail_pane_back_by_one_viewport() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 25;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// The `2`-row border means `rect.height < 3` leaves no usable rows, so
+    /// `PageUp` must not underflow and `PageDown` must step by exactly one.
+    #[tokio::test]
+    async fn page_scroll_clamps_to_one_line_for_short_detail_pane() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 2));
+        app.detail_scroll = 0;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 0);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 1);
+    }
+
+    /// Without a rendered `detail_rect` the handler has no viewport to step
+    /// against, so the key must be a no-op rather than subtract from
+    /// `detail_scroll` and risk wrapping.
+    #[tokio::test]
+    async fn page_scroll_keys_do_nothing_without_detail_rect() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = None;
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// `PageDown` must only page-scroll, not also fire a tab handler that
+    /// uses the bare key code - `PageDown` is not bound to any tab action
+    /// today, so the existing `J`/`K` cascade is the only thing that could
+    /// accidentally catch it.
+    #[tokio::test]
+    async fn page_down_does_not_also_navigate_the_table() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.issues.items = (1..=4)
+            .map(|iid| crate::domain::issues::Issue {
+                iid,
+                title: format!("Issue {iid}"),
+                state: "opened".to_string(),
+                labels: vec![],
+                updated_at: String::new(),
+                created_at: None,
+                closed_at: None,
+                author: crate::domain::issues::Author {
+                    username: "user".to_string(),
+                },
+                milestone: None,
+                assignees: vec![],
+                description: None,
+                due_date: None,
+                web_url: String::new(),
+                project_path: String::new(),
+                related_mrs: None,
+            })
+            .collect();
+        app.issues.state.select(Some(0));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+
+        assert_eq!(app.issues.state.selected(), Some(0));
+        assert_eq!(app.detail_scroll, 25);
+    }
+
+    /// `Ctrl+d` must not cancel the selected pipeline - the bare `d` arm
+    /// matches on character alone and previously swallowed the Ctrl form,
+    /// blocking any future vim half-page binding.
+    #[tokio::test]
+    async fn ctrl_d_does_not_cancel_the_selected_pipeline() {
+        use crate::domain::pipelines::Pipeline;
+
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        let pipe = Pipeline {
+            id: 42,
+            status: "running".to_string(),
+            r#ref: String::new(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+        };
+        app.pipelines.items = vec![pipe];
+        app.pipelines.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+
+        assert_eq!(
+            app.pipelines.items[0].status, "running",
+            "Ctrl+d must not flip the pipeline status to canceled"
+        );
+    }
+
+    /// `Ctrl+u` must not start a self-update check.
+    #[tokio::test]
+    async fn ctrl_u_does_not_trigger_a_self_update() {
+        let mut app = App::default();
+        app.error_message = None;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+
+        assert!(
+            app.error_message.is_none()
+                || !app
+                    .error_message
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Checking for updates"),
+            "Ctrl+u must not raise the 'Checking for updates' message",
+        );
+    }
+
+    /// `Ctrl+f` must not open the inline search bar.
+    #[tokio::test]
+    async fn ctrl_f_does_not_open_inline_search() {
+        let mut app = App::default();
+        app.is_typing_search = false;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+
+        assert!(
+            !app.is_typing_search,
+            "Ctrl+f must not flip is_typing_search"
+        );
     }
 }

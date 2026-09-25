@@ -1228,6 +1228,15 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
+            key: d(format!(
+                "{} / {}",
+                app.config.keybindings.global.scroll_page_down,
+                app.config.keybindings.global.scroll_page_up
+            )),
+            action: "Scroll description pane by one page",
+        },
+        Shortcut {
+            category: "Global & Nav",
             key: d(format!("{} / f", app.config.keybindings.global.search)),
             action: "Open fuzzy search / filter bar",
         },

@@ -3483,6 +3483,33 @@ impl App {
         self.scope.as_str().to_string()
     }
 
+    /// Drop the trailing whitespace and the preceding word from
+    /// `search_query`, mirroring readline's `Ctrl+W` semantics. Splits on
+    /// Unicode whitespace so multi-byte spaces and tabs are stripped too.
+    /// No-ops on an empty query or one made entirely of whitespace.
+    pub fn pop_search_word(&mut self) {
+        let trimmed_len = self.search_query.trim_end().len();
+        self.search_query.truncate(trimmed_len);
+        let cut = self
+            .search_query
+            .trim_end()
+            .rfind(|c: char| c.is_whitespace())
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        self.search_query.truncate(cut);
+        self.update_filter_selection();
+    }
+
+    /// Wipe the active search query. Mirrors readline's `Ctrl+U`; also
+    /// called by the Esc cascade to drop the active filter when no other
+    /// modal action consumes the press.
+    pub fn clear_search_query(&mut self) {
+        if !self.search_query.is_empty() {
+            self.search_query.clear();
+            self.update_filter_selection();
+        }
+    }
+
     /// Insert every row currently visible in the active tab's filtered list
     /// into the bulk-selection set. Returns the number of items added.
     /// Honours the active search query and column filters so a `Ctrl+A` after
@@ -3644,7 +3671,6 @@ impl App {
             _ => {}
         }
     }
-
     pub fn selected_issue_reference(&self) -> Option<String> {
         let index = self.issues.state.selected()?;
         let issue = self.filtered_issues().get(index).copied()?;
@@ -6783,6 +6809,60 @@ mod tests {
     }
 
     #[test]
+    fn pop_search_word_drops_trailing_word_and_whitespace() {
+        let mut app = App::default();
+        app.search_query = "foo bar  baz ".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "foo bar  ");
+    }
+
+    #[test]
+    fn pop_search_word_removes_unicode_word() {
+        let mut app = App::default();
+        app.search_query = "héllo wörld".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "héllo ");
+    }
+
+    #[test]
+    fn pop_search_word_on_only_whitespace_is_noop() {
+        let mut app = App::default();
+        app.search_query = "   ".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "");
+    }
+
+    #[test]
+    fn pop_search_word_on_empty_query_is_noop() {
+        let mut app = App::default();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "");
+    }
+
+    #[test]
+    fn pop_search_word_handles_tab_separated_words() {
+        let mut app = App::default();
+        app.search_query = "one\ttwo\tthree".to_string();
+        app.pop_search_word();
+        assert_eq!(app.search_query, "one\ttwo\t");
+    }
+
+    #[test]
+    fn clear_search_query_wipes_query_and_refreshes_filter() {
+        let mut app = App::default();
+        app.search_query = "anything".to_string();
+        app.clear_search_query();
+        assert_eq!(app.search_query, "");
+    }
+
+    #[test]
+    fn clear_search_query_on_empty_is_a_noop() {
+        let mut app = App::default();
+        app.clear_search_query();
+        assert_eq!(app.search_query, "");
+    }
+
+    #[test]
     fn select_all_filtered_picks_up_every_visible_issue() {
         let mut app = App::default();
         let mk_issue = |iid: u64| crate::domain::issues::Issue {
@@ -6977,6 +7057,9 @@ mod tests {
 
     #[test]
     fn clear_selections_on_empty_returns_false() {
+        let mut app = App::default();
+        let cleared = app.clear_selections();
+        assert!(!cleared);
         let mut app = App::default();
         let cleared = app.clear_selections();
         assert!(!cleared);

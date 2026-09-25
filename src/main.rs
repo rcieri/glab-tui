@@ -3309,6 +3309,11 @@ async fn main() -> Result<()> {
                                             }
                                         } else {
                                             let is_github = app.is_github();
+                                            let project = if app.scope.is_group() {
+                                                Some(app.scope.as_str().to_string())
+                                            } else {
+                                                None
+                                            };
                                             let fields = crate::entity_editor::issue_fields(
                                                 String::new(),
                                                 String::new(),
@@ -3319,6 +3324,7 @@ async fn main() -> Result<()> {
                                                 "0".to_string(),
                                                 desc_val,
                                                 is_github,
+                                                project,
                                             );
                                             app.open_edit_menu(crate::app::EditMenu {
                                                 title: "Create Issue".to_string(),
@@ -4622,14 +4628,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Left => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         if let Some(f) = menu.fields.get(menu.selected_idx) {
                                             if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
@@ -4646,14 +4646,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Right => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         if let Some(f) = menu.fields.get(menu.selected_idx) {
                                             let char_len = f.value[menu.cursor_pos..]
@@ -4672,14 +4666,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Home => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         menu.cursor_pos = 0;
                                     }
@@ -4687,14 +4675,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::End => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
@@ -4760,17 +4742,9 @@ async fn main() -> Result<()> {
                                     }
                                 }
                                 KeyCode::Char(c) => {
-                                    let field_name = if menu.selected_idx < menu.fields.len() {
-                                        menu.fields[menu.selected_idx].label.clone()
-                                    } else {
-                                        String::new()
-                                    };
-                                    if field_name == "Title"
-                                        || field_name == "Name"
-                                        || field_name == "Release Name"
-                                        || field_name == "Branch Name"
-                                        || field_name == "Description"
-                                        || field_name == "Release Notes"
+                                    if menu.selected_idx < menu.fields.len()
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);
@@ -4885,6 +4859,26 @@ async fn main() -> Result<()> {
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {
+                                        let project = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Project")
+                                            .map(|f| f.value.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or_else(|| {
+                                                if !menu.entity_project.is_empty() {
+                                                    menu.entity_project.clone()
+                                                } else {
+                                                    app.scope.as_str().to_string()
+                                                }
+                                            });
+                                        if app.scope.is_group() && !project.contains('/') {
+                                            app.show_error(
+                                                "Please specify a project path (e.g. owner/project) in group view".to_string(),
+                                            );
+                                            app.edit_menu = Some(menu);
+                                            continue;
+                                        }
                                         let title = menu
                                             .fields
                                             .iter()
@@ -4934,7 +4928,6 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -4965,6 +4958,26 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_mr" {
+                                        let project = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Project")
+                                            .map(|f| f.value.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or_else(|| {
+                                                if !menu.entity_project.is_empty() {
+                                                    menu.entity_project.clone()
+                                                } else {
+                                                    app.scope.as_str().to_string()
+                                                }
+                                            });
+                                        if app.scope.is_group() && !project.contains('/') {
+                                            app.show_error(
+                                                "Please specify a project path (e.g. owner/project) in group view".to_string(),
+                                            );
+                                            app.edit_menu = Some(menu);
+                                            continue;
+                                        }
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5026,7 +5039,6 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5290,6 +5302,26 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_milestone" {
+                                        let project = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Project")
+                                            .map(|f| f.value.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or_else(|| {
+                                                if !menu.entity_project.is_empty() {
+                                                    menu.entity_project.clone()
+                                                } else {
+                                                    app.scope.as_str().to_string()
+                                                }
+                                            });
+                                        if app.scope.is_group() && !project.contains('/') {
+                                            app.show_error(
+                                                "Please specify a project path (e.g. owner/project) in group view".to_string(),
+                                            );
+                                            app.edit_menu = Some(menu);
+                                            continue;
+                                        }
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5321,7 +5353,6 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5364,6 +5395,26 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_pipeline" {
+                                        let project = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Project")
+                                            .map(|f| f.value.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or_else(|| {
+                                                if !menu.entity_project.is_empty() {
+                                                    menu.entity_project.clone()
+                                                } else {
+                                                    app.scope.as_str().to_string()
+                                                }
+                                            });
+                                        if app.scope.is_group() && !project.contains('/') {
+                                            app.show_error(
+                                                "Please specify a project path (e.g. owner/project) in group view".to_string(),
+                                            );
+                                            app.edit_menu = Some(menu);
+                                            continue;
+                                        }
                                         let branch = menu
                                             .fields
                                             .iter()
@@ -5427,7 +5478,6 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5455,6 +5505,26 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                     } else if entity_type == "new_release" {
+                                        let project = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Project")
+                                            .map(|f| f.value.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or_else(|| {
+                                                if !menu.entity_project.is_empty() {
+                                                    menu.entity_project.clone()
+                                                } else {
+                                                    app.scope.as_str().to_string()
+                                                }
+                                            });
+                                        if app.scope.is_group() && !project.contains('/') {
+                                            app.show_error(
+                                                "Please specify a project path (e.g. owner/project) in group view".to_string(),
+                                            );
+                                            app.edit_menu = Some(menu);
+                                            continue;
+                                        }
                                         let tag = menu
                                             .fields
                                             .iter()
@@ -5480,7 +5550,6 @@ async fn main() -> Result<()> {
                                         if !tag.is_empty() {
                                             app.edit_menu = None;
                                             let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.scope.as_str().to_string();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             tokio::spawn(async move {
@@ -5510,6 +5579,26 @@ async fn main() -> Result<()> {
                                         }
                                         continue;
                                     } else if entity_type == "new_branch" {
+                                        let project = menu
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.label == "Project")
+                                            .map(|f| f.value.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or_else(|| {
+                                                if !menu.entity_project.is_empty() {
+                                                    menu.entity_project.clone()
+                                                } else {
+                                                    app.scope.as_str().to_string()
+                                                }
+                                            });
+                                        if app.scope.is_group() && !project.contains('/') {
+                                            app.show_error(
+                                                "Please specify a project path (e.g. owner/project) in group view".to_string(),
+                                            );
+                                            app.edit_menu = Some(menu);
+                                            continue;
+                                        }
                                         let branch_name = menu
                                             .fields
                                             .iter()
@@ -5525,7 +5614,6 @@ async fn main() -> Result<()> {
 
                                         app.edit_menu = None;
                                         let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5600,7 +5688,11 @@ async fn main() -> Result<()> {
                                                 continue;
                                             }
                                             let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.scope.as_str().to_string();
+                                            let project = if !menu.entity_project.is_empty() {
+                                                menu.entity_project.clone()
+                                            } else {
+                                                app.scope.as_str().to_string()
+                                            };
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             let _ = tx.send(Event::CommandStarted(format!(
@@ -6315,13 +6407,10 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                // Title / Branch Name / Description: Enter toggles inline edit mode
-                                if field_name == "Title"
-                                    || field_name == "Name"
-                                    || field_name == "Release Name"
-                                    || field_name == "Branch Name"
-                                    || field_name == "Description"
-                                    || field_name == "Release Notes"
+                                // Text fields (Title, Project, Branch Name, Description, Weight, etc.): Enter toggles inline edit mode
+                                if menu.selected_idx < menu.fields.len()
+                                    && menu.fields[menu.selected_idx].kind
+                                        == crate::app::FieldType::Text
                                 {
                                     if menu.editing {
                                         menu.editing = false;

@@ -586,10 +586,9 @@ pub(crate) fn render_fuzzy_cell(
 ) -> Cell<'static> {
     let mut styled_base = base_style;
     if is_selected {
-        styled_base = styled_base.add_modifier(Modifier::BOLD);
-        if styled_base.bg.is_none() {
-            styled_base = styled_base.bg(THEME.read().unwrap().highlight_bg);
-        }
+        styled_base = styled_base
+            .bg(THEME.read().unwrap().highlight_bg)
+            .add_modifier(Modifier::BOLD);
     }
     let line = if query.trim().is_empty() {
         Line::from(text.to_string()).alignment(alignment)
@@ -1054,12 +1053,18 @@ mod tests {
     }
 
     #[test]
-    fn test_render_fuzzy_cell_preserves_badge_bg_when_selected() {
+    fn test_render_fuzzy_cell_applies_highlight_bg_when_selected() {
         let badge_bg = Color::Rgb(10, 50, 10);
         let base = Style::default().fg(Color::Green).bg(badge_bg);
         let cell = render_fuzzy_cell("OPEN", "", true, false, base, Alignment::Center);
         let cell_str = format!("{:?}", cell);
-        assert!(cell_str.contains("10, 50, 10"));
+        let highlight_bg = THEME.read().unwrap().highlight_bg;
+        match highlight_bg {
+            Color::Rgb(r, g, b) => {
+                assert!(cell_str.contains(&format!("{r}, {g}, {b}")));
+            }
+            _ => {}
+        }
     }
 
     #[test]

@@ -90,7 +90,11 @@ pub(crate) fn render_tab_issues(
                     format!("{} OPEN", icons.state_open),
                     Style::default()
                         .fg(theme.green)
-                        .bg(theme.green_bg)
+                        .bg(if is_selected {
+                            theme.highlight_bg
+                        } else {
+                            theme.green_bg
+                        })
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
@@ -98,7 +102,11 @@ pub(crate) fn render_tab_issues(
                     format!("{} CLOSED", icons.state_closed),
                     Style::default()
                         .fg(theme.red)
-                        .bg(theme.red_bg)
+                        .bg(if is_selected {
+                            theme.highlight_bg
+                        } else {
+                            theme.red_bg
+                        })
                         .add_modifier(Modifier::BOLD),
                 )
             };
@@ -390,7 +398,11 @@ pub(crate) fn render_tab_merge_requests(
                     format!("{} OPEN", icons.state_open),
                     Style::default()
                         .fg(theme.green)
-                        .bg(theme.green_bg)
+                        .bg(if is_selected {
+                            theme.highlight_bg
+                        } else {
+                            theme.green_bg
+                        })
                         .add_modifier(Modifier::BOLD),
                 )
             } else if m.state == "merged" {
@@ -398,7 +410,11 @@ pub(crate) fn render_tab_merge_requests(
                     format!("{} MERGED", icons.state_merged),
                     Style::default()
                         .fg(theme.purple)
-                        .bg(theme.purple_bg)
+                        .bg(if is_selected {
+                            theme.highlight_bg
+                        } else {
+                            theme.purple_bg
+                        })
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
@@ -406,7 +422,11 @@ pub(crate) fn render_tab_merge_requests(
                     format!("{} CLOSED", icons.state_closed),
                     Style::default()
                         .fg(theme.red)
-                        .bg(theme.red_bg)
+                        .bg(if is_selected {
+                            theme.highlight_bg
+                        } else {
+                            theme.red_bg
+                        })
                         .add_modifier(Modifier::BOLD),
                 )
             };
@@ -416,7 +436,11 @@ pub(crate) fn render_tab_merge_requests(
                     format!("{} DRAFT", icons.status_draft),
                     Style::default()
                         .fg(theme.yellow)
-                        .bg(theme.yellow_bg)
+                        .bg(if is_selected {
+                            theme.highlight_bg
+                        } else {
+                            theme.yellow_bg
+                        })
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
@@ -426,7 +450,11 @@ pub(crate) fn render_tab_merge_requests(
                         format!("{} DRAFT", icons.status_draft),
                         Style::default()
                             .fg(theme.yellow)
-                            .bg(theme.yellow_bg)
+                            .bg(if is_selected {
+                                theme.highlight_bg
+                            } else {
+                                theme.yellow_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
@@ -434,7 +462,11 @@ pub(crate) fn render_tab_merge_requests(
                         format!("{} READY", icons.approval_approved),
                         Style::default()
                             .fg(theme.green)
-                            .bg(theme.green_bg)
+                            .bg(if is_selected {
+                                theme.highlight_bg
+                            } else {
+                                theme.green_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                     )
                 }
@@ -494,19 +526,35 @@ pub(crate) fn render_tab_merge_requests(
                     match tone {
                         crate::domain::mr_state::MergeTone::Conflict => Style::default()
                             .fg(t.red)
-                            .bg(t.red_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.red_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         crate::domain::mr_state::MergeTone::Rebase => Style::default()
                             .fg(t.yellow)
-                            .bg(t.yellow_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.yellow_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         crate::domain::mr_state::MergeTone::Clean => Style::default()
                             .fg(t.green)
-                            .bg(t.green_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.green_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         crate::domain::mr_state::MergeTone::Computing => Style::default()
                             .fg(t.blue)
-                            .bg(t.blue_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.blue_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         _ => Style::default().fg(t.text_muted),
                     }
@@ -528,19 +576,35 @@ pub(crate) fn render_tab_merge_requests(
                     match tone {
                         crate::domain::mr_state::ApprovalTone::ChangesRequested => Style::default()
                             .fg(t.red)
-                            .bg(t.red_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.red_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         crate::domain::mr_state::ApprovalTone::AwaitingYou => Style::default()
                             .fg(t.yellow)
-                            .bg(t.yellow_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.yellow_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         crate::domain::mr_state::ApprovalTone::Approved => Style::default()
                             .fg(t.green)
-                            .bg(t.green_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.green_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         crate::domain::mr_state::ApprovalTone::Pending => Style::default()
                             .fg(t.yellow)
-                            .bg(t.yellow_bg)
+                            .bg(if is_selected {
+                                t.highlight_bg
+                            } else {
+                                t.yellow_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                         _ => Style::default().fg(t.text_muted),
                     }
@@ -624,7 +688,10 @@ pub(crate) fn render_tab_merge_requests(
                 };
                 let mut wf_style = Style::default().fg(color);
                 if let Some(bg) = bg_color {
-                    wf_style = wf_style.bg(bg).add_modifier(Modifier::BOLD);
+                    let t = &theme;
+                    wf_style = wf_style
+                        .bg(if is_selected { t.highlight_bg } else { bg })
+                        .add_modifier(Modifier::BOLD);
                 }
                 cells.push(super::helpers::render_fuzzy_cell(
                     &text,
@@ -705,7 +772,11 @@ pub(crate) fn render_tab_merge_requests(
                                 theme.inactive_bg,
                             ),
                         };
-                        let bg = pipe_bg;
+                        let bg = if is_selected {
+                            theme.highlight_bg
+                        } else {
+                            pipe_bg
+                        };
                         cells.push(super::helpers::render_fuzzy_cell(
                             &pipe_text,
                             &app.search_query,
@@ -1036,7 +1107,11 @@ pub(crate) fn render_tab_pipelines(
                 icons.label_loading.clone()
             };
             let is_checked = app.selected_pipelines.contains(&p.id());
-            let status_bg = bg_color;
+            let status_bg = if is_row_highlighted {
+                theme.highlight_bg
+            } else {
+                bg_color
+            };
             let mut row_cells = Vec::new();
             if app.scope.is_group() && app.is_column_visible(Tab::Pipelines, "Project") {
                 row_cells.push(super::helpers::render_fuzzy_cell(
@@ -1386,7 +1461,11 @@ pub(crate) fn render_tab_jobs(
 
             let is_job_selected = Some(i) == app.jobs.state.selected();
             let is_checked = app.selected_jobs.contains(&j.id());
-            let status_bg = status_bg_display;
+            let status_bg = if is_job_selected {
+                theme.highlight_bg
+            } else {
+                status_bg_display
+            };
 
             let matrix_str = matrix_display;
             let status_text = status_text_display;
@@ -1897,7 +1976,11 @@ pub(crate) fn render_tab_runners(
                     false,
                     Style::default()
                         .fg(status_color)
-                        .bg(bg_color)
+                        .bg(if is_row_highlighted {
+                            theme.highlight_bg
+                        } else {
+                            bg_color
+                        })
                         .add_modifier(Modifier::BOLD),
                     Alignment::Center,
                 ));
@@ -2567,7 +2650,11 @@ pub(crate) fn render_tab_milestones(
                                         "ACTIVE",
                                         Style::default()
                                             .fg(theme.green)
-                                            .bg(theme.green_bg)
+                                            .bg(if is_selected {
+                                                theme.highlight_bg
+                                            } else {
+                                                theme.green_bg
+                                            })
                                             .add_modifier(Modifier::BOLD),
                                     )
                                 } else {
@@ -2575,7 +2662,11 @@ pub(crate) fn render_tab_milestones(
                                         "CLOSED",
                                         Style::default()
                                             .fg(theme.red)
-                                            .bg(theme.red_bg)
+                                            .bg(if is_selected {
+                                                theme.highlight_bg
+                                            } else {
+                                                theme.red_bg
+                                            })
                                             .add_modifier(Modifier::BOLD),
                                     )
                                 };
@@ -2814,7 +2905,11 @@ pub(crate) fn render_tab_branches(
                         format!(" {} YES ", icons.radio_on),
                         Style::default()
                             .fg(theme.green)
-                            .bg(theme.green_bg)
+                            .bg(if is_selected {
+                                theme.highlight_bg
+                            } else {
+                                theme.green_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                     ))
                 } else {
@@ -2828,7 +2923,11 @@ pub(crate) fn render_tab_branches(
                         format!(" \u{f023} YES "),
                         Style::default()
                             .fg(theme.yellow)
-                            .bg(theme.yellow_bg)
+                            .bg(if is_selected {
+                                theme.highlight_bg
+                            } else {
+                                theme.yellow_bg
+                            })
                             .add_modifier(Modifier::BOLD),
                     ))
                 } else {

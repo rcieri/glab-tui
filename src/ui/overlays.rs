@@ -1271,11 +1271,6 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(app.config.keybindings.global.save_view.clone()),
-            action: "Save view layout to config",
-        },
-        Shortcut {
-            category: "Global & Nav",
             key: d(app.config.keybindings.global.quit.clone()),
             action: "Quit program",
         },
@@ -1943,11 +1938,6 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Column Config",
-            key: d(app.config.keybindings.global.save_view.clone()),
-            action: "Save layout to config",
-        },
-        Shortcut {
-            category: "Column Config",
             key: s("Esc"),
             action: "Close columns config popup",
         },
@@ -2303,9 +2293,6 @@ mod tests {
         app.show_help = true;
         app.active_tab = Tab::Issues;
 
-        // Default has save_view as empty string
-        assert_eq!(app.config.keybindings.global.save_view, "");
-
         terminal
             .draw(|f| {
                 render_help(f, &mut app, f.area());
@@ -2315,21 +2302,21 @@ mod tests {
         let text = buffer_text(&terminal);
         assert!(
             !text.contains("Save view layout to config"),
-            "empty save_view binding should not be listed in help: {text:?}",
+            "save_view should not be listed in help: {text:?}",
         );
 
-        // When save_view is set, it should appear in help
-        app.config.keybindings.global.save_view = "s".to_string();
+        // If a keybinding is set to empty string, it is filtered out from help
+        app.config.keybindings.issues.create_issue = "".to_string();
         terminal
             .draw(|f| {
                 render_help(f, &mut app, f.area());
             })
             .unwrap();
 
-        let text_with_save = buffer_text(&terminal);
+        let text_empty = buffer_text(&terminal);
         assert!(
-            text_with_save.contains("Save view layout to config"),
-            "set save_view binding should be listed in help: {text_with_save:?}",
+            !text_empty.contains("Create new issue"),
+            "empty keybinding shortcut should be filtered from help: {text_empty:?}",
         );
     }
 }

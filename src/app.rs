@@ -3044,6 +3044,7 @@ pub struct App {
     /// item into the selection set (yazi-style "select mode"). `Space` still
     /// toggles the current item individually regardless of this flag.
     pub select_mode: bool,
+    pub select_anchor: Option<usize>,
     pub details_zoomed: bool,
     /// Captured when the edit menu opens so Esc can restore the previous
     /// zoom state (e.g. back to the zoomed PREVIEW if the user entered
@@ -3167,6 +3168,7 @@ impl Default for App {
             selected_issues: std::collections::HashSet::new(),
             selected_mrs: std::collections::HashSet::new(),
             select_mode: false,
+            select_anchor: None,
             details_zoomed: false,
             prev_details_zoomed: false,
             detail_visible: false,
@@ -3356,6 +3358,7 @@ impl App {
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.select_mode = false;
+        self.select_anchor = None;
         self.loaded_tabs.clear();
         self.loading_tabs.clear();
         self.refreshed_tabs.clear();
@@ -3512,21 +3515,13 @@ impl App {
     /// Honours the active search query and column filters so a `Ctrl+A` after
     /// typing a search term selects only the matching rows.
     pub fn select_all_filtered(&mut self) -> usize {
-        let keys: Vec<(String, u64)> = match self.active_tab {
-            Tab::Issues => self
-                .filtered_issues()
-                .into_iter()
-                .map(|i| (i.project_path.clone(), i.iid))
-                .collect(),
-            Tab::MergeRequests => self
-                .filtered_mrs()
-                .into_iter()
-                .map(|m| (m.project_path.clone(), m.iid))
-                .collect(),
-            _ => return 0,
-        };
         match self.active_tab {
             Tab::Issues => {
+                let keys: Vec<(String, u64)> = self
+                    .filtered_issues()
+                    .into_iter()
+                    .map(|i| (i.project_path.clone(), i.iid))
+                    .collect();
                 let before = self.selected_issues.len();
                 for key in keys {
                     self.selected_issues.insert(key);
@@ -3534,11 +3529,36 @@ impl App {
                 self.selected_issues.len().saturating_sub(before)
             }
             Tab::MergeRequests => {
+                let keys: Vec<(String, u64)> = self
+                    .filtered_mrs()
+                    .into_iter()
+                    .map(|m| (m.project_path.clone(), m.iid))
+                    .collect();
                 let before = self.selected_mrs.len();
                 for key in keys {
                     self.selected_mrs.insert(key);
                 }
                 self.selected_mrs.len().saturating_sub(before)
+            }
+            Tab::Pipelines => {
+                let keys: Vec<u64> = self
+                    .filtered_pipelines()
+                    .into_iter()
+                    .map(|p| p.id())
+                    .collect();
+                let before = self.selected_pipelines.len();
+                for key in keys {
+                    self.selected_pipelines.insert(key);
+                }
+                self.selected_pipelines.len().saturating_sub(before)
+            }
+            Tab::Jobs => {
+                let keys: Vec<u64> = self.filtered_jobs().into_iter().map(|j| j.id()).collect();
+                let before = self.selected_jobs.len();
+                for key in keys {
+                    self.selected_jobs.insert(key);
+                }
+                self.selected_jobs.len().saturating_sub(before)
             }
             _ => 0,
         }
@@ -3557,7 +3577,99 @@ impl App {
         self.selected_pipelines.clear();
         self.selected_jobs.clear();
         self.select_mode = false;
+        self.select_anchor = None;
         cleared
+    }
+
+    /// Toggle visual select mode on or off. When enabled, anchors the start
+    /// index at the current cursor position and initializes the selection.
+    pub fn toggle_select_mode(&mut self) {
+        self.select_mode = !self.select_mode;
+        if self.select_mode {
+            let curr = match self.active_tab {
+                Tab::Issues => self.issues.state.selected(),
+                Tab::MergeRequests => self.mrs.state.selected(),
+                Tab::Pipelines => self.pipelines.state.selected(),
+                Tab::Jobs => self.jobs.state.selected(),
+                _ => None,
+            };
+            self.select_anchor = curr;
+            self.update_visual_selection();
+        } else {
+            self.select_anchor = None;
+        }
+    }
+
+    /// Update the contiguous selection range between the anchor and the
+    /// current cursor position. Scrolling down expands the selection;
+    /// scrolling back shrinks it so only items between anchor and cursor
+    /// remain selected.
+    pub fn update_visual_selection(&mut self) {
+        if !self.select_mode {
+            return;
+        }
+        let Some(anchor) = self.select_anchor else {
+            return;
+        };
+        match self.active_tab {
+            Tab::Issues => {
+                if let Some(curr) = self.issues.state.selected() {
+                    let filtered = self.filtered_issues();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_issues = filtered[start..=end]
+                                .iter()
+                                .map(|i| (i.project_path.clone(), i.iid))
+                                .collect();
+                        }
+                    }
+                }
+            }
+            Tab::MergeRequests => {
+                if let Some(curr) = self.mrs.state.selected() {
+                    let filtered = self.filtered_mrs();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_mrs = filtered[start..=end]
+                                .iter()
+                                .map(|m| (m.project_path.clone(), m.iid))
+                                .collect();
+                        }
+                    }
+                }
+            }
+            Tab::Pipelines => {
+                if let Some(curr) = self.pipelines.state.selected() {
+                    let filtered = self.filtered_pipelines();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_pipelines =
+                                filtered[start..=end].iter().map(|p| p.id()).collect();
+                        }
+                    }
+                }
+            }
+            Tab::Jobs => {
+                if let Some(curr) = self.jobs.state.selected() {
+                    let filtered = self.filtered_jobs();
+                    if !filtered.is_empty() {
+                        let start = anchor.min(curr);
+                        let end = anchor.max(curr).min(filtered.len().saturating_sub(1));
+                        if start <= end {
+                            self.selected_jobs =
+                                filtered[start..=end].iter().map(|j| j.id()).collect();
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
     pub fn selected_issue_reference(&self) -> Option<String> {
         let index = self.issues.state.selected()?;
@@ -3998,6 +4110,7 @@ impl App {
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.select_mode = false;
+        self.select_anchor = None;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -4020,6 +4133,7 @@ impl App {
         self.selected_issues.clear();
         self.selected_mrs.clear();
         self.select_mode = false;
+        self.select_anchor = None;
         self.details_zoomed = false;
         self.detail_visible = false;
         self.update_filter_selection();
@@ -6872,9 +6986,52 @@ mod tests {
         assert_eq!(app.selected_mrs.len(), 1);
     }
     #[test]
-    fn select_all_filtered_is_a_noop_outside_issues_and_mrs() {
+    fn select_all_filtered_works_on_pipelines_tab() {
         let mut app = App::default();
+        let pipe: crate::domain::pipelines::Pipeline = serde_json::from_str(
+            r#"{
+                "id": 42,
+                "status": "success",
+                "ref": "main",
+                "updated_at": "2026-08-01T00:00:00Z"
+            }"#,
+        )
+        .unwrap();
+        app.pipelines.items = vec![pipe];
         app.active_tab = Tab::Pipelines;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_pipelines.len(), 1);
+        assert!(app.selected_pipelines.contains(&42));
+    }
+
+    #[test]
+    fn select_all_filtered_works_on_jobs_tab() {
+        let mut app = App::default();
+        let job = crate::domain::pipelines::Job {
+            id: 99,
+            stage: "test".to_string(),
+            name: "unit-tests".to_string(),
+            status: "success".to_string(),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: vec![],
+        };
+        app.jobs.items = vec![job];
+        app.active_tab = Tab::Jobs;
+
+        let added = app.select_all_filtered();
+        assert_eq!(added, 1);
+        assert_eq!(app.selected_jobs.len(), 1);
+        assert!(app.selected_jobs.contains(&99));
+    }
+
+    #[test]
+    fn select_all_filtered_is_a_noop_outside_supported_tabs() {
+        let mut app = App::default();
+        app.active_tab = Tab::Runners;
 
         let added = app.select_all_filtered();
         assert_eq!(added, 0);
@@ -9115,5 +9272,129 @@ index 123456..789012 100644
         let filtered = app.filtered_issues();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    #[test]
+    fn visual_select_mode_range_and_shrink() {
+        let mut app = App::default();
+        app.active_tab = Tab::Issues;
+        app.issues.items = (1..=20)
+            .map(|i| crate::domain::issues::Issue {
+                iid: i,
+                title: format!("Issue {i}"),
+                state: "opened".to_string(),
+                labels: vec![],
+                updated_at: "now".to_string(),
+                created_at: None,
+                closed_at: None,
+                author: crate::domain::issues::Author {
+                    username: "alice".to_string(),
+                },
+                milestone: None,
+                assignees: vec![],
+                description: None,
+                due_date: None,
+                web_url: "".to_string(),
+                project_path: "owner/repo".to_string(),
+                related_mrs: None,
+            })
+            .collect();
+        app.issues.state.select(Some(0));
+
+        // Enter select mode anchored at index 0
+        app.toggle_select_mode();
+        assert!(app.select_mode);
+        assert_eq!(app.select_anchor, Some(0));
+        assert_eq!(app.selected_issues.len(), 1);
+        assert!(app.selected_issues.contains(&("owner/repo".to_string(), 1)));
+
+        // Scroll down 10 lines (to index 10)
+        for _ in 0..10 {
+            app.issues.next(app.filtered_issues().len());
+            app.update_visual_selection();
+        }
+        assert_eq!(app.issues.state.selected(), Some(10));
+        // Items 0..=10 (11 total) are selected
+        assert_eq!(app.selected_issues.len(), 11);
+        for i in 1..=11 {
+            assert!(app.selected_issues.contains(&("owner/repo".to_string(), i)));
+        }
+
+        // Scroll back 3 lines (to index 7)
+        for _ in 0..3 {
+            app.issues.previous(app.filtered_issues().len());
+            app.update_visual_selection();
+        }
+        assert_eq!(app.issues.state.selected(), Some(7));
+        // Only items 0..=7 (8 total) remain selected
+        assert_eq!(app.selected_issues.len(), 8);
+        for i in 1..=8 {
+            assert!(app.selected_issues.contains(&("owner/repo".to_string(), i)));
+        }
+        assert!(!app.selected_issues.contains(&("owner/repo".to_string(), 9)));
+        assert!(
+            !app.selected_issues
+                .contains(&("owner/repo".to_string(), 10))
+        );
+        assert!(
+            !app.selected_issues
+                .contains(&("owner/repo".to_string(), 11))
+        );
+
+        // Exit select mode
+        app.toggle_select_mode();
+        assert!(!app.select_mode);
+        assert_eq!(app.select_anchor, None);
+    }
+
+    #[test]
+    fn visual_select_mode_pipelines_and_jobs() {
+        let mut app = App::default();
+        app.active_tab = Tab::Pipelines;
+        app.pipelines.items = (100..110)
+            .map(|id| crate::domain::pipelines::Pipeline {
+                id,
+                status: "success".to_string(),
+                r#ref: "main".to_string(),
+                updated_at: "now".to_string(),
+                name: "CI".to_string(),
+                display_title: "build".to_string(),
+                event: "push".to_string(),
+                head_sha: "123".to_string(),
+                actor_login: "user".to_string(),
+                duration_seconds: None,
+                created_at: None,
+                source: None,
+                project_path: "owner/repo".to_string(),
+                web_url: None,
+            })
+            .collect();
+        app.pipelines.state.select(Some(2));
+
+        // Start visual select mode on Pipelines tab at index 2
+        app.toggle_select_mode();
+        assert!(app.select_mode);
+        assert_eq!(app.select_anchor, Some(2));
+        assert_eq!(app.selected_pipelines.len(), 1);
+        assert!(app.selected_pipelines.contains(&102));
+
+        // Scroll down 3 lines to index 5
+        for _ in 0..3 {
+            app.pipelines.next(app.filtered_pipelines().len());
+            app.update_visual_selection();
+        }
+        assert_eq!(app.pipelines.state.selected(), Some(5));
+        assert_eq!(app.selected_pipelines.len(), 4); // indices 2, 3, 4, 5
+        assert!(app.selected_pipelines.contains(&102));
+        assert!(app.selected_pipelines.contains(&103));
+        assert!(app.selected_pipelines.contains(&104));
+        assert!(app.selected_pipelines.contains(&105));
+
+        // Scroll up 1 line to index 4
+        app.pipelines.previous(app.filtered_pipelines().len());
+        app.update_visual_selection();
+        assert_eq!(app.pipelines.state.selected(), Some(4));
+        assert_eq!(app.selected_pipelines.len(), 3); // indices 2, 3, 4
+        assert!(!app.selected_pipelines.contains(&105));
     }
 }

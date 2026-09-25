@@ -9,10 +9,20 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
-/// Cap `app.detail_scroll` to `max` so a held-down scroll key can't push the
-/// preview content past its last line.
-fn clamp_detail_scroll(app: &mut App, max: u16) {
-    app.detail_scroll = app.detail_scroll.min(max);
+/// Resolve `app.detail_scroll` against the pane's `max`, which only the
+/// render pass knows: honour a pending jump to the bottom, otherwise cap the
+/// scroll so a held-down scroll key can't push the preview content past its
+/// last line.
+///
+/// The jump flag is consumed here, in the frame that reads it — left standing
+/// it would send the next pane the user opens to its bottom as well.
+fn settle_detail_scroll(app: &mut App, max: u16) {
+    if app.detail_scroll_to_bottom {
+        app.detail_scroll = max;
+        app.detail_scroll_to_bottom = false;
+    } else {
+        app.detail_scroll = app.detail_scroll.min(max);
+    }
 }
 
 /// Return a responsive column width: uses `base` normally but shrinks on narrow terminals.
@@ -317,7 +327,7 @@ pub(crate) fn render_tab_issues(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -982,7 +992,7 @@ pub(crate) fn render_tab_merge_requests(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -1343,7 +1353,7 @@ pub(crate) fn render_tab_pipelines(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -1674,12 +1684,7 @@ pub(crate) fn render_tab_jobs(
 
             let max_scroll = total_lines.saturating_sub(height) as u16;
 
-            if app.job_trace_needs_scroll_to_bottom {
-                app.detail_scroll = max_scroll;
-                app.job_trace_needs_scroll_to_bottom = false;
-            } else {
-                app.detail_scroll = app.detail_scroll.min(max_scroll);
-            }
+            settle_detail_scroll(app, max_scroll);
 
             let title_suffix = if total_lines > height {
                 let percent = (app.detail_scroll as usize * 100) / max_scroll.max(1) as usize;
@@ -1827,7 +1832,7 @@ pub(crate) fn render_tab_jobs(
             let total_lines = super::helpers::rendered_line_count(&text, 0, false);
             let max_detail_scroll =
                 u16::try_from(total_lines.saturating_sub(summary_height)).unwrap_or(u16::MAX);
-            clamp_detail_scroll(app, max_detail_scroll);
+            settle_detail_scroll(app, max_detail_scroll);
             f.render_widget(
                 Paragraph::new(text)
                     .block(preview_block)
@@ -2061,7 +2066,7 @@ pub(crate) fn render_tab_runners(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -2289,7 +2294,7 @@ pub(crate) fn render_tab_releases(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -2527,7 +2532,7 @@ pub(crate) fn render_tab_todos(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -2806,7 +2811,7 @@ pub(crate) fn render_tab_milestones(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -3004,7 +3009,7 @@ pub(crate) fn render_tab_branches(
                     },
                     &app.label_colors,
                 );
-                clamp_detail_scroll(app, max_detail_scroll);
+                settle_detail_scroll(app, max_detail_scroll);
             } else {
                 f.render_widget(Paragraph::new("").block(preview_block), detail_rect);
             }
@@ -3184,7 +3189,7 @@ pub(crate) fn render_tab_environments(
                         },
                         &app.label_colors,
                     );
-                    clamp_detail_scroll(app, max_detail_scroll);
+                    settle_detail_scroll(app, max_detail_scroll);
                 }
             } else {
                 f.render_widget(
@@ -3427,23 +3432,38 @@ mod tests {
     }
 
     #[test]
-    fn clamp_detail_scroll_caps_scroll_to_max() {
+    fn settle_detail_scroll_caps_scroll_to_max() {
         let mut app = App::default();
         app.detail_scroll = 50;
 
-        clamp_detail_scroll(&mut app, 10);
+        settle_detail_scroll(&mut app, 10);
 
         assert_eq!(app.detail_scroll, 10);
     }
 
     #[test]
-    fn clamp_detail_scroll_leaves_scroll_below_max_unchanged() {
+    fn settle_detail_scroll_leaves_scroll_below_max_unchanged() {
         let mut app = App::default();
         app.detail_scroll = 3;
 
-        clamp_detail_scroll(&mut app, 10);
+        settle_detail_scroll(&mut app, 10);
 
         assert_eq!(app.detail_scroll, 3);
+    }
+
+    /// When the handler raises `detail_scroll_to_bottom`, the render pass
+    /// snaps the scroll to `max` and clears the flag — leaving it standing
+    /// would jump the next pane the user opens to its bottom as well.
+    #[test]
+    fn settle_detail_scroll_honours_the_jump_to_bottom_flag() {
+        let mut app = App::default();
+        app.detail_scroll = 5;
+        app.detail_scroll_to_bottom = true;
+
+        settle_detail_scroll(&mut app, 42);
+
+        assert_eq!(app.detail_scroll, 42);
+        assert!(!app.detail_scroll_to_bottom);
     }
 
     /// Regression test for the slice::repeat capacity overflow: when

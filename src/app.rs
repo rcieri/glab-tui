@@ -3055,7 +3055,10 @@ pub struct App {
     /// edit via double-Enter, back to NORMAL if they entered via `e`).
     pub prev_details_zoomed: bool,
     pub detail_visible: bool,
-    pub job_trace_needs_scroll_to_bottom: bool,
+    /// Set by the handler when a keypress should jump the detail pane to
+    /// its last rendered line. Only the render pass knows the pane's actual
+    /// `max`, so it resolves the flag in the same frame and clears it.
+    pub detail_scroll_to_bottom: bool,
     pub job_trace_loading: bool,
     pub job_trace_wrap: bool,
     pub job_trace_search_query: String,
@@ -3176,7 +3179,7 @@ impl Default for App {
             details_zoomed: false,
             prev_details_zoomed: false,
             detail_visible: false,
-            job_trace_needs_scroll_to_bottom: false,
+            detail_scroll_to_bottom: false,
             job_trace_loading: false,
             job_trace_wrap: false,
             job_trace_search_query: String::new(),

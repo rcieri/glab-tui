@@ -1539,7 +1539,7 @@ pub async fn handle_active_tab_key(
                         {
                             app.job_trace_follow = !app.job_trace_follow;
                             if app.job_trace_follow {
-                                app.job_trace_needs_scroll_to_bottom = true;
+                                app.detail_scroll_to_bottom = true;
                             }
                         }
                         _ if keybinding_matches(
@@ -2182,6 +2182,13 @@ pub async fn handle_active_tab_key(
                 let page = (rect.height as usize).saturating_sub(2).max(1);
                 app.detail_scroll = app.detail_scroll.saturating_sub(page as u16);
             }
+        } else if app.detail_visible
+            && keybinding_matches(&app.config.keybindings.global.scroll_to_end, &key_event)
+        {
+            // Only the flag — the last line's index is the render pass's
+            // `max`, which no handler knows. `settle_detail_scroll` resolves
+            // it in the same frame.
+            app.detail_scroll_to_bottom = true;
         }
 
         match key_event.code {
@@ -2728,7 +2735,10 @@ pub async fn handle_active_tab_key(
             }
             KeyCode::End => {
                 if app.details_zoomed {
-                    app.detail_scroll = u16::MAX;
+                    // Only the flag — the last line's index is the render
+                    // pass's `max`, which no handler knows.
+                    // `settle_detail_scroll` resolves it in the same frame.
+                    app.detail_scroll_to_bottom = true;
                 } else {
                     app.detail_scroll = 0;
                     match app.active_tab {
@@ -3153,5 +3163,64 @@ mod tests {
             !app.is_typing_search,
             "Ctrl+f must not flip is_typing_search"
         );
+    }
+
+    /// The handler must not write `detail_scroll` itself: the last line's
+    /// index is the render pass's `max`, which no handler knows. It raises
+    /// the flag and `settle_detail_scroll` resolves it in the same frame.
+    ///
+    /// The hardcoded `End` arm runs in the same dispatch and resets
+    /// `detail_scroll` to `0` (the existing #492 behaviour that jumps the
+    /// table to its last row), so the post-dispatch value is `0` here. The
+    /// render pass, not the test, is what consumes the flag and snaps the
+    /// scroll to the pane's actual last line — that path is covered by the
+    /// `render_tab_*_clamps_*` tests in `ui::tabs`.
+    #[tokio::test]
+    async fn scroll_to_end_raises_the_jump_flag() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_to_end = "End".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+
+        assert!(app.detail_scroll_to_bottom);
+    }
+
+    /// `scroll_to_end` is a detail-pane action; without a visible pane it
+    /// has nothing to scroll.
+    #[tokio::test]
+    async fn scroll_to_end_is_ignored_while_the_detail_pane_is_hidden() {
+        let mut app = App::default();
+        app.detail_visible = false;
+        app.config.keybindings.global.scroll_to_end = "End".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+
+        assert!(!app.detail_scroll_to_bottom);
+    }
+
+    /// Remap `scroll_to_end` to a different key and confirm the new key fires
+    /// while the old default does not. `Issues` already binds `G` to
+    /// `drill_into_scope`, so the test moves the local key aside too —
+    /// without that, the per-tab arm claims `G` before the global fallback
+    /// runs.
+    #[tokio::test]
+    async fn scroll_to_end_remap_to_a_custom_key_works() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app.config.keybindings.global.scroll_to_end = "G".to_string();
+        app.config.keybindings.issues.drill_into_scope = "P".to_string();
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT),
+        )
+        .await;
+
+        assert!(app.detail_scroll_to_bottom);
+        assert_eq!(app.detail_scroll, 5);
     }
 }

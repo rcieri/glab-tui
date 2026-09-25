@@ -422,6 +422,9 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `k` / `↑` | Move selection up | — |
 | `J` | Scroll description panel down | `scroll_down` |
 | `K` | Scroll description panel up | `scroll_up` |
+| `Home` | Jump to the top of the description panel | `scroll_top` |
+| `End` | Jump to the last line of the description panel | `scroll_to_end` |
+| `PageDown` / `PageUp` | Scroll description panel by one page | `scroll_page_down` / `scroll_page_up` |
 | `f` / `/` | Open search / filter bar | `search` |
 | `Enter` / `Esc` (in search) | Close search bar | — |
 | `?` / `F1` | Show help | `help` |

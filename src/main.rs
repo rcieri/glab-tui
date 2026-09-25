@@ -1146,7 +1146,7 @@ async fn main() -> Result<()> {
                         match result {
                             Ok(trace) => {
                                 app.job_trace = Some(trace);
-                                app.job_trace_needs_scroll_to_bottom = app.job_trace_follow;
+                                app.detail_scroll_to_bottom = app.job_trace_follow;
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;

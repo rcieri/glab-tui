@@ -205,6 +205,20 @@ pub async fn list_pipeline_jobs(
         .await
 }
 
+/// Fetch the downstream pipelines spawned by a parent pipeline's
+/// `trigger:` jobs. GitLab serves these through `/pipelines/:id/bridges`;
+/// backends without a bridge concept report an empty Vec.
+pub async fn list_downstream_pipelines(
+    client: &GitlabClient,
+    project_path: &str,
+    pipeline_id: u64,
+) -> Result<Vec<Pipeline>> {
+    client
+        .backend
+        .list_downstream_pipelines(project_path, pipeline_id, client.page_size)
+        .await
+}
+
 pub async fn get_job_trace(
     client: &GitlabClient,
     project_path: &str,

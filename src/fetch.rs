@@ -261,6 +261,42 @@ pub fn dispatch_pending_related_mrs_fetch(
     true
 }
 
+/// Fetch the downstream pipelines spawned by a parent's trigger jobs.
+///
+/// Sends `Event::PipelineDownstreamsFetched` with the parent id and the
+/// list of children on success, or `Event::FetchFailed` on error.
+pub fn spawn_fetch_pipeline_downstreams(
+    client: &domain::client::GitlabClient,
+    project: String,
+    parent_pipeline_id: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    tokio::spawn(async move {
+        match crate::domain::pipelines::list_downstream_pipelines(
+            &client,
+            &project,
+            parent_pipeline_id,
+        )
+        .await
+        {
+            Ok(children) => {
+                let _ = tx.send(Event::PipelineDownstreamsFetched(
+                    parent_pipeline_id,
+                    children,
+                ));
+            }
+            Err(e) => {
+                let _ = tx.send(Event::FetchFailed(
+                    crate::app::Tab::Pipelines,
+                    format!("Failed to fetch downstream pipelines for #{parent_pipeline_id}: {e}"),
+                ));
+            }
+        }
+    });
+}
+
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,

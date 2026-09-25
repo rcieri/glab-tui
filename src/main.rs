@@ -1252,6 +1252,30 @@ async fn main() -> Result<()> {
                     app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
+                Event::PipelineDownstreamsFetched(parent_id, children) => {
+                    // Append any child pipelines we don't already know about.
+                    // Children carry `downstream_of = Some(parent_id)` so the
+                    // UI can render the `↳` badge and walk back up. Dups can
+                    // arrive when the user re-Enters a parent whose children
+                    // are still in the list.
+                    let known: std::collections::HashSet<u64> =
+                        app.pipelines.items.iter().map(|p| p.id()).collect();
+                    for child in children {
+                        if !known.contains(&child.id()) {
+                            app.pipelines.items.push(child);
+                        }
+                    }
+                    // The user is typically on Tab::Jobs by the time Enter's
+                    // bridge fetch answers (Enter switched to Jobs before
+                    // the async fetch landed). Reflow the Pipelines
+                    // selection regardless of the active tab so the
+                    // children pass any active column filter when the user
+                    // later switches back. The active tab is preserved.
+                    let active = app.active_tab;
+                    app.active_tab = crate::app::Tab::Pipelines;
+                    app.update_filter_selection();
+                    app.active_tab = active;
+                }
                 Event::TodosFetched(notifs) => {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
                     app.loaded_tabs.insert(app::Tab::Todos);

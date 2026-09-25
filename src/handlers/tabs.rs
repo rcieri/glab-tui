@@ -2325,8 +2325,8 @@ pub async fn handle_active_tab_key(
                         let pipe_info = app
                             .filtered_pipelines()
                             .get(idx)
-                            .map(|p| (p.id(), p.project_path.clone()));
-                        if let Some((pipeline_id, pipe_project)) = pipe_info {
+                            .map(|p| (p.id(), p.project_path.clone(), p.downstream_of));
+                        if let Some((pipeline_id, pipe_project, downstream_of)) = pipe_info {
                             if let Some(client) = &app.gitlab_client {
                                 app.loading_tabs.insert(crate::app::Tab::Jobs);
                                 let project_context = if !pipe_project.is_empty() {
@@ -2334,25 +2334,41 @@ pub async fn handle_active_tab_key(
                                 } else {
                                     app.scope.as_str().to_string()
                                 };
-                                if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
+                                let fetch_jobs = crate::domain::pipelines::list_pipeline_jobs(
                                     client,
                                     &project_context,
                                     pipeline_id,
-                                )
-                                .await
-                                {
-                                    app.pipeline_jobs.insert(pipeline_id, jobs.clone());
-                                    app.jobs.items = jobs;
-                                    app.active_pipeline_id = Some(pipeline_id);
-                                    app.active_pipeline_project = Some(project_context);
-                                    app.jobs.state.select(Some(0));
-                                    app.detail_scroll = 0;
-                                    app.job_trace = None;
-                                    app.active_tab = crate::app::Tab::Jobs;
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                } else {
-                                    app.show_error("Failed to fetch jobs".to_string());
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
+                                );
+                                // Top-level pipelines may also have downstream
+                                // children spawned by `trigger:` jobs; surface
+                                // them so the user can drill into a trigger
+                                // chain that has no jobs of its own. Children
+                                // (downstream_of = Some(_)) skip the lookup
+                                // since their parent is already on screen.
+                                if downstream_of.is_none() {
+                                    crate::fetch::spawn_fetch_pipeline_downstreams(
+                                        client,
+                                        project_context.clone(),
+                                        pipeline_id,
+                                        tx.clone(),
+                                    );
+                                }
+                                match fetch_jobs.await {
+                                    Ok(jobs) => {
+                                        app.pipeline_jobs.insert(pipeline_id, jobs.clone());
+                                        app.jobs.items = jobs;
+                                        app.active_pipeline_id = Some(pipeline_id);
+                                        app.active_pipeline_project = Some(project_context);
+                                        app.jobs.state.select(Some(0));
+                                        app.detail_scroll = 0;
+                                        app.job_trace = None;
+                                        app.active_tab = crate::app::Tab::Jobs;
+                                        app.loading_tabs.remove(&crate::app::Tab::Jobs);
+                                    }
+                                    Err(_) => {
+                                        app.show_error("Failed to fetch jobs".to_string());
+                                        app.loading_tabs.remove(&crate::app::Tab::Jobs);
+                                    }
                                 }
                             }
                         }

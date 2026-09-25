@@ -1134,8 +1134,15 @@ pub(crate) fn render_tab_pipelines(
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "ID") {
+                let id_text = if p.downstream_of.is_some() {
+                    // A child pipeline reached through a parent bridge —
+                    // the `↳` icon marks the row as a descendant.
+                    format!("↳ #{}", p.id())
+                } else {
+                    format!("#{}", p.id())
+                };
                 row_cells.push(super::helpers::render_fuzzy_cell(
-                    &format!("#{}", p.id()),
+                    &id_text,
                     &app.search_query,
                     is_row_highlighted,
                     is_checked,

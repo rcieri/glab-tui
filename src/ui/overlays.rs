@@ -1508,8 +1508,18 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Pipelines",
-            key: s("Space"),
+            key: d(app.config.keybindings.pipelines.select_pipeline.clone()),
             action: "Check / uncheck pipeline for bulk retry",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.selection_toggle.clone()),
+            action: "Toggle select mode (paint selection while navigating)",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.select_all.clone()),
+            action: "Select all filtered pipelines (in select mode)",
         },
         Shortcut {
             category: "Pipelines",
@@ -1556,6 +1566,16 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Jobs",
             key: d(app.config.keybindings.jobs.select_job.clone()),
             action: "Check / uncheck job for bulk retry/cancel",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.selection_toggle.clone()),
+            action: "Toggle select mode (paint selection while navigating)",
+        },
+        Shortcut {
+            category: "Jobs",
+            key: d(app.config.keybindings.jobs.select_all.clone()),
+            action: "Select all filtered jobs (in select mode)",
         },
         Shortcut {
             category: "Jobs",

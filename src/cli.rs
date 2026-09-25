@@ -69,6 +69,7 @@ pub struct Cli {
     pub update: bool,
 
     #[arg(
+        short = 't',
         long = "tab",
         value_name = "TAB",
         help = "Tab to open on launch. Overrides any default_tab in config.toml. \

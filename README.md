@@ -345,7 +345,7 @@ glab-tui --tab pipelines
 |---|---|---|
 | `-r`, `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
 | `-d`, `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
-| `--tab` | `issues\|mrs\|pr\|pipelines\|jobs\|runners\|releases\|todos\|milestones\|branches\|environments\|terminal` | Tab to open on launch (overrides `active_tab` in `config.toml`) |
+| `-t`, `--tab` | `issues\|mrs\|pr\|pipelines\|jobs\|runners\|releases\|todos\|milestones\|branches\|environments\|terminal` | Tab to open on launch (overrides `active_tab` in `config.toml`) |
 | `-u`, `--update` | | Check for and install updates |
 | `-h`, `--help` | | Print usage help details |
 | `-V`, `--version` | | Print version information |

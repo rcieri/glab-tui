@@ -1384,6 +1384,11 @@ impl Config {
 # "rose-pine", "rose-pine-moon", "rose-pine-dawn"
 theme_preset = "default"
 
+# Tab to open on launch. Valid values: issues, mrs, pr, pipelines, runners, releases,
+# todos, milestones, branches, environments, terminal. Case-insensitive.
+# Overridden by the --tab CLI flag.
+# active_tab = "mrs"
+
 # Default request page size
 page_size = 100
 

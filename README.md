@@ -264,6 +264,11 @@ The generated file is fully annotated. Key sections:
 # Pick a built-in theme preset
 theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin-mocha | dracula | oled | github-dark-hc | rose-pine | rose-pine-moon | rose-pine-dawn | clean | ...
 
+# Tab to open on launch. Valid: issues, mrs, pr, pipelines, runners, releases,
+# todos, milestones, branches, environments, terminal. Case-insensitive.
+# Overridden by the --tab CLI flag.
+# active_tab = "mrs"
+
 # Items per API request (1-100) — lower this if your GitLab instance truncates
 # large JSON response bodies. GitLab-only; GitHub paginates with --limit.
 # api_per_page = 100
@@ -331,6 +336,7 @@ glab-tui
 # Specifying optional flags:
 glab-tui --repo organization/project-name
 glab-tui --dir /path/to/other/repo
+glab-tui --tab pipelines
 ```
 
 ### Options
@@ -339,6 +345,7 @@ glab-tui --dir /path/to/other/repo
 |---|---|---|
 | `-r`, `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
 | `-d`, `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
+| `-t`, `--tab` | `issues\|mrs\|pr\|pipelines\|jobs\|runners\|releases\|todos\|milestones\|branches\|environments\|terminal` | Tab to open on launch (overrides `active_tab` in `config.toml`) |
 | `-u`, `--update` | | Check for and install updates |
 | `-h`, `--help` | | Print usage help details |
 | `-V`, `--version` | | Print version information |

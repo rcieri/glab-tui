@@ -6304,7 +6304,9 @@ Below is the complete reference of all available `glab` and `gh` subcommands and
 * **Test env isolation:** Unit tests that mutate process-global environment variables (config paths via `GLAB_TUI_CONFIG`/`XDG_CONFIG_HOME`, cache dirs) must acquire `config::TEST_ENV_MUTEX` first — env vars are visible to every test thread, and overlapping mutations caused an intermittent Windows CI failure. Never introduce a second ad-hoc mutex for env mutation; reuse the crate-wide one.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
-* **MSRV:** The Minimum Supported Rust Version is `1.85` (as required by edition 2024). Ensure code is compatible.
+* **MSRV:** The Minimum Supported Rust Version is `1.88`. Edition 2024
+  requires Rust 1.85+, but current transitive dependencies raise the floor
+  to 1.88 (see `.github/workflows/msrv.yml`). Ensure code is compatible.
 
 ## 8. Release Process (Local-First)
 

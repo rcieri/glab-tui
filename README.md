@@ -808,7 +808,25 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
 3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant.
+4. Add or update tests where relevant (run unit tests with `cargo test --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
+
+### Optional: Dev Environment & Tasks (`mise`)
+
+The repository includes a `mise.toml` manifest and `rust-toolchain.toml` for reproducible local environments. If you use [`mise`](https://github.com/jdx/mise):
+
+```sh
+mise install        # installs CLI dependencies and pins toolchain
+mise run check      # runs fmt check, clippy, unit tests, and single-threaded e2e tests (mirrors CI)
+```
+
+Available tasks:
+- `mise run fmt` / `mise run fmt:check` — format code or verify formatting
+- `mise run lint` — run Clippy with `-Dwarnings`
+- `mise run test` — run unit tests
+- `mise run e2e` — run single-threaded e2e mock suite
+- `mise run check` — run the full CI test matrix locally
+- `mise run cov` — generate test coverage report
+
 
 ---
 

@@ -2,6 +2,7 @@
 name = "glab-tui-crate"
 version = "0.9.1"
 edition = "2024"
+rust-version = "1.88"
 description = "A terminal user interface for GitLab and GitHub"
 license = "MIT"
 repository = "https://github.com/rcieri/glab-tui"

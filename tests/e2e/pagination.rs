@@ -64,10 +64,10 @@ fn pages_requested(calls: &[String]) -> Vec<u32> {
             let idx = tokens
                 .iter()
                 .position(|t| *t == "--page")
-                .unwrap_or_else(|| panic!("no --page in: {}", call));
+                .unwrap_or_else(|| panic!("no --page in: {call}"));
             tokens[idx + 1]
                 .parse()
-                .unwrap_or_else(|_| panic!("unparseable --page in: {}", call))
+                .unwrap_or_else(|_| panic!("unparseable --page in: {call}"))
         })
         .collect();
     pages.sort_unstable();
@@ -84,15 +84,15 @@ fn per_page_of(call: &str) -> u32 {
     let idx = tokens
         .iter()
         .position(|t| *t == "--per-page")
-        .unwrap_or_else(|| panic!("no --per-page in: {}", call));
+        .unwrap_or_else(|| panic!("no --per-page in: {call}"));
     tokens[idx + 1]
         .parse()
-        .unwrap_or_else(|_| panic!("unparseable --per-page in: {}", call))
+        .unwrap_or_else(|_| panic!("unparseable --per-page in: {call}"))
 }
 
 fn assert_all_use_per_page(calls: &[String], per_page: u32) {
     for call in calls {
-        assert_eq!(per_page_of(call), per_page, "wrong --per-page in: {}", call);
+        assert_eq!(per_page_of(call), per_page, "wrong --per-page in: {call}");
     }
 }
 
@@ -159,8 +159,7 @@ fn test_pagination_custom_per_endpoint() {
     for call in &label_calls {
         assert!(
             call.contains("--per-page 20"),
-            "label fetch should use api_per_page=20, got: {}",
-            call
+            "label fetch should use api_per_page=20, got: {call}"
         );
     }
 }

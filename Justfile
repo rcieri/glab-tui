@@ -29,7 +29,7 @@ check: fmt-check lint test e2e
 
 # Generate code coverage summary (requires cargo-llvm-cov)
 cov:
-    cargo llvm-cov report --summary-only
+    cargo llvm-cov --all-features --workspace --summary-only
 
 # Generate code coverage lcov report (requires cargo-llvm-cov)
 cov-lcov:
@@ -38,7 +38,3 @@ cov-lcov:
 # Regenerate demo GIFs using VHS (requires vhs, ttyd, ffmpeg)
 demos:
     bash assets/generate-demos.sh
-
-# Check release prerequisites
-release-preflight:
-    bash scripts/release.sh --help

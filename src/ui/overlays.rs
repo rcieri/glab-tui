@@ -605,7 +605,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let page_size_line = if is_page_size_active || app.editing_page_size {
             Line::from(Span::styled(
                 format!(
-                    " {} Page Size   {} ",
+                    " {} Page Size      {} ",
                     icons.label_page_size, page_size_value
                 ),
                 page_size_style,
@@ -613,7 +613,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         } else {
             Line::from(vec![
                 Span::styled(
-                    format!(" {} Page Size ", icons.label_page_size),
+                    format!(" {} Page Size      ", icons.label_page_size),
                     Style::default()
                         .fg(t.header_fg)
                         .add_modifier(Modifier::BOLD),
@@ -667,7 +667,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             ListItem::new(prefetch_line).style(prefetch_style),
         ));
 
-        // Theme — inline row (icon + label in purple, value aligned with Page Size)
+        // Theme — inline row (icon + label in purple, value aligned with Page Size & Prefetch Tabs)
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
         let is_theme_active = active_idx == theme_idx;
         let theme_value = format!("[ {} ]", current_theme_name);
@@ -681,13 +681,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         };
         let theme_line = if is_theme_active {
             Line::from(Span::styled(
-                format!(" {} Theme     {} ", icons.label_theme, theme_value),
+                format!(" {} Theme          {} ", icons.label_theme, theme_value),
                 theme_style,
             ))
         } else {
             Line::from(vec![
                 Span::styled(
-                    format!(" {} Theme     ", icons.label_theme),
+                    format!(" {} Theme          ", icons.label_theme),
                     Style::default().fg(t.purple).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(theme_value, Style::default().fg(t.text_normal)),

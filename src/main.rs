@@ -78,6 +78,33 @@ fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
     pairs
 }
 
+/// Resolve the project a create/edit mutation should target, and validate it
+/// when the app is in group scope (where there is no implicit project).
+fn resolve_target_project(
+    menu: &crate::app::EditMenu,
+    scope: &crate::scope::Scope,
+) -> Result<String, String> {
+    let project = menu
+        .fields
+        .iter()
+        .find(|f| f.label == "Project")
+        .map(|f| f.value.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            if !menu.entity_project.is_empty() {
+                menu.entity_project.clone()
+            } else {
+                scope.as_str().to_string()
+            }
+        });
+    if scope.is_group() {
+        crate::backend::glab::validate_project_path(&project).map_err(|_| {
+            "Please specify a project path (e.g. owner/project) in group view".to_string()
+        })?;
+    }
+    Ok(project)
+}
+
 /// "go to issue/MR by ID": when the target item isn't already loaded, kick off
 /// a direct API lookup. Group scopes can't resolve a bare project item, so
 /// surface a hint instead of silently failing.
@@ -445,6 +472,12 @@ fn handle_edit_menu_mouse(app: &mut App, inner: ratatui::layout::Rect, row: u16,
     let offset = menu.state.offset();
     let item_idx = (row - inner.y) as usize + offset;
     if item_idx >= menu.fields.len() {
+        return;
+    }
+    if matches!(
+        menu.fields[item_idx].kind,
+        crate::app::FieldType::ReadOnly | crate::app::FieldType::Section
+    ) {
         return;
     }
     menu.selected_idx = item_idx;
@@ -1489,6 +1522,32 @@ async fn main() -> Result<()> {
                                 | "create_from" => Some(
                                     app.branches.items.iter().map(|b| b.name.clone()).collect(),
                                 ),
+                                "project" => {
+                                    let mut known = Vec::new();
+                                    for i in &app.issues.items {
+                                        if !i.project_path.is_empty() {
+                                            known.push(i.project_path.clone());
+                                        }
+                                    }
+                                    for m in &app.mrs.items {
+                                        if !m.project_path.is_empty() {
+                                            known.push(m.project_path.clone());
+                                        }
+                                    }
+                                    for p in &app.pipelines.items {
+                                        if !p.project_path.is_empty() {
+                                            known.push(p.project_path.clone());
+                                        }
+                                    }
+                                    for ms in &app.milestones.items {
+                                        if !ms.project_path.is_empty() {
+                                            known.push(ms.project_path.clone());
+                                        }
+                                    }
+                                    known.sort();
+                                    known.dedup();
+                                    if !known.is_empty() { Some(known) } else { None }
+                                }
                                 _ => None,
                             };
                             if let Some(cached) = fallback {
@@ -1523,7 +1582,15 @@ async fn main() -> Result<()> {
                         }
                         crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
-                            selector.all_items = items;
+                            if selector.field_type == "project" {
+                                let mut combined = selector.all_items;
+                                combined.extend(items);
+                                combined.sort();
+                                combined.dedup();
+                                selector.all_items = combined;
+                            } else {
+                                selector.all_items = items;
+                            }
                             selector.is_loading = false;
                             app.selector = Some(selector);
                         }
@@ -1555,6 +1622,98 @@ async fn main() -> Result<()> {
                         app.project_cache.members = members;
                     }
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::ProjectAttributesFetched {
+                    project,
+                    labels,
+                    members,
+                    milestones,
+                    branches,
+                } => {
+                    let mut proj_cache = crate::utils::cache::load_cache(&project);
+                    let mut cache_updated = false;
+
+                    if !labels.is_empty() {
+                        let names: Vec<String> = labels.iter().map(|l| l.name.clone()).collect();
+                        proj_cache.labels = names;
+                        if app.config.fetch_label_colors {
+                            let colors: std::collections::HashMap<String, String> = labels
+                                .iter()
+                                .filter_map(|l| {
+                                    l.color.as_ref().map(|c| (l.name.clone(), c.clone()))
+                                })
+                                .collect();
+                            proj_cache.label_colors = colors;
+                        }
+                        cache_updated = true;
+                    }
+                    if !members.is_empty() {
+                        proj_cache.members = members.clone();
+                        cache_updated = true;
+                    }
+                    if !milestones.is_empty() {
+                        proj_cache.milestones = milestones
+                            .iter()
+                            .map(|title| crate::domain::milestones::Milestone {
+                                id: 0,
+                                iid: 0,
+                                title: title.clone(),
+                                description: None,
+                                state: "active".to_string(),
+                                due_date: None,
+                                start_date: None,
+                                created_at: String::new(),
+                                project_path: project.clone(),
+                            })
+                            .collect();
+                        cache_updated = true;
+                    }
+                    if !branches.is_empty() {
+                        proj_cache.branches = branches
+                            .iter()
+                            .map(|name| crate::domain::branches::Branch {
+                                name: name.clone(),
+                                default: false,
+                                protected: false,
+                                web_url: String::new(),
+                                can_push: false,
+                                commit_sha: String::new(),
+                            })
+                            .collect();
+                        cache_updated = true;
+                    }
+                    if cache_updated {
+                        crate::utils::cache::save_cache(&project, &proj_cache);
+                    }
+
+                    if let Some(mut sel) = app.selector.take() {
+                        let updated = match sel.field_type.as_str() {
+                            "labels" if !labels.is_empty() => {
+                                sel.all_items = labels.into_iter().map(|l| l.name).collect();
+                                true
+                            }
+                            "assignees" | "reviewers" if !members.is_empty() => {
+                                sel.all_items = members;
+                                true
+                            }
+                            "milestone" if !milestones.is_empty() => {
+                                sel.all_items = milestones;
+                                true
+                            }
+                            "source_branch" | "target_branch" | "pipeline_branch"
+                            | "create_from"
+                                if !branches.is_empty() =>
+                            {
+                                sel.all_items = branches;
+                                true
+                            }
+                            _ => false,
+                        };
+                        if updated {
+                            sel.is_loading = false;
+                        }
+                        app.selector = Some(sel);
+                    }
                 }
                 Event::DeploymentsFetched(deployments) => {
                     app.deployments.items = deployments;
@@ -3365,6 +3524,11 @@ async fn main() -> Result<()> {
                                             }
                                         } else {
                                             let is_github = app.is_github();
+                                            let project = if app.scope.is_group() {
+                                                Some(String::new())
+                                            } else {
+                                                None
+                                            };
                                             let fields = crate::entity_editor::issue_fields(
                                                 String::new(),
                                                 String::new(),
@@ -3375,6 +3539,7 @@ async fn main() -> Result<()> {
                                                 "0".to_string(),
                                                 desc_val,
                                                 is_github,
+                                                project,
                                             );
                                             app.open_edit_menu(crate::app::EditMenu {
                                                 title: "Create Issue".to_string(),
@@ -3382,7 +3547,11 @@ async fn main() -> Result<()> {
                                                 initial_fields: std::collections::HashMap::new(),
                                                 selected_idx: 0,
                                                 entity_iid: 0,
-                                                entity_project: app.scope.as_str().to_string(),
+                                                entity_project: if app.scope.is_group() {
+                                                    String::new()
+                                                } else {
+                                                    app.scope.as_str().to_string()
+                                                },
                                                 entity_kind:
                                                     crate::app::EditEntityKind::CreateIssue,
                                                 state: {
@@ -4551,6 +4720,7 @@ async fn main() -> Result<()> {
                                                 "workflow_file" => "Workflow File",
                                                 "tag" => "Tag",
                                                 "create_from" => "Create From",
+                                                "project" => "Project",
                                                 other if other.starts_with("Input: ") => other,
                                                 _ => "",
                                             };
@@ -4586,6 +4756,112 @@ async fn main() -> Result<()> {
                                                         && !display_val.is_empty();
 
                                                     f.value = display_val.clone();
+
+                                                    if field_type == "project" {
+                                                        menu.entity_project = display_val.clone();
+                                                        if !display_val.is_empty()
+                                                            && crate::backend::glab::validate_project_path(&display_val).is_ok()
+                                                        {
+                                                            if let Some(client) = &app.gitlab_client
+                                                            {
+                                                                let client = client.clone();
+                                                                let proj_scope =
+                                                                    crate::scope::Scope::Repository(
+                                                                        display_val.clone(),
+                                                                    );
+                                                                let tx = events.sender();
+                                                                let (c1, c2, c3, c4) = (
+                                                                    client.clone(),
+                                                                    client.clone(),
+                                                                    client.clone(),
+                                                                    client.clone(),
+                                                                );
+                                                                let (p1, p2, p3, p4) = (
+                                                                    proj_scope.clone(),
+                                                                    proj_scope.clone(),
+                                                                    proj_scope.clone(),
+                                                                    proj_scope.clone(),
+                                                                );
+                                                                let (d1, d2, d3, d4) = (
+                                                                    display_val.clone(),
+                                                                    display_val.clone(),
+                                                                    display_val.clone(),
+                                                                    display_val.clone(),
+                                                                );
+                                                                let (tx1, tx2, tx3, tx4) = (
+                                                                    tx.clone(),
+                                                                    tx.clone(),
+                                                                    tx.clone(),
+                                                                    tx.clone(),
+                                                                );
+
+                                                                tokio::spawn(async move {
+                                                                    if let Ok(labels) = c1
+                                                                        .fetch_labels(&p1)
+                                                                        .await
+                                                                    {
+                                                                        let _ = tx1.send(
+                                                                            Event::ProjectAttributesFetched {
+                                                                                project: d1,
+                                                                                labels,
+                                                                                members: Vec::new(),
+                                                                                milestones: Vec::new(),
+                                                                                branches: Vec::new(),
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                });
+                                                                tokio::spawn(async move {
+                                                                    if let Ok(members) = c2
+                                                                        .fetch_members(&p2)
+                                                                        .await
+                                                                    {
+                                                                        let _ = tx2.send(
+                                                                            Event::ProjectAttributesFetched {
+                                                                                project: d2,
+                                                                                labels: Vec::new(),
+                                                                                members,
+                                                                                milestones: Vec::new(),
+                                                                                branches: Vec::new(),
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                });
+                                                                tokio::spawn(async move {
+                                                                    if let Ok(milestones) = c3
+                                                                        .fetch_milestones(&p3)
+                                                                        .await
+                                                                    {
+                                                                        let _ = tx3.send(
+                                                                            Event::ProjectAttributesFetched {
+                                                                                project: d3,
+                                                                                labels: Vec::new(),
+                                                                                members: Vec::new(),
+                                                                                milestones,
+                                                                                branches: Vec::new(),
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                });
+                                                                tokio::spawn(async move {
+                                                                    if let Ok(branches) = c4
+                                                                        .fetch_branches(&p4)
+                                                                        .await
+                                                                    {
+                                                                        let _ = tx4.send(
+                                                                            Event::ProjectAttributesFetched {
+                                                                                project: d4,
+                                                                                labels: Vec::new(),
+                                                                                members: Vec::new(),
+                                                                                milestones: Vec::new(),
+                                                                                branches,
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                });
+                                                            }
+                                                        }
+                                                    }
 
                                                     let _ = f; // release borrow before modifying fields
 
@@ -4678,14 +4954,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Left => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         if let Some(f) = menu.fields.get(menu.selected_idx) {
                                             if let Some((byte_idx, _)) = f.value[..menu.cursor_pos]
@@ -4702,14 +4972,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Right => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         if let Some(f) = menu.fields.get(menu.selected_idx) {
                                             let char_len = f.value[menu.cursor_pos..]
@@ -4728,14 +4992,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::Home => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         menu.cursor_pos = 0;
                                     }
@@ -4743,14 +5001,8 @@ async fn main() -> Result<()> {
                                 }
                                 KeyCode::End => {
                                     if menu.selected_idx < menu.fields.len()
-                                        && (menu.fields[menu.selected_idx].label == "Title"
-                                            || menu.fields[menu.selected_idx].label == "Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Name"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Description"
-                                            || menu.fields[menu.selected_idx].label
-                                                == "Release Notes")
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         menu.cursor_pos =
                                             menu.fields[menu.selected_idx].value.len();
@@ -4816,17 +5068,9 @@ async fn main() -> Result<()> {
                                     }
                                 }
                                 KeyCode::Char(c) => {
-                                    let field_name = if menu.selected_idx < menu.fields.len() {
-                                        menu.fields[menu.selected_idx].label.clone()
-                                    } else {
-                                        String::new()
-                                    };
-                                    if field_name == "Title"
-                                        || field_name == "Name"
-                                        || field_name == "Release Name"
-                                        || field_name == "Branch Name"
-                                        || field_name == "Description"
-                                        || field_name == "Release Notes"
+                                    if menu.selected_idx < menu.fields.len()
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Text
                                     {
                                         if let Some(f) = menu.fields.get_mut(menu.selected_idx) {
                                             f.value.insert(menu.cursor_pos, c);
@@ -4941,6 +5185,15 @@ async fn main() -> Result<()> {
 
                                 if is_on_submit {
                                     if entity_type == "new_issue" {
+                                        let project =
+                                            match resolve_target_project(&menu, &app.scope) {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    app.show_error(e);
+                                                    app.edit_menu = Some(menu);
+                                                    continue;
+                                                }
+                                            };
                                         let title = menu
                                             .fields
                                             .iter()
@@ -4989,8 +5242,10 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
-                                        let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let Some(client) = app.gitlab_client.clone() else {
+                                            app.show_error("Backend not initialized".to_string());
+                                            continue;
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5021,6 +5276,15 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_mr" {
+                                        let project =
+                                            match resolve_target_project(&menu, &app.scope) {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    app.show_error(e);
+                                                    app.edit_menu = Some(menu);
+                                                    continue;
+                                                }
+                                            };
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5081,8 +5345,10 @@ async fn main() -> Result<()> {
                                         };
 
                                         app.edit_menu = None;
-                                        let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let Some(client) = app.gitlab_client.clone() else {
+                                            app.show_error("Backend not initialized".to_string());
+                                            continue;
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5346,6 +5612,15 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_milestone" {
+                                        let project =
+                                            match resolve_target_project(&menu, &app.scope) {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    app.show_error(e);
+                                                    app.edit_menu = Some(menu);
+                                                    continue;
+                                                }
+                                            };
                                         let title = menu
                                             .fields
                                             .iter()
@@ -5376,8 +5651,10 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
-                                        let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let Some(client) = app.gitlab_client.clone() else {
+                                            app.show_error("Backend not initialized".to_string());
+                                            continue;
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5420,6 +5697,15 @@ async fn main() -> Result<()> {
                                         });
                                         continue;
                                     } else if entity_type == "new_pipeline" {
+                                        let project =
+                                            match resolve_target_project(&menu, &app.scope) {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    app.show_error(e);
+                                                    app.edit_menu = Some(menu);
+                                                    continue;
+                                                }
+                                            };
                                         let branch = menu
                                             .fields
                                             .iter()
@@ -5482,8 +5768,10 @@ async fn main() -> Result<()> {
                                         let mr_flag = mr.to_lowercase() == "yes";
 
                                         app.edit_menu = None;
-                                        let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let Some(client) = app.gitlab_client.clone() else {
+                                            app.show_error("Backend not initialized".to_string());
+                                            continue;
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5511,6 +5799,15 @@ async fn main() -> Result<()> {
                                             }
                                         });
                                     } else if entity_type == "new_release" {
+                                        let project =
+                                            match resolve_target_project(&menu, &app.scope) {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    app.show_error(e);
+                                                    app.edit_menu = Some(menu);
+                                                    continue;
+                                                }
+                                            };
                                         let tag = menu
                                             .fields
                                             .iter()
@@ -5535,8 +5832,12 @@ async fn main() -> Result<()> {
 
                                         if !tag.is_empty() {
                                             app.edit_menu = None;
-                                            let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.scope.as_str().to_string();
+                                            let Some(client) = app.gitlab_client.clone() else {
+                                                app.show_error(
+                                                    "Backend not initialized".to_string(),
+                                                );
+                                                continue;
+                                            };
                                             let tx = events.sender();
                                             let tab = app.active_tab;
                                             tokio::spawn(async move {
@@ -5566,6 +5867,15 @@ async fn main() -> Result<()> {
                                         }
                                         continue;
                                     } else if entity_type == "new_branch" {
+                                        let project =
+                                            match resolve_target_project(&menu, &app.scope) {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    app.show_error(e);
+                                                    app.edit_menu = Some(menu);
+                                                    continue;
+                                                }
+                                            };
                                         let branch_name = menu
                                             .fields
                                             .iter()
@@ -5580,8 +5890,10 @@ async fn main() -> Result<()> {
                                             .unwrap_or_default();
 
                                         app.edit_menu = None;
-                                        let client = app.gitlab_client.clone().unwrap();
-                                        let project = app.scope.as_str().to_string();
+                                        let Some(client) = app.gitlab_client.clone() else {
+                                            app.show_error("Backend not initialized".to_string());
+                                            continue;
+                                        };
                                         let tx = events.sender();
                                         let tab = app.active_tab;
                                         tokio::spawn(async move {
@@ -5655,7 +5967,12 @@ async fn main() -> Result<()> {
                                             {
                                                 continue;
                                             }
-                                            let client = app.gitlab_client.clone().unwrap();
+                                            let Some(client) = app.gitlab_client.clone() else {
+                                                app.show_error(
+                                                    "Backend not initialized".to_string(),
+                                                );
+                                                continue;
+                                            };
                                             let project = app.scope.as_str().to_string();
                                             let tx = events.sender();
                                             let tab = app.active_tab;
@@ -6371,13 +6688,10 @@ async fn main() -> Result<()> {
                                     String::new()
                                 };
 
-                                // Title / Branch Name / Description: Enter toggles inline edit mode
-                                if field_name == "Title"
-                                    || field_name == "Name"
-                                    || field_name == "Release Name"
-                                    || field_name == "Branch Name"
-                                    || field_name == "Description"
-                                    || field_name == "Release Notes"
+                                // Text fields: Enter toggles inline edit mode. Ref rows open a selector instead.
+                                if menu.selected_idx < menu.fields.len()
+                                    && menu.fields[menu.selected_idx].kind
+                                        == crate::app::FieldType::Text
                                 {
                                     if menu.editing {
                                         menu.editing = false;
@@ -6406,6 +6720,10 @@ async fn main() -> Result<()> {
                                     || field_name == "Tag"
                                     || field_name == "Create from Issue"
                                     || field_name == "Description Template"
+                                    || (field_name == "Project"
+                                        && menu.selected_idx < menu.fields.len()
+                                        && menu.fields[menu.selected_idx].kind
+                                            == crate::app::FieldType::Ref)
                                     || field_name.starts_with("Input: ")
                                 {
                                     let mut current_set = std::collections::HashSet::new();
@@ -6425,11 +6743,33 @@ async fn main() -> Result<()> {
                                         "Description Template" => "description_template",
                                         "Workflow File" => "workflow_file",
                                         "Tag" => "tag",
+                                        "Project" => "project",
                                         _ => "",
                                     };
                                     let multi_select = match field_type {
                                         "labels" | "assignees" | "reviewers" => true,
                                         _ => false,
+                                    };
+
+                                    let target_project = menu
+                                        .fields
+                                        .iter()
+                                        .find(|f| f.label == "Project")
+                                        .map(|f| f.value.trim().to_string())
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or_else(|| {
+                                            if !menu.entity_project.is_empty() {
+                                                menu.entity_project.clone()
+                                            } else {
+                                                String::new()
+                                            }
+                                        });
+                                    let target_cache = if !target_project.is_empty()
+                                        && target_project.contains('/')
+                                    {
+                                        Some(crate::utils::cache::load_cache(&target_project))
+                                    } else {
+                                        None
                                     };
 
                                     let mut all_items = Vec::new();
@@ -6476,37 +6816,76 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                     } else if field_type == "labels" {
-                                        if !app.cached_labels.is_empty() {
+                                        if let Some(ref tc) = target_cache {
+                                            if !tc.labels.is_empty() {
+                                                all_items = tc.labels.clone();
+                                                is_loading = false;
+                                            }
+                                        } else if !app.cached_labels.is_empty() {
                                             all_items = app.cached_labels.clone();
                                             is_loading = false;
                                         }
                                     } else if field_type == "assignees" || field_type == "reviewers"
                                     {
-                                        if !app.cached_members.is_empty() {
+                                        if let Some(ref tc) = target_cache {
+                                            if !tc.members.is_empty() {
+                                                all_items = tc.members.clone();
+                                                is_loading = false;
+                                            }
+                                        } else if !app.cached_members.is_empty() {
                                             all_items = app.cached_members.clone();
                                             is_loading = false;
                                         }
                                     } else if field_type == "milestone" {
-                                        all_items = app
-                                            .milestones
-                                            .items
-                                            .iter()
-                                            .map(|m| m.title.clone())
-                                            .filter(|t| t != "--")
-                                            .collect();
-                                        is_loading = false;
+                                        if let Some(ref tc) = target_cache {
+                                            if !tc.milestones.is_empty() {
+                                                all_items = tc
+                                                    .milestones
+                                                    .iter()
+                                                    .map(|m| m.title.clone())
+                                                    .filter(|t| t != "--")
+                                                    .collect();
+                                                is_loading = false;
+                                            }
+                                        }
+                                        if all_items.is_empty() {
+                                            all_items = app
+                                                .milestones
+                                                .items
+                                                .iter()
+                                                .filter(|m| {
+                                                    target_project.is_empty()
+                                                        || m.project_path == target_project
+                                                        || m.project_path.is_empty()
+                                                })
+                                                .map(|m| m.title.clone())
+                                                .filter(|t| t != "--")
+                                                .collect();
+                                            if !all_items.is_empty()
+                                                && !target_project.contains('/')
+                                            {
+                                                is_loading = false;
+                                            }
+                                        }
                                     } else if field_type == "source_branch"
                                         || field_type == "target_branch"
                                         || field_type == "pipeline_branch"
                                         || field_type == "create_from"
                                     {
-                                        let mut branch_names: Vec<String> = app
-                                            .branches
-                                            .items
-                                            .iter()
-                                            .map(|b| b.name.clone())
-                                            .collect();
-                                        if branch_names.is_empty() {
+                                        let mut branch_names: Vec<String> =
+                                            if let Some(ref tc) = target_cache {
+                                                tc.branches.iter().map(|b| b.name.clone()).collect()
+                                            } else {
+                                                app.branches
+                                                    .items
+                                                    .iter()
+                                                    .map(|b| b.name.clone())
+                                                    .collect()
+                                            };
+                                        if branch_names.is_empty()
+                                            && !app.scope.is_group()
+                                            && target_project.is_empty()
+                                        {
                                             if let Ok(output) = std::process::Command::new("git")
                                                 .args(["branch", "-a", "--format=%(refname:short)"])
                                                 .output()
@@ -6544,7 +6923,9 @@ async fn main() -> Result<()> {
                                         }
                                         if !branch_names.is_empty() {
                                             all_items = branch_names;
-                                            is_loading = false;
+                                            if !target_project.contains('/') {
+                                                is_loading = false;
+                                            }
                                         }
                                     } else if field_type == "workflow_file" {
                                         all_items = get_workflow_files(app.is_github());
@@ -6639,6 +7020,39 @@ async fn main() -> Result<()> {
                                                 .collect();
                                         all_items = template_names;
                                         is_loading = false;
+                                    } else if field_type == "project" {
+                                        let mut known = Vec::new();
+                                        for i in &app.issues.items {
+                                            if !i.project_path.is_empty() {
+                                                known.push(i.project_path.clone());
+                                            }
+                                        }
+                                        for m in &app.mrs.items {
+                                            if !m.project_path.is_empty() {
+                                                known.push(m.project_path.clone());
+                                            }
+                                        }
+                                        for p in &app.pipelines.items {
+                                            if !p.project_path.is_empty() {
+                                                known.push(p.project_path.clone());
+                                            }
+                                        }
+                                        for ms in &app.milestones.items {
+                                            if !ms.project_path.is_empty() {
+                                                known.push(ms.project_path.clone());
+                                            }
+                                        }
+                                        known.sort();
+                                        known.dedup();
+                                        all_items = known;
+                                        if !app.scope.is_group() {
+                                            is_loading = false;
+                                        }
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
@@ -6647,6 +7061,7 @@ async fn main() -> Result<()> {
                                         if !current_val.is_empty()
                                             && field_type != "draft_status"
                                             && field_type != "mr_pipeline"
+                                            && field_type != "project"
                                         {
                                             if multi_select {
                                                 for item in current_val.split(',') {
@@ -6756,7 +7171,14 @@ async fn main() -> Result<()> {
                                     if is_loading {
                                         if let Some(client) = &app.gitlab_client {
                                             let client = client.clone();
-                                            let scope = app.scope.clone();
+                                            let scope = if field_type != "project"
+                                                && !target_project.is_empty()
+                                                && target_project.contains('/')
+                                            {
+                                                crate::scope::Scope::Repository(target_project)
+                                            } else {
+                                                app.scope.clone()
+                                            };
                                             let field_type = field_type.to_string();
                                             let tx = events.sender();
                                             tokio::spawn(async move {
@@ -6779,6 +7201,9 @@ async fn main() -> Result<()> {
                                                     "source_branch" | "target_branch"
                                                     | "pipeline_branch" | "create_from" => {
                                                         client.fetch_branches(&scope).await
+                                                    }
+                                                    "project" => {
+                                                        client.fetch_projects(&scope).await
                                                     }
                                                     _ => Ok(Vec::new()),
                                                 };

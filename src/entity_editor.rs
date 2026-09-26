@@ -1,8 +1,15 @@
-pub fn branch_fields(branch_name: String, create_from: String) -> Vec<crate::app::Field> {
-    vec![
-        crate::app::Field::text("Branch Name", branch_name),
-        crate::app::Field::ref_field("Create From", create_from),
-    ]
+pub fn branch_fields(
+    branch_name: String,
+    create_from: String,
+    project: Option<String>,
+) -> Vec<crate::app::Field> {
+    let mut fields = Vec::new();
+    if let Some(proj) = project {
+        fields.push(crate::app::Field::ref_field("Project", proj));
+    }
+    fields.push(crate::app::Field::text("Branch Name", branch_name));
+    fields.push(crate::app::Field::ref_field("Create From", create_from));
+    fields
 }
 
 use crate::AppTerminal;
@@ -64,13 +71,16 @@ pub fn issue_fields(
     weight: String,
     description: String,
     is_github: bool,
+    project: Option<String>,
 ) -> Vec<crate::app::Field> {
-    let mut fields = vec![
-        crate::app::Field::text("Title", title),
-        crate::app::Field::multi_select("Assignees", assignees),
-        crate::app::Field::multi_select("Milestone", milestone),
-        crate::app::Field::multi_select("Labels", labels),
-    ];
+    let mut fields = Vec::new();
+    if let Some(proj) = project {
+        fields.push(crate::app::Field::ref_field("Project", proj));
+    }
+    fields.push(crate::app::Field::text("Title", title));
+    fields.push(crate::app::Field::multi_select("Assignees", assignees));
+    fields.push(crate::app::Field::multi_select("Milestone", milestone));
+    fields.push(crate::app::Field::multi_select("Labels", labels));
     if !is_github {
         fields.push(crate::app::Field::toggle("Confidential", confidential));
         fields.push(crate::app::Field::date("Due Date", due_date));
@@ -94,8 +104,13 @@ pub fn mr_fields(
     draft_status: String,
     description: String,
     is_github: bool,
+    project: Option<String>,
 ) -> Vec<crate::app::Field> {
-    let mut fields = vec![crate::app::Field::text("Title", title)];
+    let mut fields = Vec::new();
+    if let Some(proj) = project {
+        fields.push(crate::app::Field::ref_field("Project", proj));
+    }
+    fields.push(crate::app::Field::text("Title", title));
     if !is_github {
         fields.push(crate::app::Field::toggle(
             "Status (Draft/Ready)",
@@ -126,8 +141,13 @@ pub fn milestone_fields(
     due_date: String,
     description: String,
     is_github: bool,
+    project: Option<String>,
 ) -> Vec<crate::app::Field> {
-    let mut fields = vec![crate::app::Field::text("Title", title)];
+    let mut fields = Vec::new();
+    if let Some(proj) = project {
+        fields.push(crate::app::Field::ref_field("Project", proj));
+    }
+    fields.push(crate::app::Field::text("Title", title));
     if !is_github {
         fields.push(crate::app::Field::date("Start Date", start_date));
     }
@@ -200,6 +220,12 @@ pub fn build_issue_document(
         &related_label,
         format_related_mrs_value(issue.related_mrs.as_ref(), fetching_related_mrs),
     ));
+    if !issue.project_path.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Project",
+            issue.project_path.clone(),
+        ));
+    }
     crate::app::EntityDocument {
         title: format!("Issue #{}", issue.iid),
         fields,
@@ -391,6 +417,12 @@ pub fn build_mr_document(
         "Updated",
         crate::utils::format::time_ago(&mr.updated_at),
     ));
+    if !mr.project_path.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Project",
+            mr.project_path.clone(),
+        ));
+    }
 
     crate::app::EntityDocument {
         title: format!("MR !{}", mr.iid),
@@ -409,6 +441,12 @@ pub fn build_pipeline_document(
         crate::app::Field::read_only("Ref", pipeline.r#ref.clone()),
         crate::app::Field::read_only("SHA", crate::utils::format::truncate(&pipeline.head_sha, 8)),
     ];
+    if !pipeline.project_path.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Project",
+            pipeline.project_path.clone(),
+        ));
+    }
     if let Some(source) = &pipeline.source {
         fields.push(crate::app::Field::read_only("Source", source.clone()));
     }
@@ -506,6 +544,12 @@ pub fn build_milestone_document(
             crate::utils::format::time_ago(&milestone.created_at),
         ),
     ];
+    if !milestone.project_path.is_empty() {
+        fields.push(crate::app::Field::read_only(
+            "Project",
+            milestone.project_path.clone(),
+        ));
+    }
     if let Some(iss) = issues {
         let total = iss.len();
         let closed = iss.iter().filter(|i| i.state == "closed").count();
@@ -1919,5 +1963,86 @@ mod tests {
         assert!(entity_is_milestone("edit_milestone"));
         assert!(!entity_is_milestone("mr"));
         assert!(!entity_is_milestone("issue"));
+    }
+
+    #[test]
+    fn test_group_view_creation_fields_include_project() {
+        let issue_f = issue_fields(
+            "title".into(),
+            "".into(),
+            "".into(),
+            "".into(),
+            "No".into(),
+            "".into(),
+            "0".into(),
+            "".into(),
+            false,
+            Some("owner/repo".into()),
+        );
+        assert_eq!(issue_f[0].label, "Project");
+        assert_eq!(issue_f[0].value, "owner/repo");
+
+        let mr_f = mr_fields(
+            "title".into(),
+            "".into(),
+            "".into(),
+            "".into(),
+            "".into(),
+            "main".into(),
+            "Draft".into(),
+            "".into(),
+            false,
+            Some("owner/repo".into()),
+        );
+        assert_eq!(mr_f[0].label, "Project");
+        assert_eq!(mr_f[0].value, "owner/repo");
+
+        let branch_f = branch_fields("feat".into(), "main".into(), Some("owner/repo".into()));
+        assert_eq!(branch_f[0].label, "Project");
+        assert_eq!(branch_f[0].value, "owner/repo");
+
+        let milestone_f = milestone_fields(
+            "v1.0".into(),
+            "".into(),
+            "".into(),
+            "".into(),
+            false,
+            Some("owner/repo".into()),
+        );
+        assert_eq!(milestone_f[0].label, "Project");
+        assert_eq!(milestone_f[0].value, "owner/repo");
+    }
+
+    #[test]
+    fn test_inspector_documents_include_project_when_present() {
+        let mut issue = crate::domain::issues::Issue {
+            iid: 1,
+            title: "Test Issue".into(),
+            state: "opened".into(),
+            description: Some("Desc".into()),
+            author: crate::domain::issues::Author {
+                username: "alice".into(),
+            },
+            assignees: vec![],
+            labels: vec![],
+            milestone: None,
+            due_date: None,
+            created_at: Some("2026-01-01T00:00:00Z".into()),
+            closed_at: None,
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            project_path: "group/my-project".into(),
+            web_url: String::new(),
+            related_mrs: None,
+        };
+        let doc = build_issue_document(&issue, false, false);
+        assert!(
+            doc.fields
+                .iter()
+                .any(|f| f.label == "Project" && f.value == "group/my-project")
+        );
+
+        issue.project_path.clear();
+        let doc_no_proj = build_issue_document(&issue, false, false);
+        assert!(!doc_no_proj.fields.iter().any(|f| f.label == "Project"));
     }
 }

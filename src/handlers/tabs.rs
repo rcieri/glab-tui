@@ -58,17 +58,6 @@ pub async fn handle_active_tab_key(
         crate::app::Tab::Issues => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
                 let is_github = app.is_github();
-                let fields = crate::entity_editor::issue_fields(
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    "No".to_string(),
-                    String::new(),
-                    "0".to_string(),
-                    String::new(),
-                    is_github,
-                );
                 let project = if app.scope.is_group() {
                     app.issues
                         .state
@@ -83,10 +72,26 @@ pub async fn handle_active_tab_key(
                             }
                         })
                         .filter(|p| !p.is_empty())
-                        .unwrap_or_else(|| app.scope.as_str().to_string())
+                        .unwrap_or_default()
                 } else {
                     app.scope.as_str().to_string()
                 };
+                let fields = crate::entity_editor::issue_fields(
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    "No".to_string(),
+                    String::new(),
+                    "0".to_string(),
+                    String::new(),
+                    is_github,
+                    if app.scope.is_group() {
+                        Some(project.clone())
+                    } else {
+                        None
+                    },
+                );
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Issue".to_string(),
                     entity_project: project,
@@ -374,6 +379,7 @@ pub async fn handle_active_tab_key(
 
                         let title_val = issue.title.clone();
                         let source_branch_val = format!("{}-{}", issue.iid, slugify(&issue.title));
+                        let create_from_val = format!("#{} - {}", issue.iid, issue.title);
                         let labels_val = if issue.labels.is_empty() {
                             String::new()
                         } else {
@@ -396,7 +402,11 @@ pub async fn handle_active_tab_key(
                             .unwrap_or_default();
                         let target_branch_val =
                             get_default_branch().unwrap_or_else(|| "main".to_string());
-                        let create_from_val = format!("#{} {}", issue.iid, issue.title);
+                        let project_val = if !issue.project_path.is_empty() {
+                            issue.project_path.clone()
+                        } else {
+                            app.scope.as_str().to_string()
+                        };
                         let mut fields = crate::entity_editor::mr_fields(
                             title_val,
                             labels_val,
@@ -407,20 +417,24 @@ pub async fn handle_active_tab_key(
                             "Draft".to_string(),
                             String::new(),
                             is_github,
+                            if app.scope.is_group() {
+                                Some(project_val.clone())
+                            } else {
+                                None
+                            },
                         );
-                        // Pre-fill the "Create from Issue" row since we launched
+                        // Pre-fill the "Create from Issue" and "Source Branch" rows since we launched
                         // the form directly from this issue.
                         if let Some(f) = fields.iter_mut().find(|f| f.label == "Create from Issue")
                         {
                             f.value = create_from_val;
                         }
+                        if let Some(f) = fields.iter_mut().find(|f| f.label == "Source Branch") {
+                            f.value = source_branch_val;
+                        }
                         app.open_edit_menu(crate::app::EditMenu {
                             title: format!("Create {} from #{}", pr_suffix, issue.iid),
-                            entity_project: if !issue.project_path.is_empty() {
-                                issue.project_path.clone()
-                            } else {
-                                app.scope.as_str().to_string()
-                            },
+                            entity_project: project_val,
                             fields,
                             initial_fields: std::collections::HashMap::new(),
                             selected_idx: 0,
@@ -450,17 +464,6 @@ pub async fn handle_active_tab_key(
                     "Merge Request"
                 };
                 let target_branch_val = get_default_branch().unwrap_or_else(|| "main".to_string());
-                let fields = crate::entity_editor::mr_fields(
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    target_branch_val,
-                    "Draft".to_string(),
-                    String::new(),
-                    is_github,
-                );
                 let project = if app.scope.is_group() {
                     app.mrs
                         .state
@@ -477,10 +480,26 @@ pub async fn handle_active_tab_key(
                             }
                         })
                         .filter(|p| !p.is_empty())
-                        .unwrap_or_else(|| app.scope.as_str().to_string())
+                        .unwrap_or_default()
                 } else {
                     app.scope.as_str().to_string()
                 };
+                let fields = crate::entity_editor::mr_fields(
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    target_branch_val,
+                    "Draft".to_string(),
+                    String::new(),
+                    is_github,
+                    if app.scope.is_group() {
+                        Some(project.clone())
+                    } else {
+                        None
+                    },
+                );
                 app.open_edit_menu(crate::app::EditMenu {
                     title: format!("Create {}", pr_suffix),
                     entity_project: project,
@@ -883,10 +902,25 @@ pub async fn handle_active_tab_key(
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
                 let is_github = app.is_github();
-                let mut fields = vec![crate::app::Field::text(
+                let mut fields = vec![];
+                let default_project = if app.scope.is_group() {
+                    let proj = app
+                        .pipelines
+                        .state
+                        .selected()
+                        .and_then(|idx| app.pipelines.items.get(idx))
+                        .map(|p| p.project_path.clone())
+                        .filter(|p| !p.is_empty())
+                        .unwrap_or_default();
+                    fields.push(crate::app::Field::ref_field("Project", proj.clone()));
+                    proj
+                } else {
+                    app.scope.as_str().to_string()
+                };
+                fields.push(crate::app::Field::text(
                     "Branch / Ref",
                     current_branch.clone(),
-                )];
+                ));
                 if is_github {
                     fields.push(crate::app::Field::text("Workflow File", String::new()));
                 } else {
@@ -900,7 +934,7 @@ pub async fn handle_active_tab_key(
 
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Run Pipeline".to_string(),
-                    entity_project: app.scope.as_str().to_string(),
+                    entity_project: default_project,
                     fields,
                     initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
@@ -1679,16 +1713,24 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Releases => match key_event.code {
             _ if keybinding_matches(&app.config.keybindings.releases.create_release, key_event) => {
+                let mut fields = vec![crate::app::Field::section("Details")];
+                if app.scope.is_group() {
+                    fields.push(crate::app::Field::ref_field("Project", String::new()));
+                }
+                fields.extend(vec![
+                    crate::app::Field::ref_field("Tag", String::new()),
+                    crate::app::Field::text("Release Name", String::new()),
+                    crate::app::Field::section("Release Notes"),
+                    crate::app::Field::text("Release Notes", String::new()),
+                ]);
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Release".to_string(),
-                    entity_project: app.scope.as_str().to_string(),
-                    fields: vec![
-                        crate::app::Field::section("Details"),
-                        crate::app::Field::ref_field("Tag", String::new()),
-                        crate::app::Field::text("Release Name", String::new()),
-                        crate::app::Field::section("Release Notes"),
-                        crate::app::Field::text("Release Notes", String::new()),
-                    ],
+                    entity_project: if app.scope.is_group() {
+                        String::new()
+                    } else {
+                        app.scope.as_str().to_string()
+                    },
+                    fields,
                     initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
                     entity_iid: 0,
@@ -1855,16 +1897,32 @@ pub async fn handle_active_tab_key(
             ) =>
             {
                 let is_github = app.is_github();
+                let project = if app.scope.is_group() {
+                    app.milestones
+                        .state
+                        .selected()
+                        .and_then(|idx| app.milestones.items.get(idx))
+                        .map(|m| m.project_path.clone())
+                        .filter(|p| !p.is_empty())
+                        .unwrap_or_default()
+                } else {
+                    app.scope.as_str().to_string()
+                };
                 let fields = crate::entity_editor::milestone_fields(
                     String::new(),
                     String::new(),
                     String::new(),
                     String::new(),
                     is_github,
+                    if app.scope.is_group() {
+                        Some(project.clone())
+                    } else {
+                        None
+                    },
                 );
                 app.open_edit_menu(crate::app::EditMenu {
                     title: "Create Milestone".to_string(),
-                    entity_project: app.scope.as_str().to_string(),
+                    entity_project: project,
                     fields,
                     initial_fields: std::collections::HashMap::new(),
                     selected_idx: 0,
@@ -2009,11 +2067,22 @@ pub async fn handle_active_tab_key(
                     if keybinding_matches(&app.config.keybindings.branches.create_branch, key_event)
                     {
                         let create_from = branch_name.clone();
-                        let fields =
-                            crate::entity_editor::branch_fields(String::new(), create_from);
+                        let fields = crate::entity_editor::branch_fields(
+                            String::new(),
+                            create_from,
+                            if app.scope.is_group() {
+                                Some(String::new())
+                            } else {
+                                None
+                            },
+                        );
                         app.open_edit_menu(crate::app::EditMenu {
                             title: "Create Branch".to_string(),
-                            entity_project: app.scope.as_str().to_string(),
+                            entity_project: if app.scope.is_group() {
+                                String::new()
+                            } else {
+                                app.scope.as_str().to_string()
+                            },
                             fields,
                             initial_fields: std::collections::HashMap::new(),
                             selected_idx: 0,

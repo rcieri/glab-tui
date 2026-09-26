@@ -81,7 +81,27 @@ pub fn validate_project_path(path: &str) -> anyhow::Result<()> {
     if !ok {
         anyhow::bail!("project path contains unsupported characters: {}", path);
     }
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments.len() < 2 || segments.iter().any(|s| s.is_empty()) {
+        anyhow::bail!(
+            "expected a project path of the form owner/project: {}",
+            path
+        );
+    }
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct GiProject {
+    path_with_namespace: String,
+}
+
+pub fn parse_group_projects(raw: &str) -> anyhow::Result<Vec<String>> {
+    let projects: Vec<GiProject> = serde_json::from_str(raw)?;
+    Ok(projects
+        .into_iter()
+        .map(|p| p.path_with_namespace)
+        .collect())
 }
 
 /// Parse the bulk MR-state GraphQL response.
@@ -2540,6 +2560,35 @@ impl Backend for GlabBackend {
             .collect())
     }
 
+    async fn list_group_projects(
+        &self,
+        group: &str,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<String>> {
+        let encoded = Self::encode_path(group);
+        let per = per_request.clamp(1, 100);
+        let pages = page_size.div_ceil(per);
+        let mut out = Vec::new();
+        for page in 1..=pages {
+            let endpoint = format!(
+                "groups/{}/projects?include_subgroups=true&per_page={per}&page={page}&archived=false",
+                encoded
+            );
+            let raw = self
+                .raw_api(&endpoint, "GET", None, "Fetching Group Projects")
+                .await?;
+            let batch = parse_group_projects(&raw)?;
+            let n = batch.len();
+            out.extend(batch);
+            if out.len() >= page_size || n < per {
+                break;
+            }
+        }
+        out.truncate(page_size);
+        Ok(out)
+    }
+
     async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
         if !project.is_empty() {
             self.run_glab(
@@ -3220,7 +3269,20 @@ mod tests {
     fn rejects_graphql_significant_characters() {
         // The path comes from `git remote get-url`, so it is untrusted input
         // interpolated into a query string.
-        for bad in ["a\"b", "a{b", "a}b", "a\\b", "a\nb", "a b", ""] {
+        for bad in [
+            "a\"b",
+            "a{b",
+            "a}b",
+            "a\\b",
+            "a\nb",
+            "a b",
+            "",
+            "singlegroup",
+            "group/",
+            "/project",
+            "group//project",
+            "a/b/c/",
+        ] {
             assert!(
                 validate_project_path(bad).is_err(),
                 "{bad:?} should be rejected"
@@ -3493,5 +3555,22 @@ mod tests {
             !a.you_reviewed,
             "cannot have reviewed when the user is unknown"
         );
+    }
+
+    #[test]
+    fn test_parse_group_projects() {
+        let json = r#"[
+            {"path_with_namespace": "mygroup/proj1"},
+            {"path_with_namespace": "mygroup/subgroup/proj2"}
+        ]"#;
+        let paths = parse_group_projects(json).unwrap();
+        assert_eq!(paths, vec!["mygroup/proj1", "mygroup/subgroup/proj2"]);
+
+        // Empty array
+        let empty_paths = parse_group_projects("[]").unwrap();
+        assert!(empty_paths.is_empty());
+
+        // Malformed / missing field
+        assert!(parse_group_projects(r#"[{"id": 1}]"#).is_err());
     }
 }

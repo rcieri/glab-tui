@@ -54,6 +54,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 ## Features
 
 - **GitHub & GitLab Dual Support** — Automatic detection of repository host, dynamically translating TUI actions and metadata updates to `gh` or `glab` CLI commands.
+- **Group & Organization Scopes** — Browse and manage issues, merge requests / pull requests, pipelines, and members across entire GitLab groups or GitHub organizations (`-g`/`--group`). Create and edit entities directly within group views with target project selection and scoped attribute pre-fetching.
 - **Mouse support** — click to navigate tabs, scroll tables, and interact with all overlays and modals
 - **Bulk editing & Visual Select Mode** — select multiple issues or merge requests with `Space` or enter yazi-style select mode with `v`, then press `e` to apply labels, assignees, or milestone across all selected items with full selection preview
 - **Single-Column Inspector** — unified fullscreen details preview and inline editing with full-width markdown description on top and stacked metadata fields below
@@ -335,6 +336,7 @@ glab-tui
 
 # Specifying optional flags:
 glab-tui --repo organization/project-name
+glab-tui --group organization-name
 glab-tui --dir /path/to/other/repo
 glab-tui --tab pipelines
 ```
@@ -344,6 +346,7 @@ glab-tui --tab pipelines
 | Flag / Subcommand | Argument | Description |
 |---|---|---|
 | `-r`, `--repo` | `owner/repo` | Launch glab-tui for a custom remote repository |
+| `-g`, `--group` | `group` | Launch glab-tui for a GitLab group or GitHub organization context |
 | `-d`, `--dir` | `/path/to/dir` | Launch glab-tui in a custom repository directory |
 | `-t`, `--tab` | `issues\|mrs\|pr\|pipelines\|jobs\|runners\|releases\|todos\|milestones\|branches\|environments\|terminal` | Tab to open on launch (overrides `active_tab` in `config.toml`) |
 | `-u`, `--update` | | Check for and install updates |

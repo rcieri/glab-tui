@@ -597,6 +597,12 @@ pub trait Backend: Send + Sync {
         per_request: usize,
     ) -> Result<Vec<crate::domain::labels::Label>>;
     async fn fetch_members(&self, scope: &Scope) -> Result<Vec<String>>;
+    async fn list_group_projects(
+        &self,
+        group: &str,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<String>>;
 
     // ── MR review state (approval + mergeability) ──
     /// Bulk-fetch both readiness axes for the given MR iids.

@@ -2489,6 +2489,27 @@ impl Backend for GhBackend {
             .collect())
     }
 
+    async fn list_group_projects(&self, group: &str) -> Result<Vec<String>> {
+        let endpoint = format!("/orgs/{group}/repos?per_page=100");
+        let raw = match self
+            .raw_api(&endpoint, "GET", None, "Fetching Org Repos")
+            .await
+        {
+            Ok(raw) => raw,
+            Err(_) => {
+                let user_endpoint = format!("/users/{group}/repos?per_page=100");
+                self.raw_api(&user_endpoint, "GET", None, "Fetching User Repos")
+                    .await?
+            }
+        };
+        #[derive(Deserialize)]
+        struct GhRepo {
+            full_name: String,
+        }
+        let repos: Vec<GhRepo> = serde_json::from_str(&raw)?;
+        Ok(repos.into_iter().map(|r| r.full_name).collect())
+    }
+
     // ── Browser ──
 
     async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
@@ -3452,5 +3473,20 @@ mod tests {
         assert_eq!(p.event, "push");
         assert_eq!(p.actor_login, "triggerer");
         assert_eq!(p.duration_seconds, Some(120));
+    }
+
+    #[test]
+    fn test_parse_org_repos() {
+        let json = r#"[
+            {"full_name": "myorg/repo1"},
+            {"full_name": "myorg/repo2"}
+        ]"#;
+        #[derive(Deserialize)]
+        struct GhRepo {
+            full_name: String,
+        }
+        let repos: Vec<GhRepo> = serde_json::from_str(json).unwrap();
+        let names: Vec<String> = repos.into_iter().map(|r| r.full_name).collect();
+        assert_eq!(names, vec!["myorg/repo1", "myorg/repo2"]);
     }
 }

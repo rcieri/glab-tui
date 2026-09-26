@@ -92,6 +92,17 @@ impl GitlabClient {
         Ok(milestones.into_iter().map(|m| m.title).collect())
     }
 
+    pub async fn fetch_projects(&self, scope: &crate::scope::Scope) -> Result<Vec<String>> {
+        match scope {
+            crate::scope::Scope::Group(group) => self.backend.list_group_projects(group).await,
+            crate::scope::Scope::Repository(project) => Ok(vec![project.clone()]),
+        }
+    }
+
+    pub async fn list_group_projects(&self, group: &str) -> Result<Vec<String>> {
+        self.backend.list_group_projects(group).await
+    }
+
     pub async fn raw_api(
         &self,
         endpoint: &str,

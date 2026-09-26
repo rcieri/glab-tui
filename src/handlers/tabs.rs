@@ -921,7 +921,7 @@ pub async fn handle_active_tab_key(
                         .map(|p| p.project_path.clone())
                         .filter(|p| !p.is_empty())
                         .unwrap_or_default();
-                    fields.push(crate::app::Field::text("Project", p.clone()));
+                    fields.push(crate::app::Field::ref_field("Project", p.clone()));
                     p
                 } else {
                     app.scope.as_str().to_string()
@@ -1723,7 +1723,7 @@ pub async fn handle_active_tab_key(
             _ if keybinding_matches(&app.config.keybindings.releases.create_release, key_event) => {
                 let mut fields = vec![crate::app::Field::section("Details")];
                 if app.scope.is_group() {
-                    fields.push(crate::app::Field::text("Project", String::new()));
+                    fields.push(crate::app::Field::ref_field("Project", String::new()));
                 }
                 fields.extend(vec![
                     crate::app::Field::ref_field("Tag", String::new()),

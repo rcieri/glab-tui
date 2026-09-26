@@ -1433,6 +1433,32 @@ async fn main() -> Result<()> {
                                 | "create_from" => Some(
                                     app.branches.items.iter().map(|b| b.name.clone()).collect(),
                                 ),
+                                "project" => {
+                                    let mut known = Vec::new();
+                                    for i in &app.issues.items {
+                                        if !i.project_path.is_empty() {
+                                            known.push(i.project_path.clone());
+                                        }
+                                    }
+                                    for m in &app.mrs.items {
+                                        if !m.project_path.is_empty() {
+                                            known.push(m.project_path.clone());
+                                        }
+                                    }
+                                    for p in &app.pipelines.items {
+                                        if !p.project_path.is_empty() {
+                                            known.push(p.project_path.clone());
+                                        }
+                                    }
+                                    for ms in &app.milestones.items {
+                                        if !ms.project_path.is_empty() {
+                                            known.push(ms.project_path.clone());
+                                        }
+                                    }
+                                    known.sort();
+                                    known.dedup();
+                                    if !known.is_empty() { Some(known) } else { None }
+                                }
                                 _ => None,
                             };
                             if let Some(cached) = fallback {
@@ -1467,7 +1493,15 @@ async fn main() -> Result<()> {
                         }
                         crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                         if let Some(mut selector) = app.selector.take() {
-                            selector.all_items = items;
+                            if selector.field_type == "project" {
+                                let mut combined = selector.all_items;
+                                combined.extend(items);
+                                combined.sort();
+                                combined.dedup();
+                                selector.all_items = combined;
+                            } else {
+                                selector.all_items = items;
+                            }
                             selector.is_loading = false;
                             app.selector = Some(selector);
                         }
@@ -4501,6 +4535,7 @@ async fn main() -> Result<()> {
                                                 "workflow_file" => "Workflow File",
                                                 "tag" => "Tag",
                                                 "create_from" => "Create From",
+                                                "project" => "Project",
                                                 other if other.starts_with("Input: ") => other,
                                                 _ => "",
                                             };
@@ -4536,6 +4571,10 @@ async fn main() -> Result<()> {
                                                         && !display_val.is_empty();
 
                                                     f.value = display_val.clone();
+
+                                                    if field_type == "project" {
+                                                        menu.entity_project = display_val.clone();
+                                                    }
 
                                                     let _ = f; // release borrow before modifying fields
 
@@ -6439,6 +6478,7 @@ async fn main() -> Result<()> {
                                     || field_name == "Tag"
                                     || field_name == "Create from Issue"
                                     || field_name == "Description Template"
+                                    || field_name == "Project"
                                     || field_name.starts_with("Input: ")
                                 {
                                     let mut current_set = std::collections::HashSet::new();
@@ -6458,6 +6498,7 @@ async fn main() -> Result<()> {
                                         "Description Template" => "description_template",
                                         "Workflow File" => "workflow_file",
                                         "Tag" => "tag",
+                                        "Project" => "project",
                                         _ => "",
                                     };
                                     let multi_select = match field_type {
@@ -6672,6 +6713,58 @@ async fn main() -> Result<()> {
                                                 .collect();
                                         all_items = template_names;
                                         is_loading = false;
+                                    } else if field_type == "project" {
+                                        let mut known = Vec::new();
+                                        for i in &app.issues.items {
+                                            if !i.project_path.is_empty() {
+                                                known.push(i.project_path.clone());
+                                            }
+                                        }
+                                        for m in &app.mrs.items {
+                                            if !m.project_path.is_empty() {
+                                                known.push(m.project_path.clone());
+                                            }
+                                        }
+                                        for p in &app.pipelines.items {
+                                            if !p.project_path.is_empty() {
+                                                known.push(p.project_path.clone());
+                                            }
+                                        }
+                                        for ms in &app.milestones.items {
+                                            if !ms.project_path.is_empty() {
+                                                known.push(ms.project_path.clone());
+                                            }
+                                        }
+                                        if let Ok(entries) =
+                                            std::fs::read_dir(crate::utils::cache::get_cache_dir())
+                                        {
+                                            for entry in entries.flatten() {
+                                                let fname =
+                                                    entry.file_name().to_string_lossy().to_string();
+                                                if fname.ends_with(".json")
+                                                    && fname != "recent_repos.json"
+                                                    && fname != "recent_groups.json"
+                                                    && fname != "last_update_check.json"
+                                                {
+                                                    let base = fname.trim_end_matches(".json");
+                                                    let repo = base.replace('_', "/");
+                                                    if repo.starts_with(app.scope.as_str()) {
+                                                        known.push(repo);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        known.sort();
+                                        known.dedup();
+                                        all_items = known;
+                                        if !app.scope.is_group() {
+                                            is_loading = false;
+                                        }
+                                        let current_val =
+                                            menu.fields[menu.selected_idx].value.clone();
+                                        if !current_val.is_empty() {
+                                            current_set.insert(current_val);
+                                        }
                                     }
 
                                     if entity_iid == 0 || entity_type.starts_with("new_") {
@@ -6680,6 +6773,7 @@ async fn main() -> Result<()> {
                                         if !current_val.is_empty()
                                             && field_type != "draft_status"
                                             && field_type != "mr_pipeline"
+                                            && field_type != "project"
                                         {
                                             if multi_select {
                                                 for item in current_val.split(',') {
@@ -6812,6 +6906,9 @@ async fn main() -> Result<()> {
                                                     "source_branch" | "target_branch"
                                                     | "pipeline_branch" | "create_from" => {
                                                         client.fetch_branches(&scope).await
+                                                    }
+                                                    "project" => {
+                                                        client.fetch_projects(&scope).await
                                                     }
                                                     _ => Ok(Vec::new()),
                                                 };

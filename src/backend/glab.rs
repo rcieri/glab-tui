@@ -2479,6 +2479,26 @@ impl Backend for GlabBackend {
             .collect())
     }
 
+    async fn list_group_projects(&self, group: &str) -> Result<Vec<String>> {
+        let encoded = Self::encode_path(group);
+        let endpoint = format!(
+            "groups/{}/projects?include_subgroups=true&per_page=100&archived=false",
+            encoded
+        );
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Group Projects")
+            .await?;
+        #[derive(Deserialize)]
+        struct GiProject {
+            path_with_namespace: String,
+        }
+        let projects: Vec<GiProject> = serde_json::from_str(&raw)?;
+        Ok(projects
+            .into_iter()
+            .map(|p| p.path_with_namespace)
+            .collect())
+    }
+
     async fn open_in_browser(&self, project: &str, entity: &str, id: &str) -> Result<()> {
         if !project.is_empty() {
             self.run_glab(
@@ -3432,5 +3452,23 @@ mod tests {
             !a.you_reviewed,
             "cannot have reviewed when the user is unknown"
         );
+    }
+
+    #[test]
+    fn test_parse_group_projects() {
+        let json = r#"[
+            {"path_with_namespace": "mygroup/proj1"},
+            {"path_with_namespace": "mygroup/subgroup/proj2"}
+        ]"#;
+        #[derive(Deserialize)]
+        struct GiProject {
+            path_with_namespace: String,
+        }
+        let projects: Vec<GiProject> = serde_json::from_str(json).unwrap();
+        let paths: Vec<String> = projects
+            .into_iter()
+            .map(|p| p.path_with_namespace)
+            .collect();
+        assert_eq!(paths, vec!["mygroup/proj1", "mygroup/subgroup/proj2"]);
     }
 }

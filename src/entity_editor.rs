@@ -5,7 +5,7 @@ pub fn branch_fields(
 ) -> Vec<crate::app::Field> {
     let mut fields = Vec::new();
     if let Some(proj) = project {
-        fields.push(crate::app::Field::text("Project", proj));
+        fields.push(crate::app::Field::ref_field("Project", proj));
     }
     fields.push(crate::app::Field::text("Branch Name", branch_name));
     fields.push(crate::app::Field::ref_field("Create From", create_from));
@@ -75,7 +75,7 @@ pub fn issue_fields(
 ) -> Vec<crate::app::Field> {
     let mut fields = Vec::new();
     if let Some(proj) = project {
-        fields.push(crate::app::Field::text("Project", proj));
+        fields.push(crate::app::Field::ref_field("Project", proj));
     }
     fields.push(crate::app::Field::text("Title", title));
     fields.push(crate::app::Field::multi_select("Assignees", assignees));
@@ -108,7 +108,7 @@ pub fn mr_fields(
 ) -> Vec<crate::app::Field> {
     let mut fields = Vec::new();
     if let Some(proj) = project {
-        fields.push(crate::app::Field::text("Project", proj));
+        fields.push(crate::app::Field::ref_field("Project", proj));
     }
     fields.push(crate::app::Field::text("Title", title));
     if !is_github {
@@ -145,7 +145,7 @@ pub fn milestone_fields(
 ) -> Vec<crate::app::Field> {
     let mut fields = Vec::new();
     if let Some(proj) = project {
-        fields.push(crate::app::Field::text("Project", proj));
+        fields.push(crate::app::Field::ref_field("Project", proj));
     }
     fields.push(crate::app::Field::text("Title", title));
     if !is_github {

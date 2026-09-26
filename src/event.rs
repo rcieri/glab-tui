@@ -15,6 +15,7 @@ pub enum Event {
     Mouse(MouseEvent),
     Resize(u16, u16),
     PipelineJobs(u64, Vec<crate::domain::pipelines::Job>),
+    PipelineDownstreamsFetched(u64, Vec<crate::domain::pipelines::Pipeline>),
     IssuesFetched(Vec<crate::domain::issues::Issue>),
     MrsFetched(Vec<crate::domain::mr::MergeRequest>),
     PipelinesFetched(Vec<crate::domain::pipelines::Pipeline>),

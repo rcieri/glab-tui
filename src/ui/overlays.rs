@@ -445,7 +445,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let group_end = cols_end + group_cols.len();
         let order_end = group_end + 2;
         let page_size_idx = order_end;
-        let theme_idx = page_size_idx + 1;
+        let prefetch_idx = page_size_idx + 1;
+        let theme_idx = prefetch_idx + 1;
         let save_end = theme_idx + 1;
 
         // Build the entire Configure view as one flat, scrollable list so the
@@ -604,7 +605,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let page_size_line = if is_page_size_active || app.editing_page_size {
             Line::from(Span::styled(
                 format!(
-                    " {} Page Size   {} ",
+                    " {} Page Size      {} ",
                     icons.label_page_size, page_size_value
                 ),
                 page_size_style,
@@ -612,7 +613,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         } else {
             Line::from(vec![
                 Span::styled(
-                    format!(" {} Page Size ", icons.label_page_size),
+                    format!(" {} Page Size      ", icons.label_page_size),
                     Style::default()
                         .fg(t.header_fg)
                         .add_modifier(Modifier::BOLD),
@@ -628,7 +629,45 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             ListItem::new(page_size_line).style(page_size_style),
         ));
 
-        // Theme — inline row (icon + label in purple, value aligned with Page Size)
+        // Prefetch Tabs — inline row (icon + label in header_fg, value in text_normal)
+        let is_prefetch_active = active_idx == prefetch_idx;
+        let prefetch_value = format!("[ {} ]", app.config.prefetch_tabs);
+        let prefetch_style = if is_prefetch_active {
+            Style::default()
+                .fg(t.highlight_bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_normal)
+        };
+        let prefetch_line = if is_prefetch_active {
+            Line::from(Span::styled(
+                format!(
+                    " {} Prefetch Tabs  {} ",
+                    icons.label_fetching, prefetch_value
+                ),
+                prefetch_style,
+            ))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} Prefetch Tabs  ", icons.label_fetching),
+                    Style::default()
+                        .fg(t.header_fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(prefetch_value, Style::default().fg(t.text_normal)),
+            ])
+        };
+        if is_prefetch_active {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(prefetch_idx),
+            ListItem::new(prefetch_line).style(prefetch_style),
+        ));
+
+        // Theme — inline row (icon + label in purple, value aligned with Page Size & Prefetch Tabs)
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
         let is_theme_active = active_idx == theme_idx;
         let theme_value = format!("[ {} ]", current_theme_name);
@@ -642,13 +681,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         };
         let theme_line = if is_theme_active {
             Line::from(Span::styled(
-                format!(" {} Theme     {} ", icons.label_theme, theme_value),
+                format!(" {} Theme          {} ", icons.label_theme, theme_value),
                 theme_style,
             ))
         } else {
             Line::from(vec![
                 Span::styled(
-                    format!(" {} Theme     ", icons.label_theme),
+                    format!(" {} Theme          ", icons.label_theme),
                     Style::default().fg(t.purple).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(theme_value, Style::default().fg(t.text_normal)),
@@ -1225,6 +1264,25 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
                 app.config.keybindings.global.scroll_down, app.config.keybindings.global.scroll_up
             )),
             action: "Scroll description / trace / notes",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!(
+                "{} / {}",
+                app.config.keybindings.global.scroll_page_down,
+                app.config.keybindings.global.scroll_page_up
+            )),
+            action: "Scroll description pane by one page",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{}", app.config.keybindings.global.scroll_to_end)),
+            action: "Jump to the last line of the description pane",
+        },
+        Shortcut {
+            category: "Global & Nav",
+            key: d(format!("{}", app.config.keybindings.global.scroll_top)),
+            action: "Jump to the top of the description pane",
         },
         Shortcut {
             category: "Global & Nav",

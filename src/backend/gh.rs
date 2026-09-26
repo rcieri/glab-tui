@@ -2886,6 +2886,7 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
                     source: r.event,
                     project_path,
                     web_url: r.html_url,
+                    downstream_of: None,
                 }
             })
             .collect();

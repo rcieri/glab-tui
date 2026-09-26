@@ -261,6 +261,42 @@ pub fn dispatch_pending_related_mrs_fetch(
     true
 }
 
+/// Fetch the downstream pipelines spawned by a parent's trigger jobs.
+///
+/// Sends `Event::PipelineDownstreamsFetched` with the parent id and the
+/// list of children on success, or `Event::FetchFailed` on error.
+pub fn spawn_fetch_pipeline_downstreams(
+    client: &domain::client::GitlabClient,
+    project: String,
+    parent_pipeline_id: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    tokio::spawn(async move {
+        match crate::domain::pipelines::list_downstream_pipelines(
+            &client,
+            &project,
+            parent_pipeline_id,
+        )
+        .await
+        {
+            Ok(children) => {
+                let _ = tx.send(Event::PipelineDownstreamsFetched(
+                    parent_pipeline_id,
+                    children,
+                ));
+            }
+            Err(e) => {
+                let _ = tx.send(Event::FetchFailed(
+                    crate::app::Tab::Pipelines,
+                    format!("Failed to fetch downstream pipelines for #{parent_pipeline_id}: {e}"),
+                ));
+            }
+        }
+    });
+}
+
 pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
@@ -537,5 +573,35 @@ pub fn spawn_fetch_mr(
             Err(e) => Err(e),
         };
         let _ = tx.send(Event::MrFetched(iid, result.map_err(|e| e.to_string())));
+    });
+}
+
+/// Kick off background fetches for enabled tabs in order,
+/// skipping the active tab (the caller has already fired its
+/// synchronous fetch), `Tab::Terminal`, and any tab whose data is
+/// already loaded.
+///
+/// Each tab fetches through `spawn_refresh_active_tab` so it shares
+/// the existing per-tab error handling; the queue paces itself
+/// through `ApiRateLimiter::pace_bulk_operation` between tabs to stay
+/// under the GitLab/GitHub rate limit on cold start.
+pub fn spawn_refresh_all_tabs(
+    client: &domain::client::GitlabClient,
+    scope: &crate::scope::Scope,
+    active_tab: app::Tab,
+    available_tabs: Vec<app::Tab>,
+    already_loaded: std::collections::HashSet<app::Tab>,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let client = client.clone();
+    let scope = scope.clone();
+    tokio::spawn(async move {
+        for tab in available_tabs {
+            if tab == active_tab || tab == app::Tab::Terminal || already_loaded.contains(&tab) {
+                continue;
+            }
+            crate::backend::rate_limit::pace_bulk_operation().await;
+            spawn_refresh_active_tab(&client, &scope, tab, tx.clone());
+        }
     });
 }

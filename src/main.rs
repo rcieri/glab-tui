@@ -8048,7 +8048,8 @@ async fn main() -> Result<()> {
                         let group_end = cols_end + group_cols.len();
                         let order_end = group_end + 2;
                         let page_size_idx = order_end;
-                        let theme_idx = page_size_idx + 1;
+                        let prefetch_idx = page_size_idx + 1;
+                        let theme_idx = prefetch_idx + 1;
                         let save_idx = theme_idx + 1;
                         let max_idx = save_idx; // Save button is the last row
 
@@ -8082,15 +8083,16 @@ async fn main() -> Result<()> {
                                     idx if idx < cols_end => cols_end,
                                     idx if idx < group_end => group_end,
                                     idx if idx < order_end => page_size_idx,
-                                    idx if idx == page_size_idx => theme_idx,
+                                    idx if idx == page_size_idx => prefetch_idx,
+                                    idx if idx == prefetch_idx => theme_idx,
                                     _ => 0,
                                 };
                             }
                             KeyCode::Char('K') => {
                                 app.column_checklist_idx = match app.column_checklist_idx {
-                                    idx if idx == save_idx => save_idx - 1,
-                                    idx if idx == theme_idx => page_size_idx,
-                                    idx if idx > theme_idx => theme_idx,
+                                    idx if idx == save_idx => theme_idx,
+                                    idx if idx == theme_idx => prefetch_idx,
+                                    idx if idx == prefetch_idx => page_size_idx,
                                     idx if idx == page_size_idx => order_end,
                                     idx if idx >= group_end => 0,
                                     _ => order_end,
@@ -8135,6 +8137,8 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
+                                } else if idx == prefetch_idx {
+                                    app.config.prefetch_tabs = !app.config.prefetch_tabs;
                                 } else if idx == theme_idx {
                                     let theme_list = crate::config::all_theme_presets();
                                     if !theme_list.is_empty() {
@@ -8243,6 +8247,8 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
+                                } else if idx == prefetch_idx {
+                                    app.config.prefetch_tabs = !app.config.prefetch_tabs;
                                 } else if idx == theme_idx {
                                     let theme_list = crate::config::all_theme_presets();
                                     if !theme_list.is_empty() {

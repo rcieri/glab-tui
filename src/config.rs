@@ -1839,6 +1839,15 @@ impl Config {
             table.remove("page_size");
         }
 
+        if self.prefetch_tabs != base_config.prefetch_tabs {
+            table.insert(
+                "prefetch_tabs".to_string(),
+                toml::Value::Boolean(self.prefetch_tabs),
+            );
+        } else {
+            table.remove("prefetch_tabs");
+        }
+
         fn pane_to_value(pane: &PaneConfig) -> toml::Value {
             let mut table = toml::Table::new();
             if let Some(cols) = &pane.columns {
@@ -2195,5 +2204,27 @@ page_size = 250
         "#;
         let config_false: Config = toml::from_str(toml_false).unwrap();
         assert!(!config_false.prefetch_tabs);
+    }
+
+    #[test]
+    fn test_save_layout_persists_prefetch_tabs() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let guard = EnvGuard::isolate_home(temp_dir.path());
+
+        let mut config = Config::default();
+        config.prefetch_tabs = true;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let loaded = Config::load();
+        assert!(loaded.prefetch_tabs);
+
+        config.prefetch_tabs = false;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let reloaded = Config::load();
+        assert!(!reloaded.prefetch_tabs);
+
+        drop(guard);
     }
 }

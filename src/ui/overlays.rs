@@ -445,7 +445,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let group_end = cols_end + group_cols.len();
         let order_end = group_end + 2;
         let page_size_idx = order_end;
-        let theme_idx = page_size_idx + 1;
+        let prefetch_idx = page_size_idx + 1;
+        let theme_idx = prefetch_idx + 1;
         let save_end = theme_idx + 1;
 
         // Build the entire Configure view as one flat, scrollable list so the
@@ -626,6 +627,44 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         lines.push((
             Some(page_size_idx),
             ListItem::new(page_size_line).style(page_size_style),
+        ));
+
+        // Prefetch Tabs — inline row (icon + label in header_fg, value in text_normal)
+        let is_prefetch_active = active_idx == prefetch_idx;
+        let prefetch_value = format!("[ {} ]", app.config.prefetch_tabs);
+        let prefetch_style = if is_prefetch_active {
+            Style::default()
+                .fg(t.highlight_bg)
+                .bg(t.border_focused)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_normal)
+        };
+        let prefetch_line = if is_prefetch_active {
+            Line::from(Span::styled(
+                format!(
+                    " {} Prefetch Tabs  {} ",
+                    icons.label_fetching, prefetch_value
+                ),
+                prefetch_style,
+            ))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} Prefetch Tabs  ", icons.label_fetching),
+                    Style::default()
+                        .fg(t.header_fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(prefetch_value, Style::default().fg(t.text_normal)),
+            ])
+        };
+        if is_prefetch_active {
+            active_line = Some(lines.len());
+        }
+        lines.push((
+            Some(prefetch_idx),
+            ListItem::new(prefetch_line).style(prefetch_style),
         ));
 
         // Theme — inline row (icon + label in purple, value aligned with Page Size)

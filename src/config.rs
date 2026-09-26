@@ -726,6 +726,14 @@ pub struct KeybindingGlobal {
     pub scroll_down: String,
     #[serde(default)]
     pub scroll_up: String,
+    #[serde(default = "def_scroll_page_down")]
+    pub scroll_page_down: String,
+    #[serde(default = "def_scroll_page_up")]
+    pub scroll_page_up: String,
+    #[serde(default = "def_scroll_to_end")]
+    pub scroll_to_end: String,
+    #[serde(default = "def_scroll_top")]
+    pub scroll_top: String,
     #[serde(default = "def_switch_repo")]
     pub switch_repo: String,
     #[serde(default = "def_jump_to_id")]
@@ -984,6 +992,10 @@ keybind_defaults! {
     def_prev_tab = "h",
     def_scroll_down = "J",
     def_scroll_up = "K",
+    def_scroll_page_down = "PageDown",
+    def_scroll_page_up = "PageUp",
+    def_scroll_to_end = "End",
+    def_scroll_top = "Home",
     def_create_issue = "n",
     def_select_issue = "Space",
     def_create_mr_issue = "m",
@@ -1061,6 +1073,10 @@ impl Default for KeybindingGlobal {
             prev_tab: def_prev_tab(),
             scroll_down: def_scroll_down(),
             scroll_up: def_scroll_up(),
+            scroll_page_down: def_scroll_page_down(),
+            scroll_page_up: def_scroll_page_up(),
+            scroll_to_end: def_scroll_to_end(),
+            scroll_top: def_scroll_top(),
             switch_repo: def_switch_repo(),
             jump_to_id: def_jump_to_id(),
             submit_edit: def_submit_edit(),
@@ -1278,6 +1294,14 @@ fn def_fetch_label_colors() -> bool {
     true
 }
 
+fn def_keybinding_timeout_ms() -> u64 {
+    1000
+}
+
+fn def_prefetch_tabs() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1308,10 +1332,19 @@ pub struct Config {
     pub page_size: usize,
     #[serde(default = "def_api_per_page")]
     pub api_per_page: usize,
+    /// How long a captured first keypress of a two-character sequence stays
+    /// pending before the timeout fires and the prefix is dispatched as a
+    /// single keypress.
+    #[serde(default = "def_keybinding_timeout_ms")]
+    pub keybinding_timeout_ms: u64,
     /// Use real label colors from `label list` when available; otherwise use
     /// the theme palette as fallback.
     #[serde(default = "def_fetch_label_colors")]
     pub fetch_label_colors: bool,
+    /// Eagerly prefetch data for all enabled tabs in the background on
+    /// startup and repository switches. Off by default to conserve API quota.
+    #[serde(default = "def_prefetch_tabs")]
+    pub prefetch_tabs: bool,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
     pub issues: PaneConfig,
@@ -1337,7 +1370,9 @@ impl Default for Config {
             keybindings: KeybindingConfig::default(),
             page_size: def_page_size(),
             api_per_page: def_api_per_page(),
+            keybinding_timeout_ms: def_keybinding_timeout_ms(),
             fetch_label_colors: def_fetch_label_colors(),
+            prefetch_tabs: def_prefetch_tabs(),
             disabled_tabs: None,
             ui: UiConfig::default(),
             issues: PaneConfig::default(),
@@ -1395,6 +1430,13 @@ page_size = 100
 # truncates large JSON response bodies. Only affects GitLab backends.
 # api_per_page = 100
 
+# Eagerly prefetch data for all enabled tabs in the background on startup / repo switch.
+# prefetch_tabs = false
+
+# How long a captured first keypress of a two-character key sequence stays
+# pending before the prefix is dispatched as a single keypress.
+# keybinding_timeout_ms = 1000
+
 # Per-color overrides (takes precedence over theme_preset).
 # Uncomment the [theme] line and any colors you want to override.
 # [theme]
@@ -1428,6 +1470,10 @@ next_tab = "l"
 prev_tab = "h"
 scroll_down = "J"
 scroll_up = "K"
+scroll_page_down = "PageDown"
+scroll_page_up = "PageUp"
+scroll_to_end = "End"
+scroll_top = "Home"
 jump_to_id = "g"
 
 [keybindings.issues]
@@ -1793,6 +1839,15 @@ impl Config {
             table.remove("page_size");
         }
 
+        if self.prefetch_tabs != base_config.prefetch_tabs {
+            table.insert(
+                "prefetch_tabs".to_string(),
+                toml::Value::Boolean(self.prefetch_tabs),
+            );
+        } else {
+            table.remove("prefetch_tabs");
+        }
+
         fn pane_to_value(pane: &PaneConfig) -> toml::Value {
             let mut table = toml::Table::new();
             if let Some(cols) = &pane.columns {
@@ -2127,6 +2182,49 @@ page_size = 250
             std::env::set_var("USERPROFILE", temp_dir.path());
         }
         assert_eq!(home_dir(), temp_dir.path());
+        drop(guard);
+    }
+
+    #[test]
+    fn prefetch_tabs_defaults_to_false() {
+        let config = Config::default();
+        assert!(!config.prefetch_tabs);
+    }
+
+    #[test]
+    fn prefetch_tabs_parses_from_toml() {
+        let toml_str = r#"
+            prefetch_tabs = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.prefetch_tabs);
+
+        let toml_false = r#"
+            prefetch_tabs = false
+        "#;
+        let config_false: Config = toml::from_str(toml_false).unwrap();
+        assert!(!config_false.prefetch_tabs);
+    }
+
+    #[test]
+    fn test_save_layout_persists_prefetch_tabs() {
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let guard = EnvGuard::isolate_home(temp_dir.path());
+
+        let mut config = Config::default();
+        config.prefetch_tabs = true;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let loaded = Config::load();
+        assert!(loaded.prefetch_tabs);
+
+        config.prefetch_tabs = false;
+        config.save_layout(SaveMenu::Global).unwrap();
+
+        let reloaded = Config::load();
+        assert!(!reloaded.prefetch_tabs);
+
         drop(guard);
     }
 }

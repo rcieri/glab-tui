@@ -424,6 +424,12 @@ pub fn build_pipeline_document(
             format!("{}s", duration),
         ));
     }
+    if let Some(parent) = pipeline.downstream_of {
+        fields.push(crate::app::Field::read_only(
+            "Parent",
+            format!("Pipeline #{}", parent),
+        ));
+    }
     if let Some(created) = &pipeline.created_at {
         fields.push(crate::app::Field::read_only(
             "Created",

@@ -28,6 +28,12 @@ pub struct Pipeline {
     pub project_path: String,
     #[serde(default)]
     pub web_url: Option<String>,
+    /// When this pipeline was reached through a parent bridge, the id of
+    /// that parent pipeline. `None` for top-level pipelines; set on child
+    /// pipelines so the UI can render them as descendants and walk back
+    /// up.
+    #[serde(default)]
+    pub downstream_of: Option<u64>,
 }
 
 impl Pipeline {
@@ -196,6 +202,20 @@ pub async fn list_pipeline_jobs(
     client
         .backend
         .list_pipeline_jobs(project_path, pipeline_id, client.page_size)
+        .await
+}
+
+/// Fetch the downstream pipelines spawned by a parent pipeline's
+/// `trigger:` jobs. GitLab serves these through `/pipelines/:id/bridges`;
+/// backends without a bridge concept report an empty Vec.
+pub async fn list_downstream_pipelines(
+    client: &GitlabClient,
+    project_path: &str,
+    pipeline_id: u64,
+) -> Result<Vec<Pipeline>> {
+    client
+        .backend
+        .list_downstream_pipelines(project_path, pipeline_id, client.page_size)
         .await
 }
 

@@ -933,6 +933,7 @@ impl Backend for GlabBackend {
                                 source: None,
                                 project_path: String::new(),
                                 web_url: p.web_url,
+                                downstream_of: None,
                             }),
                             blocking_discussions_resolved: m.blocking_discussions_resolved,
                             approval: None,
@@ -1106,6 +1107,7 @@ impl Backend for GlabBackend {
                 source: None,
                 project_path: String::new(),
                 web_url: p.web_url,
+                downstream_of: None,
             }),
             blocking_discussions_resolved: m.blocking_discussions_resolved,
             approval: None,
@@ -1535,6 +1537,7 @@ impl Backend for GlabBackend {
                             source: p.source,
                             project_path: project.to_string(),
                             web_url: p.web_url,
+                            downstream_of: None,
                         }
                     }));
                 }
@@ -1615,6 +1618,64 @@ impl Backend for GlabBackend {
             })
             .collect();
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
+    }
+
+    async fn list_downstream_pipelines(
+        &self,
+        project: &str,
+        pipeline_id: u64,
+        page_size: usize,
+    ) -> Result<Vec<crate::domain::pipelines::Pipeline>> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!(
+            "/projects/{}/pipelines/{}/bridges?per_page={}",
+            encoded, pipeline_id, page_size
+        );
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Pipeline Bridges")
+            .await?;
+        #[derive(Deserialize)]
+        struct GiBridge {
+            #[serde(rename = "downstream_pipeline")]
+            downstream: Option<GiDownstream>,
+        }
+        #[derive(Deserialize)]
+        struct GiDownstream {
+            id: u64,
+            status: String,
+            #[serde(rename = "ref")]
+            r#ref: String,
+            sha: String,
+            #[serde(default)]
+            created_at: Option<String>,
+            updated_at: String,
+        }
+        let bridges: Vec<GiBridge> = serde_json::from_str(&raw)?;
+        // GitLab embeds only these fields on the downstream pipeline; the
+        // UI carries the parent's project_path forward when it drills into
+        // a child, since the embed carries neither project_path nor web_url.
+        Ok(bridges
+            .into_iter()
+            .filter_map(|b| {
+                b.downstream.map(|d| crate::domain::pipelines::Pipeline {
+                    id: d.id,
+                    status: d.status,
+                    r#ref: d.r#ref,
+                    updated_at: d.updated_at,
+                    name: String::new(),
+                    display_title: String::new(),
+                    event: String::new(),
+                    head_sha: d.sha,
+                    actor_login: String::new(),
+                    duration_seconds: None,
+                    created_at: d.created_at,
+                    source: Some("parent_pipeline".to_string()),
+                    project_path: String::new(),
+                    web_url: None,
+                    downstream_of: Some(pipeline_id),
+                })
+            })
+            .collect())
     }
 
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {

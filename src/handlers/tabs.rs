@@ -51,7 +51,8 @@ pub async fn handle_active_tab_key(
     key_event: &KeyEvent,
     terminal: &mut AppTerminal,
     tx: UnboundedSender<Event>,
-) {
+    pending: Option<char>,
+) -> bool {
     let mut handled = true;
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
@@ -179,7 +180,7 @@ pub async fn handle_active_tab_key(
                     .selected()
                     .and_then(|idx| app.filtered_issues().get(idx).map(|i| i.iid))
                 else {
-                    return;
+                    return false;
                 };
                 use crate::domain::issues::RelatedMrsState;
                 let state = app
@@ -290,7 +291,7 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.issues.state.selected() {
                     if let Some(issue) = app.filtered_issues().get(selected_idx) {
                         let Some(client) = app.gitlab_client.clone() else {
-                            return;
+                            return false;
                         };
                         let project_path = if !issue.project_path.is_empty() {
                             issue.project_path.clone()
@@ -764,7 +765,7 @@ pub async fn handle_active_tab_key(
                             let is_github = app.is_github();
                             let entity = if is_github { "pr" } else { "mr" };
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_path = if !mr.project_path.is_empty() {
                                 mr.project_path.clone()
@@ -1033,7 +1034,8 @@ pub async fn handle_active_tab_key(
                                 }
                             }
                         }
-                        _ if (key_event.code == KeyCode::Char('d')
+                        _ if ((key_event.code == KeyCode::Char('d')
+                            && key_event.modifiers.is_empty())
                             || keybinding_matches(
                                 &app.config.keybindings.pipelines.cancel,
                                 &key_event,
@@ -1073,7 +1075,7 @@ pub async fn handle_active_tab_key(
                                     "Workflow browser is only available for GitHub Actions"
                                         .to_string(),
                                 );
-                                return;
+                                return false;
                             }
                             let workflow = app
                                 .pipelines
@@ -1085,10 +1087,10 @@ pub async fn handle_active_tab_key(
                             let Some(workflow) = workflow else {
                                 app.error_message =
                                     Some("Selected pipeline has no workflow name".to_string());
-                                return;
+                                return false;
                             };
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_context = app.scope.as_str().to_string();
                             let tx2 = tx.clone();
@@ -1110,7 +1112,7 @@ pub async fn handle_active_tab_key(
                         {
                             let is_github = app.is_github();
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_path = if !item.project_path.is_empty() {
                                 item.project_path.clone()
@@ -1430,7 +1432,7 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let active_pipe_path = app
                                 .active_pipeline_id
@@ -1538,7 +1540,7 @@ pub async fn handle_active_tab_key(
                         {
                             app.job_trace_follow = !app.job_trace_follow;
                             if app.job_trace_follow {
-                                app.job_trace_needs_scroll_to_bottom = true;
+                                app.detail_scroll_to_bottom = true;
                             }
                         }
                         _ if keybinding_matches(
@@ -1741,7 +1743,7 @@ pub async fn handle_active_tab_key(
                     if let Some(release) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
-                            return;
+                            return false;
                         };
                         let project_path = app.scope.as_str().to_string();
                         let tag_name = release.tag_name.clone();
@@ -1818,7 +1820,7 @@ pub async fn handle_active_tab_key(
                                 "issue"
                             };
                             let Some(client) = app.gitlab_client.clone() else {
-                                return;
+                                return false;
                             };
                             let project_path = if !item.project_path.is_empty() {
                                 item.project_path.clone()
@@ -1979,7 +1981,7 @@ pub async fn handle_active_tab_key(
                     if let Some(milestone) = filtered.get(selected_idx) {
                         let is_github = app.is_github();
                         let Some(client) = app.gitlab_client.clone() else {
-                            return;
+                            return false;
                         };
                         let project_path = app.scope.as_str().to_string();
                         let mid_str = milestone.iid.to_string();
@@ -2167,13 +2169,44 @@ pub async fn handle_active_tab_key(
                 || key_event.code == KeyCode::Char('K'))
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
+        } else if app.detail_visible
+            && keybinding_matches(&app.config.keybindings.global.scroll_page_down, &key_event)
+        {
+            if let Some(rect) = app.detail_rect {
+                let page = (rect.height as usize).saturating_sub(2).max(1);
+                app.detail_scroll = app.detail_scroll.saturating_add(page as u16);
+            }
+        } else if app.detail_visible
+            && keybinding_matches(&app.config.keybindings.global.scroll_page_up, &key_event)
+        {
+            if let Some(rect) = app.detail_rect {
+                let page = (rect.height as usize).saturating_sub(2).max(1);
+                app.detail_scroll = app.detail_scroll.saturating_sub(page as u16);
+            }
+        } else if app.detail_visible
+            && keybinding_matches(&app.config.keybindings.global.scroll_to_end, &key_event)
+        {
+            // Only the flag — the last line's index is the render pass's
+            // `max`, which no handler knows. `settle_detail_scroll` resolves
+            // it in the same frame.
+            app.detail_scroll_to_bottom = true;
+        } else if app.detail_visible
+            && crate::keybinding::matches_with_pending(
+                &app.config.keybindings.global.scroll_top,
+                pending,
+                &key_event,
+            )
+        {
+            // `scroll_top` jumps to the first line directly: 0 is a known
+            // index, no flag round-trip needed.
+            app.detail_scroll = 0;
         }
 
         match key_event.code {
             KeyCode::Char('?') | KeyCode::F(1) => {
                 app.show_help = true;
             }
-            KeyCode::Char('u') => {
+            KeyCode::Char('u') if key_event.modifiers.is_empty() => {
                 app.error_message = Some("Checking for updates...".to_string());
                 let tx = tx.clone();
                 tokio::spawn(async move {
@@ -2242,7 +2275,7 @@ pub async fn handle_active_tab_key(
                     app.clear_search_query();
                 }
             }
-            KeyCode::Char('f') => {
+            KeyCode::Char('f') if key_event.modifiers.is_empty() => {
                 app.is_typing_search = true;
             }
             KeyCode::Enter => match app.active_tab {
@@ -2292,8 +2325,8 @@ pub async fn handle_active_tab_key(
                         let pipe_info = app
                             .filtered_pipelines()
                             .get(idx)
-                            .map(|p| (p.id(), p.project_path.clone()));
-                        if let Some((pipeline_id, pipe_project)) = pipe_info {
+                            .map(|p| (p.id(), p.project_path.clone(), p.downstream_of));
+                        if let Some((pipeline_id, pipe_project, downstream_of)) = pipe_info {
                             if let Some(client) = &app.gitlab_client {
                                 app.loading_tabs.insert(crate::app::Tab::Jobs);
                                 let project_context = if !pipe_project.is_empty() {
@@ -2301,25 +2334,41 @@ pub async fn handle_active_tab_key(
                                 } else {
                                     app.scope.as_str().to_string()
                                 };
-                                if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
+                                let fetch_jobs = crate::domain::pipelines::list_pipeline_jobs(
                                     client,
                                     &project_context,
                                     pipeline_id,
-                                )
-                                .await
-                                {
-                                    app.pipeline_jobs.insert(pipeline_id, jobs.clone());
-                                    app.jobs.items = jobs;
-                                    app.active_pipeline_id = Some(pipeline_id);
-                                    app.active_pipeline_project = Some(project_context);
-                                    app.jobs.state.select(Some(0));
-                                    app.detail_scroll = 0;
-                                    app.job_trace = None;
-                                    app.active_tab = crate::app::Tab::Jobs;
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                } else {
-                                    app.show_error("Failed to fetch jobs".to_string());
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
+                                );
+                                // Top-level pipelines may also have downstream
+                                // children spawned by `trigger:` jobs; surface
+                                // them so the user can drill into a trigger
+                                // chain that has no jobs of its own. Children
+                                // (downstream_of = Some(_)) skip the lookup
+                                // since their parent is already on screen.
+                                if downstream_of.is_none() {
+                                    crate::fetch::spawn_fetch_pipeline_downstreams(
+                                        client,
+                                        project_context.clone(),
+                                        pipeline_id,
+                                        tx.clone(),
+                                    );
+                                }
+                                match fetch_jobs.await {
+                                    Ok(jobs) => {
+                                        app.pipeline_jobs.insert(pipeline_id, jobs.clone());
+                                        app.jobs.items = jobs;
+                                        app.active_pipeline_id = Some(pipeline_id);
+                                        app.active_pipeline_project = Some(project_context);
+                                        app.jobs.state.select(Some(0));
+                                        app.detail_scroll = 0;
+                                        app.job_trace = None;
+                                        app.active_tab = crate::app::Tab::Jobs;
+                                        app.loading_tabs.remove(&crate::app::Tab::Jobs);
+                                    }
+                                    Err(_) => {
+                                        app.show_error("Failed to fetch jobs".to_string());
+                                        app.loading_tabs.remove(&crate::app::Tab::Jobs);
+                                    }
                                 }
                             }
                         }
@@ -2713,7 +2762,10 @@ pub async fn handle_active_tab_key(
             }
             KeyCode::End => {
                 if app.details_zoomed {
-                    app.detail_scroll = u16::MAX;
+                    // Only the flag — the last line's index is the render
+                    // pass's `max`, which no handler knows.
+                    // `settle_detail_scroll` resolves it in the same frame.
+                    app.detail_scroll_to_bottom = true;
                 } else {
                     app.detail_scroll = 0;
                     match app.active_tab {
@@ -2765,6 +2817,8 @@ pub async fn handle_active_tab_key(
             _ => {}
         }
     }
+
+    handled
 }
 
 /// Switch to the Merge Requests tab and focus the given MR/PR. If the MR is
@@ -2818,6 +2872,13 @@ mod tests {
     /// Uses `Viewport::Fixed` so construction never queries the backend's
     /// terminal size - `cargo test` has no controlling tty in CI.
     async fn dispatch(app: &mut App, key_event: &KeyEvent) {
+        dispatch_with_pending(app, key_event, None).await;
+    }
+
+    /// Like `dispatch`, but with an explicit `pending` first key, to
+    /// exercise the multi-key sequence branch at the top of
+    /// `handle_active_tab_key`.
+    async fn dispatch_with_pending(app: &mut App, key_event: &KeyEvent, pending: Option<char>) {
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let options = ratatui::TerminalOptions {
             viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 80, 24)),
@@ -2825,7 +2886,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::with_options(backend, options)
             .expect("terminal construction failed");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        handle_active_tab_key(app, key_event, &mut terminal, tx).await;
+        handle_active_tab_key(app, key_event, &mut terminal, tx, pending).await;
     }
 
     #[tokio::test]
@@ -2931,5 +2992,358 @@ mod tests {
         dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
         assert_eq!(app.issues.state.selected(), Some(0));
         assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// `PageDown` advances `detail_scroll` by the detail pane's usable
+    /// height (its `rect.height` minus the two border rows) — the convention
+    /// `less` and `man` share.
+    #[tokio::test]
+    async fn page_down_scrolls_detail_pane_by_one_viewport() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 25);
+    }
+
+    /// `PageUp` is the symmetric `PageDown` — subtracts the same page size.
+    #[tokio::test]
+    async fn page_up_scrolls_detail_pane_back_by_one_viewport() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 25;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// The `2`-row border means `rect.height < 3` leaves no usable rows, so
+    /// `PageUp` must not underflow and `PageDown` must step by exactly one.
+    #[tokio::test]
+    async fn page_scroll_clamps_to_one_line_for_short_detail_pane() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 2));
+        app.detail_scroll = 0;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 0);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 1);
+    }
+
+    /// Without a rendered `detail_rect` the handler has no viewport to step
+    /// against, so the key must be a no-op rather than subtract from
+    /// `detail_scroll` and risk wrapping.
+    #[tokio::test]
+    async fn page_scroll_keys_do_nothing_without_detail_rect() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = None;
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// `PageDown` must only page-scroll, not also fire a tab handler that
+    /// uses the bare key code - `PageDown` is not bound to any tab action
+    /// today, so the existing `J`/`K` cascade is the only thing that could
+    /// accidentally catch it.
+    #[tokio::test]
+    async fn page_down_does_not_also_navigate_the_table() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.issues.items = (1..=4)
+            .map(|iid| crate::domain::issues::Issue {
+                iid,
+                title: format!("Issue {iid}"),
+                state: "opened".to_string(),
+                labels: vec![],
+                updated_at: String::new(),
+                created_at: None,
+                closed_at: None,
+                author: crate::domain::issues::Author {
+                    username: "user".to_string(),
+                },
+                milestone: None,
+                assignees: vec![],
+                description: None,
+                due_date: None,
+                web_url: String::new(),
+                project_path: String::new(),
+                related_mrs: None,
+            })
+            .collect();
+        app.issues.state.select(Some(0));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+        )
+        .await;
+
+        assert_eq!(app.issues.state.selected(), Some(0));
+        assert_eq!(app.detail_scroll, 25);
+    }
+
+    /// `Ctrl+d` must not cancel the selected pipeline - the bare `d` arm
+    /// matches on character alone and previously swallowed the Ctrl form,
+    /// blocking any future vim half-page binding.
+    #[tokio::test]
+    async fn ctrl_d_does_not_cancel_the_selected_pipeline() {
+        use crate::domain::pipelines::Pipeline;
+
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        let pipe = Pipeline {
+            id: 42,
+            status: "running".to_string(),
+            r#ref: String::new(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+            downstream_of: None,
+        };
+        app.pipelines.items = vec![pipe];
+        app.pipelines.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+
+        assert_eq!(
+            app.pipelines.items[0].status, "running",
+            "Ctrl+d must not flip the pipeline status to canceled"
+        );
+    }
+
+    /// `Ctrl+u` must not start a self-update check.
+    #[tokio::test]
+    async fn ctrl_u_does_not_trigger_a_self_update() {
+        let mut app = App::default();
+        app.error_message = None;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+
+        assert!(
+            app.error_message.is_none()
+                || !app
+                    .error_message
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Checking for updates"),
+            "Ctrl+u must not raise the 'Checking for updates' message",
+        );
+    }
+
+    /// `Ctrl+f` must not open the inline search bar.
+    #[tokio::test]
+    async fn ctrl_f_does_not_open_inline_search() {
+        let mut app = App::default();
+        app.is_typing_search = false;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+
+        assert!(
+            !app.is_typing_search,
+            "Ctrl+f must not flip is_typing_search"
+        );
+    }
+
+    /// The handler must not write `detail_scroll` itself: the last line's
+    /// index is the render pass's `max`, which no handler knows. It raises
+    /// the flag and `settle_detail_scroll` resolves it in the same frame.
+    ///
+    /// The hardcoded `End` arm runs in the same dispatch and resets
+    /// `detail_scroll` to `0` (the existing #492 behaviour that jumps the
+    /// table to its last row), so the post-dispatch value is `0` here. The
+    /// render pass, not the test, is what consumes the flag and snaps the
+    /// scroll to the pane's actual last line — that path is covered by the
+    /// `render_tab_*_clamps_*` tests in `ui::tabs`.
+    #[tokio::test]
+    async fn scroll_to_end_raises_the_jump_flag() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_to_end = "End".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+
+        assert!(app.detail_scroll_to_bottom);
+    }
+
+    /// `scroll_to_end` is a detail-pane action; without a visible pane it
+    /// has nothing to scroll.
+    #[tokio::test]
+    async fn scroll_to_end_is_ignored_while_the_detail_pane_is_hidden() {
+        let mut app = App::default();
+        app.detail_visible = false;
+        app.config.keybindings.global.scroll_to_end = "End".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).await;
+
+        assert!(!app.detail_scroll_to_bottom);
+    }
+
+    /// Remap `scroll_to_end` to a different key and confirm the new key fires
+    /// while the old default does not. `Issues` already binds `G` to
+    /// `drill_into_scope`, so the test moves the local key aside too —
+    /// without that, the per-tab arm claims `G` before the global fallback
+    /// runs.
+    #[tokio::test]
+    async fn scroll_to_end_remap_to_a_custom_key_works() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.scope = crate::scope::Scope::Repository("group/project".to_string());
+        app.config.keybindings.global.scroll_to_end = "G".to_string();
+        app.config.keybindings.issues.drill_into_scope = "P".to_string();
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT),
+        )
+        .await;
+
+        assert!(app.detail_scroll_to_bottom);
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// `scroll_top` writes the scroll directly: 0 is a known index, so
+    /// unlike `scroll_to_end` there is no flag round-trip and the
+    /// dispatch sets the value in one shot.
+    #[tokio::test]
+    async fn scroll_top_zeroes_the_scroll() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_top = "Home".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// The default binding ships as `Home`, which is the same physical key
+    /// the hardcoded #492 arm already dispatches. The two paths land on
+    /// the same `detail_scroll = 0`, so the compound behaviour is
+    /// idempotent for the user.
+    #[tokio::test]
+    async fn scroll_top_default_does_not_raise_the_jump_to_bottom_flag() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+
+        assert_eq!(app.detail_scroll, 0);
+        assert!(!app.detail_scroll_to_bottom);
+    }
+
+    /// `gg` jumps to a known index, so it writes the scroll directly and
+    /// must not raise the jump-to-bottom flag on the way.
+    #[tokio::test]
+    async fn scroll_top_resolves_two_char_sequence_through_matches_with_pending() {
+        let mut app = App::default();
+        app.detail_visible = true;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_top = "gg".to_string();
+
+        dispatch_with_pending(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE),
+            Some('g'),
+        )
+        .await;
+
+        assert_eq!(app.detail_scroll, 0);
+        assert!(!app.detail_scroll_to_bottom);
+    }
+
+    /// The default `scroll_top = "Home"` shares its key with the hardcoded
+    /// #492 table-navigation arm, which fires regardless of
+    /// `detail_visible`. Confirm `dispatch` does not panic on the
+    /// default binding while the detail pane is hidden — the table
+    /// navigation either jumps to row 0 (when there's a row) or no-ops
+    /// on an empty table, and the `scroll_top` arm itself does not run.
+    #[tokio::test]
+    async fn scroll_top_default_dispatches_without_panic_in_hidden_detail() {
+        let mut app = App::default();
+        app.detail_visible = false;
+        app.config.keybindings.global.scroll_top = "Home".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).await;
+
+        // detail_scroll was never touched by `scroll_top` (which is
+        // gated on detail_visible); the hardcoded Home arm runs but
+        // resets to 0 unconditionally.
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// When the binding is remapped to a key with no other handler,
+    /// `scroll_top` is gated on `detail_visible` and stays out of the way
+    /// while the pane is hidden.
+    #[tokio::test]
+    async fn scroll_top_remapped_to_unbound_key_ignores_hidden_detail() {
+        let mut app = App::default();
+        app.detail_visible = false;
+        app.detail_scroll = 5;
+        app.config.keybindings.global.scroll_top = "F1".to_string();
+
+        dispatch(&mut app, &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)).await;
+
+        assert_eq!(app.detail_scroll, 5);
     }
 }

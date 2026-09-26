@@ -20,7 +20,7 @@ mod ui;
 pub mod utils;
 
 use anyhow::Result;
-use app::{App, SaveMenu};
+use app::{App, PendingKey, SaveMenu};
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
     execute,
@@ -613,7 +613,7 @@ pub use keybinding::keybinding_matches;
 pub use templates::*;
 
 pub use fetch::spawn_fetch_repo_attributes;
-pub use fetch::spawn_refresh_active_tab;
+pub use fetch::{spawn_refresh_active_tab, spawn_refresh_all_tabs};
 use handlers::overlays::*;
 
 #[tokio::main]
@@ -792,6 +792,18 @@ async fn main() -> Result<()> {
             app.start_loading_tab(app.active_tab);
         }
         spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+        // If configured, queue background fetches for remaining enabled tabs
+        // so a quick tab-switch lands on already-populated data.
+        if app.config.prefetch_tabs {
+            spawn_refresh_all_tabs(
+                &client,
+                &app.scope,
+                app.active_tab,
+                app.available_tabs(),
+                app.loaded_tabs.clone(),
+                tx.clone(),
+            );
+        }
         spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
@@ -1022,6 +1034,26 @@ async fn main() -> Result<()> {
             match event {
                 Event::Tick => {
                     app.tick();
+                    if let Some(pending_key) = app.pending_key.take() {
+                        if pending_key.since.elapsed()
+                            >= std::time::Duration::from_millis(app.config.keybinding_timeout_ms)
+                        {
+                            if let KeyCode::Char(c) = pending_key.event.code {
+                                if app.standalone_chars.contains(&c) {
+                                    handlers::tabs::handle_active_tab_key(
+                                        &mut app,
+                                        &pending_key.event,
+                                        &mut terminal,
+                                        events.sender(),
+                                        None,
+                                    )
+                                    .await;
+                                }
+                            }
+                        } else {
+                            app.pending_key = Some(pending_key);
+                        }
+                    }
                     if let Some(client) = app.gitlab_client.clone() {
                         let _ = crate::fetch::dispatch_pending_related_mrs_fetch(
                             &client,
@@ -1156,7 +1188,7 @@ async fn main() -> Result<()> {
                         match result {
                             Ok(trace) => {
                                 app.job_trace = Some(trace);
-                                app.job_trace_needs_scroll_to_bottom = app.job_trace_follow;
+                                app.detail_scroll_to_bottom = app.job_trace_follow;
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
@@ -1241,6 +1273,30 @@ async fn main() -> Result<()> {
                     app.project_cache.pipelines = app.pipelines.items.clone();
                     app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                }
+                Event::PipelineDownstreamsFetched(parent_id, children) => {
+                    // Append any child pipelines we don't already know about.
+                    // Children carry `downstream_of = Some(parent_id)` so the
+                    // UI can render the `↳` badge and walk back up. Dups can
+                    // arrive when the user re-Enters a parent whose children
+                    // are still in the list.
+                    let known: std::collections::HashSet<u64> =
+                        app.pipelines.items.iter().map(|p| p.id()).collect();
+                    for child in children {
+                        if !known.contains(&child.id()) {
+                            app.pipelines.items.push(child);
+                        }
+                    }
+                    // The user is typically on Tab::Jobs by the time Enter's
+                    // bridge fetch answers (Enter switched to Jobs before
+                    // the async fetch landed). Reflow the Pipelines
+                    // selection regardless of the active tab so the
+                    // children pass any active column filter when the user
+                    // later switches back. The active tab is preserved.
+                    let active = app.active_tab;
+                    app.active_tab = crate::app::Tab::Pipelines;
+                    app.update_filter_selection();
+                    app.active_tab = active;
                 }
                 Event::TodosFetched(notifs) => {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
@@ -7992,7 +8048,8 @@ async fn main() -> Result<()> {
                         let group_end = cols_end + group_cols.len();
                         let order_end = group_end + 2;
                         let page_size_idx = order_end;
-                        let theme_idx = page_size_idx + 1;
+                        let prefetch_idx = page_size_idx + 1;
+                        let theme_idx = prefetch_idx + 1;
                         let save_idx = theme_idx + 1;
                         let max_idx = save_idx; // Save button is the last row
 
@@ -8026,15 +8083,16 @@ async fn main() -> Result<()> {
                                     idx if idx < cols_end => cols_end,
                                     idx if idx < group_end => group_end,
                                     idx if idx < order_end => page_size_idx,
-                                    idx if idx == page_size_idx => theme_idx,
+                                    idx if idx == page_size_idx => prefetch_idx,
+                                    idx if idx == prefetch_idx => theme_idx,
                                     _ => 0,
                                 };
                             }
                             KeyCode::Char('K') => {
                                 app.column_checklist_idx = match app.column_checklist_idx {
-                                    idx if idx == save_idx => save_idx - 1,
-                                    idx if idx == theme_idx => page_size_idx,
-                                    idx if idx > theme_idx => theme_idx,
+                                    idx if idx == save_idx => theme_idx,
+                                    idx if idx == theme_idx => prefetch_idx,
+                                    idx if idx == prefetch_idx => page_size_idx,
                                     idx if idx == page_size_idx => order_end,
                                     idx if idx >= group_end => 0,
                                     _ => order_end,
@@ -8079,6 +8137,8 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
+                                } else if idx == prefetch_idx {
+                                    app.config.prefetch_tabs = !app.config.prefetch_tabs;
                                 } else if idx == theme_idx {
                                     let theme_list = crate::config::all_theme_presets();
                                     if !theme_list.is_empty() {
@@ -8187,6 +8247,8 @@ async fn main() -> Result<()> {
                                 } else if idx == page_size_idx {
                                     app.editing_page_size = true;
                                     app.page_size_input = app.page_size.to_string();
+                                } else if idx == prefetch_idx {
+                                    app.config.prefetch_tabs = !app.config.prefetch_tabs;
                                 } else if idx == theme_idx {
                                     let theme_list = crate::config::all_theme_presets();
                                     if !theme_list.is_empty() {
@@ -8369,11 +8431,44 @@ async fn main() -> Result<()> {
                     }
 
                     let old_scope = app.scope.clone();
+
+                    if let Some(PendingKey {
+                        event: pending_event,
+                        ..
+                    }) = app.pending_key.take()
+                    {
+                        if let KeyCode::Char(pending_char) = pending_event.code {
+                            let resolved = handlers::tabs::handle_active_tab_key(
+                                &mut app,
+                                &key_event,
+                                &mut terminal,
+                                events.sender(),
+                                Some(pending_char),
+                            )
+                            .await;
+                            if resolved {
+                                continue;
+                            }
+                        }
+                        // Pending was a non-character (Tab, F-key, etc.) -
+                        // fall through and dispatch the current keypress as
+                        // a fresh event.
+                    } else if let KeyCode::Char(c) = key_event.code {
+                        if key_event.modifiers.is_empty() && app.sequence_prefixes.contains(&c) {
+                            app.pending_key = Some(PendingKey {
+                                event: key_event,
+                                since: std::time::Instant::now(),
+                            });
+                            continue;
+                        }
+                    }
+
                     handlers::tabs::handle_active_tab_key(
                         &mut app,
                         &key_event,
                         &mut terminal,
                         events.sender(),
+                        None,
                     )
                     .await;
 
@@ -8415,6 +8510,18 @@ async fn main() -> Result<()> {
                                 app.active_tab,
                                 tx.clone(),
                             );
+                            // If prefetching is enabled, re-trigger the background queue
+                            // for the new scope so all tabs get populated.
+                            if app.config.prefetch_tabs {
+                                spawn_refresh_all_tabs(
+                                    &client,
+                                    &app.scope,
+                                    app.active_tab,
+                                    app.available_tabs(),
+                                    app.loaded_tabs.clone(),
+                                    tx.clone(),
+                                );
+                            }
                             spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
                         }
                     }

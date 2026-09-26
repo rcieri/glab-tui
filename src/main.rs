@@ -953,62 +953,72 @@ async fn main() -> Result<()> {
                     if let Some((milestone_iid, milestone_title, m_proj)) = milestone {
                         if app.selected_milestone_iid != Some(milestone_iid) {
                             app.selected_milestone_iid = Some(milestone_iid);
-                            // Skip the fetch whenever we already have ANY data
-                            // for this milestone — either the issues cache (set
-                            // by an earlier drill-in) or the progress cache
-                            // (rebuilt from the Issues tab on every fetch). The
-                            // preview pane will populate from whichever cache
-                            // is present; the progress bar always reads the
-                            // progress cache first and never refetches.
-                            let cached = app
-                                .milestone_issues_cache
-                                .get(&milestone_iid)
-                                .filter(|c| !c.is_empty());
-                            if let Some(cached) = cached {
-                                app.selected_milestone_issues = Some(cached.clone());
-                            } else if app.milestone_progress_cache.contains_key(&milestone_iid) {
-                                // Progress cache already answers the bar. The
-                                // preview pane stays empty until the user
-                                // explicitly asks for the issue list (e.g. via
-                                // a future drill-in action). No fetch here.
+                            if app.scope.is_group() {
+                                // In group scope milestones aggregate across projects; per-milestone
+                                // issue previews require repository scope. Skip the fetch and rely on
+                                // the progress cache + drill-in via the project selector.
                                 app.selected_milestone_issues = None;
                             } else {
-                                app.selected_milestone_issues = None;
-                                let client_clone = client.clone();
-                                let project_context = if !m_proj.is_empty() {
-                                    m_proj
+                                // Skip the fetch whenever we already have ANY data
+                                // for this milestone — either the issues cache (set
+                                // by an earlier drill-in) or the progress cache
+                                // (rebuilt from the Issues tab on every fetch). The
+                                // preview pane will populate from whichever cache
+                                // is present; the progress bar always reads the
+                                // progress cache first and never refetches.
+                                let cached = app
+                                    .milestone_issues_cache
+                                    .get(&milestone_iid)
+                                    .filter(|c| !c.is_empty());
+                                if let Some(cached) = cached {
+                                    app.selected_milestone_issues = Some(cached.clone());
+                                } else if app.milestone_progress_cache.contains_key(&milestone_iid)
+                                {
+                                    // Progress cache already answers the bar. The
+                                    // preview pane stays empty until the user
+                                    // explicitly asks for the issue list (e.g. via
+                                    // a future drill-in action). No fetch here.
+                                    app.selected_milestone_issues = None;
                                 } else {
-                                    app.scope.as_str().to_string()
-                                };
-                                // `glab issue list --milestone` filters by milestone
-                                // title, not iid — passing the title here is required
-                                // for the glab backend to return any issues.
-                                let tx = events.sender();
-                                tokio::spawn(async move {
-                                    match domain::milestones::list_milestone_issues(
-                                        &client_clone,
-                                        &project_context,
-                                        milestone_iid,
-                                        &milestone_title,
-                                    )
-                                    .await
-                                    {
-                                        Ok(issues) => {
-                                            let _ = tx.send(Event::MilestoneIssuesFetched(
-                                                milestone_iid,
-                                                issues,
-                                            ));
+                                    app.selected_milestone_issues = None;
+                                    let client_clone = client.clone();
+                                    let project_context = if !m_proj.is_empty() {
+                                        m_proj
+                                    } else {
+                                        app.scope.as_str().to_string()
+                                    };
+                                    // `glab issue list --milestone` filters by milestone
+                                    // title, not iid — passing the title here is required
+                                    // for the glab backend to return any issues.
+                                    let tx = events.sender();
+                                    tokio::spawn(async move {
+                                        match domain::milestones::list_milestone_issues(
+                                            &client_clone,
+                                            &project_context,
+                                            milestone_iid,
+                                            &milestone_title,
+                                        )
+                                        .await
+                                        {
+                                            Ok(issues) => {
+                                                let _ = tx.send(Event::MilestoneIssuesFetched(
+                                                    milestone_iid,
+                                                    issues,
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                // Don't silently substitute an empty list: that
+                                                // renders as 0% progress with no explanation.
+                                                let _ = tx.send(Event::FetchFailed(
+                                                    app::Tab::Milestones,
+                                                    format!(
+                                                        "Failed to fetch milestone issues: {e}"
+                                                    ),
+                                                ));
+                                            }
                                         }
-                                        Err(e) => {
-                                            // Don't silently substitute an empty list: that
-                                            // renders as 0% progress with no explanation.
-                                            let _ = tx.send(Event::FetchFailed(
-                                                app::Tab::Milestones,
-                                                format!("Failed to fetch milestone issues: {e}"),
-                                            ));
-                                        }
-                                    }
-                                });
+                                    });
+                                }
                             }
                         }
                     }
@@ -1275,7 +1285,7 @@ async fn main() -> Result<()> {
                             app.pipelines.items.push(child);
                         }
                     }
-// The user is typically on Tab::Jobs by the time Enter's
+                    // The user is typically on Tab::Jobs by the time Enter's
                     // bridge fetch answers (Enter switched to Jobs before
                     // the async fetch landed). Reflow the Pipelines
                     // selection regardless of the active tab so the
@@ -8389,17 +8399,6 @@ async fn main() -> Result<()> {
                     {
                         app.focus_column_checklist = true;
                         app.column_checklist_idx = 0;
-                        continue;
-                    }
-
-                    if keybinding_matches(&app.config.keybindings.global.save_view, &key_event)
-                        && !app.focus_column_checklist
-                        && app.text_input.is_none()
-                        && app.edit_menu.is_none()
-                        && app.selector.is_none()
-                    {
-                        app.save_layout(crate::app::SaveMenu::Global);
-                        app.show_error("Saved view configuration to config.toml".to_string());
                         continue;
                     }
 

@@ -251,7 +251,7 @@ and hosts serving both platforms require the override.
 
 ### Config file
 
-The config file is optional; the app boots from in-memory defaults when none exists. To create one, press the **save view** keybinding (default `s`), which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). Locations:
+The config file is optional; the app boots from in-memory defaults when none exists. To create one, open the **Configure View** popup (default `Tab`) and submit **Save View**, which writes the current view layout to either `~/.config/glab-tui/config.toml` (global) or `.glab-tui/config.toml` (repo-local, when inside a git repo). Locations:
 
 ```
 ~/.config/glab-tui/config.toml          # Linux / macOS (XDG)
@@ -431,7 +431,6 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `g` | Jump to issue/MR by ID; fetches from the API if not cached | `jump_to_id` |
 | `Ctrl+S` | Switch repository | — |
 | `F5` / `Ctrl+R` | Refresh current tab | `refresh` |
-| `s` | Save view layout to config | `save_view` |
 | `u` | Check for updates | — |
 | `q` / `Esc` | Quit (or close current overlay) | `quit` |
 
@@ -812,7 +811,26 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
 3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant.
+4. Add or update tests where relevant (run unit tests with `cargo test --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
+
+### Development & Tasks (`just`)
+
+The repository includes `rust-toolchain.toml` to automatically pin the Rust version (`1.88.0`) and required components (`clippy`, `rustfmt`, `llvm-tools-preview`) via standard `rustup`.
+
+A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
+
+```sh
+just check      # runs fmt check, clippy, unit tests, and single-threaded e2e tests (mirrors CI)
+```
+
+Available recipes:
+- `just fmt` / `just fmt-check` — format code or verify formatting
+- `just lint` — run Clippy with `-Dwarnings`
+- `just test` — run unit tests (`cargo test --bin glab-tui`)
+- `just e2e` — run single-threaded e2e mock suite (`cargo test --test e2e -- --test-threads=1`)
+- `just check` — run the full CI check matrix locally
+- `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
+
 
 ---
 

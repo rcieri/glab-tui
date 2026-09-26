@@ -236,4 +236,14 @@ mod tests {
         let event = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
         assert!(!super::matches_with_pending("Ctrl+g", Some('g'), &event));
     }
+
+    #[test]
+    fn empty_binding_never_matches() {
+        let event = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
+        assert!(!keybinding_matches("", &event));
+        let event_shift = KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT);
+        assert!(!keybinding_matches("", &event_shift));
+        let event_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!keybinding_matches("", &event_enter));
+    }
 }

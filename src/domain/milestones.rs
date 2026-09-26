@@ -18,6 +18,9 @@ pub struct Milestone {
     pub due_date: Option<String>,
     #[serde(default)]
     pub created_at: String,
+    /// Project context (`namespace/project`). Only meaningful in repository scope;
+    /// in group scope this contains the group name and cannot be passed to
+    /// per-project issue listing commands.
     #[serde(default)]
     pub project_path: String,
 }

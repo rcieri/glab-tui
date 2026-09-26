@@ -4004,7 +4004,11 @@ impl App {
             .copied()
             .collect();
         if let Some(disabled) = &self.config.disabled_tabs {
-            tabs.retain(|t| !disabled.iter().any(|d| d == &t.title(kind)));
+            tabs.retain(|t| {
+                !disabled
+                    .iter()
+                    .any(|d| Tab::from_str(d).as_ref() == Some(t) || d == &t.title(kind))
+            });
         }
         tabs
     }
@@ -9607,5 +9611,18 @@ index 123456..789012 100644
             !standalone.contains(&'z'),
             "Ctrl+z must not contribute 'z' to either set",
         );
+    }
+
+    #[test]
+    fn available_tabs_filters_disabled_tabs() {
+        let mut app = App::default();
+        let all_count = app.available_tabs().len();
+        assert!(all_count > 0);
+
+        // Disable "Pipelines" tab
+        app.config.disabled_tabs = Some(vec!["Pipelines".to_string()]);
+        let filtered = app.available_tabs();
+        assert_eq!(filtered.len(), all_count - 1);
+        assert!(!filtered.contains(&Tab::Pipelines));
     }
 }

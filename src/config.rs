@@ -1298,6 +1298,10 @@ fn def_keybinding_timeout_ms() -> u64 {
     1000
 }
 
+fn def_prefetch_tabs() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1337,6 +1341,10 @@ pub struct Config {
     /// the theme palette as fallback.
     #[serde(default = "def_fetch_label_colors")]
     pub fetch_label_colors: bool,
+    /// Eagerly prefetch data for all enabled tabs in the background on
+    /// startup and repository switches. Off by default to conserve API quota.
+    #[serde(default = "def_prefetch_tabs")]
+    pub prefetch_tabs: bool,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
     pub issues: PaneConfig,
@@ -1364,6 +1372,7 @@ impl Default for Config {
             api_per_page: def_api_per_page(),
             keybinding_timeout_ms: def_keybinding_timeout_ms(),
             fetch_label_colors: def_fetch_label_colors(),
+            prefetch_tabs: def_prefetch_tabs(),
             disabled_tabs: None,
             ui: UiConfig::default(),
             issues: PaneConfig::default(),
@@ -1420,6 +1429,9 @@ page_size = 100
 # Maximum items per API request (1-100). Lower this if your GitLab instance
 # truncates large JSON response bodies. Only affects GitLab backends.
 # api_per_page = 100
+
+# Eagerly prefetch data for all enabled tabs in the background on startup / repo switch.
+# prefetch_tabs = false
 
 # How long a captured first keypress of a two-character key sequence stays
 # pending before the prefix is dispatched as a single keypress.
@@ -2162,5 +2174,26 @@ page_size = 250
         }
         assert_eq!(home_dir(), temp_dir.path());
         drop(guard);
+    }
+
+    #[test]
+    fn prefetch_tabs_defaults_to_false() {
+        let config = Config::default();
+        assert!(!config.prefetch_tabs);
+    }
+
+    #[test]
+    fn prefetch_tabs_parses_from_toml() {
+        let toml_str = r#"
+            prefetch_tabs = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.prefetch_tabs);
+
+        let toml_false = r#"
+            prefetch_tabs = false
+        "#;
+        let config_false: Config = toml::from_str(toml_false).unwrap();
+        assert!(!config_false.prefetch_tabs);
     }
 }

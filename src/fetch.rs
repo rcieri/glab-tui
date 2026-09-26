@@ -576,9 +576,10 @@ pub fn spawn_fetch_mr(
     });
 }
 
-/// Kick off background fetches for every tab in `Tab::ALL` order,
+/// Kick off background fetches for enabled tabs in order,
 /// skipping the active tab (the caller has already fired its
-/// synchronous fetch) and any tab whose data is already loaded.
+/// synchronous fetch), `Tab::Terminal`, and any tab whose data is
+/// already loaded.
 ///
 /// Each tab fetches through `spawn_refresh_active_tab` so it shares
 /// the existing per-tab error handling; the queue paces itself
@@ -588,14 +589,15 @@ pub fn spawn_refresh_all_tabs(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
     active_tab: app::Tab,
+    available_tabs: Vec<app::Tab>,
     already_loaded: std::collections::HashSet<app::Tab>,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     let client = client.clone();
     let scope = scope.clone();
     tokio::spawn(async move {
-        for tab in app::Tab::ALL {
-            if tab == active_tab || already_loaded.contains(&tab) {
+        for tab in available_tabs {
+            if tab == active_tab || tab == app::Tab::Terminal || already_loaded.contains(&tab) {
                 continue;
             }
             crate::backend::rate_limit::pace_bulk_operation().await;

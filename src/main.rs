@@ -792,16 +792,18 @@ async fn main() -> Result<()> {
             app.start_loading_tab(app.active_tab);
         }
         spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
-        // Active tab is in flight synchronously; queue the rest so a
-        // quick tab-switch lands on already-populated data. `R` only
-        // refreshes the active tab and does not re-run the queue.
-        spawn_refresh_all_tabs(
-            &client,
-            &app.scope,
-            app.active_tab,
-            app.loaded_tabs.clone(),
-            tx.clone(),
-        );
+        // If configured, queue background fetches for remaining enabled tabs
+        // so a quick tab-switch lands on already-populated data.
+        if app.config.prefetch_tabs {
+            spawn_refresh_all_tabs(
+                &client,
+                &app.scope,
+                app.active_tab,
+                app.available_tabs(),
+                app.loaded_tabs.clone(),
+                tx.clone(),
+            );
+        }
         spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
     } else {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
@@ -8502,16 +8504,18 @@ async fn main() -> Result<()> {
                                 app.active_tab,
                                 tx.clone(),
                             );
-                            // Re-trigger the background queue for the new
-                            // scope: every tab is now stale, so the active
-                            // tab's synchronous fetch isn't enough.
-                            spawn_refresh_all_tabs(
-                                &client,
-                                &app.scope,
-                                app.active_tab,
-                                app.loaded_tabs.clone(),
-                                tx.clone(),
-                            );
+                            // If prefetching is enabled, re-trigger the background queue
+                            // for the new scope so all tabs get populated.
+                            if app.config.prefetch_tabs {
+                                spawn_refresh_all_tabs(
+                                    &client,
+                                    &app.scope,
+                                    app.active_tab,
+                                    app.available_tabs(),
+                                    app.loaded_tabs.clone(),
+                                    tx.clone(),
+                                );
+                            }
                             spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
                         }
                     }

@@ -25,6 +25,13 @@ pub enum Event {
         labels: Vec<crate::domain::labels::Label>,
         members: Vec<String>,
     },
+    ProjectAttributesFetched {
+        project: String,
+        labels: Vec<crate::domain::labels::Label>,
+        members: Vec<String>,
+        milestones: Vec<String>,
+        branches: Vec<String>,
+    },
     FetchFailed(crate::app::Tab, String),
     DiffFetched {
         mr_iid: u64,

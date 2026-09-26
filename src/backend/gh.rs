@@ -32,6 +32,16 @@ fn normalize_labels(s: &str) -> String {
 }
 
 #[derive(Deserialize)]
+struct GhRepo {
+    full_name: String,
+}
+
+pub fn parse_group_projects(raw: &str) -> Result<Vec<String>> {
+    let repos: Vec<GhRepo> = serde_json::from_str(raw)?;
+    Ok(repos.into_iter().map(|r| r.full_name).collect())
+}
+
+#[derive(Deserialize)]
 struct GhIssueJson {
     number: u64,
     title: String,
@@ -2489,25 +2499,51 @@ impl Backend for GhBackend {
             .collect())
     }
 
-    async fn list_group_projects(&self, group: &str) -> Result<Vec<String>> {
-        let endpoint = format!("/orgs/{group}/repos?per_page=100");
-        let raw = match self
-            .raw_api(&endpoint, "GET", None, "Fetching Org Repos")
-            .await
-        {
-            Ok(raw) => raw,
-            Err(_) => {
-                let user_endpoint = format!("/users/{group}/repos?per_page=100");
-                self.raw_api(&user_endpoint, "GET", None, "Fetching User Repos")
-                    .await?
+    async fn list_group_projects(
+        &self,
+        group: &str,
+        page_size: usize,
+        per_request: usize,
+    ) -> Result<Vec<String>> {
+        let per = per_request.clamp(1, 100);
+        let pages = page_size.div_ceil(per);
+        let mut out = Vec::new();
+        let mut is_user = false;
+
+        for page in 1..=pages {
+            let endpoint = if is_user {
+                format!("/users/{group}/repos?per_page={per}&page={page}")
+            } else {
+                format!("/orgs/{group}/repos?per_page={per}&page={page}")
+            };
+            let desc = if is_user {
+                "Fetching User Repos"
+            } else {
+                "Fetching Org Repos"
+            };
+            let raw = match self.raw_api(&endpoint, "GET", None, desc).await {
+                Ok(raw) => raw,
+                Err(e)
+                    if !is_user
+                        && (e.to_string().contains("404")
+                            || e.to_string().to_lowercase().contains("not found")) =>
+                {
+                    is_user = true;
+                    let user_endpoint = format!("/users/{group}/repos?per_page={per}&page={page}");
+                    self.raw_api(&user_endpoint, "GET", None, "Fetching User Repos")
+                        .await?
+                }
+                Err(e) => return Err(e),
+            };
+            let batch = parse_group_projects(&raw)?;
+            let n = batch.len();
+            out.extend(batch);
+            if out.len() >= page_size || n < per {
+                break;
             }
-        };
-        #[derive(Deserialize)]
-        struct GhRepo {
-            full_name: String,
         }
-        let repos: Vec<GhRepo> = serde_json::from_str(&raw)?;
-        Ok(repos.into_iter().map(|r| r.full_name).collect())
+        out.truncate(page_size);
+        Ok(out)
     }
 
     // ── Browser ──
@@ -3481,12 +3517,14 @@ mod tests {
             {"full_name": "myorg/repo1"},
             {"full_name": "myorg/repo2"}
         ]"#;
-        #[derive(Deserialize)]
-        struct GhRepo {
-            full_name: String,
-        }
-        let repos: Vec<GhRepo> = serde_json::from_str(json).unwrap();
-        let names: Vec<String> = repos.into_iter().map(|r| r.full_name).collect();
+        let names = parse_group_projects(json).unwrap();
         assert_eq!(names, vec!["myorg/repo1", "myorg/repo2"]);
+
+        // Empty array
+        let empty_names = parse_group_projects("[]").unwrap();
+        assert!(empty_names.is_empty());
+
+        // Malformed / missing field
+        assert!(parse_group_projects(r#"[{"id": 1}]"#).is_err());
     }
 }

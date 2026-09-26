@@ -810,22 +810,23 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
 4. Add or update tests where relevant (run unit tests with `cargo test --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
 
-### Optional: Dev Environment & Tasks (`mise`)
+### Development & Tasks (`just`)
 
-The repository includes a `mise.toml` manifest and `rust-toolchain.toml` for reproducible local environments. If you use [`mise`](https://github.com/jdx/mise):
+The repository includes `rust-toolchain.toml` to automatically pin the Rust version (`1.88.0`) and required components (`clippy`, `rustfmt`, `llvm-tools-preview`) via standard `rustup`.
+
+A [`Justfile`](https://github.com/casey/just) is provided for running common tasks that mirror CI:
 
 ```sh
-mise install        # installs CLI dependencies and pins toolchain
-mise run check      # runs fmt check, clippy, unit tests, and single-threaded e2e tests (mirrors CI)
+just check      # runs fmt check, clippy, unit tests, and single-threaded e2e tests (mirrors CI)
 ```
 
-Available tasks:
-- `mise run fmt` / `mise run fmt:check` — format code or verify formatting
-- `mise run lint` — run Clippy with `-Dwarnings`
-- `mise run test` — run unit tests
-- `mise run e2e` — run single-threaded e2e mock suite
-- `mise run check` — run the full CI test matrix locally
-- `mise run cov` — generate test coverage report
+Available recipes:
+- `just fmt` / `just fmt-check` — format code or verify formatting
+- `just lint` — run Clippy with `-Dwarnings`
+- `just test` — run unit tests (`cargo test --bin glab-tui`)
+- `just e2e` — run single-threaded e2e mock suite (`cargo test --test e2e -- --test-threads=1`)
+- `just check` — run the full CI check matrix locally
+- `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
 
 
 ---

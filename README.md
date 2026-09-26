@@ -723,6 +723,7 @@ Searchable multi-select popups are used for choosing labels, assignees, reviewer
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
 | [`syntect`](https://crates.io/crates/syntect) | 5 | Syntax highlighting in diff and preview panes |
 | [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) | 0.13.0 | CommonMark and GFM markdown renderer for details panes |
+| [`arboard`](https://crates.io/crates/arboard) | 3.6 | System clipboard integration for copy shortcuts |
 
 All API calls are made by shelling out to `gh api` or `glab api` (depending on the repository host; you only need the CLI matching the service you use) — no personal access token or direct HTTP client is required inside the binary.
 

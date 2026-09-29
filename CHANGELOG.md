@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Column filter reset via picker** — Opening a column's value-filter selector, unchecking every value, and pressing `Enter` now clears the filter for that column instead of silently re-applying the focused value (which made resets impossible). The README's "uncheck values to widen or clear the filter" guidance now works end-to-end (#510).
+
 ## [0.9.2] - 2026-09-26
 
 ### Features

@@ -3173,18 +3173,9 @@ async fn main() -> Result<()> {
                                         continue;
                                     }
                                     if field_type == "column_filter" {
-                                        if let Some((tab, col)) = app.column_filter_context.take() {
-                                            let mut selected = selector.selected_items.clone();
-                                            if selected.is_empty() && !filtered_items.is_empty() {
-                                                if let Some(focused) =
-                                                    filtered_items.get(selector.cursor_idx)
-                                                {
-                                                    selected.insert(focused.clone());
-                                                }
-                                            }
-                                            app.set_column_filter(tab, &col, selected);
-                                            app.update_filter_selection();
-                                        }
+                                        app.apply_column_filter_picker(
+                                            selector.selected_items.clone(),
+                                        );
                                         continue;
                                     }
                                     if field_type == "switch_repo" {

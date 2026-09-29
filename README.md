@@ -385,7 +385,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
    - **`Space`** toggles whether a column is shown in the table.
    - **`Enter`** opens a **value-based filter** for that column: a searchable multi-select of the distinct values currently loaded. For example, on the Issues tab, `Enter` on the `State` column lets you filter to just `opened` issues — or on the `Labels` column, to specific labels.
 3. Inside the filter selector: `Space` toggles values on/off, `/` or `f` fuzzy-searches the values, `Enter` applies the filter, `Esc` cancels. Selecting multiple values is supported (e.g. `opened` **and** `closed`).
-4. Applied filters are shown as a count next to the column, e.g. `[x] State (1)`. Re-open the column and uncheck values to widen or clear the filter.
+4. Applied filters are shown as a count next to the column, e.g. `[x] State (1)`. Re-open the column, uncheck every value, and press `Enter` to clear the filter for that column; uncheck only some to widen it.
 
 ### Grouping & sort order
 

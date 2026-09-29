@@ -4038,6 +4038,27 @@ impl App {
             .insert(col.to_string(), values);
     }
 
+    /// Apply the value-filter picker result. Empty selection clears the
+    /// filter for the column held in `column_filter_context`; any non-empty
+    /// selection replaces it. Wraps `column_filter_context.take()` so the
+    /// picker state is dropped on confirmation.
+    ///
+    /// Extracted from the `main.rs` keypress handler so the reset-on-empty
+    /// semantics are unit-testable in isolation. See issue #510: before this
+    /// helper, an empty selection silently re-applied the focused value and
+    /// there was no in-UI way to clear a column filter.
+    pub fn apply_column_filter_picker(&mut self, selected: std::collections::HashSet<String>) {
+        let Some((tab, col)) = self.column_filter_context.take() else {
+            return;
+        };
+        if selected.is_empty() {
+            self.remove_column_filter(tab, &col);
+        } else {
+            self.set_column_filter(tab, &col, selected);
+        }
+        self.update_filter_selection();
+    }
+
     pub fn remove_column_filter(&mut self, tab: Tab, col: &str) {
         if let Some(filters) = self.column_filters.get_mut(&tab) {
             filters.remove(col);
@@ -9453,6 +9474,137 @@ index 123456..789012 100644
         let filtered = app.filtered_issues();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    // ── Value-filter reset (#510) ────────────────────────────────────────
+    //
+    // Reproduces the bug where opening a column's value picker, unchecking
+    // every value, and pressing Enter silently re-applied the focused value
+    // instead of clearing the filter — leaving the user no in-UI way to
+    // reset a filter once it was applied. These tests drive the same
+    // `apply_column_filter_picker` helper that `src/main.rs` calls on the
+    // picker's Enter key, so a regression in either layer fails the test.
+
+    #[test]
+    fn picker_empty_selection_clears_existing_filter() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+
+        let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
+        issue1.project_path = "group/repo-a".to_string();
+        let mut issue2 = mr_fixture(2, "opened", "b", false, "Issue 2");
+        issue2.project_path = "group/repo-b".to_string();
+        app.mrs.items = vec![issue1, issue2];
+
+        // Seed an active filter (the picker would re-open with this as
+        // `selected_items`).
+        app.set_column_filter(
+            Tab::MergeRequests,
+            "Project",
+            ["group/repo-a".to_string()].into_iter().collect(),
+        );
+        assert_eq!(app.filtered_mrs().len(), 1);
+        assert!(app.has_column_filter(Tab::MergeRequests, "Project"));
+
+        // Drive the same code path the picker Enter key triggers in
+        // `src/main.rs` (now factored through `apply_column_filter_picker`).
+        app.column_filter_context = Some((Tab::MergeRequests, "Project".to_string()));
+        app.apply_column_filter_picker(std::collections::HashSet::new());
+
+        assert!(
+            !app.has_column_filter(Tab::MergeRequests, "Project"),
+            "filter for Project column should be cleared after picker reset"
+        );
+        assert!(
+            app.column_filter_context.is_none(),
+            "picker context must be taken"
+        );
+        let filtered = app.filtered_mrs();
+        assert_eq!(
+            filtered.len(),
+            2,
+            "clearing the filter must restore every row"
+        );
+        let projects: std::collections::BTreeSet<&str> =
+            filtered.iter().map(|m| m.project_path.as_str()).collect();
+        assert!(projects.contains("group/repo-a"));
+        assert!(projects.contains("group/repo-b"));
+    }
+
+    #[test]
+    fn picker_non_empty_selection_preserves_set_behavior() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.reset_on_scope_change();
+
+        let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
+        issue1.project_path = "group/repo-a".to_string();
+        let mut issue2 = mr_fixture(2, "opened", "b", false, "Issue 2");
+        issue2.project_path = "group/repo-b".to_string();
+        app.mrs.items = vec![issue1, issue2];
+
+        // Reopen the picker for `Project`, keep `repo-a` selected, confirm.
+        app.column_filter_context = Some((Tab::MergeRequests, "Project".to_string()));
+        let mut selected = std::collections::HashSet::new();
+        selected.insert("group/repo-a".to_string());
+        app.apply_column_filter_picker(selected);
+
+        assert!(app.has_column_filter(Tab::MergeRequests, "Project"));
+        assert!(app.column_filter_context.is_none());
+        let filtered = app.filtered_mrs();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].project_path, "group/repo-a");
+    }
+
+    #[test]
+    fn reset_drops_state_for_github_style_pipeline_status() {
+        let mut app = App::default();
+
+        let p_success = crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "success".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "".to_string(),
+            name: "".to_string(),
+            display_title: "".to_string(),
+            event: "".to_string(),
+            head_sha: "".to_string(),
+            actor_login: "".to_string(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: "owner/repo".to_string(),
+            web_url: Some(String::new()),
+            downstream_of: None,
+        };
+        let p_failed = crate::domain::pipelines::Pipeline {
+            id: 2,
+            status: "failed".to_string(),
+            ..p_success.clone()
+        };
+        app.pipelines.items = vec![p_success, p_failed];
+
+        // Seed a Status = SUCCESS filter via the picker helper, narrowing
+        // the table to the success row.
+        app.column_filter_context = Some((Tab::Pipelines, "Status".to_string()));
+        let mut selected = std::collections::HashSet::new();
+        selected.insert("SUCCESS".to_string());
+        app.apply_column_filter_picker(selected);
+        assert_eq!(app.filtered_pipelines().len(), 1);
+
+        // Empty-selection reset — `apply_column_filters` short-circuits on
+        // an empty set, so removing the entry (not inserting an empty set)
+        // is what restores every row.
+        app.column_filter_context = Some((Tab::Pipelines, "Status".to_string()));
+        app.apply_column_filter_picker(std::collections::HashSet::new());
+
+        assert!(!app.has_column_filter(Tab::Pipelines, "Status"));
+        assert_eq!(
+            app.filtered_pipelines().len(),
+            2,
+            "removing the filter must restore every row"
+        );
     }
 
     #[test]

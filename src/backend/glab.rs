@@ -1845,28 +1845,42 @@ impl Backend for GlabBackend {
     }
 
     async fn pause_runner(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        let endpoint = runner_endpoint(scope, runner_id);
-        let body = r#"{"paused":true}"#;
-        self.raw_api(&endpoint, "PUT", Some(body), "PAUSING RUNNER")
-            .await?;
+        let runner_str = runner_id.to_string();
+        let mut args = vec!["runner", "update", &runner_str, "--pause"];
+        let proj;
+        if let Scope::Repository(p) = scope {
+            if !p.is_empty() {
+                proj = p.as_str();
+                args.push("-R");
+                args.push(proj);
+            }
+        }
+        self.run_glab(&args, "PAUSING RUNNER").await?;
         Ok(())
     }
 
     async fn resume_runner(&self, scope: &Scope, runner_id: u64) -> Result<()> {
-        let endpoint = runner_endpoint(scope, runner_id);
-        let body = r#"{"paused":false}"#;
-        self.raw_api(&endpoint, "PUT", Some(body), "RESUMING RUNNER")
-            .await?;
+        let runner_str = runner_id.to_string();
+        let mut args = vec!["runner", "update", &runner_str, "--unpause"];
+        let proj;
+        if let Scope::Repository(p) = scope {
+            if !p.is_empty() {
+                proj = p.as_str();
+                args.push("-R");
+                args.push(proj);
+            }
+        }
+        self.run_glab(&args, "RESUMING RUNNER").await?;
         Ok(())
     }
 
     async fn update_runner_description(
         &self,
-        scope: &Scope,
+        _scope: &Scope,
         runner_id: u64,
         description: &str,
     ) -> Result<()> {
-        let endpoint = runner_endpoint(scope, runner_id);
+        let endpoint = format!("runners/{}", runner_id);
         let body = serde_json::json!({ "description": description }).to_string();
         self.raw_api(&endpoint, "PUT", Some(&body), "UPDATING RUNNER DESCRIPTION")
             .await?;
@@ -2803,10 +2817,6 @@ async fn run_glab_raw_api(
     }
 }
 
-fn runner_endpoint(scope: &Scope, runner_id: u64) -> String {
-    format!("{}/runners/{}", scope.api_path_prefix(), runner_id)
-}
-
 /// Resolve the GitLab host (e.g. `gitlab.com`, `gitlab.example.com`) by
 /// reading `git remote get-url origin` and stripping the path. Used to
 /// construct browser URLs for entities whose `glab` subcommand doesn't
@@ -2865,17 +2875,6 @@ async fn open_in_web_browser(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn runner_endpoint_uses_scope_path_prefix() {
-        let repo = Scope::Repository("group/subgroup/project".to_string());
-        assert_eq!(
-            runner_endpoint(&repo, 42),
-            "projects/group%2Fsubgroup%2Fproject/runners/42"
-        );
-        let group = Scope::Group("org/team".to_string());
-        assert_eq!(runner_endpoint(&group, 7), "groups/org%2Fteam/runners/7");
-    }
 
     #[test]
     fn url_encode_branch_escapes_slash() {

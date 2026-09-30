@@ -69,6 +69,26 @@ pub struct MergeRequest {
     pub project_path: String,
     #[serde(default)]
     pub web_url: Option<String>,
+    #[serde(default)]
+    pub stack: Option<StackInfo>,
+    #[serde(default)]
+    pub stack_entries: Option<Vec<StackEntry>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct StackInfo {
+    pub number: u64,
+    pub size: usize,
+    pub position: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct StackEntry {
+    pub position: usize,
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    pub is_draft: bool,
 }
 
 impl MergeRequest {

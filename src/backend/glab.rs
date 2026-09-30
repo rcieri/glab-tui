@@ -961,6 +961,8 @@ impl Backend for GlabBackend {
                             workflow: None,
                             project_path: String::new(),
                             web_url: m.web_url,
+                            stack: None,
+                            stack_entries: None,
                         }
                     }));
                 }
@@ -1135,6 +1137,8 @@ impl Backend for GlabBackend {
             workflow: None,
             project_path: String::new(),
             web_url: m.web_url,
+            stack: None,
+            stack_entries: None,
         })
     }
 

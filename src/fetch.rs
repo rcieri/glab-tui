@@ -64,6 +64,8 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            stack: None,
+            stack_entries: None,
         }
     }
 

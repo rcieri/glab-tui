@@ -1,0 +1,18 @@
+diff --git a/docs/readme.md b/docs/readme.md
+index 1111111..2222222 100644
+--- a/docs/readme.md
++++ b/docs/readme.md
+@@ -1,2 +1,2 @@
+ # Pagination
+-Old docs.
++Documents page_size.
+diff --git a/src/lib.rs b/src/lib.rs
+index 3333333..4444444 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
+ pub fn paginate() {
+-    old_fetch();
++    fetch_pages();
++    anchored_call();
+ }

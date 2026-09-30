@@ -1,0 +1,57 @@
+[
+  {
+    "id": 101,
+    "body": "Anchored question on this call.",
+    "author": { "username": "reviewer-user" },
+    "created_at": "2026-07-06T09:00:00Z",
+    "system": false,
+    "position": { "new_path": "src/lib.rs", "old_path": "src/lib.rs", "new_line": 3, "old_line": null },
+    "discussion_id": "disc-anchored",
+    "resolvable": true,
+    "resolved": false
+  },
+  {
+    "id": 102,
+    "body": "Answered in the next push.",
+    "author": { "username": "test-user" },
+    "created_at": "2026-07-06T09:30:00Z",
+    "system": false,
+    "position": { "new_path": "src/lib.rs", "old_path": "src/lib.rs", "new_line": 3, "old_line": null },
+    "discussion_id": "disc-anchored",
+    "resolvable": true,
+    "resolved": false
+  },
+  {
+    "id": 103,
+    "body": "General remark without a line.",
+    "author": { "username": "reviewer-user" },
+    "created_at": "2026-07-06T10:00:00Z",
+    "system": false,
+    "position": null,
+    "discussion_id": "disc-general",
+    "resolvable": false,
+    "resolved": false
+  },
+  {
+    "id": 104,
+    "body": "Outdated remark on a rebased line.",
+    "author": { "username": "reviewer-user" },
+    "created_at": "2026-07-06T11:00:00Z",
+    "system": false,
+    "position": { "new_path": "src/lib.rs", "old_path": "src/lib.rs", "new_line": 90, "old_line": null },
+    "discussion_id": "disc-outdated",
+    "resolvable": true,
+    "resolved": false
+  },
+  {
+    "id": 105,
+    "body": "added 1 commit",
+    "author": { "username": "test-user" },
+    "created_at": "2026-07-06T12:00:00Z",
+    "system": true,
+    "position": null,
+    "discussion_id": "disc-system",
+    "resolvable": false,
+    "resolved": false
+  }
+]

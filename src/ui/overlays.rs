@@ -56,6 +56,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         }
     }
 
+    // Below every other overlay: its comment actions and reply prompts open on top.
+    super::review_threads::render_review_threads(f, app, size);
+
     if app.column_filter_context.is_none() {
         if let Some(selector) = &mut app.selector {
             let (body, selector_area) = modal_area(f, &selector.title, 70, 70, 60, 8, size);
@@ -1905,6 +1908,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: "Diff View",
             key: s("M"),
             action: "Hide / show reviewed files in the tree",
+        },
+        Shortcut {
+            category: "Diff View",
+            key: s("T"),
+            action: "Review threads overview (general, outdated, unresolved)",
         },
         Shortcut {
             category: "Diff View",

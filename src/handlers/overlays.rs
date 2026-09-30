@@ -824,9 +824,93 @@ pub fn handle_date_picker(
     false
 }
 
+/// Keys for the review threads overlay. Selectors and text inputs opened from
+/// it (comment actions, replies) sit on top and take their keys first.
+pub fn handle_review_threads(app: &mut App, key_event: &KeyEvent) -> bool {
+    if app.selector.is_some() || app.text_input.is_some() {
+        return false;
+    }
+    let Some(mut overview) = app.review_threads.take() else {
+        return false;
+    };
+
+    let mut keep_open = true;
+    match key_event.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('T') => keep_open = false,
+        KeyCode::Char('j') | KeyCode::Down => overview.next(),
+        KeyCode::Char('k') | KeyCode::Up => overview.previous(),
+        KeyCode::Char('g') | KeyCode::Home => overview.first(),
+        KeyCode::Char('G') | KeyCode::End => overview.last(),
+        KeyCode::Char('J') => overview.preview_scroll = overview.preview_scroll.saturating_add(1),
+        KeyCode::Char('K') => overview.preview_scroll = overview.preview_scroll.saturating_sub(1),
+        KeyCode::Char('u') => overview.toggle_unresolved_only(),
+        KeyCode::Enter => keep_open = !jump_to_review_thread(app, &overview),
+        KeyCode::Char('a') => open_review_thread_actions(app, &overview),
+        _ => {}
+    }
+    if keep_open {
+        app.review_threads = Some(overview);
+    }
+    true
+}
+
+/// Moves the diff cursor onto the selected thread's anchor. Returns whether
+/// the diff now shows it.
+fn jump_to_review_thread(app: &mut App, overview: &crate::app::ReviewThreadsOverview) -> bool {
+    let Some(thread) = overview.selected_thread() else {
+        return false;
+    };
+    let position = match (&thread.anchor, thread.root().position.as_ref()) {
+        (crate::domain::review_threads::ThreadAnchor::General, _) | (_, None) => {
+            app.show_error("General comments are not attached to a line in the diff.".to_string());
+            return false;
+        }
+        (_, Some(position)) => position,
+    };
+    let Some(diff_view) = app.diff_view.as_mut() else {
+        return false;
+    };
+    let was_hiding_reviewed = diff_view.hide_reviewed;
+    if diff_view.jump_to_anchor(position) {
+        if was_hiding_reviewed && !diff_view.hide_reviewed {
+            app.hide_reviewed_files = false;
+            app.status_message = Some("Showing reviewed files to reach the thread".to_string());
+        }
+        return true;
+    }
+    let file_path = position
+        .new_path
+        .as_deref()
+        .or(position.old_path.as_deref())
+        .unwrap_or_default();
+    app.show_error(format!("{file_path} is no longer part of this diff."));
+    false
+}
+
+fn open_review_thread_actions(app: &mut App, overview: &crate::app::ReviewThreadsOverview) {
+    let Some(thread) = overview.selected_thread() else {
+        return;
+    };
+    let Some(mr_iid) = app.diff_view.as_ref().map(|d| d.mr_iid) else {
+        return;
+    };
+    app.selector = Some(if thread.notes.len() == 1 {
+        crate::app::Selector::comment_actions(thread.root(), mr_iid, app.is_github())
+    } else {
+        crate::app::Selector::comment_choice(
+            thread
+                .notes
+                .iter()
+                .map(crate::app::Selector::comment_choice_item)
+                .collect(),
+            mr_iid,
+        )
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{handle_help_keybinding, handle_help_overlay};
+    use super::{handle_help_keybinding, handle_help_overlay, handle_review_threads};
     use crate::app::{App, DiffView, EditEntityKind, EditMenu, Selector};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -1003,5 +1087,161 @@ mod tests {
         assert!(app.show_help);
         app.show_help = false;
         app.date_picker = None;
+    }
+
+    const REVIEW_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,3 @@
+ fn a() {
++    b();
+ }
+";
+
+    fn line_position(path: &str, new_line: u64) -> crate::domain::mr::NotePosition {
+        crate::domain::mr::NotePosition {
+            new_path: Some(path.to_string()),
+            old_path: Some(path.to_string()),
+            new_line: Some(new_line),
+            old_line: None,
+            start_line: None,
+            line_range: None,
+        }
+    }
+
+    fn review_note(
+        id: u64,
+        discussion: &str,
+        position: Option<crate::domain::mr::NotePosition>,
+    ) -> crate::domain::mr::DiscussionNote {
+        crate::domain::mr::DiscussionNote {
+            id,
+            body: format!("note {id}"),
+            author: crate::domain::mr::Author {
+                username: "alice".to_string(),
+            },
+            created_at: format!("2026-09-2{id}T10:00:00Z"),
+            system: false,
+            position,
+            discussion_id: Some(discussion.to_string()),
+            resolved: Some(false),
+            resolvable: Some(true),
+        }
+    }
+
+    /// Diff view open on `REVIEW_DIFF` with the threads overlay showing `notes`.
+    fn app_with_review_threads(notes: Vec<crate::domain::mr::DiscussionNote>) -> App {
+        let mut app = App::default();
+        let diff_view = DiffView::new(7, "acme/widget".to_string(), REVIEW_DIFF.to_string());
+        app.review_threads = Some(crate::app::ReviewThreadsOverview::new(&notes, &diff_view));
+        app.diff_view = Some(diff_view);
+        app.current_comments = notes;
+        app
+    }
+
+    fn press(app: &mut App, code: KeyCode) -> bool {
+        handle_review_threads(app, &KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn selected_root_id(app: &App) -> Option<u64> {
+        app.review_threads
+            .as_ref()
+            .and_then(|o| o.selected_thread())
+            .map(|t| t.root().id)
+    }
+
+    #[test]
+    fn review_threads_navigation_wraps_around_both_ends() {
+        let mut app = app_with_review_threads(vec![
+            review_note(1, "first", None),
+            review_note(2, "second", Some(line_position("src/lib.rs", 2))),
+            review_note(3, "third", Some(line_position("src/lib.rs", 3))),
+        ]);
+        assert_eq!(selected_root_id(&app), Some(1));
+
+        assert!(press(&mut app, KeyCode::Char('k')));
+        assert_eq!(
+            selected_root_id(&app),
+            Some(3),
+            "k on the first row wraps to the last"
+        );
+
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(
+            selected_root_id(&app),
+            Some(1),
+            "j on the last row wraps to the first"
+        );
+
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(selected_root_id(&app), Some(1));
+
+        press(&mut app, KeyCode::Up);
+        assert_eq!(selected_root_id(&app), Some(3));
+    }
+
+    #[test]
+    fn review_threads_enter_reaches_a_reviewed_file_hidden_by_the_filter() {
+        let mut app = app_with_review_threads(vec![review_note(
+            1,
+            "anchored",
+            Some(line_position("src/lib.rs", 2)),
+        )]);
+        app.hide_reviewed_files = true;
+        if let Some(diff_view) = &mut app.diff_view {
+            diff_view.restore_review_state(
+                std::collections::HashSet::from(["src/lib.rs".to_string()]),
+                true,
+            );
+        }
+
+        assert!(press(&mut app, KeyCode::Enter));
+
+        assert!(
+            app.review_threads.is_none(),
+            "a successful jump closes the overlay"
+        );
+        assert!(
+            !app.hide_reviewed_files,
+            "the session filter must follow, or the next re-fetch hides the file again"
+        );
+        let diff_view = app.diff_view.as_ref().unwrap();
+        let line = &diff_view.lines[diff_view.cursor_idx];
+        assert_eq!(
+            (line.file_path.as_str(), line.new_line_num),
+            ("src/lib.rs", Some(2))
+        );
+    }
+
+    #[test]
+    fn review_threads_enter_on_a_general_comment_keeps_the_overlay_open() {
+        let mut app = app_with_review_threads(vec![review_note(1, "general", None)]);
+
+        assert!(press(&mut app, KeyCode::Enter));
+
+        assert!(app.review_threads.is_some());
+        assert!(app.error_message.is_some());
+    }
+
+    #[test]
+    fn review_threads_actions_open_a_selector_that_takes_the_keys() {
+        let mut app = app_with_review_threads(vec![
+            review_note(1, "thread", Some(line_position("src/lib.rs", 2))),
+            review_note(2, "thread", Some(line_position("src/lib.rs", 2))),
+        ]);
+
+        assert!(press(&mut app, KeyCode::Char('a')));
+
+        let selector = app.selector.as_ref().expect("a opens the comment picker");
+        assert_eq!(selector.field_type, "comment_select");
+        assert_eq!(selector.all_items.len(), 2);
+        assert!(
+            !press(&mut app, KeyCode::Char('j')),
+            "keys belong to the selector on top"
+        );
+        assert!(app.review_threads.is_some());
     }
 }

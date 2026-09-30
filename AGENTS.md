@@ -48,6 +48,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [labels.rs](src/domain/labels.rs): `Label` structure carrying the API-provided color used for the Labels column.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
     * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.
+    * [review_threads.rs](src/domain/review_threads.rs): `ReviewThread` / `ThreadAnchor` and `group_threads()` — groups MR/PR notes into discussion threads and classifies each as general, in-diff, or outdated.
     * [pipelines.rs](src/domain/pipelines.rs): Pipeline, Job structures and job deduplication logic.
     * [runners.rs](src/domain/runners.rs): Runner structures.
     * [releases.rs](src/domain/releases.rs): Release structures.
@@ -78,6 +79,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [inspector.rs](src/ui/inspector.rs): Unified entity inspector component (`render_entity_inspector`, `EntityDocument`, `InspectorMode`). Drives both read-only detail previews and interactive edit/create forms in a single-column layout.
     * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions.
     * [overlays.rs](src/ui/overlays.rs): Overlay render functions (`SubmitDialog`, selectors, date picker, help).
+    * [review_threads.rs](src/ui/review_threads.rs): Review threads overlay (thread list + full-thread preview) opened with `T` from the diff view.
     * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers (`badge_style_for`, `render_fuzzy_cell`).
     * [diff.rs](src/ui/diff.rs): Diff view render functions.
     * [modal.rs](src/ui/modal.rs): Unified modal component.
@@ -149,6 +151,12 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
   - The tree is flattened through `DiffTreeNode::flatten_ex(depth, prefix, reviewed, hide_reviewed, out)`, which stamps `FlatDiffTreeNode::is_reviewed` (on a directory: every file below it is reviewed) and, when filtering, drops reviewed files plus directories left with no unreviewed file.
   - `DiffTreeNode::sync_expansion_to_review(before, after)` folds a directory when it becomes fully reviewed and unfolds it when it stops being fully reviewed, cascading up through parents.
   - Marks persist in `ProjectCache::reviewed_files` (`mr_iid → Vec<String>`), written via `App::store_reviewed_files_for_mr` + `save_cache` on every toggle and re-seeded by `DiffView::restore_review_state` on `DiffFetched`.
+* **Review threads overview:** `T` in the diff view opens `App::review_threads` (`ReviewThreadsOverview`), a snapshot of `current_comments` grouped by `group_threads()` and classified against the diff via `DiffView::contains_anchor`. It is rebuilt on every `DiffFetched`, so resolve/reply/edit results show up after the automatic re-fetch.
+  - Anchor matching for inline rendering, the `a` actions and the overview all go through `note_position_anchors()` in [src/app.rs](src/app.rs); do not re-inline the predicate.
+  - `Enter` calls `DiffView::jump_to_anchor`, which falls back to the file's first row for outdated anchors. A file out of reach in the tree is revealed first (`DiffTreeNode::expand_path_to` unfolds its directories; a file hidden by the reviewed filter turns `hide_reviewed` off, and the handler syncs `app.hide_reviewed_files`). `a` reuses `Selector::comment_actions` / `Selector::comment_choice`, the same builders the line-level `a` key uses.
+  - `j`/`k` wrap around like `Selector` and `StatefulList`; mouse scroll clamps, as the Selector's does.
+  - E2E coverage lives in `tests/e2e/review_threads.rs`, driven by the `mr list` / `mr diff` / `mr note list` branches of `tests/mocks/glab` and the `mr_diff.txt` / `mr_notes.json` fixtures.
+  - GitHub lists only pull-request review comments (`pulls/{}/comments`); top-level conversation comments are not fetched and threads report no resolved state.
 
 ### MR Review State (Approval / Mergeable / Workflow)
 * The MR/PR table's `Approval`, `Mergeable`, and `Workflow` columns are derived, not fetched. `ApprovalState` / `MergeabilityState` / `WorkflowStatus` and the display/sort/filter helpers live in [src/domain/mr_state.rs](src/domain/mr_state.rs); cell text uses ALL-CAPS display strings (e.g. `CONFLICT`, `REBASE`, `CLEAN`, `APPROVED`, `AWAITING`) that the column-filter picker also shows.

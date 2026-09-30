@@ -540,6 +540,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `C` | Add comment via external `$EDITOR` |
 | `e` | Add code suggestion via `$EDITOR` |
 | `a` | Open comment actions menu (reply, resolve, edit, delete) |
+| `T` | Review threads overview: every thread, including general and outdated ones |
 | `r` | Submit review (Approve / Request Changes / Comment) |
 | `/` / `f` | Search within diff |
 | `Ctrl+N` | Next search match |
@@ -547,6 +548,8 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `?` / `F1` | Show help |
 
 **Marking files as reviewed.** On a large MR, press `m` to tick off a file you are done with — from the file tree, or from the diff pane, where it marks the file you are currently reading. Reviewed files get a check indicator and fade to muted; a directory fades **and folds itself** once every file below it is reviewed — cascading up through parents, so a finished branch collapses to a single line — and the tree header shows your progress (`12/200`). Unmarking reopens the directory, and a completed directory you reopen by hand stays open. Press `M` to hide reviewed files altogether and leave only the pending ones. Marks are stored per MR/PR in `~/.cache/glab-tui/<repo>.json` and restored the next time you open the same diff (files that are no longer part of the diff are dropped). They are local to `glab-tui` — GitLab's own "viewed" checkboxes are not synced.
+
+**Review threads overview.** Inline comments only appear under a line that is still in the diff, so plain MR/PR comments and threads whose line was rebased away are otherwise invisible. Press `T` to list every thread with its status (`UNRESOLVED` / `RESOLVED`), its location (`file:line`, `GENERAL`, or `OUTDATED`), the author, an excerpt and the reply count; the lower pane shows the full thread. `j`/`k` move and wrap around at either end like the other lists, `g`/`G` jump to the first/last thread, `u` narrows the list to unresolved threads, `J`/`K` scroll the thread, `Enter` jumps the diff cursor to the thread's line (or to its file when the line is gone), `a` opens the usual reply / resolve / edit / delete actions, and `Esc` closes it. Jumping to a file you marked as reviewed unfolds its directory, and if `M` was hiding it, reviewed files are shown again. On GitHub the overview lists pull-request review comments only; top-level PR conversation comments are not fetched, and GitHub reports no resolved state through this endpoint, so every thread shows as unresolved.
 
 ---
 

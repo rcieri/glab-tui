@@ -240,6 +240,28 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         }
                         return;
                     }
+                    OverlayKind::ReviewThreads => {
+                        if let Some(overview) = &mut app.review_threads {
+                            let over_list = overview
+                                .list_rect
+                                .is_some_and(|r| rect_contains(r, row, col));
+                            match (over_list, scroll_down) {
+                                (true, true) => overview.select(overview.cursor_idx + 1),
+                                (true, false) => {
+                                    overview.select(overview.cursor_idx.saturating_sub(1))
+                                }
+                                (false, true) => {
+                                    overview.preview_scroll =
+                                        overview.preview_scroll.saturating_add(1)
+                                }
+                                (false, false) => {
+                                    overview.preview_scroll =
+                                        overview.preview_scroll.saturating_sub(1)
+                                }
+                            }
+                        }
+                        return;
+                    }
                     // Consume scroll on non-scrollable modals
                     _ => return,
                 }
@@ -313,6 +335,17 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                     }
                     OverlayKind::EditMenu => {
                         handle_edit_menu_mouse(app, inner, row, col);
+                        return;
+                    }
+                    OverlayKind::ReviewThreads => {
+                        if let Some(overview) = &mut app.review_threads {
+                            if let Some(list) =
+                                overview.list_rect.filter(|r| rect_contains(*r, row, col))
+                            {
+                                let clicked = overview.state.offset() + (row - list.y) as usize;
+                                overview.select(clicked);
+                            }
+                        }
                         return;
                     }
                     OverlayKind::Help => {
@@ -1773,6 +1806,11 @@ async fn main() -> Result<()> {
                     );
                     app.diff_view = Some(diff_view);
                     app.current_comments = comments;
+                    if let (Some(overview), Some(diff_view)) =
+                        (app.review_threads.as_mut(), app.diff_view.as_ref())
+                    {
+                        overview.refresh(&app.current_comments, diff_view);
+                    }
                     app.last_fetched_mr_iid = Some(mr_iid);
                     app.in_review_mode = true;
                     if let Some(pos) = app
@@ -1920,6 +1958,7 @@ async fn main() -> Result<()> {
                         && app.edit_menu.is_none()
                         && app.selector.is_none()
                         && !app.show_help
+                        && app.review_threads.is_none()
                         && !app.focus_column_checklist
                         && !app.is_typing_search
                         && !app.job_trace_searching
@@ -1935,6 +1974,7 @@ async fn main() -> Result<()> {
                         || handle_switch_repo(&mut app, &key_event)
                         || handle_refresh(&mut app, &key_event, &mut last_refresh, events.sender())
                         || handle_date_picker(&mut app, &key_event, &mut terminal, events.sender())
+                        || handle_review_threads(&mut app, &key_event)
                     {
                         continue;
                     }
@@ -4041,28 +4081,11 @@ async fn main() -> Result<()> {
                                                 if let Ok(n) = idx_str.trim().parse::<usize>() {
                                                     let draft_idx = n.saturating_sub(1);
                                                     if draft_idx < app.draft_comments.len() {
-                                                        app.selector = Some(crate::app::Selector {
-                                                            title: format!(
-                                                                " Actions for Draft #{} ",
-                                                                n
+                                                        app.selector = Some(
+                                                            crate::app::Selector::draft_actions(
+                                                                draft_idx,
                                                             ),
-                                                            all_items: vec![
-                                                                "Edit Draft".to_string(),
-                                                                "Delete Draft".to_string(),
-                                                            ],
-                                                            selected_items:
-                                                                std::collections::HashSet::new(),
-                                                            cursor_idx: 0,
-                                                            search_query: String::new(),
-                                                            is_filtering: false,
-                                                            is_loading: false,
-                                                            entity_iid: draft_idx as u64,
-                                                            entity_type: "draft".to_string(),
-                                                            field_type: "comment_action_select"
-                                                                .to_string(),
-                                                            multi_select: false,
-                                                            state: ListState::default(),
-                                                        });
+                                                        );
                                                         continue;
                                                     }
                                                 }
@@ -4077,49 +4100,13 @@ async fn main() -> Result<()> {
                                                         .find(|c| c.id == comment_id)
                                                         .cloned()
                                                     {
-                                                        let is_github = app.is_github();
-
-                                                        let mut actions =
-                                                            vec!["Reply to Thread".to_string()];
-
-                                                        if !is_github {
-                                                            let is_resolved =
-                                                                comment.resolved.unwrap_or(false);
-                                                            if is_resolved {
-                                                                actions.push(
-                                                                    "Unresolve Thread".to_string(),
-                                                                );
-                                                            } else {
-                                                                actions.push(
-                                                                    "Resolve Thread".to_string(),
-                                                                );
-                                                            }
-                                                        }
-
-                                                        actions.push("Edit Comment".to_string());
-                                                        actions.push("Delete Comment".to_string());
-
-                                                        app.selector = Some(crate::app::Selector {
-                                                            title: format!(
-                                                                " Actions for Comment {} ",
-                                                                comment_id
+                                                        app.selector = Some(
+                                                            crate::app::Selector::comment_actions(
+                                                                &comment,
+                                                                selector.entity_iid,
+                                                                app.is_github(),
                                                             ),
-                                                            all_items: actions,
-                                                            selected_items:
-                                                                std::collections::HashSet::new(),
-                                                            cursor_idx: 0,
-                                                            search_query: String::new(),
-                                                            is_filtering: false,
-                                                            is_loading: false,
-                                                            entity_iid: comment_id,
-                                                            entity_type: selector
-                                                                .entity_iid
-                                                                .to_string(), // Store MR IID as string
-                                                            field_type: "comment_action_select"
-                                                                .to_string(),
-                                                            multi_select: false,
-                                                            state: ListState::default(),
-                                                        });
+                                                        );
                                                         continue;
                                                     }
                                                     // Edit entity: close menu, writes happen on field-level handlers
@@ -7990,38 +7977,14 @@ async fn main() -> Result<()> {
                                             .current_comments
                                             .iter()
                                             .filter(|c| {
-                                                if c.system {
-                                                    return false;
-                                                }
-                                                if let Some(ref pos) = c.position {
-                                                    let path_matches =
-                                                        sline.left.as_ref().is_some_and(|l| {
-                                                            pos.old_path.as_deref()
-                                                                == Some(&l.file_path)
-                                                        }) || sline.right.as_ref().is_some_and(
-                                                            |r| {
-                                                                pos.new_path.as_deref()
-                                                                    == Some(&r.file_path)
-                                                            },
-                                                        );
-
-                                                    path_matches
-                                                        && ((pos.new_line.is_some()
-                                                            && sline.right.as_ref().and_then(
-                                                                |r| {
-                                                                    r.new_line_num.map(|n| n as u64)
-                                                                },
-                                                            ) == pos.new_line)
-                                                            || (pos.old_line.is_some()
-                                                                && sline.left.as_ref().and_then(
-                                                                    |l| {
-                                                                        l.old_line_num
-                                                                            .map(|n| n as u64)
-                                                                    },
-                                                                ) == pos.old_line))
-                                                } else {
-                                                    false
-                                                }
+                                                !c.system
+                                                    && c.position.as_ref().is_some_and(|pos| {
+                                                        crate::app::note_position_anchors(
+                                                            pos,
+                                                            sline.left.as_ref(),
+                                                            sline.right.as_ref(),
+                                                        )
+                                                    })
                                             })
                                             .cloned()
                                             .collect();
@@ -8049,120 +8012,47 @@ async fn main() -> Result<()> {
                                             == 1
                                         {
                                             if let Some(comment) = matching_current.first() {
-                                                let comment_id = comment.id;
-                                                let is_github = app.is_github();
-
-                                                let mut actions =
-                                                    vec!["Reply to Thread".to_string()];
-
-                                                if !is_github {
-                                                    let is_resolved =
-                                                        comment.resolved.unwrap_or(false);
-                                                    if is_resolved {
-                                                        actions
-                                                            .push("Unresolve Thread".to_string());
-                                                    } else {
-                                                        actions.push("Resolve Thread".to_string());
-                                                    }
-                                                }
-
-                                                actions.push("Edit Comment".to_string());
-                                                actions.push("Delete Comment".to_string());
-
-                                                app.selector = Some(crate::app::Selector {
-                                                    title: format!(
-                                                        " Actions for Comment {} ",
-                                                        comment_id
-                                                    ),
-                                                    all_items: actions,
-                                                    selected_items: std::collections::HashSet::new(
-                                                    ),
-                                                    cursor_idx: 0,
-                                                    search_query: String::new(),
-                                                    is_filtering: false,
-                                                    is_loading: false,
-                                                    entity_iid: comment_id,
-                                                    entity_type: diff_view.mr_iid.to_string(),
-                                                    field_type: "comment_action_select".to_string(),
-                                                    multi_select: false,
-                                                    state: ListState::default(),
-                                                });
+                                                app.selector =
+                                                    Some(crate::app::Selector::comment_actions(
+                                                        comment,
+                                                        diff_view.mr_iid,
+                                                        app.is_github(),
+                                                    ));
                                             } else if let Some(&idx) = matching_drafts.first() {
                                                 // Drafts only support edit and
                                                 // delete — the upstream API
                                                 // reply/resolve semantics
                                                 // don't apply until the draft
                                                 // has been pushed.
-                                                app.selector = Some(crate::app::Selector {
-                                                    title: format!(
-                                                        " Actions for Draft #{} ",
-                                                        idx + 1
-                                                    ),
-                                                    all_items: vec![
-                                                        "Edit Draft".to_string(),
-                                                        "Delete Draft".to_string(),
-                                                    ],
-                                                    selected_items: std::collections::HashSet::new(
-                                                    ),
-                                                    cursor_idx: 0,
-                                                    search_query: String::new(),
-                                                    is_filtering: false,
-                                                    is_loading: false,
-                                                    entity_iid: idx as u64,
-                                                    entity_type: "draft".to_string(),
-                                                    field_type: "comment_action_select".to_string(),
-                                                    multi_select: false,
-                                                    state: ListState::default(),
-                                                });
+                                                app.selector =
+                                                    Some(crate::app::Selector::draft_actions(idx));
                                             }
                                         } else {
                                             let mut items: Vec<String> = matching_current
                                                 .iter()
-                                                .map(|c| {
-                                                    let clean_body = c.body.replace('\n', " ");
-                                                    let truncated = if clean_body.len() > 40 {
-                                                        format!("{}...", &clean_body[..40])
-                                                    } else {
-                                                        clean_body
-                                                    };
-                                                    format!(
-                                                        "ID: {} | @{}: {}",
-                                                        c.id, c.author.username, truncated
-                                                    )
-                                                })
+                                                .map(crate::app::Selector::comment_choice_item)
                                                 .collect();
-                                            for &idx in &matching_drafts {
-                                                let body =
-                                                    app.draft_comments[idx].body.replace('\n', " ");
-                                                let truncated = if body.len() > 40 {
-                                                    format!("{}...", &body[..40])
-                                                } else {
-                                                    body
-                                                };
-                                                items.push(format!(
-                                                    "DRAFT #{} | {}",
-                                                    idx + 1,
-                                                    truncated
+                                            items.extend(matching_drafts.iter().map(|&idx| {
+                                                crate::app::Selector::draft_choice_item(
+                                                    idx,
+                                                    &app.draft_comments[idx].body,
+                                                )
+                                            }));
+                                            app.selector =
+                                                Some(crate::app::Selector::comment_choice(
+                                                    items,
+                                                    diff_view.mr_iid,
                                                 ));
-                                            }
-
-                                            app.selector = Some(crate::app::Selector {
-                                                title: " Select Comment to Interact ".to_string(),
-                                                all_items: items,
-                                                selected_items: std::collections::HashSet::new(),
-                                                cursor_idx: 0,
-                                                search_query: String::new(),
-                                                is_filtering: false,
-                                                is_loading: false,
-                                                entity_iid: diff_view.mr_iid,
-                                                entity_type: "mr".to_string(),
-                                                field_type: "comment_select".to_string(),
-                                                multi_select: false,
-                                                state: ListState::default(),
-                                            });
                                         }
                                     }
                                 }
+                                app.diff_view = Some(diff_view);
+                            }
+                            KeyCode::Char('T') => {
+                                app.review_threads = Some(crate::app::ReviewThreadsOverview::new(
+                                    &app.current_comments,
+                                    &diff_view,
+                                ));
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('c') => {

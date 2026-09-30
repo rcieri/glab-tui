@@ -2,6 +2,8 @@
 
 use crate::backend::BackendKind;
 use crate::config::{Config, KeybindingConfig, THEME, Theme};
+use crate::domain::mr::{DiscussionNote, NotePosition};
+use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::format::expand_tabs;
 use crate::utils::ui::StatefulTable;
@@ -805,6 +807,200 @@ impl Selector {
             .map(|(item, _)| item)
             .collect()
     }
+
+    fn single_choice(
+        title: String,
+        items: Vec<String>,
+        entity_iid: u64,
+        entity_type: String,
+        field_type: &str,
+    ) -> Self {
+        Self {
+            title,
+            all_items: items,
+            selected_items: HashSet::new(),
+            cursor_idx: 0,
+            search_query: String::new(),
+            is_filtering: false,
+            is_loading: false,
+            entity_iid,
+            entity_type,
+            field_type: field_type.to_string(),
+            multi_select: false,
+            state: ListState::default(),
+        }
+    }
+
+    /// Actions on one pushed review comment. The `comment_action_select`
+    /// handler reads the comment id from `entity_iid` and parses the MR iid
+    /// back out of `entity_type`.
+    pub fn comment_actions(comment: &DiscussionNote, mr_iid: u64, is_github: bool) -> Self {
+        let mut actions = vec!["Reply to Thread".to_string()];
+        if !is_github {
+            actions.push(if comment.resolved.unwrap_or(false) {
+                "Unresolve Thread".to_string()
+            } else {
+                "Resolve Thread".to_string()
+            });
+        }
+        actions.push("Edit Comment".to_string());
+        actions.push("Delete Comment".to_string());
+        Self::single_choice(
+            format!(" Actions for Comment {} ", comment.id),
+            actions,
+            comment.id,
+            mr_iid.to_string(),
+            "comment_action_select",
+        )
+    }
+
+    /// Actions on a local draft; `entity_iid` is the 0-based draft index.
+    pub fn draft_actions(draft_idx: usize) -> Self {
+        Self::single_choice(
+            format!(" Actions for Draft #{} ", draft_idx + 1),
+            vec!["Edit Draft".to_string(), "Delete Draft".to_string()],
+            draft_idx as u64,
+            "draft".to_string(),
+            "comment_action_select",
+        )
+    }
+
+    /// Picker over several comments/drafts built from `comment_choice_item`
+    /// and `draft_choice_item`, whose prefixes the `comment_select` handler
+    /// parses.
+    pub fn comment_choice(items: Vec<String>, mr_iid: u64) -> Self {
+        Self::single_choice(
+            " Select Comment to Interact ".to_string(),
+            items,
+            mr_iid,
+            "mr".to_string(),
+            "comment_select",
+        )
+    }
+
+    pub fn comment_choice_item(comment: &DiscussionNote) -> String {
+        format!(
+            "ID: {} | @{}: {}",
+            comment.id,
+            comment.author.username,
+            crate::utils::format::truncate(&comment.body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
+        )
+    }
+
+    pub fn draft_choice_item(draft_idx: usize, body: &str) -> String {
+        format!(
+            "DRAFT #{} | {}",
+            draft_idx + 1,
+            crate::utils::format::truncate(&body.replace('\n', " "), COMMENT_EXCERPT_CHARS)
+        )
+    }
+}
+
+const COMMENT_EXCERPT_CHARS: usize = 40;
+
+/// The review threads overlay opened from the diff view. `threads` is a
+/// snapshot of the MR's notes classified against the loaded diff; it is
+/// rebuilt whenever the diff and its notes are re-fetched.
+#[derive(Debug, Default)]
+pub struct ReviewThreadsOverview {
+    pub threads: Vec<ReviewThread>,
+    pub unresolved_only: bool,
+    pub cursor_idx: usize,
+    pub preview_scroll: u16,
+    pub state: ListState,
+    /// Inner list area from the last render, for mouse hit-testing.
+    pub list_rect: Option<Rect>,
+}
+
+impl ReviewThreadsOverview {
+    pub fn new(comments: &[DiscussionNote], diff_view: &DiffView) -> Self {
+        let mut overview = Self::default();
+        overview.refresh(comments, diff_view);
+        overview
+    }
+
+    /// Rebuilds the threads, keeping the cursor on the same thread when it
+    /// still exists.
+    pub fn refresh(&mut self, comments: &[DiscussionNote], diff_view: &DiffView) {
+        let selected_root = self.selected_thread().map(|t| t.root().id);
+        self.threads = group_threads(comments, |position| diff_view.contains_anchor(position));
+        self.select_root_or_clamp(selected_root);
+    }
+
+    pub fn visible_threads(&self) -> impl Iterator<Item = &ReviewThread> {
+        let unresolved_only = self.unresolved_only;
+        self.threads
+            .iter()
+            .filter(move |t| !unresolved_only || t.is_unresolved())
+    }
+
+    pub fn selected_thread(&self) -> Option<&ReviewThread> {
+        self.visible_threads().nth(self.cursor_idx)
+    }
+
+    pub fn unresolved_count(&self) -> usize {
+        self.threads.iter().filter(|t| t.is_unresolved()).count()
+    }
+
+    /// Moves down one thread, wrapping from the last to the first like
+    /// `Selector` and the entity tables.
+    pub fn next(&mut self) {
+        let count = self.visible_threads().count();
+        if count == 0 {
+            return;
+        }
+        self.select((self.cursor_idx + 1) % count);
+    }
+
+    /// Moves up one thread, wrapping from the first to the last.
+    pub fn previous(&mut self) {
+        let count = self.visible_threads().count();
+        if count == 0 {
+            return;
+        }
+        self.select(self.cursor_idx.checked_sub(1).unwrap_or(count - 1));
+    }
+
+    pub fn first(&mut self) {
+        self.select(0);
+    }
+
+    pub fn last(&mut self) {
+        let count = self.visible_threads().count();
+        self.select(count.saturating_sub(1));
+    }
+
+    /// Selects a row by index; out-of-range rows (clicks below the list) are ignored.
+    pub fn select(&mut self, idx: usize) {
+        if idx < self.visible_threads().count() {
+            self.cursor_idx = idx;
+            self.state.select(Some(idx));
+            self.preview_scroll = 0;
+        }
+    }
+
+    pub fn toggle_unresolved_only(&mut self) {
+        let selected_root = self.selected_thread().map(|t| t.root().id);
+        self.unresolved_only = !self.unresolved_only;
+        self.select_root_or_clamp(selected_root);
+    }
+
+    fn select_root_or_clamp(&mut self, root_id: Option<u64>) {
+        let count = self.visible_threads().count();
+        let position =
+            root_id.and_then(|id| self.visible_threads().position(|t| t.root().id == id));
+        match position {
+            Some(idx) => {
+                self.cursor_idx = idx;
+                self.state.select(Some(idx));
+            }
+            None => {
+                self.cursor_idx = self.cursor_idx.min(count.saturating_sub(1));
+                self.state.select((count > 0).then_some(self.cursor_idx));
+                self.preview_scroll = 0;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1148,6 +1344,27 @@ impl DiffTreeNode {
         }
         false
     }
+
+    /// Unfolds every directory on the way to `file_path`. Returns whether the
+    /// file is at or below this node.
+    fn expand_path_to(&mut self, file_path: &str) -> bool {
+        match self {
+            DiffTreeNode::File {
+                file_path: path, ..
+            } => path == file_path,
+            DiffTreeNode::Directory {
+                is_expanded,
+                children,
+                ..
+            } => {
+                let contains = children.iter_mut().any(|c| c.expand_path_to(file_path));
+                if contains {
+                    *is_expanded = true;
+                }
+                contains
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1173,6 +1390,23 @@ pub struct SideBySideLine {
     pub left: Option<DiffLine>,
     pub right: Option<DiffLine>,
     pub line_type: DiffLineType,
+}
+
+/// Whether a note's position points at this diff row. `left` carries the old
+/// side and `right` the new side; unified rows pass the same line for both.
+pub fn note_position_anchors(
+    position: &NotePosition,
+    left: Option<&DiffLine>,
+    right: Option<&DiffLine>,
+) -> bool {
+    let path_matches = left
+        .is_some_and(|l| position.old_path.as_deref() == Some(l.file_path.as_str()))
+        || right.is_some_and(|r| position.new_path.as_deref() == Some(r.file_path.as_str()));
+    let new_line_matches = position.new_line.is_some()
+        && right.and_then(|r| r.new_line_num).map(u64::from) == position.new_line;
+    let old_line_matches = position.old_line.is_some()
+        && left.and_then(|l| l.old_line_num).map(u64::from) == position.old_line;
+    path_matches && (new_line_matches || old_line_matches)
 }
 
 #[derive(Clone, Debug)]
@@ -1680,6 +1914,75 @@ impl DiffView {
             .filter(|p| self.reviewed_files.contains(*p))
             .count();
         (reviewed, paths.len())
+    }
+
+    /// Whether the note's anchor line exists anywhere in the diff, regardless
+    /// of which file the tree currently shows.
+    pub fn contains_anchor(&self, position: &NotePosition) -> bool {
+        self.all_lines
+            .iter()
+            .any(|line| note_position_anchors(position, Some(line), Some(line)))
+    }
+
+    /// Opens the anchor's file and puts the diff cursor on the anchor line, or
+    /// on the file's first row when that line is no longer in the diff. A file
+    /// out of reach in the tree is revealed first: its folded parent
+    /// directories are unfolded and, when the reviewed filter hides it, the
+    /// filter is turned off. Returns false when the file is not in the diff.
+    pub fn jump_to_anchor(&mut self, position: &NotePosition) -> bool {
+        let Some(file_path) = [position.new_path.as_deref(), position.old_path.as_deref()]
+            .into_iter()
+            .flatten()
+            .find(|path| self.all_lines.iter().any(|l| l.file_path == *path))
+            .map(str::to_string)
+        else {
+            return false;
+        };
+
+        self.reveal_file_in_tree(&file_path);
+        self.update_active_lines();
+
+        let row = if self.side_by_side {
+            self.side_by_side_lines
+                .iter()
+                .position(|s| note_position_anchors(position, s.left.as_ref(), s.right.as_ref()))
+                .or_else(|| {
+                    self.side_by_side_lines.iter().position(|s| {
+                        s.right
+                            .as_ref()
+                            .or(s.left.as_ref())
+                            .is_some_and(|l| l.file_path == file_path)
+                    })
+                })
+        } else {
+            self.lines
+                .iter()
+                .position(|l| note_position_anchors(position, Some(l), Some(l)))
+                .or_else(|| self.lines.iter().position(|l| l.file_path == file_path))
+        };
+
+        self.cursor_idx = row.unwrap_or(0);
+        self.scroll_offset = self.cursor_idx.saturating_sub(5);
+        self.focus_on_files = false;
+        self.selection_start = None;
+        self.selection_end = None;
+        true
+    }
+
+    /// Makes the file's tree row visible and selects it.
+    fn reveal_file_in_tree(&mut self, file_path: &str) {
+        if self.hide_reviewed && self.reviewed_files.contains(file_path) {
+            self.hide_reviewed = false;
+        }
+        self.root_node.expand_path_to(file_path);
+        self.rebuild_visible_nodes_keep_position();
+        if let Some(idx) = self
+            .visible_nodes
+            .iter()
+            .position(|n| n.file_path.as_deref() == Some(file_path))
+        {
+            self.selected_visible_idx = idx;
+        }
     }
 
     /// Rebuilds the tree after a review-state change. Unlike
@@ -2521,6 +2824,7 @@ pub enum OverlayKind {
     SaveMenu,
     ColumnFilter,
     ConfirmPopup,
+    ReviewThreads,
 }
 
 #[derive(Clone, Debug)]
@@ -3136,6 +3440,7 @@ pub struct App {
     pub show_help: bool,
     pub help_search_query: String,
     pub diff_view: Option<DiffView>,
+    pub review_threads: Option<ReviewThreadsOverview>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
     pub last_fetched_mr_iid: Option<u64>,
 
@@ -3261,6 +3566,7 @@ impl Default for App {
             show_help: false,
             help_search_query: String::new(),
             diff_view: None,
+            review_threads: None,
             current_comments: Vec::new(),
             last_fetched_mr_iid: None,
             submit_dialog: None,
@@ -7534,6 +7840,124 @@ index abcdef..ffffff 100644
         );
         assert_eq!(color_view.lines[6].line_type, DiffLineType::Addition);
         assert_eq!(color_view.lines[7].line_type, DiffLineType::Deletion);
+    }
+
+    const TWO_FILE_DIFF: &str = "\
+diff --git a/src/app.rs b/src/app.rs
+index 123456..789012 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -10,6 +10,7 @@
+ some content
++new line 1
+-deleted line 1
+ normal line
+diff --git a/src/main.rs b/src/main.rs
+index abcdef..ffffff 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -20,6 +20,7 @@
+ main content
++main new line 1
+";
+
+    fn note_position(path: &str, new_line: Option<u64>, old_line: Option<u64>) -> NotePosition {
+        NotePosition {
+            new_path: Some(path.to_string()),
+            old_path: Some(path.to_string()),
+            new_line,
+            old_line,
+            start_line: None,
+            line_range: None,
+        }
+    }
+
+    fn selected_tree_file(diff_view: &DiffView) -> Option<&str> {
+        diff_view.visible_nodes[diff_view.selected_visible_idx]
+            .file_path
+            .as_deref()
+    }
+
+    fn tree_shows_file(diff_view: &DiffView, path: &str) -> bool {
+        diff_view
+            .visible_nodes
+            .iter()
+            .any(|n| n.file_path.as_deref() == Some(path))
+    }
+
+    #[test]
+    fn jump_to_anchor_lands_on_line_or_falls_back_to_file_start() {
+        let at = note_position;
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
+
+        let added = at("src/main.rs", Some(21), None);
+        assert!(diff_view.contains_anchor(&added));
+        assert!(!diff_view.contains_anchor(&at("src/main.rs", Some(99), None)));
+
+        assert!(diff_view.jump_to_anchor(&added));
+        assert!(!diff_view.focus_on_files);
+        assert_eq!(selected_tree_file(&diff_view), Some("src/main.rs"));
+        let line = &diff_view.lines[diff_view.cursor_idx];
+        assert_eq!(
+            (line.file_path.as_str(), line.new_line_num),
+            ("src/main.rs", Some(21))
+        );
+
+        assert!(diff_view.jump_to_anchor(&at("src/app.rs", None, Some(11))));
+        let line = &diff_view.lines[diff_view.cursor_idx];
+        assert_eq!((line.old_line_num, line.new_line_num), (Some(11), None));
+
+        assert!(diff_view.jump_to_anchor(&at("src/app.rs", Some(500), None)));
+        assert_eq!(diff_view.cursor_idx, 0);
+        assert_eq!(diff_view.lines[0].file_path, "src/app.rs");
+
+        assert!(!diff_view.jump_to_anchor(&at("gone.rs", Some(1), None)));
+
+        diff_view.side_by_side = true;
+        assert!(diff_view.jump_to_anchor(&added));
+        let row = &diff_view.side_by_side_lines[diff_view.cursor_idx];
+        assert_eq!(row.right.as_ref().and_then(|r| r.new_line_num), Some(21));
+    }
+
+    #[test]
+    fn jump_to_anchor_unfolds_a_directory_folded_by_review_marks() {
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
+        diff_view.restore_review_state(
+            HashSet::from(["src/app.rs".to_string(), "src/main.rs".to_string()]),
+            false,
+        );
+        assert!(
+            !tree_shows_file(&diff_view, "src/main.rs"),
+            "a fully reviewed directory opens folded"
+        );
+
+        assert!(diff_view.jump_to_anchor(&note_position("src/main.rs", Some(21), None)));
+
+        assert_eq!(selected_tree_file(&diff_view), Some("src/main.rs"));
+        let line = &diff_view.lines[diff_view.cursor_idx];
+        assert_eq!(
+            (line.file_path.as_str(), line.new_line_num),
+            ("src/main.rs", Some(21))
+        );
+        assert!(diff_view.reviewed_files.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn jump_to_anchor_reveals_a_file_hidden_by_the_reviewed_filter() {
+        let mut diff_view = DiffView::new(42, "owner/repo".to_string(), TWO_FILE_DIFF.to_string());
+        diff_view.restore_review_state(HashSet::from(["src/main.rs".to_string()]), true);
+        assert!(!tree_shows_file(&diff_view, "src/main.rs"));
+
+        assert!(diff_view.jump_to_anchor(&note_position("src/main.rs", Some(21), None)));
+
+        assert!(!diff_view.hide_reviewed);
+        assert_eq!(selected_tree_file(&diff_view), Some("src/main.rs"));
+        let line = &diff_view.lines[diff_view.cursor_idx];
+        assert_eq!(
+            (line.file_path.as_str(), line.new_line_num),
+            ("src/main.rs", Some(21))
+        );
+        assert!(diff_view.reviewed_files.contains("src/main.rs"));
     }
 
     #[test]

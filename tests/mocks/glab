@@ -31,6 +31,18 @@ if [[ "$*" == *"api"* ]]; then
     else
         echo "{}"
     fi
+elif [[ "$*" == *"mr list"* ]]; then
+    # Pages are requested concurrently; only the first carries the fixture so
+    # the MR is not duplicated once per page.
+    if [[ " $* " == *" --page 1 "* ]]; then
+        cat "$FIXTURES_DIR/mrs.json"
+    else
+        echo "[]"
+    fi
+elif [[ "$*" == *"mr diff"* ]]; then
+    cat "$FIXTURES_DIR/mr_diff.txt"
+elif [[ "$*" == *"mr note list"* ]]; then
+    cat "$FIXTURES_DIR/mr_notes.json"
 else
     echo "[]"
 fi

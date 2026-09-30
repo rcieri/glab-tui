@@ -1545,6 +1545,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: mr_label,
+            key: d(app.config.keybindings.mrs.jump_linked_issues.clone()),
+            action: "Jump to linked Issues",
+        },
+        Shortcut {
+            category: mr_label,
             key: d(app.config.keybindings.mrs.open_in_browser.clone()),
             action: if is_github {
                 "Open selected PR in browser"

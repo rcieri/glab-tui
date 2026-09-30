@@ -350,7 +350,15 @@ impl Tab {
                 if is_group {
                     cols.push("Project");
                 }
-                cols.extend(["ID", "State", "Title", "Assignees", "Labels", "Milestone"]);
+                cols.extend([
+                    "ID",
+                    "State",
+                    "Title",
+                    "Assignees",
+                    "Labels",
+                    "Milestone",
+                    "Related MRs",
+                ]);
                 if !kind.is_github() {
                     cols.push("Due Date");
                 }
@@ -380,6 +388,7 @@ impl Tab {
                     cols.push("Pipeline");
                 }
                 cols.push("Milestone");
+                cols.push("Linked Issues");
                 cols.push("Author");
                 cols
             }
@@ -3427,6 +3436,7 @@ pub struct App {
     pub active_pipeline_project: Option<String>,
     pub pending_pipeline_select: Option<u64>,
     pub pending_mr_select: Option<u64>,
+    pub pending_issue_select: Option<u64>,
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
     pub error_message_at: Option<std::time::Instant>,
@@ -3454,6 +3464,13 @@ pub struct App {
     /// once this is older than the debounce window, so the GraphQL call lands
     /// for the issue the user actually stopped on.
     pub pending_related_mrs_since: Option<std::time::Instant>,
+    /// MR iids whose `related_issues` is currently being fetched.
+    pub fetching_mr_related_issues: std::collections::HashSet<u64>,
+    /// MR iid whose related-issues fetch has been *requested* by a keypress
+    /// but not yet dispatched.
+    pub pending_mr_related_issues_iid: Option<u64>,
+    /// Wall-clock timestamp of the most recent request in `pending_mr_related_issues_iid`.
+    pub pending_mr_related_issues_since: Option<std::time::Instant>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
     pub edit_menu: Option<EditMenu>,
@@ -3596,6 +3613,7 @@ impl Default for App {
             active_pipeline_project: None,
             pending_pipeline_select: None,
             pending_mr_select: None,
+            pending_issue_select: None,
             job_trace: None,
             error_message: None,
             error_message_at: None,
@@ -3607,6 +3625,9 @@ impl Default for App {
             fetching_related_mrs: std::collections::HashSet::new(),
             pending_related_mrs_iid: None,
             pending_related_mrs_since: None,
+            fetching_mr_related_issues: std::collections::HashSet::new(),
+            pending_mr_related_issues_iid: None,
+            pending_mr_related_issues_since: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
             edit_menu: None,
@@ -7807,6 +7828,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -7831,6 +7853,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         };
 
         let mr_ready = MergeRequest {
@@ -7855,6 +7878,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
@@ -9386,6 +9410,7 @@ index 123456..789012 100644
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         }
     }
 

@@ -877,6 +877,8 @@ pub struct KeybindingMrs {
     pub drill_into_scope: String,
     #[serde(default = "def_copy_reference")]
     pub copy_reference: String,
+    #[serde(default = "def_jump_linked_issues")]
+    pub jump_linked_issues: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1116,6 +1118,7 @@ keybind_defaults! {
     def_view_diff = "D",
     def_view_related_pipelines = "P",
     def_jump_related_mrs = "M",
+    def_jump_linked_issues = "I",
     def_trigger_pipeline = "p",
     def_select_pipeline = "Space",
     def_retry = "r",
@@ -1225,6 +1228,7 @@ impl Default for KeybindingMrs {
             select_all: def_select_all(),
             drill_into_scope: def_drill_into_scope(),
             copy_reference: def_copy_reference(),
+            jump_linked_issues: def_jump_linked_issues(),
         }
     }
 }
@@ -1607,6 +1611,7 @@ close_entity = "c"
 reopen_entity = "r"
 delete_entity = "d"
 selection_toggle = "v"
+jump_linked_issues = "I"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"

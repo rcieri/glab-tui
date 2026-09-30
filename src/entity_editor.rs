@@ -283,6 +283,7 @@ pub fn build_mr_document(
     mr: &crate::domain::mr::MergeRequest,
     is_github: bool,
     unresolved_threads_count: Option<usize>,
+    fetching_linked_issues: bool,
 ) -> crate::app::EntityDocument {
     let icons = crate::config::ICONS.read().unwrap();
     let mut fields = vec![
@@ -406,6 +407,10 @@ pub fn build_mr_document(
         },
     ));
     fields.push(crate::app::Field::read_only(
+        "Linked Issues",
+        format_linked_issues_value(mr.related_issues.as_ref(), fetching_linked_issues),
+    ));
+    fields.push(crate::app::Field::read_only(
         "Source Branch",
         display_branch(&mr.source_branch).to_string(),
     ));
@@ -428,6 +433,37 @@ pub fn build_mr_document(
         title: format!("MR !{}", mr.iid),
         fields,
         content: crate::app::InspectorContent::Markdown(mr.description.clone().unwrap_or_default()),
+    }
+}
+
+fn format_linked_issues_value(
+    state: Option<&crate::domain::mr::RelatedIssuesState>,
+    fetching: bool,
+) -> String {
+    use crate::domain::mr::RelatedIssuesState;
+    match state {
+        None if fetching => "Loading…".to_string(),
+        None => "--".to_string(),
+        Some(RelatedIssuesState::Empty) => "--".to_string(),
+        Some(RelatedIssuesState::Failed(_)) => "Error".to_string(),
+        Some(RelatedIssuesState::Items(items)) => {
+            if items.is_empty() {
+                "--".to_string()
+            } else {
+                items
+                    .iter()
+                    .map(|i| {
+                        let title = truncate_inline(&i.title, 20);
+                        if title.is_empty() {
+                            format!("#{}", i.iid)
+                        } else {
+                            format!("#{} ({})", i.iid, title)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        }
     }
 }
 
@@ -1477,7 +1513,8 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 None
             };
 
-            let mut doc = build_mr_document(&mr, is_github, unresolved);
+            let is_fetching_issues = app.fetching_mr_related_issues.contains(&mr.iid);
+            let mut doc = build_mr_document(&mr, is_github, unresolved, is_fetching_issues);
             doc.fields.push(crate::app::Field::text(
                 "Description",
                 mr.description.clone().unwrap_or_default(),
@@ -1966,6 +2003,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         };
         app.mrs.items = vec![mr];
 

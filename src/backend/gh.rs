@@ -433,6 +433,55 @@ mod related_prs_types {
     }
 }
 
+/// Build the GraphQL query that finds the issues which a PR closes.
+fn related_issues_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
+    let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
+    let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{n}) {{ \
+         closingIssuesReferences(first:{first}) {{ \
+         nodes {{ number title state }} }} }} }} }}",
+        owner = owner,
+        repo = repo,
+        n = pr_number,
+        first = first,
+    )
+}
+
+mod related_issues_types {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhResponse {
+        pub(super) data: Option<GhData>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhData {
+        pub(super) repository: Option<GhRepo>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhRepo {
+        #[serde(rename = "pullRequest")]
+        pub(super) pull_request: Option<GhPr>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhPr {
+        #[serde(default, rename = "closingIssuesReferences")]
+        pub(super) closing_issues_references: GhConn,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhConn {
+        #[serde(default)]
+        pub(super) nodes: Vec<GhIssueRef>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhIssueRef {
+        pub(super) number: u64,
+        pub(super) title: String,
+        pub(super) state: String,
+    }
+}
+
 #[async_trait]
 impl Backend for GhBackend {
     fn kind(&self) -> super::BackendKind {
@@ -938,6 +987,7 @@ impl Backend for GhBackend {
                             workflow: None,
                             project_path: project.to_string(),
                             web_url: gp.url,
+                            related_issues: None,
                         }
                     })
                     .collect())
@@ -1047,6 +1097,7 @@ impl Backend for GhBackend {
                             workflow: None,
                             project_path,
                             web_url: item.html_url.clone(),
+                            related_issues: None,
                         }
                     })
                     .collect();
@@ -1147,6 +1198,7 @@ impl Backend for GhBackend {
             workflow: None,
             project_path: String::new(),
             web_url: gp.url,
+            related_issues: None,
         })
     }
 
@@ -1270,6 +1322,40 @@ impl Backend for GhBackend {
         // dismissal API, which needs a review-ID lookup and write permission,
         // so it is deliberately out of scope.
         anyhow::bail!("Revoking approval isn't supported on GitHub")
+    }
+
+    async fn list_mr_related_issues(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        page_size: usize,
+    ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>> {
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let first = page_size.min(100).max(1);
+        let query = related_issues_graphql_query(owner, repo, mr_iid, first);
+        let raw = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching Related Issues",
+            )
+            .await?;
+        use related_issues_types::*;
+        let resp: GhResponse = serde_json::from_str(&raw)?;
+        let refs = resp
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .map(|pr| pr.closing_issues_references.nodes)
+            .unwrap_or_default();
+        Ok(refs
+            .into_iter()
+            .map(|i| crate::domain::mr::RelatedIssueRef {
+                iid: i.number,
+                title: i.title,
+                state: i.state.to_lowercase(),
+            })
+            .collect())
     }
 
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {

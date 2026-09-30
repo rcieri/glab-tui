@@ -1143,9 +1143,16 @@ async fn main() -> Result<()> {
                             &mut app,
                             &events.sender(),
                         );
+                        let _ = crate::fetch::dispatch_pending_mr_related_issues_fetch(
+                            &client,
+                            &mut app,
+                            &events.sender(),
+                        );
                     } else {
                         app.pending_related_mrs_iid = None;
                         app.pending_related_mrs_since = None;
+                        app.pending_mr_related_issues_iid = None;
+                        app.pending_mr_related_issues_since = None;
                     }
                     if app.active_tab == app::Tab::Jobs
                         && app.job_trace_follow
@@ -1289,6 +1296,12 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::Issues);
                     app.status_message = None;
                     app.issues.items = issues;
+                    if let Some(target_iid) = app.pending_issue_select.take() {
+                        if let Some(idx) = app.issues.items.iter().position(|i| i.iid == target_iid)
+                        {
+                            app.issues.state.select(Some(idx));
+                        }
+                    }
                     app.rebuild_milestone_progress_cache();
                     app.update_filter_selection();
                     crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
@@ -1307,6 +1320,10 @@ async fn main() -> Result<()> {
                         }
                     }
                     app.update_filter_selection();
+                    crate::handlers::tabs::maybe_fetch_mr_related_issues(
+                        &mut app,
+                        &events.sender(),
+                    );
                     app.project_cache.mrs = app.mrs.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
@@ -1329,6 +1346,10 @@ async fn main() -> Result<()> {
                         app.update_filter_selection();
                     }
                     app.focus_mr(iid);
+                    crate::handlers::tabs::maybe_fetch_mr_related_issues(
+                        &mut app,
+                        &events.sender(),
+                    );
                     app.project_cache.mrs = app.mrs.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
@@ -1792,6 +1813,22 @@ async fn main() -> Result<()> {
                     };
                     if let Some(issue) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid) {
                         issue.related_mrs = Some(new_state);
+                    }
+                }
+                Event::MrRelatedIssuesFetched { mr_iid, result } => {
+                    app.fetching_mr_related_issues.remove(&mr_iid);
+                    let new_state = match result {
+                        Ok(items) => {
+                            if items.is_empty() {
+                                crate::domain::mr::RelatedIssuesState::Empty
+                            } else {
+                                crate::domain::mr::RelatedIssuesState::Items(items)
+                            }
+                        }
+                        Err(e) => crate::domain::mr::RelatedIssuesState::Failed(e),
+                    };
+                    if let Some(mr) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
+                        mr.related_issues = Some(new_state);
                     }
                 }
                 Event::FetchFailed(tab, err_msg) => {
@@ -3088,7 +3125,8 @@ async fn main() -> Result<()> {
                                     let has_filter = selector.field_type != "comment_action_select"
                                         && selector.field_type != "review_submit_status"
                                         && selector.field_type != "merge_options"
-                                        && selector.field_type != "related_mrs";
+                                        && selector.field_type != "related_mrs"
+                                        && selector.field_type != "linked_issues";
                                     if has_filter {
                                         selector.is_filtering = true;
                                     }
@@ -4013,6 +4051,39 @@ async fn main() -> Result<()> {
                                             }
                                             app.show_error(
                                                 "Could not parse the selected MR/PR iid"
+                                                    .to_string(),
+                                            );
+                                        }
+                                        continue;
+                                    }
+
+                                    if field_type == "linked_issues" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let picked =
+                                            selector.selected_items.iter().next().cloned().or_else(
+                                                || filtered_items.get(selector.cursor_idx).cloned(),
+                                            );
+                                        app.selector = None;
+                                        if let Some(item) = picked {
+                                            if let Some(iid_str) = item
+                                                .strip_prefix('#')
+                                                .and_then(|s| s.split_whitespace().next())
+                                            {
+                                                if let Ok(issue_iid) = iid_str.parse::<u64>() {
+                                                    if let Some(client) = app.gitlab_client.clone()
+                                                    {
+                                                        crate::handlers::tabs::jump_to_issue_tab_from_selector(
+                                                            &mut app,
+                                                            issue_iid,
+                                                            events.sender(),
+                                                            &client,
+                                                        );
+                                                    }
+                                                    continue;
+                                                }
+                                            }
+                                            app.show_error(
+                                                "Could not parse the selected Issue iid"
                                                     .to_string(),
                                             );
                                         }

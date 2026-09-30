@@ -205,6 +205,30 @@ pub(crate) fn render_tab_issues(
                     Alignment::Left,
                 ));
             }
+            if app.is_column_visible(Tab::Issues, "Related MRs") {
+                let related_str = match &i.related_mrs {
+                    None if app.fetching_related_mrs.contains(&i.iid) => "…".to_string(),
+                    None => "—".to_string(),
+                    Some(crate::domain::issues::RelatedMrsState::Empty) => "—".to_string(),
+                    Some(crate::domain::issues::RelatedMrsState::Failed(_)) => "!".to_string(),
+                    Some(crate::domain::issues::RelatedMrsState::Items(items)) => {
+                        let prefix = if app.is_github() { "#" } else { "!" };
+                        items
+                            .iter()
+                            .map(|r| format!("{}{}", prefix, r.iid))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&related_str, 16),
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(theme.purple),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::Issues, "Due Date") {
                 let due_str = i.due_date.as_deref().unwrap_or("—");
                 cells.push(super::helpers::render_fuzzy_cell(
@@ -278,6 +302,14 @@ pub(crate) fn render_tab_issues(
         if app.is_column_visible(Tab::Issues, "Milestone") {
             header_cells.push(Cell::from("Milestone"));
             widths.push(col_w(content_area.width, 18));
+        }
+        if app.is_column_visible(Tab::Issues, "Related MRs") {
+            header_cells.push(Cell::from(if app.is_github() {
+                "Related PRs"
+            } else {
+                "Related MRs"
+            }));
+            widths.push(col_w(content_area.width, 16));
         }
         if app.is_column_visible(Tab::Issues, "Due Date") {
             header_cells.push(Cell::from("Due Date"));
@@ -834,6 +866,27 @@ pub(crate) fn render_tab_merge_requests(
                     Alignment::Left,
                 ));
             }
+            if app.is_column_visible(Tab::MergeRequests, "Linked Issues") {
+                let linked_str = match &m.related_issues {
+                    None if app.fetching_mr_related_issues.contains(&m.iid) => "…".to_string(),
+                    None => "—".to_string(),
+                    Some(crate::domain::mr::RelatedIssuesState::Empty) => "—".to_string(),
+                    Some(crate::domain::mr::RelatedIssuesState::Failed(_)) => "!".to_string(),
+                    Some(crate::domain::mr::RelatedIssuesState::Items(items)) => items
+                        .iter()
+                        .map(|r| format!("#{}", r.iid))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &truncate(&linked_str, 16),
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    Style::default().fg(theme.blue),
+                    Alignment::Left,
+                ));
+            }
             if app.is_column_visible(Tab::MergeRequests, "Author") {
                 let author_str = format!("@{}", m.author.username);
                 cells.push(super::helpers::render_fuzzy_cell(
@@ -936,6 +989,10 @@ pub(crate) fn render_tab_merge_requests(
             header_cells.push(Cell::from("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
+        if app.is_column_visible(Tab::MergeRequests, "Linked Issues") {
+            header_cells.push(Cell::from("Linked Issues"));
+            widths.push(col_w(content_area.width, 16));
+        }
         if app.is_column_visible(Tab::MergeRequests, "Author") {
             header_cells.push(Cell::from("Author"));
             widths.push(col_w(content_area.width, 18));
@@ -980,8 +1037,13 @@ pub(crate) fn render_tab_merge_requests(
                     None
                 };
 
-                let doc =
-                    crate::entity_editor::build_mr_document(mr, is_github, unresolved_threads);
+                let fetching_issues = app.fetching_mr_related_issues.contains(&mr.iid);
+                let doc = crate::entity_editor::build_mr_document(
+                    mr,
+                    is_github,
+                    unresolved_threads,
+                    fetching_issues,
+                );
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,

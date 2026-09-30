@@ -22,6 +22,20 @@ pub struct Reviewer {
     pub username: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct RelatedIssueRef {
+    pub iid: u64,
+    pub title: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelatedIssuesState {
+    Empty,
+    Items(Vec<RelatedIssueRef>),
+    Failed(String),
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MergeRequest {
     pub iid: u64,
@@ -69,6 +83,10 @@ pub struct MergeRequest {
     pub project_path: String,
     #[serde(default)]
     pub web_url: Option<String>,
+    /// Cache of the related/closing-issues fetch. Skipped during (de)serialization
+    /// because relationships can change between sessions; re-fetched on preview.
+    #[serde(skip, default)]
+    pub related_issues: Option<RelatedIssuesState>,
 }
 
 impl MergeRequest {
@@ -196,6 +214,17 @@ pub async fn list_mr_notes(
         .await
 }
 
+pub async fn fetch_related_issues(
+    client: &GitlabClient,
+    project_path: &str,
+    mr_iid: u64,
+) -> Result<Vec<RelatedIssueRef>> {
+    client
+        .backend
+        .list_mr_related_issues(project_path, mr_iid, client.page_size)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +289,11 @@ mod tests {
             mr.markdown_reference(crate::backend::BackendKind::GitHub),
             r"[#1471: feat(core): support \[nested\] \\brackets\\](https://gitlab.com/acme/project/-/merge_requests/1471)"
         );
+    }
+
+    #[test]
+    fn test_related_issues_state_default() {
+        let mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
+        assert!(mr.related_issues.is_none());
     }
 }

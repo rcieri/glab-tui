@@ -64,6 +64,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         }
     }
 
@@ -258,6 +259,56 @@ pub fn dispatch_pending_related_mrs_fetch(
     }
     let project_path = app.project_path_for_issue(iid);
     spawn_fetch_related_mrs(client, &project_path, iid, tx.clone());
+    true
+}
+
+pub fn spawn_fetch_mr_related_issues(
+    client: &domain::client::GitlabClient,
+    project_context: &str,
+    mr_iid: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    let project_context = project_context.to_string();
+    tokio::spawn(async move {
+        let result = domain::mr::fetch_related_issues(&client, &project_context, mr_iid).await;
+        let result = result.map_err(|e| e.to_string());
+        let _ = tx.send(Event::MrRelatedIssuesFetched { mr_iid, result });
+    });
+}
+
+pub fn dispatch_pending_mr_related_issues_fetch(
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+) -> bool {
+    let Some(iid) = app.pending_mr_related_issues_iid else {
+        return false;
+    };
+    let Some(since) = app.pending_mr_related_issues_since else {
+        app.pending_mr_related_issues_iid = None;
+        return false;
+    };
+    if since.elapsed() < RELATED_MRS_DEBOUNCE {
+        return false;
+    }
+    app.pending_mr_related_issues_iid = None;
+    app.pending_mr_related_issues_since = None;
+
+    if app
+        .mrs
+        .items
+        .iter()
+        .any(|m| m.iid == iid && m.related_issues.is_some())
+    {
+        return false;
+    }
+    if !app.fetching_mr_related_issues.insert(iid) {
+        return false;
+    }
+    let project_path = app.project_path_for_mr(iid);
+    spawn_fetch_mr_related_issues(client, &project_path, iid, tx.clone());
     true
 }
 

@@ -1956,8 +1956,9 @@ pub async fn handle_active_tab_key(
                             .clone()
                             .or_else(|| app.milestone_issues_cache.get(&m.iid).cloned());
                         let issues_ref: Option<&[crate::domain::issues::Issue]> = issues.as_deref();
+                        let progress = app.milestone_progress_cache.get(&m.iid).copied();
                         let mut doc = crate::entity_editor::build_milestone_document(
-                            &m, issues_ref, is_github,
+                            &m, issues_ref, progress, is_github,
                         );
                         doc.fields.push(crate::app::Field::text(
                             "Description",
@@ -2571,9 +2572,11 @@ pub async fn handle_active_tab_key(
                                                     .get(&m.iid)
                                                     .map(|v| v.as_slice())
                                             });
+                                        let progress =
+                                            app.milestone_progress_cache.get(&m.iid).copied();
                                         let mut doc =
                                             crate::entity_editor::build_milestone_document(
-                                                m, issues, is_github,
+                                                m, issues, progress, is_github,
                                             );
                                         doc.fields.push(crate::app::Field::text(
                                             "Description",

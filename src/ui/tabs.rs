@@ -2807,7 +2807,9 @@ pub(crate) fn render_tab_milestones(
                     .selected_milestone_issues
                     .as_deref()
                     .or_else(|| app.milestone_issues_cache.get(&m.iid).map(|v| v.as_slice()));
-                let doc = crate::entity_editor::build_milestone_document(m, issues, is_github);
+                let progress = app.milestone_progress_cache.get(&m.iid).copied();
+                let doc =
+                    crate::entity_editor::build_milestone_document(m, issues, progress, is_github);
                 let max_detail_scroll = super::inspector::render_entity_inspector(
                     f,
                     &doc,

@@ -1431,12 +1431,19 @@ async fn main() -> Result<()> {
                         }
                     }
                     if !fallback_success {
+                        let total = issues.len();
+                        let closed = issues.iter().filter(|i| i.state == "closed").count();
+                        app.milestone_progress_cache.insert(iid, (closed, total));
                         app.milestone_issues_cache.insert(iid, issues.clone());
                         if app.selected_milestone_iid == Some(iid) {
                             app.selected_milestone_issues = Some(issues.clone());
                         }
                         app.project_cache.milestone_issues.insert(iid, issues);
                         crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                    } else if let Some(cached) = app.milestone_issues_cache.get(&iid) {
+                        let total = cached.len();
+                        let closed = cached.iter().filter(|i| i.state == "closed").count();
+                        app.milestone_progress_cache.insert(iid, (closed, total));
                     }
                 }
                 Event::MilestoneUpdated | Event::MilestoneClosed | Event::MilestoneReopened => {

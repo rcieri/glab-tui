@@ -53,6 +53,24 @@ pub async fn handle_active_tab_key(
     tx: UnboundedSender<Event>,
     pending: Option<char>,
 ) -> bool {
+    if pending.is_some() {
+        // Resolving the second key of a pending sequence (e.g. the second
+        // `g` of `gg`). A key that doesn't complete a known sequence lapses
+        // instead of falling through to normal dispatch — vim discards `g`
+        // + an unbound key the same way (glt-0009 plan, Entscheidung 5).
+        if app.detail_visible
+            && crate::keybinding::matches_with_pending(
+                &app.config.keybindings.global.scroll_top,
+                pending,
+                key_event,
+            )
+        {
+            app.detail_scroll = 0;
+            return true;
+        }
+        return false;
+    }
+
     let mut handled = true;
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {

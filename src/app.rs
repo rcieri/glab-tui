@@ -3307,7 +3307,9 @@ fn keybinding_char_sets(
                     (Some(c), None, None) => {
                         standalone.insert(c);
                     }
-                    (Some(first), Some(_), None) => {
+                    (Some(first), Some(_), None)
+                        if !crate::keybinding::is_named_two_char_binding(s) =>
+                    {
                         prefixes.insert(first);
                     }
                     _ => {}
@@ -4386,6 +4388,10 @@ impl App {
     }
 
     pub fn apply_config(&mut self) {
+        let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
+        self.sequence_prefixes = sequence_prefixes;
+        self.standalone_chars = standalone_chars;
+
         for tab in Tab::ALL {
             let pane = match tab {
                 Tab::Issues => &self.config.issues,
@@ -10187,6 +10193,30 @@ index 123456..789012 100644
             !standalone.contains(&'z'),
             "Ctrl+z must not contribute 'z' to either set",
         );
+    }
+
+    #[test]
+    fn keybinding_char_sets_does_not_treat_a_named_two_char_binding_as_a_prefix() {
+        // "Up" is a two-character *named* token (matched literally by
+        // keybinding_matches), not two literal characters. It must not
+        // register 'U' as a sequence-prefix char.
+        let mut keybindings = crate::config::KeybindingConfig::default();
+        keybindings.global.scroll_top = "Up".to_string();
+
+        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
+
+        assert!(!prefixes.contains(&'U'));
+        assert!(!standalone.contains(&'U'));
+    }
+
+    #[test]
+    fn apply_config_rebuilds_keybinding_sequence_sets() {
+        let mut app = App::default();
+        app.config.keybindings.global.next_tab = "zz".to_string();
+
+        app.apply_config();
+
+        assert!(app.sequence_prefixes.contains(&'z'));
     }
 
     #[test]

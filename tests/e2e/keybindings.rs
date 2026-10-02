@@ -81,3 +81,18 @@ fn test_keybind_case_insensitive() {
 fn test_keybind_during_popup() {
     let _session = TestSession::new(false, 24, 80);
 }
+
+#[test]
+fn test_page_scroll_keybindings() {
+    let mut session = TestSession::new(false, 24, 80);
+    let _ = session.wait_for_screen_contains("Issues", 2000);
+    session.send_input(b"\x1b[6~"); // PageDown
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    session.send_input(b"\x1b[5~"); // PageUp
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    session.send_input(b"\x1b[1~"); // Home
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    session.send_input(b"\x1b[4~"); // End
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    session.send_input(b"q");
+}

@@ -730,6 +730,10 @@ pub struct KeybindingGlobal {
     pub scroll_page_down: String,
     #[serde(default = "def_scroll_page_up")]
     pub scroll_page_up: String,
+    #[serde(default = "def_scroll_half_page_down")]
+    pub scroll_half_page_down: String,
+    #[serde(default = "def_scroll_half_page_up")]
+    pub scroll_half_page_up: String,
     #[serde(default = "def_scroll_to_end")]
     pub scroll_to_end: String,
     #[serde(default = "def_scroll_top")]
@@ -994,6 +998,8 @@ keybind_defaults! {
     def_scroll_up = "K",
     def_scroll_page_down = "PageDown",
     def_scroll_page_up = "PageUp",
+    def_scroll_half_page_down = "",
+    def_scroll_half_page_up = "",
     def_scroll_to_end = "End",
     def_scroll_top = "Home",
     def_create_issue = "n",
@@ -1075,6 +1081,8 @@ impl Default for KeybindingGlobal {
             scroll_up: def_scroll_up(),
             scroll_page_down: def_scroll_page_down(),
             scroll_page_up: def_scroll_page_up(),
+            scroll_half_page_down: def_scroll_half_page_down(),
+            scroll_half_page_up: def_scroll_half_page_up(),
             scroll_to_end: def_scroll_to_end(),
             scroll_top: def_scroll_top(),
             switch_repo: def_switch_repo(),
@@ -1472,6 +1480,9 @@ scroll_down = "J"
 scroll_up = "K"
 scroll_page_down = "PageDown"
 scroll_page_up = "PageUp"
+# Half-page scrolling has no default. Vim users bind "Ctrl+d" / "Ctrl+u".
+scroll_half_page_down = ""
+scroll_half_page_up = ""
 scroll_to_end = "End"
 scroll_top = "Home"
 jump_to_id = "g"
@@ -2084,6 +2095,15 @@ page_size = 250
     #[test]
     fn copy_branch_defaults_to_y() {
         assert_eq!(Config::default().keybindings.branches.copy_branch, "y");
+    }
+
+    #[test]
+    fn page_scroll_defaults_to_pager_keys() {
+        let global = Config::default().keybindings.global;
+        assert_eq!(global.scroll_page_down, "PageDown");
+        assert_eq!(global.scroll_page_up, "PageUp");
+        assert_eq!(global.scroll_half_page_down, "");
+        assert_eq!(global.scroll_half_page_up, "");
     }
 
     #[test]

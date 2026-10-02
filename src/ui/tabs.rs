@@ -3692,4 +3692,45 @@ mod tests {
         // x=5 is the ID "#1" cell, which should have the cursor highlight background.
         assert_eq!(buffer[(5, 1)].bg, theme.highlight_bg);
     }
+
+    #[test]
+    fn render_tab_jobs_clamps_page_scroll_past_trace_end() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.jobs.items = vec![crate::domain::pipelines::Job {
+            id: 1,
+            status: "success".to_string(),
+            stage: "test".to_string(),
+            name: "job1".to_string(),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: vec![],
+        }];
+        app.job_trace = Some("line\n".repeat(200));
+        app.detail_scroll = 999;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 10);
+                let detail_rect = Rect::new(0, 10, area.width, 10);
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        assert_eq!(
+            app.detail_scroll, 192,
+            "detail_scroll should clamp to the trace's max_scroll, not keep counting past it"
+        );
+    }
 }

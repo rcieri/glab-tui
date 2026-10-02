@@ -1279,6 +1279,15 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
+            key: d(format!(
+                "{} / {}",
+                app.config.keybindings.global.scroll_half_page_down,
+                app.config.keybindings.global.scroll_half_page_up
+            )),
+            action: "Scroll description pane by half a page",
+        },
+        Shortcut {
+            category: "Global & Nav",
             key: d(format!("{}", app.config.keybindings.global.scroll_to_end)),
             action: "Jump to the last line of the description pane",
         },
@@ -2075,6 +2084,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     let filtered_shortcuts: Vec<&Shortcut> = shortcuts
         .iter()
         .filter(|s| active_categories.contains(&s.category) && !s.key.trim().is_empty())
+        .filter(|s| s.key.split('/').any(|k| !k.trim().is_empty()))
         .collect();
 
     let block = Block::default()

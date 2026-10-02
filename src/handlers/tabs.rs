@@ -46,6 +46,44 @@ pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event
     app.pending_related_mrs_since = Some(std::time::Instant::now());
 }
 
+/// Scrolls the detail pane by a full or half page for the
+/// `scroll_page_down`/`scroll_page_up`/`scroll_half_page_down`/
+/// `scroll_half_page_up` bindings, against the usable height of
+/// `detail_rect` (its height minus the two border rows). `pending` is the
+/// character captured on a previous keystroke, if any (see
+/// `matches_with_pending`); pass `None` when there is no pending sequence.
+fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent) {
+    if let Some(rect) = app.detail_rect.filter(|_| app.detail_visible) {
+        let full_page = rect.height.saturating_sub(2).max(1);
+        let half_page = full_page / 2;
+        if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_page_down,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_add(full_page);
+        } else if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_page_up,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_sub(full_page);
+        } else if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_half_page_down,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_add(half_page);
+        } else if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_half_page_up,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_sub(half_page);
+        }
+    }
+}
+
 pub async fn handle_active_tab_key(
     app: &mut App,
     key_event: &KeyEvent,
@@ -53,6 +91,22 @@ pub async fn handle_active_tab_key(
     tx: UnboundedSender<Event>,
     pending: Option<char>,
 ) -> bool {
+    if pending.is_some() {
+        if app.detail_visible
+            && crate::keybinding::matches_with_pending(
+                &app.config.keybindings.global.scroll_top,
+                pending,
+                key_event,
+            )
+        {
+            app.detail_scroll = 0;
+            return true;
+        } else {
+            apply_page_scroll(app, pending, key_event);
+        }
+        return false;
+    }
+
     let mut handled = true;
     match app.active_tab {
         crate::app::Tab::Issues => match key_event.code {
@@ -2240,20 +2294,6 @@ pub async fn handle_active_tab_key(
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
         } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_page_down, &key_event)
-        {
-            if let Some(rect) = app.detail_rect {
-                let page = (rect.height as usize).saturating_sub(2).max(1);
-                app.detail_scroll = app.detail_scroll.saturating_add(page as u16);
-            }
-        } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_page_up, &key_event)
-        {
-            if let Some(rect) = app.detail_rect {
-                let page = (rect.height as usize).saturating_sub(2).max(1);
-                app.detail_scroll = app.detail_scroll.saturating_sub(page as u16);
-            }
-        } else if app.detail_visible
             && keybinding_matches(&app.config.keybindings.global.scroll_to_end, &key_event)
         {
             // Only the flag — the last line's index is the render pass's
@@ -2270,6 +2310,8 @@ pub async fn handle_active_tab_key(
             // `scroll_top` jumps to the first line directly: 0 is a known
             // index, no flag round-trip needed.
             app.detail_scroll = 0;
+        } else {
+            apply_page_scroll(app, None, key_event);
         }
 
         match key_event.code {
@@ -3417,5 +3459,198 @@ mod tests {
         dispatch(&mut app, &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)).await;
 
         assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// The page-scroll actions ship no vim bindings: a full page is PageDown /
+    /// PageUp, a half page has no default at all. Every test below drives the
+    /// Ctrl+f/b/d/u spelling, so it has to bind it first.
+    fn bind_vim_page_keys(app: &mut App) {
+        app.config.keybindings.global.scroll_page_down = "Ctrl+f".to_string();
+        app.config.keybindings.global.scroll_page_up = "Ctrl+b".to_string();
+        app.config.keybindings.global.scroll_half_page_down = "Ctrl+d".to_string();
+        app.config.keybindings.global.scroll_half_page_up = "Ctrl+u".to_string();
+    }
+
+    /// `Ctrl+f`/`Ctrl+b` move a full viewport, `Ctrl+d`/`Ctrl+u` half of it,
+    /// against the usable height of `detail_rect` (its height minus the two
+    /// border rows).
+    #[tokio::test]
+    async fn ctrl_f_b_d_u_scroll_by_full_and_half_viewport() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 25);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 15);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// Without a rendered `detail_rect`, there is no known viewport height,
+    /// so page-scroll keys move nothing (Entscheidung 4).
+    #[tokio::test]
+    async fn ctrl_page_scroll_keys_do_nothing_without_detail_rect() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = None;
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// `Ctrl+b`/`Ctrl+u` do not underflow at the top of the pane, and a
+    /// two-row-or-smaller rect (no usable height) does not panic.
+    #[tokio::test]
+    async fn page_scroll_up_does_not_underflow_at_top() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 2));
+        app.detail_scroll = 0;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 0);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// A page-scroll key still scrolls even while a `g` sequence prefix is
+    /// pending, instead of being swallowed by the sequence lapsing
+    /// (Entscheidung 5: both handler sites stay wired).
+    #[tokio::test]
+    async fn ctrl_f_scrolls_even_with_pending_g_prefix() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch_with_pending(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+            Some('g'),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 25);
+    }
+
+    /// `Ctrl+f` must only page-scroll, not also trigger the hardcoded plain
+    /// `f` shortcut (open inline search) that ignores modifiers.
+    #[tokio::test]
+    async fn ctrl_f_does_not_also_open_inline_search() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert!(!app.is_typing_search);
+    }
+
+    /// `Ctrl+d` on the Pipelines tab must only page-scroll, not also trigger
+    /// the hardcoded plain `d` shortcut (cancel the selected pipeline) that
+    /// ignores modifiers.
+    #[tokio::test]
+    async fn ctrl_d_does_not_also_cancel_pipeline() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "running".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "".to_string(),
+            name: "".to_string(),
+            display_title: "".to_string(),
+            event: "".to_string(),
+            head_sha: "".to_string(),
+            actor_login: "".to_string(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+            downstream_of: None,
+        }];
+        app.pipelines.state.select(Some(0));
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.pipelines.items[0].status, "running");
+        assert_eq!(app.detail_scroll, 15);
+    }
+
+    /// `Ctrl+u` must only page-scroll, not also trigger the hardcoded plain
+    /// `u` shortcut (check for updates) that ignores modifiers.
+    #[tokio::test]
+    async fn ctrl_u_does_not_also_trigger_self_update() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.error_message, None);
     }
 }

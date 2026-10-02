@@ -4,6 +4,12 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "glab $*" >> "$LOG_FILE"
 
+# Failure injection for tests that assert on error handling.
+if [[ -n "$TEST_GLAB_FAIL_BRIDGES" && "$*" == *"/bridges"* ]]; then
+    echo "mock: bridges unavailable" >&2
+    exit 1
+fi
+
 # Match arguments to determine response
 if [[ "$*" == *"api"* ]]; then
     if [[ "$*" == *"/issues"* ]]; then
@@ -16,6 +22,19 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
     elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
         cat "$FIXTURES_DIR/deployments.json"
+    elif [[ "$*" == *"/bridges"* ]]; then
+        # Must precede /pipelines: a bridges URL contains it.
+        cat "$FIXTURES_DIR/bridges.json"
+    elif [[ "$*" == *"/trace"* ]]; then
+        # Must precede /jobs: a trace URL contains it.
+        echo "mock gitlab job trace output"
+    elif [[ "$*" == *"/jobs"* ]]; then
+        # Must precede /pipelines: /pipelines/:id/jobs contains it.
+        if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then
+            echo '[]'
+        else
+            echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
+        fi
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
@@ -24,10 +43,6 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/todos.json"
     elif [[ "$*" == *"/milestones"* ]]; then
         cat "$FIXTURES_DIR/milestones.json"
-    elif [[ "$*" == *"/trace"* ]]; then
-        echo "mock gitlab job trace output"
-    elif [[ "$*" == *"/jobs"* ]]; then
-        echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
     else
         echo "{}"
     fi

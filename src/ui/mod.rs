@@ -454,7 +454,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
     f.render_widget(sidebar, sidebar_rect);
 
     // Main Area Title
-    let tab_title = format!(" {} ", app.active_tab.title(kind));
+    // Inside a pipeline descent the tab name alone no longer says where you
+    // are, so the path down is appended. Jobs is the deepest level of the same
+    // descent and needs it just as much.
+    let breadcrumb = match app.active_tab {
+        Tab::Pipelines | Tab::Jobs => app.nav_breadcrumb(),
+        _ => String::new(),
+    };
+    let tab_title = if breadcrumb.is_empty() {
+        format!(" {} ", app.active_tab.title(kind))
+    } else {
+        format!(" {} › {} ", app.active_tab.title(kind), breadcrumb)
+    };
     let main_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app.focus_column_checklist {

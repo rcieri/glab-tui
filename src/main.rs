@@ -1105,26 +1105,18 @@ async fn main() -> Result<()> {
                                 // the progress cache + drill-in via the project selector.
                                 app.selected_milestone_issues = None;
                             } else {
-                                // Skip the fetch whenever we already have ANY data
-                                // for this milestone — either the issues cache (set
-                                // by an earlier drill-in) or the progress cache
-                                // (rebuilt from the Issues tab on every fetch). The
-                                // preview pane will populate from whichever cache
-                                // is present; the progress bar always reads the
-                                // progress cache first and never refetches.
+                                // Use the issues cache when we already have it
+                                // (set by an earlier selection). The progress cache
+                                // alone only holds `(closed, total)` counts — not the
+                                // actual issue list — so it does NOT suppress the
+                                // fetch: the milestone preview renders the issues,
+                                // not just their counts.
                                 let cached = app
                                     .milestone_issues_cache
                                     .get(&milestone_iid)
                                     .filter(|c| !c.is_empty());
                                 if let Some(cached) = cached {
                                     app.selected_milestone_issues = Some(cached.clone());
-                                } else if app.milestone_progress_cache.contains_key(&milestone_iid)
-                                {
-                                    // Progress cache already answers the bar. The
-                                    // preview pane stays empty until the user
-                                    // explicitly asks for the issue list (e.g. via
-                                    // a future drill-in action). No fetch here.
-                                    app.selected_milestone_issues = None;
                                 } else {
                                     app.selected_milestone_issues = None;
                                     let client_clone = client.clone();

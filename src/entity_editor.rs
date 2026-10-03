@@ -14,6 +14,7 @@ pub fn branch_fields(
 
 use crate::AppTerminal;
 use crate::app::App;
+use crate::domain::issues::Issue;
 use crate::editor::edit_in_editor;
 use crate::event::Event;
 use crossterm::event::KeyCode;
@@ -407,7 +408,7 @@ pub fn build_mr_document(
         },
     ));
     fields.push(crate::app::Field::read_only(
-        "Closes issues",
+        "Closes Issues",
         format_linked_issues_value(mr.related_issues.as_ref(), fetching_linked_issues),
     ));
     fields.push(crate::app::Field::read_only(
@@ -675,59 +676,15 @@ pub fn build_milestone_document(
         ));
     }
 
-    if let Some(iss) = issues {
-        let issues_field = if iss.is_empty() {
-            "None".to_string()
-        } else {
-            iss.iter()
-                .map(|i| format!("#{}", i.iid))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        fields.push(crate::app::Field::read_only(
-            "Issues",
-            crate::utils::format::truncate(&issues_field, 60),
-        ));
-    } else if let Some((closed, total)) = progress {
-        fields.push(crate::app::Field::read_only(
-            "Issues",
-            format!("{} issues ({} closed)", total, closed),
-        ));
-    } else {
-        fields.push(crate::app::Field::read_only(
-            "Issues",
-            "(Loading...)".to_string(),
-        ));
-    }
-
-    let mut doc_content = milestone.description.clone().unwrap_or_default();
-    if let Some(iss) = issues {
-        if !iss.is_empty() {
-            if !doc_content.is_empty() {
-                doc_content.push_str("\n\n---\n\n");
-            }
-            doc_content.push_str("### Related Issues\n\n");
-            for i in iss {
-                let state_str = if i.state.eq_ignore_ascii_case("opened")
-                    || i.state.eq_ignore_ascii_case("open")
-                {
-                    "OPEN"
-                } else if i.state.eq_ignore_ascii_case("closed")
-                    || i.state.eq_ignore_ascii_case("close")
-                {
-                    "CLOSED"
-                } else {
-                    i.state.as_str()
-                };
-                doc_content.push_str(&format!("- #{} `[{}]` {}\n", i.iid, state_str, i.title));
-            }
-        }
-    }
+    let content = crate::app::InspectorContent::MilestoneRelated {
+        description: milestone.description.clone().unwrap_or_default(),
+        issues: issues.map(<[Issue]>::to_vec),
+    };
 
     crate::app::EntityDocument {
         title: format!("Milestone %{}", milestone.iid),
         fields,
-        content: crate::app::InspectorContent::Markdown(doc_content),
+        content,
     }
 }
 
@@ -2213,8 +2170,20 @@ mod tests {
         let doc = build_milestone_document(&milestone, None, Some((3, 5)), false);
         let progress_field = doc.fields.iter().find(|f| f.label == "Progress").unwrap();
         assert_eq!(progress_field.value, "[██████░░░░] 60% (3/5 closed)");
-        let issues_field = doc.fields.iter().find(|f| f.label == "Issues").unwrap();
-        assert_eq!(issues_field.value, "5 issues (3 closed)");
+        assert!(doc.fields.iter().all(|f| f.label != "Issues"));
+        // The doc carries the raw pieces; the actual markdown rendering +
+        // Related Issues block composition happens in the inspector
+        // renderer (see render_inspector_content, InspectorContent::MilestoneRelated).
+        match &doc.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "Release 1.0");
+                assert!(issues.is_none(), "no issues supplied for this case");
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
+        }
 
         // Case 2: with issues list
         let issue1 = crate::domain::issues::Issue {
@@ -2262,18 +2231,20 @@ mod tests {
             .find(|f| f.label == "Progress")
             .unwrap();
         assert_eq!(progress_issues_field.value, "[█████░░░░░] 50% (1/2 closed)");
-        let issues_field = doc_issues
-            .fields
-            .iter()
-            .find(|f| f.label == "Issues")
-            .unwrap();
-        assert_eq!(issues_field.value, "#1, #2");
-        if let crate::app::InspectorContent::Markdown(content) = &doc_issues.content {
-            assert!(content.contains("### Related Issues"));
-            assert!(content.contains("- #1 `[CLOSED]` Issue 1"));
-            assert!(content.contains("- #2 `[OPEN]` Issue 2"));
-        } else {
-            panic!("Expected markdown content");
+        assert!(doc_issues.fields.iter().all(|f| f.label != "Issues"));
+        match &doc_issues.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "Release 1.0");
+                let issues = issues.as_ref().expect("issues should be present");
+                assert_eq!(issues.len(), 2);
+                let iids: Vec<u64> = issues.iter().map(|i| i.iid).collect();
+                assert!(iids.contains(&1));
+                assert!(iids.contains(&2));
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
         }
 
         // Case 3: without progress and without issues
@@ -2284,12 +2255,70 @@ mod tests {
             .find(|f| f.label == "Progress")
             .unwrap();
         assert_eq!(progress_none_field.value, "[░░░░░░░░░░] 0% (Loading...)");
-        let issues_none_field = doc_none
-            .fields
-            .iter()
-            .find(|f| f.label == "Issues")
-            .unwrap();
-        assert_eq!(issues_none_field.value, "(Loading...)");
+        assert!(doc_none.fields.iter().all(|f| f.label != "Issues"));
+        match &doc_none.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "Release 1.0");
+                assert!(issues.is_none(), "issues not fetched yet");
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_milestone_document_uses_milestone_related_content() {
+        let milestone = crate::domain::milestones::Milestone {
+            id: 1,
+            iid: 5,
+            title: "v1.0".to_string(),
+            description: Some("desc".to_string()),
+            state: "active".to_string(),
+            start_date: None,
+            due_date: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            project_path: "owner/repo".to_string(),
+        };
+        let issue = crate::domain::issues::Issue {
+            iid: 12,
+            title: "#12 Fix login flow".into(),
+            state: "opened".into(),
+            description: None,
+            author: crate::domain::issues::Author {
+                username: "alice".into(),
+            },
+            assignees: vec![],
+            labels: vec![],
+            milestone: None,
+            due_date: None,
+            created_at: None,
+            closed_at: None,
+            updated_at: String::new(),
+            project_path: "owner/repo".into(),
+            web_url: String::new(),
+            related_mrs: None,
+        };
+        let doc = build_milestone_document(&milestone, Some(&[issue]), None, false);
+        // The build step hands the description and issues off to the
+        // renderer; the renderer is responsible for stripping the
+        // `#NN` marker and styling each row. Verify the data wires
+        // through correctly.
+        match &doc.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "desc");
+                let issues = issues.as_ref().unwrap();
+                assert_eq!(issues.len(), 1);
+                assert_eq!(issues[0].iid, 12);
+                // Marker still present at the build layer; renderer strips it.
+                assert!(issues[0].title.starts_with("#12"));
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
+        }
     }
 
     #[test]

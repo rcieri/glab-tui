@@ -630,7 +630,18 @@ pub enum FieldType {
 #[derive(Clone, Debug)]
 pub enum InspectorContent {
     Markdown(String),
-    AnsiTrace { trace: String, wrap: bool },
+    /// Milestone preview: description markdown followed by a `Related Issues`
+    /// header and one styled row per linked issue. Carries the description
+    /// raw so the renderer can lay it out at the actual content area width
+    /// (vs. guessing in advance).
+    MilestoneRelated {
+        description: String,
+        issues: Option<Vec<crate::domain::issues::Issue>>,
+    },
+    AnsiTrace {
+        trace: String,
+        wrap: bool,
+    },
     PipelineStages(Vec<crate::domain::pipelines::Job>),
     Custom(Vec<ratatui::text::Line<'static>>),
     Empty(&'static str),

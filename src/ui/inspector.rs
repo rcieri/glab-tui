@@ -9,7 +9,8 @@ use ratatui::{
 };
 
 use crate::app::{EditMenu, EntityDocument, Field, FieldTone, FieldType, InspectorContent};
-use crate::config::{ICONS, THEME};
+use crate::config::{ICONS, THEME, Theme};
+use crate::domain::issues::Issue;
 use crate::ui::helpers::{get_label_color, rendered_line_count};
 use crate::utils::format::parse_ansi_trace;
 use crate::utils::markdown::render_markdown;
@@ -127,6 +128,9 @@ pub(crate) fn render_entity_inspector(
             match &doc.content {
                 InspectorContent::Empty(_) => false,
                 InspectorContent::Markdown(m) => !m.trim().is_empty(),
+                InspectorContent::MilestoneRelated { description, .. } => {
+                    !description.trim().is_empty()
+                }
                 InspectorContent::AnsiTrace { trace, .. } => !trace.trim().is_empty(),
                 InspectorContent::PipelineStages(jobs) => !jobs.is_empty(),
                 InspectorContent::Custom(lines) => !lines.is_empty(),
@@ -1146,6 +1150,72 @@ pub(crate) fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
         .collect()
 }
 
+/// One styled line per related milestone issue: `[STATE] #iid Title`. Mirrors
+/// the bulk-edit descriptor (`#iid` purple-bold, title plain) but adds a
+/// colored state badge that matches the Progress column on the left side of
+/// the preview. Issue titles occasionally carry a `#NN` prefix from the backend
+/// projection — strip it so the row doesn't read `#12 #12 Fix thing`.
+fn milestone_related_issue_lines(issues: &[Issue], theme: &Theme) -> Vec<Line<'static>> {
+    issues
+        .iter()
+        .map(|i| {
+            let (badge_text, badge_style) =
+                if i.state.eq_ignore_ascii_case("opened") || i.state.eq_ignore_ascii_case("open") {
+                    (
+                        "OPEN",
+                        Style::default()
+                            .fg(theme.green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else if i.state.eq_ignore_ascii_case("closed")
+                    || i.state.eq_ignore_ascii_case("close")
+                {
+                    (
+                        "CLOSED",
+                        Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    (i.state.as_str(), Style::default().fg(theme.text_normal))
+                };
+            Line::from(vec![
+                Span::styled(format!("[{badge_text}] "), badge_style),
+                Span::styled(
+                    format!("#{} ", i.iid),
+                    Style::default()
+                        .fg(theme.purple)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    strip_leading_issue_marker(&i.title),
+                    Style::default().fg(theme.text_normal),
+                ),
+            ])
+        })
+        .collect()
+}
+
+fn strip_leading_issue_marker(title: &str) -> String {
+    let trimmed = title.trim_start();
+    let bytes = trimmed.as_bytes();
+    if bytes.first() == Some(&b'#')
+        && bytes
+            .iter()
+            .skip(1)
+            .take_while(|b| b.is_ascii_digit())
+            .any(|_| true)
+    {
+        let digits_end = bytes
+            .iter()
+            .skip(1)
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+            + 1;
+        trimmed[digits_end..].trim_start().to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 pub(crate) fn render_inspector_content(
     f: &mut Frame,
     content: &InspectorContent,
@@ -1174,6 +1244,55 @@ pub(crate) fn render_inspector_content(
                 Paragraph::new(lines)
                     .scroll((scroll, 0))
                     .wrap(ratatui::widgets::Wrap { trim: false }),
+                area,
+            );
+            max_scroll
+        }
+        InspectorContent::MilestoneRelated {
+            description,
+            issues,
+        } => {
+            let mut lines: Vec<Line<'static>> = if description.trim().is_empty() {
+                Vec::new()
+            } else {
+                render_markdown(description, &theme, area.width)
+            };
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(vec![Span::styled(
+                "Related Issues",
+                Style::default()
+                    .fg(theme.header_fg)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+            match issues {
+                Some(iss) if !iss.is_empty() => {
+                    lines.push(Line::from(""));
+                    lines.extend(milestone_related_issue_lines(iss, &theme));
+                }
+                Some(_) => {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "No issues in this milestone.",
+                        Style::default().fg(theme.text_muted),
+                    )));
+                }
+                None => {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "(loading issues…)",
+                        Style::default().fg(theme.text_muted),
+                    )));
+                }
+            }
+            let total_lines = rendered_line_count(&lines, area.width as usize, true);
+            let max_scroll =
+                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
+            f.render_widget(
+                Paragraph::new(lines)
+                    .scroll((scroll, 0))
+                    .wrap(ratatui::widgets::Wrap { trim: true }),
                 area,
             );
             max_scroll
@@ -1630,6 +1749,120 @@ mod tests {
         assert!(
             rendered.contains("!519"),
             "Pull requests in issue preview must render with !: got '{rendered}'"
+        );
+    }
+
+    #[test]
+    fn render_milestone_related_renders_issues_with_state_badges() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let open = crate::domain::issues::Issue {
+            iid: 12,
+            title: "#12 Fix login flow".into(),
+            state: "opened".into(),
+            description: None,
+            author: crate::domain::issues::Author {
+                username: "alice".into(),
+            },
+            assignees: vec![],
+            labels: vec![],
+            milestone: None,
+            due_date: None,
+            created_at: None,
+            closed_at: None,
+            updated_at: String::new(),
+            project_path: "owner/repo".into(),
+            web_url: String::new(),
+            related_mrs: None,
+        };
+        let closed = crate::domain::issues::Issue {
+            iid: 34,
+            title: "Update docs".into(),
+            state: "closed".into(),
+            description: None,
+            author: crate::domain::issues::Author {
+                username: "bob".into(),
+            },
+            assignees: vec![],
+            labels: vec![],
+            milestone: None,
+            due_date: None,
+            created_at: None,
+            closed_at: None,
+            updated_at: String::new(),
+            project_path: "owner/repo".into(),
+            web_url: String::new(),
+            related_mrs: None,
+        };
+        let content = InspectorContent::MilestoneRelated {
+            description: "Release 1.0".to_string(),
+            issues: Some(vec![open, closed]),
+        };
+
+        terminal
+            .draw(|f| {
+                render_inspector_content(f, &content, f.area(), 0);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            rendered.contains("Related Issues"),
+            "preview should contain the Related Issues header: got\n{rendered}"
+        );
+        assert!(
+            rendered.contains("[OPEN]")
+                && rendered.contains("#12")
+                && rendered.contains("Fix login flow"),
+            "preview should render the open row once with stripped title: got\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("#12 #12"),
+            "preview should not double-print the leading #NN marker: got\n{rendered}"
+        );
+        assert!(
+            rendered.contains("[CLOSED]")
+                && rendered.contains("#34")
+                && rendered.contains("Update docs"),
+            "preview should render the closed row: got\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_milestone_related_renders_loading_state() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let content = InspectorContent::MilestoneRelated {
+            description: String::new(),
+            issues: None,
+        };
+
+        terminal
+            .draw(|f| {
+                render_inspector_content(f, &content, f.area(), 0);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            rendered.contains("(loading issues…)"),
+            "preview should advertise the in-flight fetch: got\n{rendered}"
         );
     }
 }

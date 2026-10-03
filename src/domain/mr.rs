@@ -88,6 +88,26 @@ pub struct MergeRequest {
     /// Cache of the related/closing-issues fetch.
     #[serde(default)]
     pub related_issues: Option<RelatedIssuesState>,
+    #[serde(default)]
+    pub stack: Option<StackInfo>,
+    #[serde(default)]
+    pub stack_entries: Option<Vec<StackEntry>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct StackInfo {
+    pub number: u64,
+    pub size: usize,
+    pub position: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct StackEntry {
+    pub position: usize,
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    pub is_draft: bool,
 }
 
 impl MergeRequest {

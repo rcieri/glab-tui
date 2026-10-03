@@ -423,6 +423,15 @@ pub fn build_mr_document(
         "Updated",
         crate::utils::format::time_ago(&mr.updated_at),
     ));
+    if let Some(stack) = &mr.stack {
+        fields.push(crate::app::Field::read_only(
+            "Stack",
+            format!(
+                "#{} (position {} of {})",
+                stack.number, stack.position, stack.size
+            ),
+        ));
+    }
     if !mr.project_path.is_empty() {
         fields.push(crate::app::Field::read_only(
             "Project",
@@ -430,10 +439,45 @@ pub fn build_mr_document(
         ));
     }
 
+    let mut description = mr.description.clone().unwrap_or_default();
+    if let Some(entries) = &mr.stack_entries {
+        if !entries.is_empty() {
+            if !description.is_empty() {
+                description.push_str("\n\n---\n\n");
+            }
+            let stack_num = mr.stack.as_ref().map(|s| s.number).unwrap_or(0);
+            if stack_num > 0 {
+                description.push_str(&format!(
+                    "### Stack #{stack_num} ({} PRs)\n\n",
+                    entries.len()
+                ));
+            } else {
+                description.push_str(&format!("### Stack ({} PRs)\n\n", entries.len()));
+            }
+            for entry in entries {
+                let current_marker = if entry.number == mr.iid {
+                    " ◀ (current)"
+                } else {
+                    ""
+                };
+                let draft_str = if entry.is_draft { " [draft]" } else { "" };
+                description.push_str(&format!(
+                    "{}. #{}: {} ({}){}{}\n",
+                    entry.position,
+                    entry.number,
+                    entry.title,
+                    entry.state.to_uppercase(),
+                    draft_str,
+                    current_marker
+                ));
+            }
+        }
+    }
+
     crate::app::EntityDocument {
         title: format!("MR !{}", mr.iid),
         fields,
-        content: crate::app::InspectorContent::Markdown(mr.description.clone().unwrap_or_default()),
+        content: crate::app::InspectorContent::Markdown(description),
     }
 }
 
@@ -1971,6 +2015,8 @@ mod tests {
             project_path: String::new(),
             web_url: None,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         };
         app.mrs.items = vec![mr];
 
@@ -2272,6 +2318,80 @@ mod tests {
                 assert!(issues[0].title.starts_with("#12"));
             }
             other => panic!("Expected MilestoneRelated content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_build_mr_document_with_stack() {
+        let mr = crate::domain::mr::MergeRequest {
+            iid: 102,
+            title: "Middle PR".to_string(),
+            state: "opened".to_string(),
+            labels: vec![],
+            updated_at: "".to_string(),
+            author: crate::domain::mr::Author {
+                username: "alice".to_string(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "feature-1".to_string(),
+            source_branch: "feature-2".to_string(),
+            sha: None,
+            draft: false,
+            description: Some("My PR description".to_string()),
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+            project_path: "rcieri/glab-tui".to_string(),
+            web_url: None,
+            related_issues: None,
+            stack: Some(crate::domain::mr::StackInfo {
+                number: 7,
+                size: 3,
+                position: 2,
+            }),
+            stack_entries: Some(vec![
+                crate::domain::mr::StackEntry {
+                    position: 1,
+                    number: 101,
+                    title: "Base PR".to_string(),
+                    state: "merged".to_string(),
+                    is_draft: false,
+                },
+                crate::domain::mr::StackEntry {
+                    position: 2,
+                    number: 102,
+                    title: "Middle PR".to_string(),
+                    state: "open".to_string(),
+                    is_draft: false,
+                },
+                crate::domain::mr::StackEntry {
+                    position: 3,
+                    number: 103,
+                    title: "Top PR".to_string(),
+                    state: "open".to_string(),
+                    is_draft: true,
+                },
+            ]),
+        };
+
+        let doc = build_mr_document(&mr, true, None, false);
+        assert!(
+            doc.fields
+                .iter()
+                .any(|f| f.label == "Stack" && f.value == "#7 (position 2 of 3)")
+        );
+
+        if let crate::app::InspectorContent::Markdown(content) = doc.content {
+            assert!(content.contains("### Stack #7 (3 PRs)"));
+            assert!(content.contains("1. #101: Base PR (MERGED)"));
+            assert!(content.contains("2. #102: Middle PR (OPEN) ◀ (current)"));
+            assert!(content.contains("3. #103: Top PR (OPEN) [draft]"));
+        } else {
+            panic!("Expected Markdown content");
         }
     }
 }

@@ -180,6 +180,14 @@ impl GitlabClient {
         self.backend.get_mr_diff(project, iid).await
     }
 
+    pub async fn get_pr_stack_entries(
+        &self,
+        project: &str,
+        pr_number: u64,
+    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+        self.backend.get_pr_stack_entries(project, pr_number).await
+    }
+
     pub async fn list_mr_notes(
         &self,
         project: &str,

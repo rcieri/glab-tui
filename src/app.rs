@@ -381,6 +381,9 @@ impl Tab {
                 ]);
                 if kind.is_github() {
                     cols.push("Action");
+                    if !is_group {
+                        cols.push("Stack");
+                    }
                 } else {
                     cols.push("Pipeline");
                 }
@@ -5052,6 +5055,11 @@ impl App {
                     check_match(&v);
                 }
             }
+            if enabled_cols.contains("Stack") {
+                for v in Self::mr_filter_values(item, "Stack") {
+                    check_match(&v);
+                }
+            }
 
             if let Some(score) = best_score {
                 scored_items.push((item, score));
@@ -5104,6 +5112,13 @@ impl App {
                 crate::domain::mr_state::mergeable_sort_key(m.mergeability.as_ref()).to_string()
             }
             "Workflow" => crate::domain::mr_state::workflow_sort_key(m.workflow).to_string(),
+            "Stack" => {
+                if let Some(ref s) = m.stack {
+                    format!("{:08}:{:04}", s.number, s.position)
+                } else {
+                    String::new()
+                }
+            }
             "Closes" | "Linked Issues" => match &m.related_issues {
                 Some(crate::domain::mr::RelatedIssuesState::Items(items)) if !items.is_empty() => {
                     format!("{:05}", items.first().map(|r| r.iid).unwrap_or(0))
@@ -5183,6 +5198,16 @@ impl App {
             "Workflow" => crate::domain::mr_state::workflow_cell_word(m.workflow)
                 .map(|w| vec![w.to_string()])
                 .unwrap_or_default(),
+            "Stack" => {
+                if let Some(ref s) = m.stack {
+                    vec![
+                        format!("#{}", s.number),
+                        format!("#{} {}/{}", s.number, s.position, s.size),
+                    ]
+                } else {
+                    vec!["—".to_string()]
+                }
+            }
             "Closes" | "Linked Issues" => match &m.related_issues {
                 Some(crate::domain::mr::RelatedIssuesState::Items(items)) if !items.is_empty() => {
                     let mut vals = vec!["Closes Issues".to_string(), "Has Issues".to_string()];
@@ -6560,6 +6585,13 @@ impl App {
                         "Title" => {
                             let c = m.title.chars().next().unwrap_or('?');
                             c.to_uppercase().to_string()
+                        }
+                        "Stack" => {
+                            if let Some(ref s) = m.stack {
+                                format!("Stack #{}", s.number)
+                            } else {
+                                "No Stack".to_string()
+                            }
                         }
                         "Closes" | "Linked Issues" => match &m.related_issues {
                             Some(crate::domain::mr::RelatedIssuesState::Items(items))
@@ -7945,6 +7977,8 @@ mod tests {
             project_path: String::new(),
             web_url: None,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -7970,6 +8004,8 @@ mod tests {
             project_path: String::new(),
             web_url: None,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         };
 
         let mr_ready = MergeRequest {
@@ -7995,6 +8031,8 @@ mod tests {
             project_path: String::new(),
             web_url: None,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
@@ -9527,6 +9565,8 @@ index 123456..789012 100644
             project_path: String::new(),
             web_url: None,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         }
     }
 
@@ -10641,6 +10681,62 @@ index 123456..789012 100644
     }
 
     #[test]
+    fn stack_column_available_on_github_repo_mode() {
+        assert!(
+            Tab::MergeRequests
+                .columns(BackendKind::GitHub, false)
+                .contains(&"Stack")
+        );
+        assert!(
+            !Tab::MergeRequests
+                .columns(BackendKind::GitLab, false)
+                .contains(&"Stack")
+        );
+        assert!(
+            !Tab::MergeRequests
+                .columns(BackendKind::GitHub, true)
+                .contains(&"Stack")
+        );
+    }
+
+    #[test]
+    fn stack_filter_sort_and_grouping() {
+        let mut app = App::default();
+        let mut pr1 = mr_fixture(101, "opened", "user1", false, "Base PR");
+        pr1.stack = Some(crate::domain::mr::StackInfo {
+            number: 7,
+            size: 3,
+            position: 1,
+        });
+
+        let mut pr2 = mr_fixture(102, "opened", "user1", false, "Middle PR");
+        pr2.stack = Some(crate::domain::mr::StackInfo {
+            number: 7,
+            size: 3,
+            position: 2,
+        });
+
+        let pr3 = mr_fixture(103, "opened", "user2", false, "Unstacked PR");
+
+        app.mrs.items = vec![pr1, pr2, pr3];
+
+        let values = app.collect_unique_column_values(Tab::MergeRequests, "Stack");
+        assert!(values.contains(&"#7".to_string()));
+        assert!(values.contains(&"#7 1/3".to_string()));
+        assert!(values.contains(&"#7 2/3".to_string()));
+        assert!(values.contains(&"—".to_string()));
+
+        app.set_column_filter(
+            Tab::MergeRequests,
+            "Stack",
+            ["#7 1/3".to_string()].into_iter().collect(),
+        );
+        let filtered = app.filtered_mrs();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].iid, 101);
+    }
+
+    #[test]
     fn test_is_column_visible_linked_column_aliases() {
         let mut app = App::default();
         let mut issues_set = std::collections::HashSet::new();
@@ -10751,6 +10847,8 @@ index 123456..789012 100644
                 state: "opened".into(),
                 project_path: None,
             }])),
+            stack: None,
+            stack_entries: None,
         };
         let mr_without_issues = MergeRequest {
             iid: 102,
@@ -10777,6 +10875,8 @@ index 123456..789012 100644
             project_path: "repo".into(),
             web_url: None,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         };
 
         let mr_values_with = App::mr_filter_values(&mr_with_issues, "Closes");

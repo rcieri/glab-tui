@@ -498,6 +498,16 @@ pub trait Backend: Send + Sync {
     }
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String>;
 
+    /// For GitHub stacked PRs (`gh stack`), fetch all entries in the PR's stack.
+    /// Backends without stacked PR support (GitLab) return `Ok(None)`.
+    async fn get_pr_stack_entries(
+        &self,
+        _project: &str,
+        _pr_number: u64,
+    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+        Ok(None)
+    }
+
     // ── Pipeline / Job actions ──
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;

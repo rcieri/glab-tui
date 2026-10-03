@@ -81,6 +81,14 @@ pub enum Event {
     /// the item so the handler can insert it into the loaded set if absent.
     IssueFetched(u64, Result<crate::domain::issues::Issue, String>),
     MrFetched(u64, Result<crate::domain::mr::MergeRequest, String>),
+    /// Lazy follow-up fetch for the full `stack.entries` of a stacked GitHub PR,
+    /// needed by the inspector breakdown. `Ok(Some(_))` is the entries list,
+    /// `Ok(None)` means the PR is not in a stack, `Err` is the API failure.
+    StackEntriesFetched {
+        pr_number: u64,
+        project_path: String,
+        result: Result<Option<Vec<crate::domain::mr::StackEntry>>, String>,
+    },
     /// A optimistic UI mutation for `runner_id` failed; restore the row's
     /// prior `status`/`active` fields. Sender fills `status`/`active` with
     /// the values that were on screen before the user pressed pause/resume.

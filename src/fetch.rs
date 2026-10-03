@@ -211,6 +211,8 @@ mod tests {
             project_path: String::new(),
             web_url: None,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         }
     }
 
@@ -878,6 +880,32 @@ pub fn spawn_fetch_mr(
             Err(e) => Err(e),
         };
         let _ = tx.send(Event::MrFetched(iid, result.map_err(|e| e.to_string())));
+    });
+}
+
+/// Fetch the full list of PRs that belong to a GitHub stacked PR. Called
+/// lazily, once per stacked MR, after `list_mrs` populates the lightweight
+/// `stack: Some(StackInfo)` summary. The PR number + project path identify the
+/// MR in `app.mrs.items` so the handler can drop the entries back in place.
+///
+/// GitLab returns `Ok(None)` from the backend trait default — it has no stack
+/// concept — so this helper is effectively GitHub-only.
+pub fn spawn_fetch_stack_entries(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+    pr_number: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    let project_path = project_path.to_string();
+    tokio::spawn(async move {
+        let result = client.get_pr_stack_entries(&project_path, pr_number).await;
+        let _ = tx.send(Event::StackEntriesFetched {
+            pr_number,
+            project_path: project_path.clone(),
+            result: result.map_err(|e| e.to_string()),
+        });
     });
 }
 

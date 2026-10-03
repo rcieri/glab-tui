@@ -366,6 +366,35 @@ impl GhBackend {
             .as_deref()
     }
 
+    async fn fetch_pr_stacks_for_repo(
+        &self,
+        project: &str,
+        pr_numbers: &[u64],
+    ) -> std::collections::HashMap<u64, crate::domain::mr::StackInfo> {
+        if pr_numbers.is_empty() {
+            return std::collections::HashMap::new();
+        }
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let query = pr_stack_graphql_query(owner, repo, pr_numbers);
+        match self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching PR Stacks",
+            )
+            .await
+        {
+            Ok(raw) => parse_pr_stacks_response(&raw),
+            // Stack info is a non-critical decoration: an empty map means
+            // "no PR in this batch is in a stack" — identical to the
+            // pre-stack behaviour. Matches the GitLab `list_mr_state`
+            // follow-up path in `fetch.rs:347` which also swallows errors
+            // for the same reason. The terminal-commands bar still records
+            // the failure (see `run_gh_command`), so it isn't truly silent.
+            Err(_) => std::collections::HashMap::new(),
+        }
+    }
+
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
         let tx = self.tx.clone();
         let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -472,6 +501,207 @@ mod related_prs_types {
         pub(super) title: String,
         pub(super) state: String,
     }
+}
+
+/// Build a GraphQL query to fetch stack info for a batch of PR numbers.
+fn pr_stack_graphql_query(owner: &str, repo: &str, pr_numbers: &[u64]) -> String {
+    let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
+    let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut fields = String::new();
+    for &num in pr_numbers {
+        fields.push_str(&format!(
+            "pr_{num}: pullRequest(number: {num}) {{ \
+             number \
+             stack {{ number size }} \
+             stackEntry {{ position }} \
+             }} "
+        ));
+    }
+    format!("{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ {fields} }} }}")
+}
+
+mod pr_stack_types {
+    use super::*;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackBatchResponse {
+        pub(super) data: Option<GhStackBatchData>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackBatchData {
+        pub(super) repository: Option<std::collections::HashMap<String, Option<GhPrStackNode>>>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhPrStackNode {
+        pub(super) number: Option<u64>,
+        pub(super) stack: Option<GhPrStackObj>,
+        #[serde(rename = "stackEntry")]
+        pub(super) stack_entry: Option<GhPrStackEntryObj>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhPrStackObj {
+        pub(super) number: u64,
+        pub(super) size: usize,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhPrStackEntryObj {
+        pub(super) position: usize,
+    }
+}
+
+fn parse_pr_stacks_response(
+    raw: &str,
+) -> std::collections::HashMap<u64, crate::domain::mr::StackInfo> {
+    let mut map = std::collections::HashMap::new();
+    let Ok(resp) = serde_json::from_str::<pr_stack_types::GhStackBatchResponse>(raw) else {
+        return map;
+    };
+    let Some(data) = resp.data else {
+        return map;
+    };
+    let Some(repo) = data.repository else {
+        return map;
+    };
+    for (key, node_opt) in repo {
+        if let Some(node) = node_opt {
+            let pr_num = node
+                .number
+                .or_else(|| key.strip_prefix("pr_").and_then(|s| s.parse::<u64>().ok()));
+            if let (Some(pr_num), Some(stk), Some(entry)) = (pr_num, node.stack, node.stack_entry) {
+                map.insert(
+                    pr_num,
+                    crate::domain::mr::StackInfo {
+                        number: stk.number,
+                        size: stk.size,
+                        position: entry.position,
+                    },
+                );
+            }
+        }
+    }
+    map
+}
+
+/// Build a GraphQL query to fetch all entries in a PR's stack.
+fn pr_stack_entries_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
+    let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
+    let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
+         pullRequest(number:{pr_number}) {{ \
+         stack {{ \
+           number \
+           size \
+           entries(first:{first}) {{ \
+             nodes {{ \
+               position \
+               pullRequest {{ number title state isDraft }} \
+             }} \
+           }} \
+         }} \
+         }} }} }}"
+    )
+}
+
+mod pr_stack_entries_types {
+    use super::*;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackEntriesResp {
+        pub(super) data: Option<GhStackEntriesData>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackEntriesData {
+        pub(super) repository: Option<GhStackEntriesRepo>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackEntriesRepo {
+        #[serde(rename = "pullRequest")]
+        pub(super) pull_request: Option<GhStackEntriesPr>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackEntriesPr {
+        pub(super) stack: Option<GhStackEntriesStackObj>,
+    }
+
+    #[derive(Deserialize)]
+    #[allow(dead_code)]
+    pub(super) struct GhStackEntriesStackObj {
+        pub(super) number: u64,
+        pub(super) size: usize,
+        pub(super) entries: Option<GhStackEntriesNodes>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackEntriesNodes {
+        #[serde(default)]
+        pub(super) nodes: Vec<GhStackEntryNode>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackEntryNode {
+        pub(super) position: usize,
+        #[serde(rename = "pullRequest")]
+        pub(super) pull_request: Option<GhStackEntryPrDetails>,
+    }
+
+    #[derive(Deserialize)]
+    pub(super) struct GhStackEntryPrDetails {
+        pub(super) number: u64,
+        pub(super) title: String,
+        pub(super) state: String,
+        #[serde(rename = "isDraft", default)]
+        pub(super) is_draft: bool,
+    }
+}
+
+fn parse_pr_stack_entries_response(
+    raw: &str,
+) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+    let Ok(resp) = serde_json::from_str::<pr_stack_entries_types::GhStackEntriesResp>(raw) else {
+        return Ok(None);
+    };
+    let Some(data) = resp.data else {
+        return Ok(None);
+    };
+    let Some(repo) = data.repository else {
+        return Ok(None);
+    };
+    let Some(pr) = repo.pull_request else {
+        return Ok(None);
+    };
+    let Some(stack) = pr.stack else {
+        return Ok(None);
+    };
+    let Some(entries_obj) = stack.entries else {
+        return Ok(None);
+    };
+    let mut list: Vec<crate::domain::mr::StackEntry> = entries_obj
+        .nodes
+        .into_iter()
+        .filter_map(|node| {
+            let pr_details = node.pull_request?;
+            Some(crate::domain::mr::StackEntry {
+                position: node.position,
+                number: pr_details.number,
+                title: pr_details.title,
+                state: pr_details.state.to_lowercase(),
+                is_draft: pr_details.is_draft,
+            })
+        })
+        .collect();
+    if list.is_empty() {
+        return Ok(None);
+    }
+    list.sort_by_key(|e| e.position);
+    Ok(Some(list))
 }
 
 /// Build the GraphQL query that finds the issues which a PR closes.
@@ -971,6 +1201,8 @@ impl Backend for GhBackend {
 
                 let me = self.current_user().await;
                 let gh_prs: Vec<GhPr> = serde_json::from_str(&raw)?;
+                let pr_numbers: Vec<u64> = gh_prs.iter().map(|gp| gp.number).collect();
+                let stacks = self.fetch_pr_stacks_for_repo(project, &pr_numbers).await;
                 Ok(gh_prs
                     .into_iter()
                     .map(|gp| {
@@ -1063,6 +1295,8 @@ impl Backend for GhBackend {
                             project_path: project.to_string(),
                             web_url: gp.url,
                             related_issues,
+                            stack: stacks.get(&gp.number).cloned(),
+                            stack_entries: None,
                         }
                     })
                     .collect())
@@ -1173,6 +1407,8 @@ impl Backend for GhBackend {
                             project_path,
                             web_url: item.html_url.clone(),
                             related_issues: None,
+                            stack: None,
+                            stack_entries: None,
                         }
                     })
                     .collect();
@@ -1307,7 +1543,26 @@ impl Backend for GhBackend {
             project_path: String::new(),
             web_url: gp.url,
             related_issues,
+            stack: None,
+            stack_entries: None,
         })
+    }
+
+    async fn get_pr_stack_entries(
+        &self,
+        project: &str,
+        pr_number: u64,
+    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let query = pr_stack_entries_graphql_query(owner, repo, pr_number, 50);
+        let raw = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching PR Stack Entries",
+            )
+            .await?;
+        parse_pr_stack_entries_response(&raw)
     }
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
@@ -3726,5 +3981,120 @@ mod tests {
 
         // Malformed / missing field
         assert!(parse_group_projects(r#"[{"id": 1}]"#).is_err());
+    }
+
+    #[test]
+    fn test_pr_stack_graphql_query() {
+        let q = pr_stack_graphql_query("rcieri", "glab-tui", &[101, 102]);
+        assert!(q.contains("pr_101: pullRequest(number: 101)"));
+        assert!(q.contains("pr_102: pullRequest(number: 102)"));
+        assert!(q.contains("stack { number size }"));
+        assert!(q.contains("stackEntry { position }"));
+    }
+
+    #[test]
+    fn test_parse_pr_stacks_response() {
+        let json = r#"{
+            "data": {
+                "repository": {
+                    "pr_101": {
+                        "number": 101,
+                        "stack": { "number": 7, "size": 3 },
+                        "stackEntry": { "position": 1 }
+                    },
+                    "pr_102": {
+                        "number": 102,
+                        "stack": { "number": 7, "size": 3 },
+                        "stackEntry": { "position": 2 }
+                    },
+                    "pr_103": {
+                        "number": 103,
+                        "stack": null,
+                        "stackEntry": null
+                    }
+                }
+            }
+        }"#;
+        let stacks = parse_pr_stacks_response(json);
+        assert_eq!(stacks.len(), 2);
+        let s101 = stacks.get(&101).unwrap();
+        assert_eq!(s101.number, 7);
+        assert_eq!(s101.size, 3);
+        assert_eq!(s101.position, 1);
+
+        let s102 = stacks.get(&102).unwrap();
+        assert_eq!(s102.number, 7);
+        assert_eq!(s102.size, 3);
+        assert_eq!(s102.position, 2);
+
+        assert!(stacks.get(&103).is_none());
+    }
+
+    #[test]
+    fn test_pr_stack_entries_graphql_query() {
+        let q = pr_stack_entries_graphql_query("rcieri", "glab-tui", 101, 50);
+        assert!(q.contains("pullRequest(number:101)"));
+        assert!(q.contains("entries(first:50)"));
+    }
+
+    #[test]
+    fn test_parse_pr_stack_entries_response() {
+        let json = r#"{
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "stack": {
+                            "number": 7,
+                            "size": 3,
+                            "entries": {
+                                "nodes": [
+                                    {
+                                        "position": 2,
+                                        "pullRequest": {
+                                            "number": 102,
+                                            "title": "Middle PR",
+                                            "state": "OPEN",
+                                            "isDraft": false
+                                        }
+                                    },
+                                    {
+                                        "position": 1,
+                                        "pullRequest": {
+                                            "number": 101,
+                                            "title": "Base PR",
+                                            "state": "MERGED",
+                                            "isDraft": false
+                                        }
+                                    },
+                                    {
+                                        "position": 3,
+                                        "pullRequest": {
+                                            "number": 103,
+                                            "title": "Top PR",
+                                            "state": "OPEN",
+                                            "isDraft": true
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }"#;
+        let entries = parse_pr_stack_entries_response(json).unwrap().unwrap();
+        assert_eq!(entries.len(), 3);
+        // Sorted by position
+        assert_eq!(entries[0].position, 1);
+        assert_eq!(entries[0].number, 101);
+        assert_eq!(entries[0].state, "merged");
+        assert!(!entries[0].is_draft);
+
+        assert_eq!(entries[1].position, 2);
+        assert_eq!(entries[1].number, 102);
+
+        assert_eq!(entries[2].position, 3);
+        assert_eq!(entries[2].number, 103);
+        assert!(entries[2].is_draft);
     }
 }

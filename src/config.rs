@@ -797,6 +797,10 @@ pub struct KeybindingGlobal {
     pub scroll_page_down: String,
     #[serde(default = "def_scroll_page_up")]
     pub scroll_page_up: String,
+    #[serde(default = "def_scroll_half_page_down")]
+    pub scroll_half_page_down: String,
+    #[serde(default = "def_scroll_half_page_up")]
+    pub scroll_half_page_up: String,
     #[serde(default = "def_scroll_to_end")]
     pub scroll_to_end: String,
     #[serde(default = "def_scroll_top")]
@@ -877,6 +881,10 @@ pub struct KeybindingMrs {
     pub drill_into_scope: String,
     #[serde(default = "def_copy_reference")]
     pub copy_reference: String,
+    /// Open a selector listing the PRs in a stacked GitHub PR, then jump to
+    /// the chosen one. No-op when the selected MR has no `stack` summary.
+    #[serde(default = "def_view_stack")]
+    pub view_stack: String,
     #[serde(default = "def_jump_linked_issues")]
     pub jump_linked_issues: String,
 }
@@ -1096,6 +1104,8 @@ keybind_defaults! {
     def_scroll_up = "K",
     def_scroll_page_down = "PageDown",
     def_scroll_page_up = "PageUp",
+    def_scroll_half_page_down = "Ctrl+d",
+    def_scroll_half_page_up = "Ctrl+u",
     def_scroll_to_end = "End",
     def_scroll_top = "Home",
     def_create_issue = "n",
@@ -1117,6 +1127,7 @@ keybind_defaults! {
     def_toggle_draft = "s",
     def_view_diff = "D",
     def_view_related_pipelines = "P",
+    def_view_stack = "Y",
     def_jump_related_mrs = "M",
     def_jump_linked_issues = "I",
     def_trigger_pipeline = "p",
@@ -1178,6 +1189,8 @@ impl Default for KeybindingGlobal {
             scroll_up: def_scroll_up(),
             scroll_page_down: def_scroll_page_down(),
             scroll_page_up: def_scroll_page_up(),
+            scroll_half_page_down: def_scroll_half_page_down(),
+            scroll_half_page_up: def_scroll_half_page_up(),
             scroll_to_end: def_scroll_to_end(),
             scroll_top: def_scroll_top(),
             switch_repo: def_switch_repo(),
@@ -1228,6 +1241,7 @@ impl Default for KeybindingMrs {
             select_all: def_select_all(),
             drill_into_scope: def_drill_into_scope(),
             copy_reference: def_copy_reference(),
+            view_stack: def_view_stack(),
             jump_linked_issues: def_jump_linked_issues(),
         }
     }
@@ -1581,6 +1595,8 @@ scroll_down = "J"
 scroll_up = "K"
 scroll_page_down = "PageDown"
 scroll_page_up = "PageUp"
+scroll_half_page_down = "Ctrl+d"
+scroll_half_page_up = "Ctrl+u"
 scroll_to_end = "End"
 scroll_top = "Home"
 jump_to_id = "g"
@@ -2162,6 +2178,13 @@ page_size = 250
     }
 
     #[test]
+    fn view_stack_defaults_to_y() {
+        // Reusing `Y` (capital) keeps `y` free for `copy_reference`. The
+        // mnemonic is `Y` → "stacK" or "stack list"; users can rebind.
+        assert_eq!(Config::default().keybindings.mrs.view_stack, "Y");
+    }
+
+    #[test]
     fn copy_sha_defaults_to_y() {
         assert_eq!(Config::default().keybindings.pipelines.copy_sha, "y");
         assert_eq!(Config::default().keybindings.jobs.copy_sha, "y");
@@ -2170,6 +2193,15 @@ page_size = 250
     #[test]
     fn copy_branch_defaults_to_y() {
         assert_eq!(Config::default().keybindings.branches.copy_branch, "y");
+    }
+
+    #[test]
+    fn page_scroll_defaults_to_pager_keys() {
+        let global = Config::default().keybindings.global;
+        assert_eq!(global.scroll_page_down, "PageDown");
+        assert_eq!(global.scroll_page_up, "PageUp");
+        assert_eq!(global.scroll_half_page_down, "Ctrl+d");
+        assert_eq!(global.scroll_half_page_up, "Ctrl+u");
     }
 
     #[test]

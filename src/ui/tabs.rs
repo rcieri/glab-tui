@@ -214,7 +214,7 @@ pub(crate) fn render_tab_issues(
                     Some(crate::domain::issues::RelatedMrsState::Empty) => "--".to_string(),
                     Some(crate::domain::issues::RelatedMrsState::Failed(_)) => "!".to_string(),
                     Some(crate::domain::issues::RelatedMrsState::Items(items)) => {
-                        let prefix = if app.is_github() { "#" } else { "!" };
+                        let prefix = "!";
                         if items.is_empty() {
                             "--".to_string()
                         } else {

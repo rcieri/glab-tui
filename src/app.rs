@@ -6327,13 +6327,14 @@ impl App {
                 for item in &self.issues.items {
                     for v in Self::issue_filter_values(item, col) {
                         if matches!(col, "PRs" | "MRs" | "Related PRs" | "Related MRs") {
-                            if is_gh && (v == "Has MR" || v == "No MR" || v.starts_with('!')) {
+                            if is_gh && (v == "Has MR" || v == "No MR") {
                                 continue;
                             }
                             if !is_gh && (v == "Has PR" || v == "No PR") {
                                 continue;
                             }
-                            if v == "Has PR/MR" || v == "No PR/MR" || v == "—" {
+                            if v.starts_with('#') || v == "Has PR/MR" || v == "No PR/MR" || v == "—"
+                            {
                                 continue;
                             }
                         }
@@ -10674,7 +10675,7 @@ index 123456..789012 100644
 
         let values_with_pr = App::issue_filter_values(&issue_with_pr, "PRs");
         assert!(values_with_pr.contains(&"Has PR".to_string()));
-        assert!(values_with_pr.contains(&"#101".to_string()));
+        assert!(values_with_pr.contains(&"!101".to_string()));
 
         let values_without_pr = App::issue_filter_values(&issue_without_pr, "PRs");
         assert!(values_without_pr.contains(&"No PR".to_string()));

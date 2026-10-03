@@ -883,42 +883,39 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     );
                     name_display = name_display_padded;
 
-                    // Determine per-item style
-                    let item_style = if is_selected {
-                        if diff_view.focus_on_files {
-                            Style::default()
-                                .bg(THEME.read().unwrap().highlight_bg)
-                                .fg(THEME.read().unwrap().highlight_bg)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default()
-                                .bg(THEME.read().unwrap().border)
-                                .fg(THEME.read().unwrap().text_normal)
-                        }
-                    } else if node.is_reviewed {
-                        // Reviewed files (and fully reviewed directories) fade
-                        // into the background so only pending work stands out.
-                        Style::default()
-                            .fg(THEME.read().unwrap().text_muted)
-                            .add_modifier(Modifier::DIM)
+                    // Determine base foreground color and style based on node type
+                    let fg_color = if node.is_reviewed {
+                        THEME.read().unwrap().text_muted
                     } else if node.is_dir {
-                        Style::default()
-                            .fg(THEME.read().unwrap().blue)
-                            .add_modifier(Modifier::BOLD)
+                        THEME.read().unwrap().blue
                     } else if node.is_new_file {
-                        Style::default()
-                            .fg(THEME.read().unwrap().green)
-                            .add_modifier(Modifier::BOLD)
+                        THEME.read().unwrap().green
                     } else if node.is_deleted_file {
-                        Style::default()
-                            .fg(THEME.read().unwrap().red)
-                            .add_modifier(Modifier::BOLD)
+                        THEME.read().unwrap().red
                     } else if node.old_file_path.is_some() {
-                        Style::default()
-                            .fg(THEME.read().unwrap().yellow)
-                            .add_modifier(Modifier::ITALIC)
+                        THEME.read().unwrap().yellow
                     } else {
-                        Style::default().fg(THEME.read().unwrap().text_normal)
+                        THEME.read().unwrap().text_normal
+                    };
+
+                    let mut item_style = Style::default().fg(fg_color);
+                    let sel_bg = if is_selected {
+                        let bg = if diff_view.focus_on_files {
+                            THEME.read().unwrap().highlight_bg
+                        } else {
+                            THEME.read().unwrap().border
+                        };
+                        item_style = item_style.bg(bg).add_modifier(Modifier::BOLD);
+                        Some(bg)
+                    } else {
+                        if node.is_reviewed {
+                            item_style = item_style.add_modifier(Modifier::DIM);
+                        } else if node.is_dir || node.is_new_file || node.is_deleted_file {
+                            item_style = item_style.add_modifier(Modifier::BOLD);
+                        } else if node.old_file_path.is_some() {
+                            item_style = item_style.add_modifier(Modifier::ITALIC);
+                        }
+                        None
                     };
 
                     // Build colored line spans
@@ -936,29 +933,33 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         while i < parts.len() {
                             let part = parts[i];
                             if part.starts_with('+') {
-                                line_spans.push(Span::styled(
-                                    format!(" {}", part),
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().diff_addition_fg)
-                                        .add_modifier(Modifier::BOLD),
-                                ));
+                                let mut stat_style = Style::default()
+                                    .fg(THEME.read().unwrap().diff_addition_fg)
+                                    .add_modifier(Modifier::BOLD);
+                                if let Some(bg) = sel_bg {
+                                    stat_style = stat_style.bg(bg);
+                                }
+                                line_spans.push(Span::styled(format!(" {}", part), stat_style));
                             } else if part.starts_with('-') {
-                                line_spans.push(Span::styled(
-                                    format!(" {}", part),
-                                    Style::default()
-                                        .fg(THEME.read().unwrap().diff_deletion_fg)
-                                        .add_modifier(Modifier::BOLD),
-                                ));
+                                let mut stat_style = Style::default()
+                                    .fg(THEME.read().unwrap().diff_deletion_fg)
+                                    .add_modifier(Modifier::BOLD);
+                                if let Some(bg) = sel_bg {
+                                    stat_style = stat_style.bg(bg);
+                                }
+                                line_spans.push(Span::styled(format!(" {}", part), stat_style));
                             }
                             i += 1;
                         }
                     }
 
                     if !count_suffix.is_empty() {
-                        line_spans.push(Span::styled(
-                            count_suffix,
-                            Style::default().fg(THEME.read().unwrap().text_muted),
-                        ));
+                        let mut suffix_style =
+                            Style::default().fg(THEME.read().unwrap().text_muted);
+                        if let Some(bg) = sel_bg {
+                            suffix_style = suffix_style.bg(bg);
+                        }
+                        line_spans.push(Span::styled(count_suffix, suffix_style));
                     }
 
                     file_items.push(ListItem::new(Line::from(line_spans)));

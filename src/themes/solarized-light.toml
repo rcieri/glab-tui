@@ -1,0 +1,59 @@
+# Solarized Light (light theme)
+# Official Ethan Schoonover Solarized Light palette
+bg = "#fdf6e3"
+border = "#93a1a1"
+border_focused = "#268bd2"
+header_fg = "#268bd2"
+highlight_bg = "#eee8d5"
+inactive_bg = "#f5efdc"
+text_normal = "#586e75"
+text_muted = "#93a1a1"
+checked_bg = "#d7e2e8"
+green = "#859900"
+green_bg = "#e3eccb"
+red = "#dc322f"
+red_bg = "#fae0de"
+blue = "#268bd2"
+blue_bg = "#dbe9f4"
+yellow = "#b58900"
+yellow_bg = "#f9eed3"
+purple = "#d33682"
+purple_bg = "#f7dce8"
+
+# ── Diff ──
+diff_addition_fg = "#859900"
+diff_addition_bg = "#e3eccb"
+diff_deletion_fg = "#dc322f"
+diff_deletion_bg = "#fae0de"
+diff_gutter_bg = "#eee8d5"
+diff_sep = "#93a1a1"
+
+# ── Comments ──
+comment_bg = "#eee8d5"
+comment_draft_bg = "#f9eed3"
+
+# ── Modals ──
+modal_border = "#268bd2"
+
+# ── Pipelines ──
+pipeline_success = "#859900"
+pipeline_failed = "#dc322f"
+pipeline_running = "#268bd2"
+pipeline_pending = "#b58900"
+pipeline_canceled = "#93a1a1"
+pipeline_skipped = "#93a1a1"
+
+# ── Badges ──
+badge_group_bg = "#2aa198"
+
+# ── Label palette ──
+label_palette_0 = "#6c71c4"
+label_palette_1 = "#268bd2"
+label_palette_2 = "#859900"
+label_palette_3 = "#b58900"
+label_palette_4 = "#dc322f"
+label_palette_5 = "#d33682"
+label_palette_6 = "#cb4b16"
+label_palette_7 = "#2aa198"
+label_palette_8 = "#073642"
+label_palette_9 = "#657b83"

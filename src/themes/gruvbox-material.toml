@@ -1,0 +1,59 @@
+# Gruvbox Material Dark
+# Based on sainnhe/gruvbox-material
+bg = "#282828"
+border = "#7c6f64"
+border_focused = "#a9b665"
+header_fg = "#a9b665"
+highlight_bg = "#3a3634"
+inactive_bg = "#1d2021"
+text_normal = "#dfbf8e"
+text_muted = "#928374"
+checked_bg = "#4c483a"
+green = "#a9b665"
+green_bg = "#29321e"
+red = "#ea6962"
+red_bg = "#3a1e1b"
+blue = "#7daea3"
+blue_bg = "#1e2c2a"
+yellow = "#d8a657"
+yellow_bg = "#382d19"
+purple = "#d3869b"
+purple_bg = "#36222b"
+
+# ── Diff ──
+diff_addition_fg = "#a9b665"
+diff_addition_bg = "#29321e"
+diff_deletion_fg = "#ea6962"
+diff_deletion_bg = "#3a1e1b"
+diff_gutter_bg = "#282828"
+diff_sep = "#7c6f64"
+
+# ── Comments ──
+comment_bg = "#282828"
+comment_draft_bg = "#382d19"
+
+# ── Modals ──
+modal_border = "#a9b665"
+
+# ── Pipelines ──
+pipeline_success = "#a9b665"
+pipeline_failed = "#ea6962"
+pipeline_running = "#7daea3"
+pipeline_pending = "#d8a657"
+pipeline_canceled = "#928374"
+pipeline_skipped = "#928374"
+
+# ── Badges ──
+badge_group_bg = "#89b482"
+
+# ── Label palette ──
+label_palette_0 = "#d3869b"
+label_palette_1 = "#7daea3"
+label_palette_2 = "#a9b665"
+label_palette_3 = "#d8a657"
+label_palette_4 = "#ea6962"
+label_palette_5 = "#e78a4e"
+label_palette_6 = "#bd6f3e"
+label_palette_7 = "#89b482"
+label_palette_8 = "#87af87"
+label_palette_9 = "#bdae93"

@@ -1,0 +1,59 @@
+# Catppuccin Frappé
+# Palette: https://catppuccin.com/palette
+bg = "#303446"
+border = "#626880"
+border_focused = "#8caaee"
+header_fg = "#8caaee"
+highlight_bg = "#414559"
+inactive_bg = "#292c3c"
+text_normal = "#c6d0f5"
+text_muted = "#838ba7"
+checked_bg = "#3d4b76"
+green = "#a6d189"
+green_bg = "#273824"
+red = "#e78284"
+red_bg = "#3b1e22"
+blue = "#8caaee"
+blue_bg = "#1f2a44"
+yellow = "#e5c890"
+yellow_bg = "#393120"
+purple = "#ca9ee6"
+purple_bg = "#322340"
+
+# ── Diff ──
+diff_addition_fg = "#a6d189"
+diff_addition_bg = "#273824"
+diff_deletion_fg = "#e78284"
+diff_deletion_bg = "#3b1e22"
+diff_gutter_bg = "#303446"
+diff_sep = "#626880"
+
+# ── Comments ──
+comment_bg = "#303446"
+comment_draft_bg = "#393120"
+
+# ── Modals ──
+modal_border = "#8caaee"
+
+# ── Pipelines ──
+pipeline_success = "#a6d189"
+pipeline_failed = "#e78284"
+pipeline_running = "#8caaee"
+pipeline_pending = "#e5c890"
+pipeline_canceled = "#838ba7"
+pipeline_skipped = "#838ba7"
+
+# ── Badges ──
+badge_group_bg = "#81c8be"
+
+# ── Label palette ──
+label_palette_0 = "#ca9ee6"
+label_palette_1 = "#8caaee"
+label_palette_2 = "#a6d189"
+label_palette_3 = "#e5c890"
+label_palette_4 = "#e78284"
+label_palette_5 = "#ea999c"
+label_palette_6 = "#ef9f76"
+label_palette_7 = "#85c1dc"
+label_palette_8 = "#81c8be"
+label_palette_9 = "#babbf1"

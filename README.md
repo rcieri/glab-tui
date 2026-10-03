@@ -86,7 +86,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
-- **Themes** — 18 built-in color themes (including `oled` and `github-dark-hc`); fully customizable via `config.toml` or custom `.toml` files
+- **Themes** — 28 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---

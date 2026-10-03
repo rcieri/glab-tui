@@ -547,6 +547,34 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("rose-pine", include_str!("themes/rose-pine.toml")),
     ("rose-pine-moon", include_str!("themes/rose-pine-moon.toml")),
     ("rose-pine-dawn", include_str!("themes/rose-pine-dawn.toml")),
+    (
+        "catppuccin-macchiato",
+        include_str!("themes/catppuccin-macchiato.toml"),
+    ),
+    (
+        "catppuccin-frappe",
+        include_str!("themes/catppuccin-frappe.toml"),
+    ),
+    (
+        "catppuccin-latte",
+        include_str!("themes/catppuccin-latte.toml"),
+    ),
+    (
+        "tokyo-night-storm",
+        include_str!("themes/tokyo-night-storm.toml"),
+    ),
+    (
+        "gruvbox-material",
+        include_str!("themes/gruvbox-material.toml"),
+    ),
+    (
+        "solarized-light",
+        include_str!("themes/solarized-light.toml"),
+    ),
+    ("kanagawa", include_str!("themes/kanagawa.toml")),
+    ("nord-light", include_str!("themes/nord-light.toml")),
+    ("cyberpunk", include_str!("themes/cyberpunk.toml")),
+    ("dracula-light", include_str!("themes/dracula-light.toml")),
 ];
 
 pub(crate) fn home_dir() -> PathBuf {
@@ -726,6 +754,17 @@ fn apply_overrides(base: &mut Theme, overrides: &ThemeOverrides) {
     apply_color(&mut base.pipeline_skipped, &overrides.pipeline_skipped);
     // ── Badges ──
     apply_color(&mut base.badge_group_bg, &overrides.badge_group_bg);
+    // ── Label palette ──
+    apply_color(&mut base.label_palette[0], &overrides.label_palette_0);
+    apply_color(&mut base.label_palette[1], &overrides.label_palette_1);
+    apply_color(&mut base.label_palette[2], &overrides.label_palette_2);
+    apply_color(&mut base.label_palette[3], &overrides.label_palette_3);
+    apply_color(&mut base.label_palette[4], &overrides.label_palette_4);
+    apply_color(&mut base.label_palette[5], &overrides.label_palette_5);
+    apply_color(&mut base.label_palette[6], &overrides.label_palette_6);
+    apply_color(&mut base.label_palette[7], &overrides.label_palette_7);
+    apply_color(&mut base.label_palette[8], &overrides.label_palette_8);
+    apply_color(&mut base.label_palette[9], &overrides.label_palette_9);
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -771,6 +810,17 @@ pub struct ThemeOverrides {
     pipeline_skipped: Option<String>,
     // ── Badges ──
     badge_group_bg: Option<String>,
+    // ── Label palette ──
+    label_palette_0: Option<String>,
+    label_palette_1: Option<String>,
+    label_palette_2: Option<String>,
+    label_palette_3: Option<String>,
+    label_palette_4: Option<String>,
+    label_palette_5: Option<String>,
+    label_palette_6: Option<String>,
+    label_palette_7: Option<String>,
+    label_palette_8: Option<String>,
+    label_palette_9: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2375,5 +2425,106 @@ page_size = 250
         assert!(!reloaded.prefetch_tabs);
 
         drop(guard);
+    }
+
+    #[test]
+    fn test_all_theme_fields_configurable() {
+        let toml_str = r##"
+[theme]
+bg = "#010101"
+border = "#020202"
+border_focused = "#030303"
+header_fg = "#040404"
+highlight_bg = "#050505"
+inactive_bg = "#060606"
+text_normal = "#070707"
+text_muted = "#080808"
+checked_bg = "#090909"
+green = "#0a0a0a"
+green_bg = "#0b0b0b"
+red = "#0c0c0c"
+red_bg = "#0d0d0d"
+blue = "#0e0e0e"
+blue_bg = "#0f0f0f"
+yellow = "#101010"
+yellow_bg = "#111111"
+purple = "#121212"
+purple_bg = "#131313"
+diff_addition_fg = "#141414"
+diff_addition_bg = "#151515"
+diff_deletion_fg = "#161616"
+diff_deletion_bg = "#171717"
+diff_gutter_bg = "#181818"
+diff_sep = "#191919"
+comment_bg = "#1a1a1a"
+comment_draft_bg = "#1b1b1b"
+modal_border = "#1c1c1c"
+pipeline_success = "#1d1d1d"
+pipeline_failed = "#1e1e1e"
+pipeline_running = "#1f1f1f"
+pipeline_pending = "#202020"
+pipeline_canceled = "#212121"
+pipeline_skipped = "#222222"
+badge_group_bg = "#232323"
+label_palette_0 = "#242424"
+label_palette_1 = "#252525"
+label_palette_2 = "#262626"
+label_palette_3 = "#272727"
+label_palette_4 = "#282828"
+label_palette_5 = "#292929"
+label_palette_6 = "#2a2a2a"
+label_palette_7 = "#2b2b2b"
+label_palette_8 = "#2c2c2c"
+label_palette_9 = "#2d2d2d"
+"##;
+        let config: Config =
+            toml::from_str(toml_str).expect("deserialize config with full theme overrides");
+        let theme = config.resolve_theme();
+
+        assert_eq!(theme.bg, Color::Rgb(1, 1, 1));
+        assert_eq!(theme.border, Color::Rgb(2, 2, 2));
+        assert_eq!(theme.border_focused, Color::Rgb(3, 3, 3));
+        assert_eq!(theme.header_fg, Color::Rgb(4, 4, 4));
+        assert_eq!(theme.highlight_bg, Color::Rgb(5, 5, 5));
+        assert_eq!(theme.inactive_bg, Color::Rgb(6, 6, 6));
+        assert_eq!(theme.text_normal, Color::Rgb(7, 7, 7));
+        assert_eq!(theme.text_muted, Color::Rgb(8, 8, 8));
+        assert_eq!(theme.checked_bg, Color::Rgb(9, 9, 9));
+        assert_eq!(theme.green, Color::Rgb(10, 10, 10));
+        assert_eq!(theme.green_bg, Color::Rgb(11, 11, 11));
+        assert_eq!(theme.red, Color::Rgb(12, 12, 12));
+        assert_eq!(theme.red_bg, Color::Rgb(13, 13, 13));
+        assert_eq!(theme.blue, Color::Rgb(14, 14, 14));
+        assert_eq!(theme.blue_bg, Color::Rgb(15, 15, 15));
+        assert_eq!(theme.yellow, Color::Rgb(16, 16, 16));
+        assert_eq!(theme.yellow_bg, Color::Rgb(17, 17, 17));
+        assert_eq!(theme.purple, Color::Rgb(18, 18, 18));
+        assert_eq!(theme.purple_bg, Color::Rgb(19, 19, 19));
+        assert_eq!(theme.diff_addition_fg, Color::Rgb(20, 20, 20));
+        assert_eq!(theme.diff_addition_bg, Color::Rgb(21, 21, 21));
+        assert_eq!(theme.diff_deletion_fg, Color::Rgb(22, 22, 22));
+        assert_eq!(theme.diff_deletion_bg, Color::Rgb(23, 23, 23));
+        assert_eq!(theme.diff_gutter_bg, Color::Rgb(24, 24, 24));
+        assert_eq!(theme.diff_sep, Color::Rgb(25, 25, 25));
+        assert_eq!(theme.comment_bg, Color::Rgb(26, 26, 26));
+        assert_eq!(theme.comment_draft_bg, Color::Rgb(27, 27, 27));
+        assert_eq!(theme.modal_border, Color::Rgb(28, 28, 28));
+        assert_eq!(theme.pipeline_success, Color::Rgb(29, 29, 29));
+        assert_eq!(theme.pipeline_failed, Color::Rgb(30, 30, 30));
+        assert_eq!(theme.pipeline_running, Color::Rgb(31, 31, 31));
+        assert_eq!(theme.pipeline_pending, Color::Rgb(32, 32, 32));
+        assert_eq!(theme.pipeline_canceled, Color::Rgb(33, 33, 33));
+        assert_eq!(theme.pipeline_skipped, Color::Rgb(34, 34, 34));
+        assert_eq!(theme.badge_group_bg, Color::Rgb(35, 35, 35));
+        assert_eq!(theme.label_palette[0], Color::Rgb(36, 36, 36));
+        assert_eq!(theme.label_palette[1], Color::Rgb(37, 37, 37));
+        assert_eq!(theme.label_palette[2], Color::Rgb(38, 38, 38));
+        assert_eq!(theme.label_palette[3], Color::Rgb(39, 39, 39));
+        assert_eq!(theme.label_palette[4], Color::Rgb(40, 40, 40));
+        assert_eq!(theme.label_palette[5], Color::Rgb(41, 41, 41));
+        assert_eq!(theme.label_palette[6], Color::Rgb(42, 42, 42));
+        assert_eq!(theme.label_palette[7], Color::Rgb(43, 43, 43));
+        assert_eq!(theme.label_palette[8], Color::Rgb(44, 44, 44));
+        assert_eq!(theme.label_palette[9], Color::Rgb(45, 45, 45));
     }
 }

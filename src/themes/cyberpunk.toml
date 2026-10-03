@@ -1,0 +1,59 @@
+# Cyberpunk
+# High-contrast neon aesthetics
+bg = "#120e1f"
+border = "#52437b"
+border_focused = "#00ffcc"
+header_fg = "#00ffcc"
+highlight_bg = "#251d3b"
+inactive_bg = "#0d0917"
+text_normal = "#e0e6ed"
+text_muted = "#716591"
+checked_bg = "#3a2a6b"
+green = "#00ff99"
+green_bg = "#0a3824"
+red = "#ff0055"
+red_bg = "#3d0a1b"
+blue = "#00ccff"
+blue_bg = "#0a2d3b"
+yellow = "#ffea00"
+yellow_bg = "#38340a"
+purple = "#d600ff"
+purple_bg = "#360a3b"
+
+# ── Diff ──
+diff_addition_fg = "#00ff99"
+diff_addition_bg = "#0a3824"
+diff_deletion_fg = "#ff0055"
+diff_deletion_bg = "#3d0a1b"
+diff_gutter_bg = "#120e1f"
+diff_sep = "#52437b"
+
+# ── Comments ──
+comment_bg = "#120e1f"
+comment_draft_bg = "#38340a"
+
+# ── Modals ──
+modal_border = "#00ffcc"
+
+# ── Pipelines ──
+pipeline_success = "#00ff99"
+pipeline_failed = "#ff0055"
+pipeline_running = "#00ccff"
+pipeline_pending = "#ffea00"
+pipeline_canceled = "#716591"
+pipeline_skipped = "#716591"
+
+# ── Badges ──
+badge_group_bg = "#00ffcc"
+
+# ── Label palette ──
+label_palette_0 = "#d600ff"
+label_palette_1 = "#00ccff"
+label_palette_2 = "#00ff99"
+label_palette_3 = "#ffea00"
+label_palette_4 = "#ff0055"
+label_palette_5 = "#ff00aa"
+label_palette_6 = "#ff7700"
+label_palette_7 = "#00ffcc"
+label_palette_8 = "#7000ff"
+label_palette_9 = "#ffff00"

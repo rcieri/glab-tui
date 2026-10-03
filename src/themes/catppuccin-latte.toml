@@ -1,0 +1,59 @@
+# Catppuccin Latte (light theme)
+# Palette: https://catppuccin.com/palette
+bg = "#eff1f5"
+border = "#bcc0cc"
+border_focused = "#1e66f5"
+header_fg = "#1e66f5"
+highlight_bg = "#ccd0da"
+inactive_bg = "#e6e9ef"
+text_normal = "#4c4f69"
+text_muted = "#7c7f93"
+checked_bg = "#bccbf5"
+green = "#40a02b"
+green_bg = "#d7eed0"
+red = "#d20f39"
+red_bg = "#fbd7dd"
+blue = "#1e66f5"
+blue_bg = "#d3e0fc"
+yellow = "#df8e1d"
+yellow_bg = "#f9e9cf"
+purple = "#8839ef"
+purple_bg = "#e9d7fc"
+
+# ── Diff ──
+diff_addition_fg = "#40a02b"
+diff_addition_bg = "#d7eed0"
+diff_deletion_fg = "#d20f39"
+diff_deletion_bg = "#fbd7dd"
+diff_gutter_bg = "#e6e9ef"
+diff_sep = "#bcc0cc"
+
+# ── Comments ──
+comment_bg = "#e6e9ef"
+comment_draft_bg = "#f9e9cf"
+
+# ── Modals ──
+modal_border = "#1e66f5"
+
+# ── Pipelines ──
+pipeline_success = "#40a02b"
+pipeline_failed = "#d20f39"
+pipeline_running = "#1e66f5"
+pipeline_pending = "#df8e1d"
+pipeline_canceled = "#7c7f93"
+pipeline_skipped = "#9ca0b0"
+
+# ── Badges ──
+badge_group_bg = "#04a5e5"
+
+# ── Label palette ──
+label_palette_0 = "#8839ef"
+label_palette_1 = "#1e66f5"
+label_palette_2 = "#40a02b"
+label_palette_3 = "#df8e1d"
+label_palette_4 = "#d20f39"
+label_palette_5 = "#ea76cb"
+label_palette_6 = "#fe640b"
+label_palette_7 = "#179299"
+label_palette_8 = "#209fb5"
+label_palette_9 = "#7287fd"

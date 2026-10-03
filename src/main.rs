@@ -682,6 +682,11 @@ pub use fetch::spawn_fetch_repo_attributes;
 pub use fetch::{spawn_refresh_active_tab, spawn_refresh_all_tabs};
 use handlers::overlays::*;
 
+// ---------------------------------------------------------------------------
+// Scope-change helper shared by the live keypress dispatch and the
+// sequence-timeout redispatch inside `main` below.
+// ---------------------------------------------------------------------------
+
 /// After a key dispatch changed `app.scope`, rebuild the GitLab/GitHub
 /// client for the new scope, reload its cache into `app`, and kick off a
 /// background refresh. No-op if the scope didn't change. Shared by the live
@@ -8799,8 +8804,6 @@ async fn main() -> Result<()> {
                             app.reset_on_scope_change();
                         }
                     }
-
-                    let old_scope = app.scope.clone();
 
                     let pending: Option<char> = if let Some(pending_key) = app.pending_key.take() {
                         match pending_key.event.code {

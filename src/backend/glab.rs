@@ -962,6 +962,8 @@ impl Backend for GlabBackend {
                             project_path: String::new(),
                             web_url: m.web_url,
                             related_issues: None,
+                            stack: None,
+                            stack_entries: None,
                         }
                     }));
                 }
@@ -1136,6 +1138,8 @@ impl Backend for GlabBackend {
             project_path: String::new(),
             web_url: m.web_url,
             related_issues: None,
+            stack: None,
+            stack_entries: None,
         })
     }
 

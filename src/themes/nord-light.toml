@@ -1,0 +1,59 @@
+# Nord Light (Snow Storm)
+# Light variant based on Arctic Ice Studio Nord Snow Storm
+bg = "#eceff4"
+border = "#d8dee9"
+border_focused = "#5e81ac"
+header_fg = "#5e81ac"
+highlight_bg = "#e5e9f0"
+inactive_bg = "#e5e9f0"
+text_normal = "#2e3440"
+text_muted = "#4c566a"
+checked_bg = "#cddaf0"
+green = "#a3be8c"
+green_bg = "#dbe5d4"
+red = "#bf616a"
+red_bg = "#f3dbde"
+blue = "#5e81ac"
+blue_bg = "#dbe4f0"
+yellow = "#ebcb8b"
+yellow_bg = "#faeed4"
+purple = "#b48ead"
+purple_bg = "#eddfe9"
+
+# ── Diff ──
+diff_addition_fg = "#4f7a36"
+diff_addition_bg = "#dbe5d4"
+diff_deletion_fg = "#bf616a"
+diff_deletion_bg = "#f3dbde"
+diff_gutter_bg = "#e5e9f0"
+diff_sep = "#d8dee9"
+
+# ── Comments ──
+comment_bg = "#e5e9f0"
+comment_draft_bg = "#faeed4"
+
+# ── Modals ──
+modal_border = "#5e81ac"
+
+# ── Pipelines ──
+pipeline_success = "#4f7a36"
+pipeline_failed = "#bf616a"
+pipeline_running = "#5e81ac"
+pipeline_pending = "#b28a2b"
+pipeline_canceled = "#4c566a"
+pipeline_skipped = "#98a2b3"
+
+# ── Badges ──
+badge_group_bg = "#88c0d0"
+
+# ── Label palette ──
+label_palette_0 = "#b48ead"
+label_palette_1 = "#5e81ac"
+label_palette_2 = "#4f7a36"
+label_palette_3 = "#b28a2b"
+label_palette_4 = "#bf616a"
+label_palette_5 = "#d08770"
+label_palette_6 = "#81a1c1"
+label_palette_7 = "#88c0d0"
+label_palette_8 = "#8fbcbb"
+label_palette_9 = "#434c5e"

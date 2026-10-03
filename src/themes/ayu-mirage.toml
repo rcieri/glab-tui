@@ -1,0 +1,59 @@
+# Ayu Mirage
+# Based on the official Ayu Mirage palette from Helix
+bg = "#1f2430"
+border = "#565b66"
+border_focused = "#73d0ff"
+header_fg = "#73d0ff"
+highlight_bg = "#323843"
+inactive_bg = "#1a1f29"
+text_normal = "#cccac2"
+text_muted = "#565b66"
+checked_bg = "#234159"
+green = "#d5ff80"
+green_bg = "#223518"
+red = "#f28779"
+red_bg = "#3a1d1c"
+blue = "#73d0ff"
+blue_bg = "#182a3d"
+yellow = "#ffcc77"
+yellow_bg = "#382914"
+purple = "#dfbfff"
+purple_bg = "#2c203b"
+
+# ── Diff ──
+diff_addition_fg = "#d5ff80"
+diff_addition_bg = "#223518"
+diff_deletion_fg = "#f28779"
+diff_deletion_bg = "#3a1d1c"
+diff_gutter_bg = "#1f2430"
+diff_sep = "#565b66"
+
+# ── Comments ──
+comment_bg = "#1f2430"
+comment_draft_bg = "#382914"
+
+# ── Modals ──
+modal_border = "#73d0ff"
+
+# ── Pipelines ──
+pipeline_success = "#d5ff80"
+pipeline_failed = "#f28779"
+pipeline_running = "#73d0ff"
+pipeline_pending = "#ffcc77"
+pipeline_canceled = "#565b66"
+pipeline_skipped = "#565b66"
+
+# ── Badges ──
+badge_group_bg = "#5ccfe6"
+
+# ── Label palette ──
+label_palette_0 = "#dfbfff"
+label_palette_1 = "#73d0ff"
+label_palette_2 = "#d5ff80"
+label_palette_3 = "#ffcc77"
+label_palette_4 = "#f28779"
+label_palette_5 = "#ffad66"
+label_palette_6 = "#f4b371"
+label_palette_7 = "#5ccfe6"
+label_palette_8 = "#a6e22e"
+label_palette_9 = "#eae5c9"

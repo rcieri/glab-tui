@@ -1,0 +1,59 @@
+# Ayu Dark
+# Based on the official Ayu Dark palette from Helix
+bg = "#0f1419"
+border = "#5c6773"
+border_focused = "#59c2ff"
+header_fg = "#59c2ff"
+highlight_bg = "#2d3640"
+inactive_bg = "#131721"
+text_normal = "#bfbdb6"
+text_muted = "#5c6773"
+checked_bg = "#1c3c52"
+green = "#aad94c"
+green_bg = "#1c2b12"
+red = "#f07178"
+red_bg = "#38171a"
+blue = "#59c2ff"
+blue_bg = "#132536"
+yellow = "#e6b450"
+yellow_bg = "#302613"
+purple = "#d2a6ff"
+purple_bg = "#291b38"
+
+# ── Diff ──
+diff_addition_fg = "#aad94c"
+diff_addition_bg = "#1c2b12"
+diff_deletion_fg = "#f07178"
+diff_deletion_bg = "#38171a"
+diff_gutter_bg = "#0f1419"
+diff_sep = "#5c6773"
+
+# ── Comments ──
+comment_bg = "#0f1419"
+comment_draft_bg = "#302613"
+
+# ── Modals ──
+modal_border = "#59c2ff"
+
+# ── Pipelines ──
+pipeline_success = "#aad94c"
+pipeline_failed = "#f07178"
+pipeline_running = "#59c2ff"
+pipeline_pending = "#e6b450"
+pipeline_canceled = "#5c6773"
+pipeline_skipped = "#5c6773"
+
+# ── Badges ──
+badge_group_bg = "#73b8ff"
+
+# ── Label palette ──
+label_palette_0 = "#d2a6ff"
+label_palette_1 = "#59c2ff"
+label_palette_2 = "#aad94c"
+label_palette_3 = "#e6b450"
+label_palette_4 = "#f07178"
+label_palette_5 = "#ff8f40"
+label_palette_6 = "#ffb454"
+label_palette_7 = "#73b8ff"
+label_palette_8 = "#95e6cb"
+label_palette_9 = "#d4bfff"

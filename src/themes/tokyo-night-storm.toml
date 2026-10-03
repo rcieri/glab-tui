@@ -1,0 +1,59 @@
+# Tokyo Night Storm
+# Darker blue background variant of Tokyo Night
+bg = "#24283b"
+border = "#565f89"
+border_focused = "#7aa2f7"
+header_fg = "#7aa2f7"
+highlight_bg = "#2f354f"
+inactive_bg = "#1f2335"
+text_normal = "#c0caf5"
+text_muted = "#565f89"
+checked_bg = "#394b70"
+green = "#9ece6a"
+green_bg = "#23371e"
+red = "#f7768e"
+red_bg = "#3d1d28"
+blue = "#7aa2f7"
+blue_bg = "#1d294a"
+yellow = "#e0af68"
+yellow_bg = "#382c18"
+purple = "#bb9af7"
+purple_bg = "#2e2447"
+
+# ── Diff ──
+diff_addition_fg = "#9ece6a"
+diff_addition_bg = "#23371e"
+diff_deletion_fg = "#f7768e"
+diff_deletion_bg = "#3d1d28"
+diff_gutter_bg = "#24283b"
+diff_sep = "#565f89"
+
+# ── Comments ──
+comment_bg = "#24283b"
+comment_draft_bg = "#382c18"
+
+# ── Modals ──
+modal_border = "#7aa2f7"
+
+# ── Pipelines ──
+pipeline_success = "#9ece6a"
+pipeline_failed = "#f7768e"
+pipeline_running = "#7aa2f7"
+pipeline_pending = "#e0af68"
+pipeline_canceled = "#565f89"
+pipeline_skipped = "#565f89"
+
+# ── Badges ──
+badge_group_bg = "#7dcfff"
+
+# ── Label palette ──
+label_palette_0 = "#bb9af7"
+label_palette_1 = "#7aa2f7"
+label_palette_2 = "#9ece6a"
+label_palette_3 = "#e0af68"
+label_palette_4 = "#f7768e"
+label_palette_5 = "#ff007c"
+label_palette_6 = "#ff9e64"
+label_palette_7 = "#7dcfff"
+label_palette_8 = "#41a6b5"
+label_palette_9 = "#b4f9f8"

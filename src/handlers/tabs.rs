@@ -72,6 +72,50 @@ pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender
     app.pending_mr_related_issues_since = Some(std::time::Instant::now());
 }
 
+/// Scrolls the detail pane by a full or half page for the
+/// `scroll_page_down`/`scroll_page_up`/`scroll_half_page_down`/
+/// `scroll_half_page_up` bindings, against the usable height of
+/// `detail_rect` (its height minus the two border rows). `pending` is the
+/// character captured on a previous keystroke, if any (see
+/// `matches_with_pending`); pass `None` when there is no pending sequence.
+/// Returns true if a page scroll action matched and was applied.
+fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent) -> bool {
+    if let Some(rect) = app.detail_rect.filter(|_| app.detail_visible) {
+        let full_page = rect.height.saturating_sub(2).max(1);
+        let half_page = full_page / 2;
+        if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_page_down,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_add(full_page);
+            return true;
+        } else if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_page_up,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_sub(full_page);
+            return true;
+        } else if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_half_page_down,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_add(half_page);
+            return true;
+        } else if crate::keybinding::matches_with_pending(
+            &app.config.keybindings.global.scroll_half_page_up,
+            pending,
+            key_event,
+        ) {
+            app.detail_scroll = app.detail_scroll.saturating_sub(half_page);
+            return true;
+        }
+    }
+    false
+}
+
 pub async fn handle_active_tab_key(
     app: &mut App,
     key_event: &KeyEvent,
@@ -92,6 +136,8 @@ pub async fn handle_active_tab_key(
             )
         {
             app.detail_scroll = 0;
+            return true;
+        } else if apply_page_scroll(app, pending, key_event) {
             return true;
         }
         return false;
@@ -823,6 +869,75 @@ pub async fn handle_active_tab_key(
                                     crate::app::Tab::Pipelines,
                                     tx.clone(),
                                 );
+                            }
+                        }
+                        _ if keybinding_matches(
+                            &app.config.keybindings.mrs.view_stack,
+                            key_event,
+                        ) =>
+                        {
+                            // Open a selector over the MR's stack entries so
+                            // the user can pick one to jump into. GitHub-only;
+                            // - GitLab backends always report `stack = None`.
+                            if let Some(ref entries) = mr.stack_entries {
+                                if entries.is_empty() {
+                                    app.show_error(
+                                        "This PR has no stack entries to navigate.".to_string(),
+                                    );
+                                } else {
+                                    app.selector = Some(crate::app::Selector {
+                                        title: format!(
+                                            " Stack #{} — {} PRs ",
+                                            mr.stack.as_ref().map(|s| s.number).unwrap_or(0),
+                                            entries.len(),
+                                        ),
+                                        all_items: entries
+                                            .iter()
+                                            .map(|e| {
+                                                let current_marker = if e.number == mr.iid {
+                                                    " ◀ (current)"
+                                                } else {
+                                                    ""
+                                                };
+                                                let draft_str =
+                                                    if e.is_draft { " [draft]" } else { "" };
+                                                format!(
+                                                    "#{}. #{}: {} ({}){}{}",
+                                                    e.position,
+                                                    e.number,
+                                                    e.title,
+                                                    e.state.to_uppercase(),
+                                                    draft_str,
+                                                    current_marker,
+                                                )
+                                            })
+                                            .collect(),
+                                        selected_items: std::collections::HashSet::new(),
+                                        cursor_idx: entries
+                                            .iter()
+                                            .position(|e| e.number == mr.iid)
+                                            .unwrap_or(0),
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: mr_iid,
+                                        entity_type: "mr".to_string(),
+                                        field_type: "stack_entries".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                }
+                            } else if mr.stack.is_some() {
+                                app.show_error(
+                                    "Stack entries still loading — try again in a moment."
+                                        .to_string(),
+                                );
+                            } else {
+                                app.show_error("This PR is not part of a stack.".to_string());
                             }
                         }
                         _ if keybinding_matches(
@@ -2382,20 +2497,6 @@ pub async fn handle_active_tab_key(
         {
             app.detail_scroll = app.detail_scroll.saturating_sub(1);
         } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_page_down, &key_event)
-        {
-            if let Some(rect) = app.detail_rect {
-                let page = (rect.height as usize).saturating_sub(2).max(1);
-                app.detail_scroll = app.detail_scroll.saturating_add(page as u16);
-            }
-        } else if app.detail_visible
-            && keybinding_matches(&app.config.keybindings.global.scroll_page_up, &key_event)
-        {
-            if let Some(rect) = app.detail_rect {
-                let page = (rect.height as usize).saturating_sub(2).max(1);
-                app.detail_scroll = app.detail_scroll.saturating_sub(page as u16);
-            }
-        } else if app.detail_visible
             && keybinding_matches(&app.config.keybindings.global.scroll_to_end, &key_event)
         {
             // Only the flag — the last line's index is the render pass's
@@ -2412,7 +2513,7 @@ pub async fn handle_active_tab_key(
             // `scroll_top` jumps to the first line directly: 0 is a known
             // index, no flag round-trip needed.
             app.detail_scroll = 0;
-        } else {
+        } else if !apply_page_scroll(app, None, key_event) {
             detail_scrolled = false;
         }
 
@@ -3660,5 +3761,198 @@ mod tests {
         dispatch(&mut app, &KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)).await;
 
         assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// Full page scrolling defaults to PageDown / PageUp while half page
+    /// scrolling defaults to Ctrl+d / Ctrl+u. These tests drive the
+    /// Ctrl+f/b/d/u spelling, so we ensure the full page bindings are set.
+    fn bind_vim_page_keys(app: &mut App) {
+        app.config.keybindings.global.scroll_page_down = "Ctrl+f".to_string();
+        app.config.keybindings.global.scroll_page_up = "Ctrl+b".to_string();
+        app.config.keybindings.global.scroll_half_page_down = "Ctrl+d".to_string();
+        app.config.keybindings.global.scroll_half_page_up = "Ctrl+u".to_string();
+    }
+
+    /// `Ctrl+f`/`Ctrl+b` move a full viewport, `Ctrl+d`/`Ctrl+u` half of it,
+    /// against the usable height of `detail_rect` (its height minus the two
+    /// border rows).
+    #[tokio::test]
+    async fn ctrl_f_b_d_u_scroll_by_full_and_half_viewport() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 25);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 15);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// Without a rendered `detail_rect`, there is no known viewport height,
+    /// so page-scroll keys move nothing (Entscheidung 4).
+    #[tokio::test]
+    async fn ctrl_page_scroll_keys_do_nothing_without_detail_rect() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = None;
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    /// `Ctrl+b`/`Ctrl+u` do not underflow at the top of the pane, and a
+    /// two-row-or-smaller rect (no usable height) does not panic.
+    #[tokio::test]
+    async fn page_scroll_up_does_not_underflow_at_top() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 2));
+        app.detail_scroll = 0;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 0);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    /// A page-scroll key still scrolls even while a `g` sequence prefix is
+    /// pending, instead of being swallowed by the sequence lapsing
+    /// (Entscheidung 5: both handler sites stay wired).
+    #[tokio::test]
+    async fn ctrl_f_scrolls_even_with_pending_g_prefix() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch_with_pending(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+            Some('g'),
+        )
+        .await;
+        assert_eq!(app.detail_scroll, 25);
+    }
+
+    /// `Ctrl+f` must only page-scroll, not also trigger the hardcoded plain
+    /// `f` shortcut (open inline search) that ignores modifiers.
+    #[tokio::test]
+    async fn ctrl_f_does_not_also_open_inline_search() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert!(!app.is_typing_search);
+    }
+
+    /// `Ctrl+d` on the Pipelines tab must only page-scroll, not also trigger
+    /// the hardcoded plain `d` shortcut (cancel the selected pipeline) that
+    /// ignores modifiers.
+    #[tokio::test]
+    async fn ctrl_d_does_not_also_cancel_pipeline() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "running".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: "".to_string(),
+            name: "".to_string(),
+            display_title: "".to_string(),
+            event: "".to_string(),
+            head_sha: "".to_string(),
+            actor_login: "".to_string(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+            downstream_of: None,
+        }];
+        app.pipelines.state.select(Some(0));
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+        app.detail_scroll = 5;
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.pipelines.items[0].status, "running");
+        assert_eq!(app.detail_scroll, 15);
+    }
+
+    /// `Ctrl+u` must only page-scroll, not also trigger the hardcoded plain
+    /// `u` shortcut (check for updates) that ignores modifiers.
+    #[tokio::test]
+    async fn ctrl_u_does_not_also_trigger_self_update() {
+        let mut app = App::default();
+        bind_vim_page_keys(&mut app);
+        app.detail_visible = true;
+        app.detail_rect = Some(ratatui::layout::Rect::new(0, 0, 40, 22));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        )
+        .await;
+        assert_eq!(app.error_message, None);
     }
 }

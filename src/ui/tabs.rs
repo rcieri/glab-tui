@@ -878,6 +878,25 @@ pub(crate) fn render_tab_merge_requests(
                     ));
                 }
             }
+            if app.is_column_visible(Tab::MergeRequests, "Stack") {
+                let stack_str = if let Some(ref s) = m.stack {
+                    format!("#{} {}/{}", s.number, s.position, s.size)
+                } else {
+                    "—".to_string()
+                };
+                cells.push(super::helpers::render_fuzzy_cell(
+                    &stack_str,
+                    &app.search_query,
+                    is_selected,
+                    is_checked,
+                    if m.stack.is_some() {
+                        Style::default().fg(theme.purple)
+                    } else {
+                        Style::default().fg(theme.text_muted)
+                    },
+                    Alignment::Center,
+                ));
+            }
             if app.is_column_visible(Tab::MergeRequests, "Milestone") {
                 let mr_milestone_str = m
                     .milestone
@@ -1040,6 +1059,10 @@ pub(crate) fn render_tab_merge_requests(
                     .alignment(Alignment::Center),
             ));
             widths.push(Constraint::Length(12));
+        }
+        if app.is_column_visible(Tab::MergeRequests, "Stack") {
+            header_cells.push(Cell::from(Line::from("Stack").alignment(Alignment::Center)));
+            widths.push(col_w(content_area.width, 14));
         }
         if app.is_column_visible(Tab::MergeRequests, "Milestone") {
             header_cells.push(Cell::from("Milestone"));
@@ -3834,5 +3857,46 @@ mod tests {
         assert_eq!(buffer[(3, 1)].bg, theme.checked_bg);
         // x=5 is the ID "#1" cell, which should have the cursor highlight background.
         assert_eq!(buffer[(5, 1)].bg, theme.highlight_bg);
+    }
+
+    #[test]
+    fn render_tab_jobs_clamps_page_scroll_past_trace_end() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.jobs.items = vec![crate::domain::pipelines::Job {
+            id: 1,
+            status: "success".to_string(),
+            stage: "test".to_string(),
+            name: "job1".to_string(),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: vec![],
+        }];
+        app.job_trace = Some("line\n".repeat(200));
+        app.detail_scroll = 999;
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let content_area = Rect::new(0, 0, area.width, 10);
+                let detail_rect = Rect::new(0, 10, area.width, 10);
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    content_area,
+                    detail_rect,
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        assert_eq!(
+            app.detail_scroll, 192,
+            "detail_scroll should clamp to the trace's max_scroll, not keep counting past it"
+        );
     }
 }

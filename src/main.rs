@@ -1105,26 +1105,18 @@ async fn main() -> Result<()> {
                                 // the progress cache + drill-in via the project selector.
                                 app.selected_milestone_issues = None;
                             } else {
-                                // Skip the fetch whenever we already have ANY data
-                                // for this milestone — either the issues cache (set
-                                // by an earlier drill-in) or the progress cache
-                                // (rebuilt from the Issues tab on every fetch). The
-                                // preview pane will populate from whichever cache
-                                // is present; the progress bar always reads the
-                                // progress cache first and never refetches.
+                                // Use the issues cache when we already have it
+                                // (set by an earlier selection). The progress cache
+                                // alone only holds `(closed, total)` counts — not the
+                                // actual issue list — so it does NOT suppress the
+                                // fetch: the milestone preview renders the issues,
+                                // not just their counts.
                                 let cached = app
                                     .milestone_issues_cache
                                     .get(&milestone_iid)
                                     .filter(|c| !c.is_empty());
                                 if let Some(cached) = cached {
                                     app.selected_milestone_issues = Some(cached.clone());
-                                } else if app.milestone_progress_cache.contains_key(&milestone_iid)
-                                {
-                                    // Progress cache already answers the bar. The
-                                    // preview pane stays empty until the user
-                                    // explicitly asks for the issue list (e.g. via
-                                    // a future drill-in action). No fetch here.
-                                    app.selected_milestone_issues = None;
                                 } else {
                                     app.selected_milestone_issues = None;
                                     let client_clone = client.clone();
@@ -1400,6 +1392,27 @@ async fn main() -> Result<()> {
                         }
                     }
                     app.update_filter_selection();
+                    // Kick off the lazy stack-entries fetch for every stacked
+                    // PR whose entries have not been loaded yet. GitHub only —
+                    // GitLab returns `Ok(None)` from the backend default and
+                    // does not need a follow-up call.
+                    if app.gitlab_client.as_ref().is_some_and(|c| c.is_github) {
+                        for mr in &app.mrs.items {
+                            if mr.stack.is_some() && mr.stack_entries.is_none() {
+                                let project_path = if !mr.project_path.is_empty() {
+                                    mr.project_path.clone()
+                                } else {
+                                    app.scope.as_str().to_string()
+                                };
+                                crate::fetch::spawn_fetch_stack_entries(
+                                    app.gitlab_client.as_ref().unwrap(),
+                                    &project_path,
+                                    mr.iid,
+                                    events.sender(),
+                                );
+                            }
+                        }
+                    }
                     crate::handlers::tabs::maybe_fetch_mr_related_issues(
                         &mut app,
                         &events.sender(),
@@ -1435,6 +1448,49 @@ async fn main() -> Result<()> {
                 }
                 Event::MrFetched(iid, Err(err)) => {
                     app.show_error(format!("Failed to fetch MR #{}: {}", iid, err));
+                }
+                Event::StackEntriesFetched {
+                    pr_number,
+                    project_path,
+                    result,
+                } => {
+                    // Locate the MR by both iid and project_path so an
+                    // in-flight fetch for a now-stale repo doesn't update a
+                    // row from a different scope (group → repo switch).
+                    let target = app.mrs.items.iter().position(|m| {
+                        m.iid == pr_number
+                            && (m.project_path == project_path
+                                || (m.project_path.is_empty()
+                                    && app.scope.as_str() == project_path))
+                    });
+                    let mut changed = false;
+                    if let Some(idx) = target {
+                        match result {
+                            Ok(Some(entries)) => {
+                                app.mrs.items[idx].stack_entries = Some(entries);
+                                changed = true;
+                            }
+                            Ok(None) => {
+                                // The PR is not actually in a stack; clear the
+                                // summary so the column drops the misleading
+                                // "#N pos/size" hint.
+                                app.mrs.items[idx].stack = None;
+                                app.mrs.items[idx].stack_entries = None;
+                                changed = true;
+                            }
+                            Err(_e) => {
+                                // Non-critical: leave the summary and let the
+                                // user retry. The other GitLab fetch helpers
+                                // follow the same swallow-and-retry pattern
+                                // (`list_mr_state` in `fetch.rs:347`).
+                            }
+                        }
+                        if changed {
+                            app.update_filter_selection();
+                            app.project_cache.mrs = app.mrs.items.clone();
+                            crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                        }
+                    }
                 }
                 Event::PipelinesFetched(pipelines) => {
                     app.complete_loading_tab(app::Tab::Pipelines, "Success");
@@ -4133,6 +4189,59 @@ async fn main() -> Result<()> {
                                                 "Could not parse the selected MR/PR iid"
                                                     .to_string(),
                                             );
+                                        }
+                                        continue;
+                                    }
+
+                                    if field_type == "stack_entries" {
+                                        // Each line is formatted
+                                        // "<pos>. #<iid>: <title> (STATE) ... [draft] ◀ (current)".
+                                        // Pick the `#iid` token via a `split('#')`
+                                        // pass that handles any extra `#` in
+                                        // titles without tripping the parse.
+                                        let filtered_items = selector.get_filtered_items();
+                                        let picked =
+                                            selector.selected_items.iter().next().cloned().or_else(
+                                                || filtered_items.get(selector.cursor_idx).cloned(),
+                                            );
+                                        app.selector = None;
+                                        if let Some(item) = picked {
+                                            let iid_str = item.split_whitespace().find_map(|tok| {
+                                                tok.strip_prefix('#').and_then(|s| {
+                                                    s.trim_end_matches(':').parse::<u64>().ok()
+                                                })
+                                            });
+                                            if let Some(target) = iid_str {
+                                                if let Some(idx) = app
+                                                    .mrs
+                                                    .items
+                                                    .iter()
+                                                    .position(|m| m.iid == target)
+                                                {
+                                                    app.mrs.state.select(Some(idx));
+                                                    app.detail_scroll = 0;
+                                                    app.details_zoomed = false;
+                                                    continue;
+                                                }
+                                                if let Some(client) = app.gitlab_client.clone() {
+                                                    crate::handlers::tabs::jump_to_mr_tab_from_selector(
+                                                        &mut app,
+                                                        target,
+                                                        events.sender(),
+                                                        &client,
+                                                    );
+                                                    continue;
+                                                }
+                                                app.show_error(
+                                                    "No backend client available to jump to the stack entry."
+                                                        .to_string(),
+                                                );
+                                            } else {
+                                                app.show_error(
+                                                    "Could not parse the selected stack entry iid"
+                                                        .to_string(),
+                                                );
+                                            }
                                         }
                                         continue;
                                     }

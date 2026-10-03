@@ -1,0 +1,59 @@
+# Vesper
+# Based on the Vesper palette in Helix
+bg = "#101010"
+border = "#505050"
+border_focused = "#ffc799"
+header_fg = "#ffc799"
+highlight_bg = "#1c1c1c"
+inactive_bg = "#141414"
+text_normal = "#ffffff"
+text_muted = "#a0a0a0"
+checked_bg = "#333333"
+green = "#99ffe4"
+green_bg = "#19332c"
+red = "#ff8080"
+red_bg = "#3d1f1f"
+blue = "#70a5eb"
+blue_bg = "#17273b"
+yellow = "#ffc799"
+yellow_bg = "#362a20"
+purple = "#ca9ee6"
+purple_bg = "#2e2336"
+
+# ── Diff ──
+diff_addition_fg = "#99ffe4"
+diff_addition_bg = "#19332c"
+diff_deletion_fg = "#ff8080"
+diff_deletion_bg = "#3d1f1f"
+diff_gutter_bg = "#101010"
+diff_sep = "#505050"
+
+# ── Comments ──
+comment_bg = "#141414"
+comment_draft_bg = "#362a20"
+
+# ── Modals ──
+modal_border = "#ffc799"
+
+# ── Pipelines ──
+pipeline_success = "#99ffe4"
+pipeline_failed = "#ff8080"
+pipeline_running = "#70a5eb"
+pipeline_pending = "#ffc799"
+pipeline_canceled = "#a0a0a0"
+pipeline_skipped = "#a0a0a0"
+
+# ── Badges ──
+badge_group_bg = "#70a5eb"
+
+# ── Label palette ──
+label_palette_0 = "#ca9ee6"
+label_palette_1 = "#70a5eb"
+label_palette_2 = "#99ffe4"
+label_palette_3 = "#ffc799"
+label_palette_4 = "#ff8080"
+label_palette_5 = "#f5a97f"
+label_palette_6 = "#b7bdf8"
+label_palette_7 = "#8bd5ca"
+label_palette_8 = "#a0a0a0"
+label_palette_9 = "#ffffff"

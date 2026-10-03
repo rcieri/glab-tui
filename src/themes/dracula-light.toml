@@ -1,0 +1,59 @@
+# Dracula Light (Alucard)
+# A crisp light variant of the iconic Dracula palette
+bg = "#f8f8f2"
+border = "#c1c2c7"
+border_focused = "#6272a4"
+header_fg = "#6272a4"
+highlight_bg = "#eaeaf0"
+inactive_bg = "#e3e3eb"
+text_normal = "#282a36"
+text_muted = "#6272a4"
+checked_bg = "#cfd7ed"
+green = "#28a745"
+green_bg = "#d7eedd"
+red = "#d73a49"
+red_bg = "#fbdadc"
+blue = "#005cc5"
+blue_bg = "#d2e4fc"
+yellow = "#b08800"
+yellow_bg = "#faeed0"
+purple = "#6f42c1"
+purple_bg = "#eddffa"
+
+# ── Diff ──
+diff_addition_fg = "#28a745"
+diff_addition_bg = "#d7eedd"
+diff_deletion_fg = "#d73a49"
+diff_deletion_bg = "#fbdadc"
+diff_gutter_bg = "#eaeaf0"
+diff_sep = "#c1c2c7"
+
+# ── Comments ──
+comment_bg = "#eaeaf0"
+comment_draft_bg = "#faeed0"
+
+# ── Modals ──
+modal_border = "#6272a4"
+
+# ── Pipelines ──
+pipeline_success = "#28a745"
+pipeline_failed = "#d73a49"
+pipeline_running = "#005cc5"
+pipeline_pending = "#b08800"
+pipeline_canceled = "#6272a4"
+pipeline_skipped = "#8c92a4"
+
+# ── Badges ──
+badge_group_bg = "#005cc5"
+
+# ── Label palette ──
+label_palette_0 = "#6f42c1"
+label_palette_1 = "#005cc5"
+label_palette_2 = "#28a745"
+label_palette_3 = "#b08800"
+label_palette_4 = "#d73a49"
+label_palette_5 = "#ea4a5a"
+label_palette_6 = "#f66a0a"
+label_palette_7 = "#0366d6"
+label_palette_8 = "#00867d"
+label_palette_9 = "#44475a"

@@ -1,0 +1,59 @@
+# Night Owl
+# Based on Sarah Drasner's Night Owl palette in Helix
+bg = "#011627"
+border = "#444444"
+border_focused = "#82aaff"
+header_fg = "#82aaff"
+highlight_bg = "#112630"
+inactive_bg = "#0b1d30"
+text_normal = "#d6deeb"
+text_muted = "#637777"
+checked_bg = "#2d2c5d"
+green = "#addb67"
+green_bg = "#11342b"
+red = "#ff5874"
+red_bg = "#451624"
+blue = "#82aaff"
+blue_bg = "#16284a"
+yellow = "#ecc48d"
+yellow_bg = "#3a301d"
+purple = "#c792ea"
+purple_bg = "#2f1b40"
+
+# ── Diff ──
+diff_addition_fg = "#addb67"
+diff_addition_bg = "#11342b"
+diff_deletion_fg = "#ff5874"
+diff_deletion_bg = "#451624"
+diff_gutter_bg = "#011627"
+diff_sep = "#444444"
+
+# ── Comments ──
+comment_bg = "#0b1d30"
+comment_draft_bg = "#3a301d"
+
+# ── Modals ──
+modal_border = "#82aaff"
+
+# ── Pipelines ──
+pipeline_success = "#addb67"
+pipeline_failed = "#ff5874"
+pipeline_running = "#82aaff"
+pipeline_pending = "#ecc48d"
+pipeline_canceled = "#637777"
+pipeline_skipped = "#637777"
+
+# ── Badges ──
+badge_group_bg = "#7fdbca"
+
+# ── Label palette ──
+label_palette_0 = "#c792ea"
+label_palette_1 = "#82aaff"
+label_palette_2 = "#addb67"
+label_palette_3 = "#ecc48d"
+label_palette_4 = "#ff5874"
+label_palette_5 = "#7fdbca"
+label_palette_6 = "#f78c6c"
+label_palette_7 = "#21c7a8"
+label_palette_8 = "#637777"
+label_palette_9 = "#d6deeb"

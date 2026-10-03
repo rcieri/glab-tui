@@ -1,0 +1,59 @@
+# Sonokai
+# Based on the Sonokai palette in Helix
+bg = "#2c2e34"
+border = "#595f6f"
+border_focused = "#9ed072"
+header_fg = "#9ed072"
+highlight_bg = "#363944"
+inactive_bg = "#222327"
+text_normal = "#e2e2e3"
+text_muted = "#7f8490"
+checked_bg = "#354157"
+green = "#9ed072"
+green_bg = "#273b2c"
+red = "#fc5d7c"
+red_bg = "#41232e"
+blue = "#76cce0"
+blue_bg = "#1e2e35"
+yellow = "#e7c664"
+yellow_bg = "#383120"
+purple = "#b39df3"
+purple_bg = "#2d283d"
+
+# ── Diff ──
+diff_addition_fg = "#9ed072"
+diff_addition_bg = "#273b2c"
+diff_deletion_fg = "#fc5d7c"
+diff_deletion_bg = "#41232e"
+diff_gutter_bg = "#2c2e34"
+diff_sep = "#595f6f"
+
+# ── Comments ──
+comment_bg = "#222327"
+comment_draft_bg = "#383120"
+
+# ── Modals ──
+modal_border = "#9ed072"
+
+# ── Pipelines ──
+pipeline_success = "#9ed072"
+pipeline_failed = "#fc5d7c"
+pipeline_running = "#76cce0"
+pipeline_pending = "#e7c664"
+pipeline_canceled = "#7f8490"
+pipeline_skipped = "#7f8490"
+
+# ── Badges ──
+badge_group_bg = "#76cce0"
+
+# ── Label palette ──
+label_palette_0 = "#b39df3"
+label_palette_1 = "#76cce0"
+label_palette_2 = "#9ed072"
+label_palette_3 = "#e7c664"
+label_palette_4 = "#fc5d7c"
+label_palette_5 = "#f39660"
+label_palette_6 = "#7f8490"
+label_palette_7 = "#e2e2e3"
+label_palette_8 = "#595f6f"
+label_palette_9 = "#282a36"

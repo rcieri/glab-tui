@@ -86,7 +86,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
-- **Themes** — 18 built-in color themes (including `oled` and `github-dark-hc`); fully customizable via `config.toml` or custom `.toml` files
+- **Themes** — 28 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---
@@ -477,6 +477,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `Home` | Jump to the top of the description panel | `scroll_top` |
 | `End` | Jump to the last line of the description panel | `scroll_to_end` |
 | `PageDown` / `PageUp` | Scroll description panel by one page | `scroll_page_down` / `scroll_page_up` |
+| `Ctrl+d` / `Ctrl+u` | Scroll description panel by half a page | `scroll_half_page_down` / `scroll_half_page_up` |
 | `f` / `/` | Open search / filter bar | `search` |
 | `Enter` / `Esc` (in search) | Close search bar | — |
 | `?` / `F1` | Show help: type to filter; `↑`/`↓`, `Ctrl+N`/`Ctrl+P`, `PgUp`/`PgDn`, `Home`/`End` or the mouse wheel scroll the list | `help` |

@@ -60,6 +60,25 @@ struct GhIssueJson {
     milestone: Option<GhIssueMilestone>,
     #[serde(default)]
     assignees: Vec<GhIssueLogin>,
+    #[serde(rename = "closedByPullRequestsReferences", default)]
+    closed_by_pull_requests_references: Option<Vec<GhIssuePrRef>>,
+}
+
+#[derive(Deserialize)]
+struct GhIssueRepoRef {
+    name: String,
+    owner: GhIssueLogin,
+}
+
+#[derive(Deserialize)]
+struct GhIssuePrRef {
+    number: u64,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    repository: Option<GhIssueRepoRef>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +106,28 @@ fn issue_from_gh_json(issue: GhIssueJson) -> Issue {
         .iter()
         .filter_map(|value| value.get("name")?.as_str().map(String::from))
         .collect();
+
+    let related_mrs = issue.closed_by_pull_requests_references.map(|refs| {
+        if refs.is_empty() {
+            crate::domain::issues::RelatedMrsState::Empty
+        } else {
+            crate::domain::issues::RelatedMrsState::Items(
+                refs.into_iter()
+                    .map(|pr| {
+                        let project_path = pr
+                            .repository
+                            .map(|r| format!("{}/{}", r.owner.login, r.name));
+                        crate::domain::issues::RelatedMrRef {
+                            iid: pr.number,
+                            title: pr.title.unwrap_or_default(),
+                            state: pr.state.unwrap_or_default(),
+                            project_path,
+                        }
+                    })
+                    .collect(),
+            )
+        }
+    });
 
     Issue {
         iid: issue.number,
@@ -118,7 +159,7 @@ fn issue_from_gh_json(issue: GhIssueJson) -> Issue {
         due_date: None,
         web_url: issue.url,
         project_path: String::new(),
-        related_mrs: None,
+        related_mrs,
     }
 }
 
@@ -433,6 +474,55 @@ mod related_prs_types {
     }
 }
 
+/// Build the GraphQL query that finds the issues which a PR closes.
+fn related_issues_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
+    let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
+    let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ pullRequest(number:{n}) {{ \
+         closingIssuesReferences(first:{first}) {{ \
+         nodes {{ number title state }} }} }} }} }}",
+        owner = owner,
+        repo = repo,
+        n = pr_number,
+        first = first,
+    )
+}
+
+mod related_issues_types {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhResponse {
+        pub(super) data: Option<GhData>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhData {
+        pub(super) repository: Option<GhRepo>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhRepo {
+        #[serde(rename = "pullRequest")]
+        pub(super) pull_request: Option<GhPr>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhPr {
+        #[serde(default, rename = "closingIssuesReferences")]
+        pub(super) closing_issues_references: GhConn,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhConn {
+        #[serde(default)]
+        pub(super) nodes: Vec<GhIssueRef>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhIssueRef {
+        pub(super) number: u64,
+        pub(super) title: String,
+        pub(super) state: String,
+    }
+}
+
 #[async_trait]
 impl Backend for GhBackend {
     fn kind(&self) -> super::BackendKind {
@@ -469,7 +559,7 @@ impl Backend for GhBackend {
                             "issue",
                             "list",
                             "--json",
-                            "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url",
+                            "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url,closedByPullRequestsReferences",
                             "-R",
                             project,
                             "--state",
@@ -607,7 +697,7 @@ impl Backend for GhBackend {
                     "view",
                     &iid.to_string(),
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,closedAt,milestone,assignees,url,closedByPullRequestsReferences",
                     "-R",
                     project,
                 ],
@@ -679,6 +769,7 @@ impl Backend for GhBackend {
                 iid: p.number,
                 title: p.title,
                 state: p.state.to_lowercase(),
+                project_path: Some(project.to_string()),
             })
             .collect())
     }
@@ -809,7 +900,7 @@ impl Backend for GhBackend {
                             "pr",
                             "list",
                             "--json",
-                            "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests,url",
+                            "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,reviewDecision,latestReviews,mergeable,mergeStateStatus,reviewRequests,url,closingIssuesReferences",
                             "-R",
                             project,
                             "--state",
@@ -856,6 +947,18 @@ impl Backend for GhBackend {
                     review_requests: Vec<serde_json::Value>,
                     #[serde(default)]
                     url: Option<String>,
+                    #[serde(rename = "closingIssuesReferences", default)]
+                    closing_issues_references: Option<Vec<GhPrIssueRef>>,
+                }
+                #[derive(Deserialize)]
+                struct GhPrIssueRef {
+                    number: u64,
+                    #[serde(default)]
+                    title: Option<String>,
+                    #[serde(default)]
+                    state: Option<String>,
+                    #[serde(default)]
+                    repository: Option<GhIssueRepoRef>,
                 }
                 #[derive(Deserialize)]
                 struct GhLogin {
@@ -913,6 +1016,27 @@ impl Backend for GhBackend {
                                 })
                             })
                             .collect();
+                        let related_issues = gp.closing_issues_references.map(|refs| {
+                            if refs.is_empty() {
+                                crate::domain::mr::RelatedIssuesState::Empty
+                            } else {
+                                crate::domain::mr::RelatedIssuesState::Items(
+                                    refs.into_iter()
+                                        .map(|r| {
+                                            let project_path = r.repository.map(|repo| {
+                                                format!("{}/{}", repo.owner.login, repo.name)
+                                            });
+                                            crate::domain::mr::RelatedIssueRef {
+                                                iid: r.number,
+                                                title: r.title.unwrap_or_default(),
+                                                state: r.state.unwrap_or_default(),
+                                                project_path,
+                                            }
+                                        })
+                                        .collect(),
+                                )
+                            }
+                        });
                         MergeRequest {
                             iid: gp.number,
                             title: gp.title,
@@ -938,6 +1062,7 @@ impl Backend for GhBackend {
                             workflow: None,
                             project_path: project.to_string(),
                             web_url: gp.url,
+                            related_issues,
                         }
                     })
                     .collect())
@@ -1047,6 +1172,7 @@ impl Backend for GhBackend {
                             workflow: None,
                             project_path,
                             web_url: item.html_url.clone(),
+                            related_issues: None,
                         }
                     })
                     .collect();
@@ -1063,7 +1189,7 @@ impl Backend for GhBackend {
                     "view",
                     &iid.to_string(),
                     "--json",
-                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,url",
+                    "number,title,state,labels,author,body,createdAt,updatedAt,headRefName,baseRefName,isDraft,assignees,milestone,url,closingIssuesReferences",
                     "-R",
                     project,
                 ],
@@ -1095,6 +1221,18 @@ impl Backend for GhBackend {
             milestone: Option<GhMs>,
             #[serde(default)]
             url: Option<String>,
+            #[serde(rename = "closingIssuesReferences", default)]
+            closing_issues_references: Option<Vec<GhPrIssueRef>>,
+        }
+        #[derive(Deserialize)]
+        struct GhPrIssueRef {
+            number: u64,
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            state: Option<String>,
+            #[serde(default)]
+            repository: Option<GhIssueRepoRef>,
         }
         #[derive(Deserialize)]
         struct GhLogin {
@@ -1122,6 +1260,27 @@ impl Backend for GhBackend {
             .into_iter()
             .map(|a| crate::domain::mr::Assignee { username: a.login })
             .collect();
+        let related_issues = gp.closing_issues_references.map(|refs| {
+            if refs.is_empty() {
+                crate::domain::mr::RelatedIssuesState::Empty
+            } else {
+                crate::domain::mr::RelatedIssuesState::Items(
+                    refs.into_iter()
+                        .map(|r| {
+                            let project_path = r
+                                .repository
+                                .map(|repo| format!("{}/{}", repo.owner.login, repo.name));
+                            crate::domain::mr::RelatedIssueRef {
+                                iid: r.number,
+                                title: r.title.unwrap_or_default(),
+                                state: r.state.unwrap_or_default(),
+                                project_path,
+                            }
+                        })
+                        .collect(),
+                )
+            }
+        });
         Ok(MergeRequest {
             iid: gp.number,
             title: gp.title,
@@ -1147,6 +1306,7 @@ impl Backend for GhBackend {
             workflow: None,
             project_path: String::new(),
             web_url: gp.url,
+            related_issues,
         })
     }
 
@@ -1270,6 +1430,41 @@ impl Backend for GhBackend {
         // dismissal API, which needs a review-ID lookup and write permission,
         // so it is deliberately out of scope.
         anyhow::bail!("Revoking approval isn't supported on GitHub")
+    }
+
+    async fn list_mr_related_issues(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        page_size: usize,
+    ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>> {
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let first = page_size.min(100).max(1);
+        let query = related_issues_graphql_query(owner, repo, mr_iid, first);
+        let raw = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching Related Issues",
+            )
+            .await?;
+        use related_issues_types::*;
+        let resp: GhResponse = serde_json::from_str(&raw)?;
+        let refs = resp
+            .data
+            .and_then(|d| d.repository)
+            .and_then(|r| r.pull_request)
+            .map(|pr| pr.closing_issues_references.nodes)
+            .unwrap_or_default();
+        Ok(refs
+            .into_iter()
+            .map(|i| crate::domain::mr::RelatedIssueRef {
+                iid: i.number,
+                title: i.title,
+                state: i.state.to_lowercase(),
+                project_path: Some(project.to_string()),
+            })
+            .collect())
     }
 
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -2952,6 +3147,7 @@ mod tests {
                 iid: p.number,
                 title: p.title,
                 state: p.state.to_lowercase(),
+                project_path: None,
             })
             .collect();
         assert_eq!(
@@ -2961,11 +3157,13 @@ mod tests {
                     iid: 408,
                     title: "fix: guard bracket slice".into(),
                     state: "merged".into(),
+                    project_path: None,
                 },
                 RelatedMrRef {
                     iid: 407,
                     title: "fix(merge): stop --auto-merge=false".into(),
                     state: "open".into(),
+                    project_path: None,
                 },
             ]
         );
@@ -2987,6 +3185,7 @@ mod tests {
                 iid: p.number,
                 title: p.title,
                 state: p.state.to_lowercase(),
+                project_path: None,
             })
             .collect();
         assert!(refs.is_empty());

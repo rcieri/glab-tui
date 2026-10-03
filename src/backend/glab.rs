@@ -701,6 +701,7 @@ impl Backend for GlabBackend {
                 iid: m.iid,
                 title: m.title,
                 state: m.state,
+                project_path: Some(project.to_string()),
             })
             .collect())
     }
@@ -961,6 +962,7 @@ impl Backend for GlabBackend {
                             workflow: None,
                             project_path: String::new(),
                             web_url: m.web_url,
+                            related_issues: None,
                         }
                     }));
                 }
@@ -1135,6 +1137,7 @@ impl Backend for GlabBackend {
             workflow: None,
             project_path: String::new(),
             web_url: m.web_url,
+            related_issues: None,
         })
     }
 
@@ -1271,6 +1274,38 @@ impl Backend for GlabBackend {
         )
         .await?;
         Ok(())
+    }
+
+    async fn list_mr_related_issues(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        page_size: usize,
+    ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>> {
+        let encoded = Self::encode_path(project);
+        let endpoint = format!(
+            "/projects/{}/merge_requests/{}/closes_issues?per_page={}",
+            encoded, mr_iid, page_size
+        );
+        let raw = self
+            .raw_api(&endpoint, "GET", None, "Fetching Related Issues")
+            .await?;
+        #[derive(Deserialize)]
+        struct GiClosesIssue {
+            iid: u64,
+            title: String,
+            state: String,
+        }
+        let items: Vec<GiClosesIssue> = serde_json::from_str(&raw)?;
+        Ok(items
+            .into_iter()
+            .map(|i| crate::domain::mr::RelatedIssueRef {
+                iid: i.iid,
+                title: i.title,
+                state: i.state,
+                project_path: Some(project.to_string()),
+            })
+            .collect())
     }
 
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()> {
@@ -2957,6 +2992,7 @@ mod tests {
                 iid: m.iid,
                 title: m.title,
                 state: m.state,
+                project_path: None,
             })
             .collect();
         assert_eq!(
@@ -2965,12 +3001,14 @@ mod tests {
                 RelatedMrRef {
                     iid: 1471,
                     title: "wire up webhooks".into(),
-                    state: "opened".into()
+                    state: "opened".into(),
+                    project_path: None,
                 },
                 RelatedMrRef {
                     iid: 1502,
                     title: "fix closing flow".into(),
-                    state: "merged".into()
+                    state: "merged".into(),
+                    project_path: None,
                 },
             ]
         );
@@ -2986,6 +3024,7 @@ mod tests {
                 iid: m.iid,
                 title: m.title,
                 state: m.state,
+                project_path: None,
             })
             .collect();
         assert!(refs.is_empty());

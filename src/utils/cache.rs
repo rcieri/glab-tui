@@ -390,6 +390,17 @@ pub fn get_switchable_repos() -> Vec<RepoEntry> {
     entries
 }
 
+/// The recently used checkout whose `origin` remote is `project`
+/// (`namespace/project`, compared case-insensitively like the hosts do).
+/// Runs one local `git remote get-url` per recent repo.
+pub fn find_local_checkout(project: &str) -> Option<String> {
+    get_recent_repos().into_iter().find(|path| {
+        is_git_repo(path)
+            && get_project_context_for_path(path)
+                .is_some_and(|context| context.eq_ignore_ascii_case(project))
+    })
+}
+
 /// Last path component of an absolute repo path. Falls back to the full
 /// path when the basename is empty (e.g. trailing-slash inputs) so the
 /// Switch Repository overlay always has a non-empty display label.

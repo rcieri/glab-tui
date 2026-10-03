@@ -1,0 +1,85 @@
+# Example custom keybindings for glab-tui.
+#
+# Copy the entries you want into ~/.config/glab-tui/config.toml (global) or
+# .glab-tui/config.toml (repo-local; a repo-local table replaces the global one).
+#
+# Each entry: `key` and `command` are required, `name` is shown in the help
+# modal (`?`). Commands run through $SHELL -c with the terminal handed over
+# until they exit; every run is logged in the Terminal tab.
+#
+# Template arguments (gh-dash names, so gh-dash configs port as-is; `prs` is
+# accepted as an alias for `mrs`):
+#   universal: RepoName RepoPath
+#   issues:    RepoName RepoPath IssueNumber IssueTitle Author
+#   mrs:       RepoName RepoPath PrNumber HeadRefName BaseRefName Author
+#   diff:      the mrs arguments + FilePath LineNumber (under the diff cursor)
+#
+# Every argument is also exported as GLAB_TUI_<NAME> (GLAB_TUI_PR_NUMBER,
+# GLAB_TUI_ISSUE_TITLE, ...). A {{.Arg}} whose value holds a shell
+# metacharacter is refused, so quote the variable instead for free text.
+#
+# With issues or MRs selected (Space, or v select mode), an issues/mrs binding
+# runs once per selected item.
+#
+# `background = true` keeps the TUI on screen: the command gets no input, its
+# output is not shown, and it is logged when it finishes (with its last error
+# line on failure). Use it for commands that open their own window or pane.
+
+# --- Merge requests / pull requests ------------------------------------------
+
+# Worktree for the MR/PR in a new tmux window with a devbox shell.
+[[custom_keybindings.mrs]]
+key = "w"
+name = "worktree + devbox shell (tmux)"
+command = "tmux new-window -c {{.RepoPath}} 'lazyworktree create --from-pr {{.PrNumber}} --update-on-existing --exec \"devbox shell\"'"
+
+# Worktree for the MR/PR, then Neovim on every file it changes.
+[[custom_keybindings.mrs]]
+key = "N"
+name = "worktree + nvim on changed files"
+command = "lazyworktree create --from-pr {{.PrNumber}} --update-on-existing --exec 'git fetch --quiet origin {{.BaseRefName}}; nvim $(git diff --name-only --diff-filter=d origin/{{.BaseRefName}}...HEAD)'"
+
+# Review the whole change in Neovim's diffview, in a new tmux window.
+[[custom_keybindings.mrs]]
+key = "C"
+name = "review in editor (tmux)"
+command = "tmux new-window -c {{.RepoPath}} 'nvim -c \":DiffviewOpen {{.BaseRefName}}...{{.HeadRefName}}\"'"
+
+# --- Diff view (open an MR/PR with D) -----------------------------------------
+
+# Open the file at the line under the cursor, in a worktree of the MR branch.
+[[custom_keybindings.diff]]
+key = "o"
+name = "open line in nvim (worktree)"
+command = "lazyworktree create --from-pr {{.PrNumber}} --update-on-existing --exec 'nvim +{{.LineNumber}} {{.FilePath}}'"
+
+# --- Issues -------------------------------------------------------------------
+
+# One worktree per selected issue (or the highlighted one).
+[[custom_keybindings.issues]]
+key = "W"
+name = "worktree per issue"
+command = "lazyworktree create --from-issue {{.IssueNumber}} --update-on-existing --silent"
+
+# Echo the issue in a new herdr pane without leaving glab-tui (one pane per
+# selected issue). The title is passed to the pane as an environment variable
+# and expanded there, so quotes in titles are safe.
+[[custom_keybindings.issues]]
+key = "p"
+name = "echo issue (herdr pane)"
+background = true
+command = '''pane=$(herdr pane split --current --direction right --no-focus --env GLAB_TUI_ISSUE_TITLE="$GLAB_TUI_ISSUE_TITLE" | jq -r .result.pane.pane_id) && herdr pane run "$pane" "echo \"Issue #{{.IssueNumber}}: \$GLAB_TUI_ISSUE_TITLE\""'''
+
+# Free text such as titles goes through the environment, which is always safe.
+[[custom_keybindings.issues]]
+key = "x"
+name = "print issue title"
+command = "echo \"#$GLAB_TUI_ISSUE_NUMBER: $GLAB_TUI_ISSUE_TITLE\"; read -r _"
+
+# --- Every tab ----------------------------------------------------------------
+
+# `g` is the built-in jump-to-ID key, so lazygit goes on `L`.
+[[custom_keybindings.universal]]
+key = "L"
+name = "lazygit"
+command = "cd {{.RepoPath}} && lazygit"

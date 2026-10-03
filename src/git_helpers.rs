@@ -382,6 +382,18 @@ pub fn get_branches() -> Vec<String> {
     Vec::new()
 }
 
+/// Top-level directory of the git checkout containing the working
+/// directory. A pure local resolve, safe on the UI thread.
+pub fn repo_root() -> Option<String> {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|root| !root.is_empty())
+}
+
 /// Returns a list of workflow/CI files available in the repo.
 /// For GitHub repos: scans `.github/workflows/*.yml` and `*.yaml`.
 /// For GitLab repos: returns `.gitlab-ci.yml` if it exists, else empty.
@@ -390,19 +402,7 @@ pub fn get_branches() -> Vec<String> {
 /// under `.github/workflows/` or `.gitlab-ci*.yml`. No network roundtrip,
 /// no prompt for credentials.
 pub fn get_workflow_files(is_github: bool) -> Vec<String> {
-    // Determine the repo root via `git rev-parse --show-toplevel`
-    let root = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| ".".to_string());
+    let root = repo_root().unwrap_or_else(|| ".".to_string());
 
     if is_github {
         let workflows_dir = std::path::Path::new(&root)

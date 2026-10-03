@@ -22,6 +22,22 @@ pub struct Reviewer {
     pub username: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct RelatedIssueRef {
+    pub iid: u64,
+    pub title: String,
+    pub state: String,
+    #[serde(default)]
+    pub project_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub enum RelatedIssuesState {
+    Empty,
+    Items(Vec<RelatedIssueRef>),
+    Failed(String),
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MergeRequest {
     pub iid: u64,
@@ -69,6 +85,9 @@ pub struct MergeRequest {
     pub project_path: String,
     #[serde(default)]
     pub web_url: Option<String>,
+    /// Cache of the related/closing-issues fetch.
+    #[serde(default)]
+    pub related_issues: Option<RelatedIssuesState>,
 }
 
 impl MergeRequest {
@@ -196,6 +215,17 @@ pub async fn list_mr_notes(
         .await
 }
 
+pub async fn fetch_related_issues(
+    client: &GitlabClient,
+    project_path: &str,
+    mr_iid: u64,
+) -> Result<Vec<RelatedIssueRef>> {
+    client
+        .backend
+        .list_mr_related_issues(project_path, mr_iid, client.page_size)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +290,32 @@ mod tests {
             mr.markdown_reference(crate::backend::BackendKind::GitHub),
             r"[#1471: feat(core): support \[nested\] \\brackets\\](https://gitlab.com/acme/project/-/merge_requests/1471)"
         );
+    }
+
+    #[test]
+    fn test_related_issues_state_default() {
+        let mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
+        assert!(mr.related_issues.is_none());
+    }
+
+    #[test]
+    fn test_related_issues_serialized_and_deserialized() {
+        let mut mr: MergeRequest = serde_json::from_str(GLAB_MR_JSON).unwrap();
+        mr.related_issues = Some(RelatedIssuesState::Items(vec![RelatedIssueRef {
+            iid: 513,
+            title: "enhancement: linked issues".into(),
+            state: "opened".into(),
+            project_path: None,
+        }]));
+
+        let serialized = serde_json::to_string(&mr).unwrap();
+        assert!(
+            serialized.contains("related_issues"),
+            "related_issues must be serialized with cache: {}",
+            serialized
+        );
+
+        let round_trip: MergeRequest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(round_trip.related_issues, mr.related_issues);
     }
 }

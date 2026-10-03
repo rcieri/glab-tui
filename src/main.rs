@@ -6,6 +6,7 @@ mod app;
 mod backend;
 mod cli;
 mod config;
+mod custom_commands;
 mod domain;
 mod editor;
 mod entity_editor;
@@ -218,6 +219,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
                         return;
                     }
                     OverlayKind::Help => {
+                        handlers::overlays::move_help_selection(app, scroll_down, 1);
                         return;
                     }
                     OverlayKind::Configure => {
@@ -682,12 +684,87 @@ pub use fetch::spawn_fetch_repo_attributes;
 pub use fetch::{spawn_refresh_active_tab, spawn_refresh_all_tabs};
 use handlers::overlays::*;
 
+// ---------------------------------------------------------------------------
+// Scope-change helper shared by the live keypress dispatch and the
+// sequence-timeout redispatch inside `main` below.
+// ---------------------------------------------------------------------------
+
+/// After a key dispatch changed `app.scope`, rebuild the GitLab/GitHub
+/// client for the new scope, reload its cache into `app`, and kick off a
+/// background refresh. No-op if the scope didn't change. Shared by the live
+/// keypress dispatch and the sequence-timeout redispatch so both apply the
+/// same post-processing when a standalone action switches scope.
+async fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events: &EventHandler) {
+    if app.scope == *old_scope {
+        return;
+    }
+
+    if let Ok(mut client) = domain::client::GitlabClient::new(&app.config).await {
+        client.page_size = app.config.page_size;
+        client.api_per_page = app.config.api_per_page_clamped();
+        client.tx = Some(events.sender());
+        client.backend.set_tx(events.sender());
+        app.gitlab_client = Some(client.clone());
+    } else {
+        app.gitlab_client = None;
+    }
+
+    let cache = crate::utils::cache::load_cache(app.scope.as_str());
+    app.project_cache = cache.clone();
+    app.issues.items = cache.issues;
+    app.mrs.items = cache.mrs;
+    crate::fetch::derive_workflow(&mut app.mrs.items);
+    app.pipelines.items = cache.pipelines;
+    app.runners.items = cache.runners;
+    app.releases.items = cache.releases;
+    app.todos.items = cache.todos;
+    app.milestones.items = cache.milestones;
+    app.pipeline_jobs = cache.pipeline_jobs;
+    app.branches.items = cache.branches;
+    app.environments.items = cache.environments;
+    app.milestone_issues_cache = cache.milestone_issues;
+    app.cached_labels = cache.labels;
+    app.cached_members = cache.members;
+
+    if let Some(client) = app.gitlab_client.clone() {
+        let tx = events.sender();
+        app.start_loading_tab(app.active_tab);
+        spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+        if app.config.prefetch_tabs {
+            spawn_refresh_all_tabs(
+                &client,
+                &app.scope,
+                app.active_tab,
+                app.available_tabs(),
+                app.loaded_tabs.clone(),
+                tx.clone(),
+            );
+        }
+        spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     use clap::Parser;
 
     // ── Subcommand dispatch ──
     let cli = cli::Cli::parse();
+
+    if let Some(ref path) = cli.config {
+        // Resolved before `--dir` changes the working directory.
+        match std::fs::canonicalize(path) {
+            Ok(file) if file.is_file() => crate::config::use_config_file(file),
+            Ok(_) => {
+                eprintln!("Error: --config '{}' is not a file", path.display());
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error: --config '{}': {}", path.display(), e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     if let Some(cmd) = cli.command {
         match cmd {
@@ -781,6 +858,7 @@ async fn main() -> Result<()> {
     // though the approval state it derives from was persisted and just
     // loaded above.
     crate::fetch::derive_workflow(&mut app.mrs.items);
+    crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
     app.runners.items = cache.runners;
     app.releases.items = cache.releases;
@@ -1106,6 +1184,7 @@ async fn main() -> Result<()> {
                         {
                             if let KeyCode::Char(c) = pending_key.event.code {
                                 if app.standalone_chars.contains(&c) {
+                                    let old_scope = app.scope.clone();
                                     handlers::tabs::handle_active_tab_key(
                                         &mut app,
                                         &pending_key.event,
@@ -1114,6 +1193,7 @@ async fn main() -> Result<()> {
                                         None,
                                     )
                                     .await;
+                                    sync_after_scope_change(&mut app, &old_scope, &events).await;
                                 }
                             }
                         } else {
@@ -1126,9 +1206,16 @@ async fn main() -> Result<()> {
                             &mut app,
                             &events.sender(),
                         );
+                        let _ = crate::fetch::dispatch_pending_mr_related_issues_fetch(
+                            &client,
+                            &mut app,
+                            &events.sender(),
+                        );
                     } else {
                         app.pending_related_mrs_iid = None;
                         app.pending_related_mrs_since = None;
+                        app.pending_mr_related_issues_iid = None;
+                        app.pending_mr_related_issues_since = None;
                     }
                     if app.active_tab == app::Tab::Jobs
                         && app.job_trace_follow
@@ -1272,6 +1359,13 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::Issues);
                     app.status_message = None;
                     app.issues.items = issues;
+                    crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
+                    if let Some(target_iid) = app.pending_issue_select.take() {
+                        if let Some(idx) = app.issues.items.iter().position(|i| i.iid == target_iid)
+                        {
+                            app.issues.state.select(Some(idx));
+                        }
+                    }
                     app.rebuild_milestone_progress_cache();
                     app.update_filter_selection();
                     crate::handlers::tabs::maybe_fetch_related_mrs(&mut app, &events.sender());
@@ -1284,12 +1378,17 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::MergeRequests);
                     app.status_message = None;
                     app.mrs.items = mrs;
+                    crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_mr_select.take() {
                         if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == target_iid) {
                             app.mrs.state.select(Some(idx));
                         }
                     }
                     app.update_filter_selection();
+                    crate::handlers::tabs::maybe_fetch_mr_related_issues(
+                        &mut app,
+                        &events.sender(),
+                    );
                     app.project_cache.mrs = app.mrs.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
@@ -1312,6 +1411,10 @@ async fn main() -> Result<()> {
                         app.update_filter_selection();
                     }
                     app.focus_mr(iid);
+                    crate::handlers::tabs::maybe_fetch_mr_related_issues(
+                        &mut app,
+                        &events.sender(),
+                    );
                     app.project_cache.mrs = app.mrs.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
@@ -1775,6 +1878,34 @@ async fn main() -> Result<()> {
                     };
                     if let Some(issue) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid) {
                         issue.related_mrs = Some(new_state);
+                        crate::fetch::sync_linked_references(
+                            &mut app.issues.items,
+                            &mut app.mrs.items,
+                        );
+                        app.project_cache.issues = app.issues.items.clone();
+                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
+                    }
+                }
+                Event::MrRelatedIssuesFetched { mr_iid, result } => {
+                    app.fetching_mr_related_issues.remove(&mr_iid);
+                    let new_state = match result {
+                        Ok(items) => {
+                            if items.is_empty() {
+                                crate::domain::mr::RelatedIssuesState::Empty
+                            } else {
+                                crate::domain::mr::RelatedIssuesState::Items(items)
+                            }
+                        }
+                        Err(e) => crate::domain::mr::RelatedIssuesState::Failed(e),
+                    };
+                    if let Some(mr) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
+                        mr.related_issues = Some(new_state);
+                        crate::fetch::sync_linked_references(
+                            &mut app.issues.items,
+                            &mut app.mrs.items,
+                        );
+                        app.project_cache.mrs = app.mrs.items.clone();
+                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                     }
                 }
                 Event::FetchFailed(tab, err_msg) => {
@@ -1828,6 +1959,9 @@ async fn main() -> Result<()> {
                         app.terminal_commands[pos].status = "Success".to_string();
                     }
                 }
+                Event::CustomCommandFinished(report) => {
+                    handlers::custom_commands::report_runs(&mut app, report);
+                }
                 Event::DiffFetchFailed(err_msg) => {
                     app.diff_loading = false;
                     app.show_error(err_msg);
@@ -1850,11 +1984,7 @@ async fn main() -> Result<()> {
                         .rposition(|cmd| cmd.command == command && cmd.status == "Running")
                     {
                         app.terminal_commands[pos].status = status;
-                    } else if let Some(pos) = app
-                        .terminal_commands
-                        .iter()
-                        .rposition(|cmd| cmd.status == "Running")
-                    {
+                    } else if let Some(pos) = app.latest_running_cli_command() {
                         // fallback: update most recent Running entry when
                         // command strings differ (e.g. CommandStarted vs backend log)
                         app.terminal_commands[pos].status = status;
@@ -1881,11 +2011,7 @@ async fn main() -> Result<()> {
                 Event::CommandCompleted(tab, res) => {
                     match &res {
                         Ok(_) => {
-                            if let Some(pos) = app
-                                .terminal_commands
-                                .iter()
-                                .rposition(|cmd| cmd.status == "Running")
-                            {
+                            if let Some(pos) = app.latest_running_cli_command() {
                                 app.terminal_commands[pos].status = "Success".to_string();
                             }
                         }
@@ -3076,7 +3202,8 @@ async fn main() -> Result<()> {
                                     let has_filter = selector.field_type != "comment_action_select"
                                         && selector.field_type != "review_submit_status"
                                         && selector.field_type != "merge_options"
-                                        && selector.field_type != "related_mrs";
+                                        && selector.field_type != "related_mrs"
+                                        && selector.field_type != "linked_issues";
                                     if has_filter {
                                         selector.is_filtering = true;
                                     }
@@ -3300,6 +3427,10 @@ async fn main() -> Result<()> {
                                                 app.issues.items = cache.issues;
                                                 app.mrs.items = cache.mrs;
                                                 crate::fetch::derive_workflow(&mut app.mrs.items);
+                                                crate::fetch::sync_linked_references(
+                                                    &mut app.issues.items,
+                                                    &mut app.mrs.items,
+                                                );
                                                 app.pipelines.items = cache.pipelines;
                                                 app.runners.items = cache.runners;
                                                 app.releases.items = cache.releases;
@@ -3334,6 +3465,7 @@ async fn main() -> Result<()> {
                                                     );
                                                     app.config = crate::config::Config::load();
                                                     app.apply_config();
+                                                    app.load_custom_commands();
                                                     crate::config::reload_theme();
 
                                                     if let Ok(context) =
@@ -4000,6 +4132,39 @@ async fn main() -> Result<()> {
                                             }
                                             app.show_error(
                                                 "Could not parse the selected MR/PR iid"
+                                                    .to_string(),
+                                            );
+                                        }
+                                        continue;
+                                    }
+
+                                    if field_type == "linked_issues" {
+                                        let filtered_items = selector.get_filtered_items();
+                                        let picked =
+                                            selector.selected_items.iter().next().cloned().or_else(
+                                                || filtered_items.get(selector.cursor_idx).cloned(),
+                                            );
+                                        app.selector = None;
+                                        if let Some(item) = picked {
+                                            if let Some(iid_str) = item
+                                                .strip_prefix('#')
+                                                .and_then(|s| s.split_whitespace().next())
+                                            {
+                                                if let Ok(issue_iid) = iid_str.parse::<u64>() {
+                                                    if let Some(client) = app.gitlab_client.clone()
+                                                    {
+                                                        crate::handlers::tabs::jump_to_issue_tab_from_selector(
+                                                            &mut app,
+                                                            issue_iid,
+                                                            events.sender(),
+                                                            &client,
+                                                        );
+                                                    }
+                                                    continue;
+                                                }
+                                            }
+                                            app.show_error(
+                                                "Could not parse the selected Issue iid"
                                                     .to_string(),
                                             );
                                         }
@@ -8269,6 +8434,12 @@ async fn main() -> Result<()> {
                             }
                             _ => {
                                 app.diff_view = Some(diff_view);
+                                handlers::custom_commands::run_bound_diff_command(
+                                    &mut app,
+                                    &key_event,
+                                    &mut terminal,
+                                    &events.sender(),
+                                );
                             }
                         }
                         continue;
@@ -8743,101 +8914,40 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    let old_scope = app.scope.clone();
-
-                    if let Some(PendingKey {
-                        event: pending_event,
-                        ..
-                    }) = app.pending_key.take()
-                    {
-                        if let KeyCode::Char(pending_char) = pending_event.code {
-                            let resolved = handlers::tabs::handle_active_tab_key(
-                                &mut app,
-                                &key_event,
-                                &mut terminal,
-                                events.sender(),
-                                Some(pending_char),
-                            )
-                            .await;
-                            if resolved {
-                                continue;
-                            }
+                    let pending: Option<char> = if let Some(pending_key) = app.pending_key.take() {
+                        match pending_key.event.code {
+                            KeyCode::Char(c) => Some(c),
+                            _ => None,
                         }
-                        // Pending was a non-character (Tab, F-key, etc.) -
-                        // fall through and dispatch the current keypress as
-                        // a fresh event.
                     } else if let KeyCode::Char(c) = key_event.code {
-                        if key_event.modifiers.is_empty() && app.sequence_prefixes.contains(&c) {
+                        if (key_event.modifiers.is_empty()
+                            || (key_event.modifiers == crossterm::event::KeyModifiers::SHIFT
+                                && c.is_uppercase()))
+                            && app.sequence_prefixes.contains(&c)
+                        {
                             app.pending_key = Some(PendingKey {
                                 event: key_event,
                                 since: std::time::Instant::now(),
                             });
                             continue;
+                        } else {
+                            None
                         }
-                    }
+                    } else {
+                        None
+                    };
 
+                    let old_scope = app.scope.clone();
                     handlers::tabs::handle_active_tab_key(
                         &mut app,
                         &key_event,
                         &mut terminal,
                         events.sender(),
-                        None,
+                        pending,
                     )
                     .await;
 
-                    if app.scope != old_scope {
-                        if let Ok(mut client) = domain::client::GitlabClient::new(&app.config).await
-                        {
-                            client.page_size = app.config.page_size;
-                            client.api_per_page = app.config.api_per_page_clamped();
-                            client.tx = Some(events.sender());
-                            client.backend.set_tx(events.sender());
-                            app.gitlab_client = Some(client.clone());
-                        } else {
-                            app.gitlab_client = None;
-                        }
-
-                        let cache = crate::utils::cache::load_cache(app.scope.as_str());
-                        app.project_cache = cache.clone();
-                        app.issues.items = cache.issues;
-                        app.mrs.items = cache.mrs;
-                        crate::fetch::derive_workflow(&mut app.mrs.items);
-                        app.pipelines.items = cache.pipelines;
-                        app.runners.items = cache.runners;
-                        app.releases.items = cache.releases;
-                        app.todos.items = cache.todos;
-                        app.milestones.items = cache.milestones;
-                        app.pipeline_jobs = cache.pipeline_jobs;
-                        app.branches.items = cache.branches;
-                        app.environments.items = cache.environments;
-                        app.milestone_issues_cache = cache.milestone_issues;
-                        app.cached_labels = cache.labels;
-                        app.cached_members = cache.members;
-
-                        if let Some(client) = app.gitlab_client.clone() {
-                            let tx = events.sender();
-                            app.start_loading_tab(app.active_tab);
-                            spawn_refresh_active_tab(
-                                &client,
-                                &app.scope,
-                                app.active_tab,
-                                tx.clone(),
-                            );
-                            // If prefetching is enabled, re-trigger the background queue
-                            // for the new scope so all tabs get populated.
-                            if app.config.prefetch_tabs {
-                                spawn_refresh_all_tabs(
-                                    &client,
-                                    &app.scope,
-                                    app.active_tab,
-                                    app.available_tabs(),
-                                    app.loaded_tabs.clone(),
-                                    tx.clone(),
-                                );
-                            }
-                            spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
-                        }
-                    }
+                    sync_after_scope_change(&mut app, &old_scope, &events).await;
                 }
                 _ => {}
             }

@@ -36,13 +36,15 @@ pub struct RelatedMrRef {
     pub iid: u64,
     pub title: String,
     pub state: String,
+    #[serde(default)]
+    pub project_path: Option<String>,
 }
 
 /// Cache for the related-MR/PRs fetch on the issue preview.
 ///
 /// `None` means "not yet fetched"; the app tracks in-flight requests via
 /// `App::fetching_related_mrs` to distinguish that from "fetched and empty".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum RelatedMrsState {
     Empty,
     Items(Vec<RelatedMrRef>),
@@ -70,10 +72,8 @@ pub struct Issue {
     pub web_url: String,
     #[serde(default)]
     pub project_path: String,
-    /// Cache of the related-MRs/PRs fetch. Skipped during (de)serialization
-    /// because the underlying GitLab/GitHub relationship can change between
-    /// sessions; we always re-fetch on first preview.
-    #[serde(skip, default)]
+    /// Cache of the related-MRs/PRs fetch.
+    #[serde(default)]
     pub related_mrs: Option<RelatedMrsState>,
 }
 
@@ -196,8 +196,8 @@ mod tests {
     }
 
     #[test]
-    fn test_related_mrs_skips_during_serde() {
-        let mut issue = Issue {
+    fn test_related_mrs_serialized_and_deserialized() {
+        let issue = Issue {
             iid: 7,
             title: "x".into(),
             state: "opened".into(),
@@ -218,19 +218,18 @@ mod tests {
                 iid: 12,
                 title: "fix".into(),
                 state: "opened".into(),
+                project_path: None,
             }])),
         };
 
         let serialized = serde_json::to_string(&issue).unwrap();
         assert!(
-            !serialized.contains("related_mrs"),
-            "related_mrs must be skipped during serialization: {}",
+            serialized.contains("related_mrs"),
+            "related_mrs must be serialized with cache: {}",
             serialized
         );
 
         let round_trip: Issue = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(round_trip.related_mrs, None);
-        issue.related_mrs = None;
         assert_eq!(round_trip, issue);
     }
 }

@@ -46,13 +46,40 @@ pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event
     app.pending_related_mrs_since = Some(std::time::Instant::now());
 }
 
+/// Record a request to fetch linked issues for the currently selected MR/PR.
+pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender<Event>) {
+    let Some(iid) = app
+        .mrs
+        .state
+        .selected()
+        .and_then(|idx| app.filtered_mrs().get(idx).map(|m| m.iid))
+    else {
+        return;
+    };
+    if app
+        .mrs
+        .items
+        .iter()
+        .any(|m| m.iid == iid && m.related_issues.is_some())
+    {
+        if app.pending_mr_related_issues_iid == Some(iid) {
+            app.pending_mr_related_issues_iid = None;
+            app.pending_mr_related_issues_since = None;
+        }
+        return;
+    }
+    app.pending_mr_related_issues_iid = Some(iid);
+    app.pending_mr_related_issues_since = Some(std::time::Instant::now());
+}
+
 /// Scrolls the detail pane by a full or half page for the
 /// `scroll_page_down`/`scroll_page_up`/`scroll_half_page_down`/
 /// `scroll_half_page_up` bindings, against the usable height of
 /// `detail_rect` (its height minus the two border rows). `pending` is the
 /// character captured on a previous keystroke, if any (see
 /// `matches_with_pending`); pass `None` when there is no pending sequence.
-fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent) {
+/// Returns true if a page scroll action matched and was applied.
+fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent) -> bool {
     if let Some(rect) = app.detail_rect.filter(|_| app.detail_visible) {
         let full_page = rect.height.saturating_sub(2).max(1);
         let half_page = full_page / 2;
@@ -62,26 +89,31 @@ fn apply_page_scroll(app: &mut App, pending: Option<char>, key_event: &KeyEvent)
             key_event,
         ) {
             app.detail_scroll = app.detail_scroll.saturating_add(full_page);
+            return true;
         } else if crate::keybinding::matches_with_pending(
             &app.config.keybindings.global.scroll_page_up,
             pending,
             key_event,
         ) {
             app.detail_scroll = app.detail_scroll.saturating_sub(full_page);
+            return true;
         } else if crate::keybinding::matches_with_pending(
             &app.config.keybindings.global.scroll_half_page_down,
             pending,
             key_event,
         ) {
             app.detail_scroll = app.detail_scroll.saturating_add(half_page);
+            return true;
         } else if crate::keybinding::matches_with_pending(
             &app.config.keybindings.global.scroll_half_page_up,
             pending,
             key_event,
         ) {
             app.detail_scroll = app.detail_scroll.saturating_sub(half_page);
+            return true;
         }
     }
+    false
 }
 
 pub async fn handle_active_tab_key(
@@ -92,6 +124,10 @@ pub async fn handle_active_tab_key(
     pending: Option<char>,
 ) -> bool {
     if pending.is_some() {
+        // Resolving the second key of a pending sequence (e.g. the second
+        // `g` of `gg`). A key that doesn't complete a known sequence lapses
+        // instead of falling through to normal dispatch — vim discards `g`
+        // + an unbound key the same way (glt-0009 plan, Entscheidung 5).
         if app.detail_visible
             && crate::keybinding::matches_with_pending(
                 &app.config.keybindings.global.scroll_top,
@@ -101,8 +137,8 @@ pub async fn handle_active_tab_key(
         {
             app.detail_scroll = 0;
             return true;
-        } else {
-            apply_page_scroll(app, pending, key_event);
+        } else if apply_page_scroll(app, pending, key_event) {
+            return true;
         }
         return false;
     }
@@ -645,8 +681,13 @@ pub async fn handle_active_tab_key(
                         } else {
                             None
                         };
-                        let mut doc =
-                            crate::entity_editor::build_mr_document(mr, is_github, unresolved);
+                        let is_fetching_issues = app.fetching_mr_related_issues.contains(&mr.iid);
+                        let mut doc = crate::entity_editor::build_mr_document(
+                            mr,
+                            is_github,
+                            unresolved,
+                            is_fetching_issues,
+                        );
                         doc.fields.push(crate::app::Field::text(
                             "Description",
                             mr.description.clone().unwrap_or_default(),
@@ -939,6 +980,87 @@ pub async fn handle_active_tab_key(
                                 app.show_error(format!(
                                     "Failed to copy {label} reference: {error}"
                                 ));
+                            }
+                        }
+                        _ if (key_event.code == KeyCode::Char('I')
+                            || keybinding_matches(
+                                &app.config.keybindings.mrs.jump_linked_issues,
+                                key_event,
+                            )) =>
+                        {
+                            use crate::domain::mr::RelatedIssuesState;
+                            let state = app
+                                .mrs
+                                .items
+                                .iter()
+                                .find(|m| m.iid == mr_iid)
+                                .and_then(|m| m.related_issues.as_ref());
+                            match state {
+                                None if app.fetching_mr_related_issues.contains(&mr_iid) => {
+                                    app.show_error("Linked Issues still loading…".to_string());
+                                }
+                                None => {
+                                    app.show_error(
+                                        "No linked Issues cached yet — open the Merge Request once and retry."
+                                            .to_string(),
+                                    );
+                                }
+                                Some(RelatedIssuesState::Empty) => {
+                                    app.show_error(
+                                        "This Merge Request / Pull Request has no linked issues."
+                                            .to_string(),
+                                    );
+                                }
+                                Some(RelatedIssuesState::Failed(msg)) => {
+                                    app.show_error(format!(
+                                        "Failed to fetch linked issues: {}",
+                                        msg
+                                    ));
+                                }
+                                Some(RelatedIssuesState::Items(items)) => {
+                                    if items.len() == 1 {
+                                        let client = app.gitlab_client.clone();
+                                        jump_to_issue_tab(app, items[0].iid, client, tx.clone());
+                                    } else {
+                                        let is_github = app.is_github();
+                                        let pr_term = if is_github { "PR" } else { "MR" };
+                                        app.selector = Some(crate::app::Selector {
+                                            title: format!(
+                                                " Linked Issues for {} #{} ",
+                                                pr_term, mr_iid
+                                            ),
+                                            all_items: items
+                                                .iter()
+                                                .map(|r| {
+                                                    format!(
+                                                        "#{} [{}] {}",
+                                                        r.iid,
+                                                        match r.state.as_str() {
+                                                            "opened" | "open" => "OPEN",
+                                                            "closed" | "close" => "CLOSED",
+                                                            other => other,
+                                                        },
+                                                        r.title
+                                                    )
+                                                })
+                                                .collect(),
+                                            selected_items: std::collections::HashSet::new(),
+                                            cursor_idx: 0,
+                                            search_query: String::new(),
+                                            is_filtering: false,
+                                            is_loading: false,
+                                            entity_iid: mr_iid,
+                                            entity_type: String::new(),
+                                            field_type: "linked_issues".to_string(),
+                                            multi_select: false,
+                                            state: {
+                                                let mut s = ListState::default();
+                                                s.select(Some(0));
+                                                s
+                                            },
+                                        });
+                                    }
+                                }
                             }
                         }
                         _ => handled = false,
@@ -2283,6 +2405,7 @@ pub async fn handle_active_tab_key(
     }
 
     if !handled {
+        let mut detail_scrolled = true;
         if app.detail_visible
             && (keybinding_matches(&app.config.keybindings.global.scroll_down, &key_event)
                 || key_event.code == KeyCode::Char('J'))
@@ -2310,8 +2433,8 @@ pub async fn handle_active_tab_key(
             // `scroll_top` jumps to the first line directly: 0 is a known
             // index, no flag round-trip needed.
             app.detail_scroll = 0;
-        } else {
-            apply_page_scroll(app, None, key_event);
+        } else if !apply_page_scroll(app, None, key_event) {
+            detail_scrolled = false;
         }
 
         match key_event.code {
@@ -2573,8 +2696,13 @@ pub async fn handle_active_tab_key(
                                         } else {
                                             None
                                         };
+                                        let is_fetching_issues =
+                                            app.fetching_mr_related_issues.contains(&mr.iid);
                                         let mut doc = crate::entity_editor::build_mr_document(
-                                            mr, is_github, unresolved,
+                                            mr,
+                                            is_github,
+                                            unresolved,
+                                            is_fetching_issues,
                                         );
                                         doc.fields.push(crate::app::Field::text(
                                             "Description",
@@ -2701,6 +2829,9 @@ pub async fn handle_active_tab_key(
                 if app.active_tab == crate::app::Tab::Issues {
                     maybe_fetch_related_mrs(app, &tx);
                 }
+                if app.active_tab == crate::app::Tab::MergeRequests {
+                    maybe_fetch_mr_related_issues(app, &tx);
+                }
             }
             _ if (key_event.code == KeyCode::Left
                 || key_event.code == KeyCode::Char('h')
@@ -2719,6 +2850,9 @@ pub async fn handle_active_tab_key(
                 }
                 if app.active_tab == crate::app::Tab::Issues {
                     maybe_fetch_related_mrs(app, &tx);
+                }
+                if app.active_tab == crate::app::Tab::MergeRequests {
+                    maybe_fetch_mr_related_issues(app, &tx);
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -2769,6 +2903,9 @@ pub async fn handle_active_tab_key(
                     }
                     if app.active_tab == crate::app::Tab::Issues {
                         maybe_fetch_related_mrs(app, &tx);
+                    }
+                    if app.active_tab == crate::app::Tab::MergeRequests {
+                        maybe_fetch_mr_related_issues(app, &tx);
                     }
                 }
             }
@@ -2821,6 +2958,9 @@ pub async fn handle_active_tab_key(
                     if app.active_tab == crate::app::Tab::Issues {
                         maybe_fetch_related_mrs(app, &tx);
                     }
+                    if app.active_tab == crate::app::Tab::MergeRequests {
+                        maybe_fetch_mr_related_issues(app, &tx);
+                    }
                 }
             }
             KeyCode::Home => {
@@ -2871,6 +3011,9 @@ pub async fn handle_active_tab_key(
                     }
                     if app.active_tab == crate::app::Tab::Issues {
                         maybe_fetch_related_mrs(app, &tx);
+                    }
+                    if app.active_tab == crate::app::Tab::MergeRequests {
+                        maybe_fetch_mr_related_issues(app, &tx);
                     }
                 }
             }
@@ -2926,7 +3069,13 @@ pub async fn handle_active_tab_key(
                     if app.active_tab == crate::app::Tab::Issues {
                         maybe_fetch_related_mrs(app, &tx);
                     }
+                    if app.active_tab == crate::app::Tab::MergeRequests {
+                        maybe_fetch_mr_related_issues(app, &tx);
+                    }
                 }
+            }
+            _ if !detail_scrolled => {
+                handled = super::custom_commands::run_bound_command(app, key_event, terminal, &tx);
             }
             _ => {}
         }
@@ -2972,6 +3121,40 @@ pub(crate) fn jump_to_mr_tab_from_selector(
     client: &crate::domain::client::GitlabClient,
 ) {
     jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx);
+}
+
+/// Switch to the Issues tab and focus the given Issue. If the Issue is
+/// already loaded, focus it immediately; otherwise set `pending_issue_select`
+/// so the `Event::IssuesFetched` handler in `main.rs` can focus it once the
+/// in-flight tab refresh completes.
+pub(crate) fn jump_to_issue_tab(
+    app: &mut crate::app::App,
+    issue_iid: u64,
+    client: Option<crate::domain::client::GitlabClient>,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+) {
+    if let Some(idx) = app.issues.items.iter().position(|i| i.iid == issue_iid) {
+        app.issues.state.select(Some(idx));
+    } else {
+        app.pending_issue_select = Some(issue_iid);
+    }
+    app.active_tab = crate::app::Tab::Issues;
+    app.detail_scroll = 0;
+    if let Some(client) = client {
+        crate::fetch::spawn_refresh_active_tab(&client, &app.scope, crate::app::Tab::Issues, tx);
+    } else {
+        app.show_error("No backend client available to load Issues.".to_string());
+    }
+}
+
+/// Public entry point used by the linked-issues selector.
+pub(crate) fn jump_to_issue_tab_from_selector(
+    app: &mut crate::app::App,
+    issue_iid: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    client: &crate::domain::client::GitlabClient,
+) {
+    jump_to_issue_tab(app, issue_iid, Some(client.clone()), tx);
 }
 
 #[cfg(test)]

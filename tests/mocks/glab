@@ -39,6 +39,12 @@ elif [[ "$*" == *"mr list"* ]]; then
     else
         echo "[]"
     fi
+elif [[ "$*" == *"issue list"* ]]; then
+    if [[ " $* " == *" --page 1 "* ]]; then
+        cat "$FIXTURES_DIR/custom_command_issues.json"
+    else
+        echo "[]"
+    fi
 elif [[ "$*" == *"mr diff"* ]]; then
     cat "$FIXTURES_DIR/mr_diff.txt"
 elif [[ "$*" == *"mr note list"* ]]; then

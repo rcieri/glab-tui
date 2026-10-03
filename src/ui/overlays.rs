@@ -1216,6 +1216,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     render_help(f, app, size);
 }
 
+const CUSTOM_COMMANDS_CATEGORY: &str = "Custom Commands";
+
 pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     if !app.show_help {
         return;
@@ -1229,16 +1231,25 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         "Merge Requests"
     };
 
-    struct Shortcut {
+    struct Shortcut<'a> {
         category: &'static str,
         key: std::borrow::Cow<'static, str>,
-        action: &'static str,
+        action: &'a str,
     }
 
     let s = |k: &'static str| std::borrow::Cow::Borrowed(k);
     let d = |k: String| std::borrow::Cow::Owned(k);
 
-    let shortcuts: Vec<Shortcut> = vec![
+    let custom_commands: Vec<crate::custom_commands::CustomCommand> = if app.diff_view.is_some() {
+        app.custom_commands.in_diff().cloned().collect()
+    } else {
+        app.custom_commands
+            .reachable_on(app.active_tab)
+            .cloned()
+            .collect()
+    };
+
+    let mut shortcuts: Vec<Shortcut> = vec![
         // ── Global & Nav ──
         Shortcut {
             category: "Global & Nav",
@@ -1540,6 +1551,11 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             } else {
                 "Copy selected MR as Markdown link"
             },
+        },
+        Shortcut {
+            category: mr_label,
+            key: d(app.config.keybindings.mrs.jump_linked_issues.clone()),
+            action: "Jump to linked Issues",
         },
         Shortcut {
             category: mr_label,
@@ -2048,9 +2064,18 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             action: "Show this help modal",
         },
     ];
+    // The few user-defined commands go first, above the long built-in lists.
+    shortcuts.splice(
+        0..0,
+        custom_commands.iter().map(|command| Shortcut {
+            category: CUSTOM_COMMANDS_CATEGORY,
+            key: d(command.key.clone()),
+            action: command.label(),
+        }),
+    );
 
     let active_categories: &[&str] = if app.diff_view.is_some() {
-        &["Diff View"]
+        &["Diff View", CUSTOM_COMMANDS_CATEGORY]
     } else if app.edit_menu.is_some() {
         &["Global & Nav", "Inspector / Editor"]
     } else if app.focus_column_checklist {
@@ -2061,23 +2086,23 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         &["Global & Nav", "Selector / Filter"]
     } else {
         match app.active_tab {
-            Tab::Issues => &["Global & Nav", "Issues"],
+            Tab::Issues => &["Global & Nav", "Issues", CUSTOM_COMMANDS_CATEGORY],
             Tab::MergeRequests => {
                 if is_github {
-                    &["Global & Nav", "Pull Requests"]
+                    &["Global & Nav", "Pull Requests", CUSTOM_COMMANDS_CATEGORY]
                 } else {
-                    &["Global & Nav", "Merge Requests"]
+                    &["Global & Nav", "Merge Requests", CUSTOM_COMMANDS_CATEGORY]
                 }
             }
-            Tab::Pipelines => &["Global & Nav", "Pipelines"],
-            Tab::Jobs => &["Global & Nav", "Jobs"],
-            Tab::Milestones => &["Global & Nav", "Milestones"],
-            Tab::Runners => &["Global & Nav", "Runners"],
-            Tab::Releases => &["Global & Nav", "Releases"],
-            Tab::Todos => &["Global & Nav", "TODOs"],
-            Tab::Branches => &["Global & Nav", "Branches"],
-            Tab::Environments => &["Global & Nav", "Environments"],
-            Tab::Terminal => &["Global & Nav", "Terminal"],
+            Tab::Pipelines => &["Global & Nav", "Pipelines", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Jobs => &["Global & Nav", "Jobs", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Milestones => &["Global & Nav", "Milestones", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Runners => &["Global & Nav", "Runners", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Releases => &["Global & Nav", "Releases", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Todos => &["Global & Nav", "TODOs", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Branches => &["Global & Nav", "Branches", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Environments => &["Global & Nav", "Environments", CUSTOM_COMMANDS_CATEGORY],
+            Tab::Terminal => &["Global & Nav", "Terminal", CUSTOM_COMMANDS_CATEGORY],
         }
     };
 
@@ -2152,95 +2177,77 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         .block(search_block)
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    let rows: Vec<Row> =
-        if app.help_search_query.is_empty() {
-            let mut result_rows = Vec::new();
-            let mut last_category = "";
-            for s in &filtered_shortcuts {
-                if s.category != last_category {
-                    if !last_category.is_empty() {
-                        result_rows.push(Row::new(vec![
-                            Cell::from(""),
-                            Cell::from(""),
-                            Cell::from(""),
-                        ])); // spacer
-                    }
-                    let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
-                    result_rows.push(
-                        Row::new(vec![
-                            Cell::from(Span::styled(
-                                s.category,
-                                Style::default()
-                                    .fg(THEME.read().unwrap().purple)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
-                            Cell::from(Span::styled(
-                                s.key.clone(),
-                                Style::default()
-                                    .fg(THEME.read().unwrap().text_normal)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
-                            Cell::from(action_text.patch_style(
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            )),
-                        ])
-                        .height(action_lines),
-                    );
-                    last_category = s.category;
-                } else {
-                    let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
-                    result_rows.push(
-                        Row::new(vec![
-                            Cell::from(""),
-                            Cell::from(Span::styled(
-                                s.key.clone(),
-                                Style::default()
-                                    .fg(THEME.read().unwrap().text_normal)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
-                            Cell::from(action_text.patch_style(
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            )),
-                        ])
-                        .height(action_lines),
-                    );
-                }
-            }
-            result_rows
+    let query = app.help_search_query.to_lowercase();
+    let is_grouped = query.is_empty();
+    let listed: Vec<&Shortcut> = if is_grouped {
+        filtered_shortcuts
+    } else {
+        shortcuts
+            .iter()
+            .filter(|s| {
+                s.category.to_lowercase().contains(&query)
+                    || s.key.to_lowercase().contains(&query)
+                    || s.action.to_lowercase().contains(&query)
+            })
+            .collect()
+    };
+
+    let theme = THEME.read().unwrap();
+    let mut rows: Vec<Row> = Vec::new();
+    // Table row of each listed shortcut; spacer rows between categories are
+    // never selectable.
+    let mut shortcut_rows: Vec<usize> = Vec::with_capacity(listed.len());
+    let mut last_category = "";
+    for s in &listed {
+        let starts_category = s.category != last_category;
+        if is_grouped && starts_category && !last_category.is_empty() {
+            rows.push(Row::new(vec![
+                Cell::from(""),
+                Cell::from(""),
+                Cell::from(""),
+            ]));
+        }
+        let category = if !is_grouped || starts_category {
+            s.category
         } else {
-            let query = app.help_search_query.to_lowercase();
-            shortcuts
-                .iter()
-                .filter(|s| {
-                    s.category.to_lowercase().contains(&query)
-                        || s.key.to_lowercase().contains(&query)
-                        || s.action.to_lowercase().contains(&query)
-                })
-                .map(|s| {
-                    let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
-                    Row::new(vec![
-                        Cell::from(Span::styled(
-                            s.category,
-                            Style::default()
-                                .fg(THEME.read().unwrap().purple)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(Span::styled(
-                            s.key.clone(),
-                            Style::default()
-                                .fg(THEME.read().unwrap().text_normal)
-                                .add_modifier(Modifier::BOLD),
-                        )),
-                        Cell::from(
-                            action_text.patch_style(
-                                Style::default().fg(THEME.read().unwrap().text_normal),
-                            ),
-                        ),
-                    ])
-                    .height(action_lines)
-                })
-                .collect()
+            ""
         };
+        let (action_text, action_lines) = wrap_cell_text(s.action, action_width);
+        shortcut_rows.push(rows.len());
+        rows.push(
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    category,
+                    Style::default()
+                        .fg(theme.purple)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Cell::from(Span::styled(
+                    s.key.clone(),
+                    Style::default()
+                        .fg(theme.text_normal)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Cell::from(action_text.patch_style(Style::default().fg(theme.text_normal))),
+            ])
+            .height(action_lines),
+        );
+        last_category = s.category;
+    }
+
+    let shortcut_count = shortcut_rows.len();
+    app.help_selected = app.help_selected.min(shortcut_count.saturating_sub(1));
+    app.help_table_state
+        .select(shortcut_rows.get(app.help_selected).copied());
+    let position = if shortcut_count == 0 {
+        " 0/0 ".to_string()
+    } else {
+        format!(
+            " {}/{shortcut_count} · ↑↓ PgUp/PgDn ",
+            app.help_selected + 1
+        )
+    };
+    let block = block.title_bottom(Line::from(position).right_aligned());
 
     let widths = [
         Constraint::Length(20),
@@ -2249,7 +2256,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
     ];
 
     let header_style = Style::default()
-        .fg(THEME.read().unwrap().header_fg)
+        .fg(theme.header_fg)
         .add_modifier(Modifier::BOLD);
     let table = Table::new(rows, widths)
         .header(
@@ -2261,12 +2268,23 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             .height(1),
         )
         .block(block)
-        .row_highlight_style(Style::default())
+        .row_highlight_style(Style::default().bg(theme.highlight_bg))
         .column_spacing(2);
+    drop(theme);
 
     clear_area(f, area);
     f.render_widget(search_p, help_chunks[0]);
-    f.render_widget(table, help_chunks[1]);
+    f.render_stateful_widget(table, help_chunks[1], &mut app.help_table_state);
+    let mut scrollbar_state =
+        ratatui::widgets::ScrollbarState::new(shortcut_count).position(app.help_selected);
+    f.render_stateful_widget(
+        ratatui::widgets::Scrollbar::new(ratatui::widgets::ScrollbarOrientation::VerticalRight),
+        help_chunks[1].inner(ratatui::layout::Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut scrollbar_state,
+    );
 }
 
 /// Wrap a string into `width`-character lines at word boundaries,
@@ -2358,6 +2376,82 @@ mod tests {
         assert!(text.contains("Open selected PR in browser"));
         assert!(text.contains("View related Actions for selected PR"));
         assert!(text.contains("Create new Pull Request"));
+    }
+
+    #[test]
+    fn render_help_lists_custom_commands_only_on_their_tab() {
+        let backend = TestBackend::new(160, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.config.custom_keybindings = toml::from_str(
+            r#"
+[[mrs]]
+key = "w"
+name = "worktree + devbox shell"
+command = "true"
+"#,
+        )
+        .unwrap();
+        app.custom_commands = crate::custom_commands::CustomCommands::load(&app.config).0;
+        app.show_help = true;
+
+        app.active_tab = Tab::MergeRequests;
+        terminal
+            .draw(|f| render_help(f, &mut app, f.area()))
+            .unwrap();
+        let on_mrs = buffer_text(&terminal);
+        assert!(on_mrs.contains("Custom Commands"), "{on_mrs:?}");
+        assert!(on_mrs.contains("worktree + devbox shell"), "{on_mrs:?}");
+
+        app.active_tab = Tab::Issues;
+        terminal
+            .draw(|f| render_help(f, &mut app, f.area()))
+            .unwrap();
+        let on_issues = buffer_text(&terminal);
+        assert!(
+            !on_issues.contains("worktree + devbox shell"),
+            "{on_issues:?}"
+        );
+    }
+
+    #[test]
+    fn help_list_scrolls_to_entries_below_the_visible_area() {
+        let backend = TestBackend::new(160, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.show_help = true;
+        app.active_tab = Tab::Issues;
+
+        terminal
+            .draw(|f| render_help(f, &mut app, f.area()))
+            .unwrap();
+        let top = buffer_text(&terminal);
+        assert!(top.contains("Next tab"), "{top:?}");
+        let listed = top
+            .split(" 1/")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|count| count.parse::<usize>().ok())
+            .expect("position counter 1/N");
+
+        app.help_selected = usize::MAX;
+        terminal
+            .draw(|f| render_help(f, &mut app, f.area()))
+            .unwrap();
+        let bottom = buffer_text(&terminal);
+        assert_eq!(
+            app.help_selected,
+            listed - 1,
+            "End clamps to the last entry"
+        );
+        assert!(
+            bottom.contains(&format!(" {listed}/{listed} ")),
+            "{bottom:?}"
+        );
+        assert!(
+            !bottom.contains("Next tab"),
+            "the list scrolled past the first entries"
+        );
     }
 
     #[test]

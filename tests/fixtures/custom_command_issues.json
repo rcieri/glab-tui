@@ -1,0 +1,6 @@
+[
+  {"iid": 7, "title": "Worktree for seven", "state": "opened", "updated_at": "2026-07-06T12:00:00Z",
+   "author": {"username": "test-user"}, "labels": [], "assignees": [], "web_url": ""},
+  {"iid": 8, "title": "Worktree for eight", "state": "opened", "updated_at": "2026-07-05T12:00:00Z",
+   "author": {"username": "test-user"}, "labels": [], "assignees": [], "web_url": ""}
+]

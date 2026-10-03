@@ -4,7 +4,7 @@ use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
 use crate::keybinding::keybinding_matches;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
@@ -576,7 +576,25 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyEvent) -> bool {
 
     app.show_help = true;
     app.help_search_query.clear();
+    reset_help_selection(app);
     true
+}
+
+/// Rows a PageUp/PageDown in the help list moves by.
+const HELP_PAGE_ROWS: usize = 10;
+
+fn reset_help_selection(app: &mut App) {
+    app.help_selected = 0;
+    app.help_table_state = ratatui::widgets::TableState::default();
+}
+
+/// Moves the help selection; the renderer clamps it to the listed entries.
+pub fn move_help_selection(app: &mut App, down: bool, rows: usize) {
+    app.help_selected = if down {
+        app.help_selected.saturating_add(rows)
+    } else {
+        app.help_selected.saturating_sub(rows)
+    };
 }
 
 pub fn handle_help_overlay(app: &mut App, key_event: &KeyEvent) -> bool {
@@ -586,11 +604,25 @@ pub fn handle_help_overlay(app: &mut App, key_event: &KeyEvent) -> bool {
                 app.show_help = false;
                 app.help_search_query.clear();
             }
+            KeyCode::Down => move_help_selection(app, true, 1),
+            KeyCode::Up => move_help_selection(app, false, 1),
+            KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                move_help_selection(app, true, 1)
+            }
+            KeyCode::Char('p') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                move_help_selection(app, false, 1)
+            }
+            KeyCode::PageDown => move_help_selection(app, true, HELP_PAGE_ROWS),
+            KeyCode::PageUp => move_help_selection(app, false, HELP_PAGE_ROWS),
+            KeyCode::Home => app.help_selected = 0,
+            KeyCode::End => app.help_selected = usize::MAX,
             KeyCode::Backspace => {
                 app.help_search_query.pop();
+                reset_help_selection(app);
             }
             KeyCode::Char(c) => {
                 app.help_search_query.push(c);
+                reset_help_selection(app);
             }
             _ => {}
         }
@@ -913,6 +945,24 @@ mod tests {
     use super::{handle_help_keybinding, handle_help_overlay, handle_review_threads};
     use crate::app::{App, DiffView, EditEntityKind, EditMenu, Selector};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn help_arrows_move_the_selection_and_typing_filters_from_the_top() {
+        use crossterm::event::KeyModifiers;
+        let mut app = App::default();
+        app.show_help = true;
+        let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        handle_help_overlay(&mut app, &press(KeyCode::Down));
+        handle_help_overlay(&mut app, &press(KeyCode::Down));
+        handle_help_overlay(&mut app, &press(KeyCode::PageDown));
+        handle_help_overlay(&mut app, &press(KeyCode::Up));
+        assert_eq!(app.help_selected, 11);
+
+        handle_help_overlay(&mut app, &press(KeyCode::Char('j')));
+        assert_eq!(app.help_search_query, "j", "letters still filter");
+        assert_eq!(app.help_selected, 0, "a new filter starts from the top");
+    }
 
     #[test]
     fn help_search_consumes_q_instead_of_closing_or_quitting() {

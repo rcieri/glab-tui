@@ -14,16 +14,12 @@ pub fn branch_fields(
 
 use crate::AppTerminal;
 use crate::app::App;
-use crate::config::THEME;
 use crate::domain::issues::Issue;
 use crate::editor::edit_in_editor;
 use crate::event::Event;
-use crate::utils::markdown::render_markdown;
 use crossterm::event::KeyCode;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
 
 fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
     if entity_type.contains("issue") {
@@ -412,7 +408,7 @@ pub fn build_mr_document(
         },
     ));
     fields.push(crate::app::Field::read_only(
-        "Closes issues",
+        "Closes Issues",
         format_linked_issues_value(mr.related_issues.as_ref(), fetching_linked_issues),
     ));
     fields.push(crate::app::Field::read_only(
@@ -565,133 +561,6 @@ pub fn build_job_document(
     }
 }
 
-/// Width used to pre-render the milestone description markdown into `Line`s.
-/// The Paragraph widget re-wraps these lines based on the actual content area
-/// width at render time, so this is a generous upper bound that keeps
-/// short descriptions as one visual line per source line and only splits when
-/// the description itself is wide.
-const MILESTONE_PREVIEW_WIDTH: u16 = 120;
-
-/// Build the `Line` list for the milestone preview content pane: rendered
-/// markdown description (if any) followed by a "Related Issues" header and one
-/// styled row per issue. Mirrors the bulk-edit descriptor layout — purple bold
-/// `#iid` token, plain title — but adds a colored state badge per row so the
-/// progress at a glance matches the Progress column on the left side of the
-/// preview.
-fn milestone_preview_content_lines(
-    description: Option<&str>,
-    issues: Option<&[Issue]>,
-) -> Vec<Line<'static>> {
-    let theme = THEME.read().unwrap();
-    let mut lines: Vec<Line<'static>> = if let Some(desc) = description.filter(|d| !d.is_empty()) {
-        render_markdown(desc, &theme, MILESTONE_PREVIEW_WIDTH)
-    } else {
-        Vec::new()
-    };
-
-    if !lines.is_empty() {
-        lines.push(Line::from(""));
-    }
-
-    lines.push(Line::from(vec![Span::styled(
-        "Related Issues",
-        Style::default()
-            .fg(theme.header_fg)
-            .add_modifier(Modifier::BOLD),
-    )]));
-
-    match issues {
-        Some(iss) if !iss.is_empty() => {
-            lines.push(Line::from(""));
-            lines.extend(milestone_related_issue_lines(iss, &theme));
-        }
-        Some(_) => {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "No issues in this milestone.",
-                Style::default().fg(theme.text_muted),
-            )));
-        }
-        None => {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "(loading issues…)",
-                Style::default().fg(theme.text_muted),
-            )));
-        }
-    }
-
-    lines
-}
-
-/// One styled line per related issue: `[STATE] #iid Title`. The state badge
-/// uses the same semantic colors as the Progress column so a glance matches.
-fn milestone_related_issue_lines(
-    issues: &[Issue],
-    theme: &crate::config::Theme,
-) -> Vec<Line<'static>> {
-    issues
-        .iter()
-        .map(|i| {
-            let (badge_text, badge_style) =
-                if i.state.eq_ignore_ascii_case("opened") || i.state.eq_ignore_ascii_case("open") {
-                    (
-                        "OPEN",
-                        Style::default()
-                            .fg(theme.green)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else if i.state.eq_ignore_ascii_case("closed")
-                    || i.state.eq_ignore_ascii_case("close")
-                {
-                    (
-                        "CLOSED",
-                        Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    (i.state.as_str(), Style::default().fg(theme.text_normal))
-                };
-            Line::from(vec![
-                Span::styled(format!("[{badge_text}] "), badge_style),
-                Span::styled(
-                    format!("#{} ", i.iid),
-                    Style::default()
-                        .fg(theme.purple)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    strip_leading_issue_marker(&i.title),
-                    Style::default().fg(theme.text_normal),
-                ),
-            ])
-        })
-        .collect()
-}
-
-/// Issue titles sometimes already include a leading `#NN ` prefix from the
-/// API projection; strip it so the row doesn't read `#12 #12 Fix thing`.
-fn strip_leading_issue_marker(title: &str) -> String {
-    let trimmed = title.trim_start();
-    let bytes = trimmed.as_bytes();
-    if bytes.first() == Some(&b'#')
-        && bytes
-            .iter()
-            .skip(1)
-            .take_while(|b| b.is_ascii_digit())
-            .any(|_| true)
-    {
-        let digits_end = bytes
-            .iter()
-            .skip(1)
-            .take_while(|b| b.is_ascii_digit())
-            .count()
-            + 1;
-        trimmed[digits_end..].trim_start().to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 pub fn build_milestone_document(
     milestone: &crate::domain::milestones::Milestone,
     issues: Option<&[crate::domain::issues::Issue]>,
@@ -763,10 +632,10 @@ pub fn build_milestone_document(
         ));
     }
 
-    let content = crate::app::InspectorContent::Custom(milestone_preview_content_lines(
-        milestone.description.as_deref(),
-        issues,
-    ));
+    let content = crate::app::InspectorContent::MilestoneRelated {
+        description: milestone.description.clone().unwrap_or_default(),
+        issues: issues.map(<[Issue]>::to_vec),
+    };
 
     crate::app::EntityDocument {
         title: format!("Milestone %{}", milestone.iid),
@@ -2256,15 +2125,18 @@ mod tests {
         let progress_field = doc.fields.iter().find(|f| f.label == "Progress").unwrap();
         assert_eq!(progress_field.value, "[██████░░░░] 60% (3/5 closed)");
         assert!(doc.fields.iter().all(|f| f.label != "Issues"));
-        if let crate::app::InspectorContent::Custom(lines) = &doc.content {
-            assert!(
-                lines
-                    .iter()
-                    .any(|l| line_to_plain(l) == "(loading issues…)"),
-                "progress-only preview should advertise the in-flight fetch"
-            );
-        } else {
-            panic!("Expected Custom content");
+        // The doc carries the raw pieces; the actual markdown rendering +
+        // Related Issues block composition happens in the inspector
+        // renderer (see render_inspector_content, InspectorContent::MilestoneRelated).
+        match &doc.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "Release 1.0");
+                assert!(issues.is_none(), "no issues supplied for this case");
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
         }
 
         // Case 2: with issues list
@@ -2314,30 +2186,19 @@ mod tests {
             .unwrap();
         assert_eq!(progress_issues_field.value, "[█████░░░░░] 50% (1/2 closed)");
         assert!(doc_issues.fields.iter().all(|f| f.label != "Issues"));
-        if let crate::app::InspectorContent::Custom(lines) = &doc_issues.content {
-            let plain: Vec<String> = lines.iter().map(line_to_plain).collect();
-            assert!(
-                plain.iter().any(|p| p.contains("Related Issues")),
-                "expected a Related Issues header in preview content: {plain:?}"
-            );
-            let closed_row = plain
-                .iter()
-                .find(|p| p.contains("[CLOSED]"))
-                .expect("closed badge row");
-            assert!(closed_row.contains("#1"), "iid missing: {closed_row}");
-            assert!(
-                closed_row.contains("Issue 1"),
-                "title missing: {closed_row}"
-            );
-            let open_row = plain
-                .iter()
-                .find(|p| p.contains("[OPEN]"))
-                .expect("open badge row");
-            assert!(open_row.contains("#2"), "iid missing: {open_row}");
-            assert!(open_row.contains("Issue 2"), "title missing: {open_row}");
-            assert!(plain.iter().any(|p| p.contains("Release 1.0")));
-        } else {
-            panic!("Expected Custom content");
+        match &doc_issues.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "Release 1.0");
+                let issues = issues.as_ref().expect("issues should be present");
+                assert_eq!(issues.len(), 2);
+                let iids: Vec<u64> = issues.iter().map(|i| i.iid).collect();
+                assert!(iids.contains(&1));
+                assert!(iids.contains(&2));
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
         }
 
         // Case 3: without progress and without issues
@@ -2349,20 +2210,20 @@ mod tests {
             .unwrap();
         assert_eq!(progress_none_field.value, "[░░░░░░░░░░] 0% (Loading...)");
         assert!(doc_none.fields.iter().all(|f| f.label != "Issues"));
-        if let crate::app::InspectorContent::Custom(lines) = &doc_none.content {
-            assert!(
-                lines
-                    .iter()
-                    .any(|l| line_to_plain(l) == "(loading issues…)"),
-                "no-data preview should advertise the loading state"
-            );
-        } else {
-            panic!("Expected Custom content");
+        match &doc_none.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "Release 1.0");
+                assert!(issues.is_none(), "issues not fetched yet");
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
         }
     }
 
     #[test]
-    fn test_build_milestone_document_strips_leading_issue_marker() {
+    fn test_build_milestone_document_uses_milestone_related_content() {
         let milestone = crate::domain::milestones::Milestone {
             id: 1,
             iid: 5,
@@ -2394,24 +2255,23 @@ mod tests {
             related_mrs: None,
         };
         let doc = build_milestone_document(&milestone, Some(&[issue]), None, false);
-        if let crate::app::InspectorContent::Custom(lines) = &doc.content {
-            let plain: Vec<String> = lines.iter().map(line_to_plain).collect();
-            assert!(
-                plain.iter().any(|p| p.contains("[OPEN]")
-                    && p.contains("#12")
-                    && p.contains("Fix login flow")),
-                "row should show #12 once plus the title: {plain:?}"
-            );
-            assert!(
-                !plain.iter().any(|p| p.contains("#12 #12")),
-                "row should not double-print the iid: {plain:?}"
-            );
-        } else {
-            panic!("Expected Custom content");
+        // The build step hands the description and issues off to the
+        // renderer; the renderer is responsible for stripping the
+        // `#NN` marker and styling each row. Verify the data wires
+        // through correctly.
+        match &doc.content {
+            crate::app::InspectorContent::MilestoneRelated {
+                description,
+                issues,
+            } => {
+                assert_eq!(description, "desc");
+                let issues = issues.as_ref().unwrap();
+                assert_eq!(issues.len(), 1);
+                assert_eq!(issues[0].iid, 12);
+                // Marker still present at the build layer; renderer strips it.
+                assert!(issues[0].title.starts_with("#12"));
+            }
+            other => panic!("Expected MilestoneRelated content, got {other:?}"),
         }
-    }
-
-    fn line_to_plain(l: &Line<'_>) -> String {
-        l.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 }

@@ -350,15 +350,12 @@ impl Tab {
                 if is_group {
                     cols.push("Project");
                 }
-                cols.extend([
-                    "ID",
-                    "State",
-                    "Title",
-                    "Assignees",
-                    "Labels",
-                    "Milestone",
-                    "Related MRs",
-                ]);
+                cols.extend(["ID", "State", "Title", "Assignees", "Labels", "Milestone"]);
+                if kind.is_github() {
+                    cols.push("PRs");
+                } else {
+                    cols.push("MRs");
+                }
                 if !kind.is_github() {
                     cols.push("Due Date");
                 }
@@ -388,7 +385,7 @@ impl Tab {
                     cols.push("Pipeline");
                 }
                 cols.push("Milestone");
-                cols.push("Linked Issues");
+                cols.push("Closes");
                 cols.push("Author");
                 cols
             }
@@ -4465,6 +4462,15 @@ impl App {
             }
         }
         if let Some(set) = self.enabled_columns.get(&tab) {
+            if tab == Tab::Issues && matches!(col, "PRs" | "MRs" | "Related PRs" | "Related MRs") {
+                return set.contains("PRs")
+                    || set.contains("MRs")
+                    || set.contains("Related PRs")
+                    || set.contains("Related MRs");
+            }
+            if tab == Tab::MergeRequests && matches!(col, "Closes" | "Linked Issues") {
+                return set.contains("Closes") || set.contains("Linked Issues");
+            }
             set.contains(col)
         } else {
             true
@@ -4818,6 +4824,14 @@ impl App {
                         .unwrap_or_default(),
                     "ID" => a.iid.to_string(),
                     "Title" => a.title.clone(),
+                    "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &a.related_mrs {
+                        Some(crate::domain::issues::RelatedMrsState::Items(items))
+                            if !items.is_empty() =>
+                        {
+                            format!("{:05}", items.first().map(|r| r.iid).unwrap_or(0))
+                        }
+                        _ => String::new(),
+                    },
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -4837,6 +4851,14 @@ impl App {
                         .unwrap_or_default(),
                     "ID" => b.iid.to_string(),
                     "Title" => b.title.clone(),
+                    "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &b.related_mrs {
+                        Some(crate::domain::issues::RelatedMrsState::Items(items))
+                            if !items.is_empty() =>
+                        {
+                            format!("{:05}", items.first().map(|r| r.iid).unwrap_or(0))
+                        }
+                        _ => String::new(),
+                    },
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -4879,6 +4901,25 @@ impl App {
                 .as_ref()
                 .map(|d| vec![d.clone()])
                 .unwrap_or_default(),
+            "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &item.related_mrs {
+                Some(crate::domain::issues::RelatedMrsState::Items(items)) if !items.is_empty() => {
+                    let mut vals = vec![
+                        "Has PR".to_string(),
+                        "Has MR".to_string(),
+                        "Has PR/MR".to_string(),
+                    ];
+                    vals.extend(items.iter().map(|r| format!("#{}", r.iid)));
+                    vals.extend(items.iter().map(|r| format!("!{}", r.iid)));
+                    vals
+                }
+                _ => vec![
+                    "No PR".to_string(),
+                    "No MR".to_string(),
+                    "No PR/MR".to_string(),
+                    "--".to_string(),
+                    "—".to_string(),
+                ],
+            },
             _ => vec![],
         }
     }
@@ -5046,6 +5087,12 @@ impl App {
                 crate::domain::mr_state::mergeable_sort_key(m.mergeability.as_ref()).to_string()
             }
             "Workflow" => crate::domain::mr_state::workflow_sort_key(m.workflow).to_string(),
+            "Closes" | "Linked Issues" => match &m.related_issues {
+                Some(crate::domain::mr::RelatedIssuesState::Items(items)) if !items.is_empty() => {
+                    format!("{:05}", items.first().map(|r| r.iid).unwrap_or(0))
+                }
+                _ => String::new(),
+            },
             _ => String::new(),
         }
     }
@@ -5119,6 +5166,14 @@ impl App {
             "Workflow" => crate::domain::mr_state::workflow_cell_word(m.workflow)
                 .map(|w| vec![w.to_string()])
                 .unwrap_or_default(),
+            "Closes" | "Linked Issues" => match &m.related_issues {
+                Some(crate::domain::mr::RelatedIssuesState::Items(items)) if !items.is_empty() => {
+                    let mut vals = vec!["Closes Issues".to_string(), "Has Issues".to_string()];
+                    vals.extend(items.iter().map(|r| format!("#{}", r.iid)));
+                    vals
+                }
+                _ => vec!["No Issues".to_string(), "--".to_string(), "—".to_string()],
+            },
             _ => vec![],
         }
     }
@@ -6268,8 +6323,20 @@ impl App {
         let mut values: BTreeSet<String> = BTreeSet::new();
         match tab {
             Tab::Issues => {
+                let is_gh = self.is_github();
                 for item in &self.issues.items {
                     for v in Self::issue_filter_values(item, col) {
+                        if matches!(col, "PRs" | "MRs" | "Related PRs" | "Related MRs") {
+                            if is_gh && (v == "Has MR" || v == "No MR" || v.starts_with('!')) {
+                                continue;
+                            }
+                            if !is_gh && (v == "Has PR" || v == "No PR") {
+                                continue;
+                            }
+                            if v == "Has PR/MR" || v == "No PR/MR" || v == "—" {
+                                continue;
+                            }
+                        }
                         values.insert(v);
                     }
                 }
@@ -6277,6 +6344,11 @@ impl App {
             Tab::MergeRequests => {
                 for item in &self.mrs.items {
                     for v in Self::mr_filter_values(item, col) {
+                        if matches!(col, "Closes" | "Linked Issues") {
+                            if v == "Has Issues" || v == "—" {
+                                continue;
+                            }
+                        }
                         values.insert(v);
                     }
                 }
@@ -6393,6 +6465,24 @@ impl App {
                             let c = i.title.chars().next().unwrap_or('?');
                             c.to_uppercase().to_string()
                         }
+                        "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &i.related_mrs {
+                            Some(crate::domain::issues::RelatedMrsState::Items(items))
+                                if !items.is_empty() =>
+                            {
+                                if col == "PRs" || col == "Related PRs" {
+                                    "Has PR".to_string()
+                                } else {
+                                    "Has MR".to_string()
+                                }
+                            }
+                            _ => {
+                                if col == "PRs" || col == "Related PRs" {
+                                    "No PR".to_string()
+                                } else {
+                                    "No MR".to_string()
+                                }
+                            }
+                        },
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -6453,6 +6543,14 @@ impl App {
                             let c = m.title.chars().next().unwrap_or('?');
                             c.to_uppercase().to_string()
                         }
+                        "Closes" | "Linked Issues" => match &m.related_issues {
+                            Some(crate::domain::mr::RelatedIssuesState::Items(items))
+                                if !items.is_empty() =>
+                            {
+                                "Closes Issues".to_string()
+                            }
+                            _ => "No Issues".to_string(),
+                        },
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -10498,5 +10596,187 @@ index 123456..789012 100644
         let filtered = app.available_tabs();
         assert_eq!(filtered.len(), all_count - 1);
         assert!(!filtered.contains(&Tab::Pipelines));
+    }
+
+    #[test]
+    fn test_is_column_visible_linked_column_aliases() {
+        let mut app = App::default();
+        let mut issues_set = std::collections::HashSet::new();
+        issues_set.insert("Related MRs".to_string());
+        app.enabled_columns.insert(Tab::Issues, issues_set);
+
+        assert!(app.is_column_visible(Tab::Issues, "PRs"));
+        assert!(app.is_column_visible(Tab::Issues, "MRs"));
+        assert!(app.is_column_visible(Tab::Issues, "Related PRs"));
+        assert!(app.is_column_visible(Tab::Issues, "Related MRs"));
+        assert!(!app.is_column_visible(Tab::Issues, "State"));
+
+        let mut mr_set = std::collections::HashSet::new();
+        mr_set.insert("Linked Issues".to_string());
+        app.enabled_columns.insert(Tab::MergeRequests, mr_set);
+
+        assert!(app.is_column_visible(Tab::MergeRequests, "Closes"));
+        assert!(app.is_column_visible(Tab::MergeRequests, "Linked Issues"));
+        assert!(!app.is_column_visible(Tab::MergeRequests, "State"));
+    }
+
+    #[test]
+    fn test_linked_issues_mrs_filter_and_grouping() {
+        use crate::domain::issues::{Author as IssueAuthor, Issue, RelatedMrRef, RelatedMrsState};
+        use crate::domain::mr::{
+            Author as MrAuthor, MergeRequest, RelatedIssueRef, RelatedIssuesState,
+        };
+
+        let mut app = App::default();
+        let issue_with_pr = Issue {
+            iid: 1,
+            title: "Issue 1".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            created_at: None,
+            closed_at: None,
+            author: IssueAuthor {
+                username: "alice".into(),
+            },
+            project_path: "repo".into(),
+            web_url: String::new(),
+            description: None,
+            milestone: None,
+            assignees: vec![],
+            due_date: None,
+            related_mrs: Some(RelatedMrsState::Items(vec![RelatedMrRef {
+                iid: 101,
+                title: "PR 101".into(),
+                state: "opened".into(),
+                project_path: None,
+            }])),
+        };
+        let issue_without_pr = Issue {
+            iid: 2,
+            title: "Issue 2".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            created_at: None,
+            closed_at: None,
+            author: IssueAuthor {
+                username: "bob".into(),
+            },
+            project_path: "repo".into(),
+            web_url: String::new(),
+            description: None,
+            milestone: None,
+            assignees: vec![],
+            due_date: None,
+            related_mrs: None,
+        };
+
+        let values_with_pr = App::issue_filter_values(&issue_with_pr, "PRs");
+        assert!(values_with_pr.contains(&"Has PR".to_string()));
+        assert!(values_with_pr.contains(&"#101".to_string()));
+
+        let values_without_pr = App::issue_filter_values(&issue_without_pr, "PRs");
+        assert!(values_without_pr.contains(&"No PR".to_string()));
+
+        let mr_with_issues = MergeRequest {
+            iid: 101,
+            title: "MR 101".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            author: MrAuthor {
+                username: "charlie".into(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".into(),
+            source_branch: "feat".into(),
+            sha: None,
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+            project_path: "repo".into(),
+            web_url: None,
+            related_issues: Some(RelatedIssuesState::Items(vec![RelatedIssueRef {
+                iid: 1,
+                title: "Issue 1".into(),
+                state: "opened".into(),
+                project_path: None,
+            }])),
+        };
+        let mr_without_issues = MergeRequest {
+            iid: 102,
+            title: "MR 102".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            author: MrAuthor {
+                username: "dave".into(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".into(),
+            source_branch: "feat2".into(),
+            sha: None,
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+            project_path: "repo".into(),
+            web_url: None,
+            related_issues: None,
+        };
+
+        let mr_values_with = App::mr_filter_values(&mr_with_issues, "Closes");
+        assert!(mr_values_with.contains(&"Closes Issues".to_string()));
+        assert!(mr_values_with.contains(&"#1".to_string()));
+
+        let mr_values_without = App::mr_filter_values(&mr_without_issues, "Closes");
+        assert!(mr_values_without.contains(&"No Issues".to_string()));
+
+        // Test grouping
+        app.issues.items = vec![issue_with_pr, issue_without_pr];
+        app.active_tab = Tab::Issues;
+        app.group_by_column
+            .insert(Tab::Issues, Some("PRs".to_string()));
+        app.rebuild_group_map();
+
+        let headers: Vec<String> = app
+            .group_items
+            .iter()
+            .filter_map(|g| match g {
+                GroupItem::Header(h) => Some(h.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(headers.iter().any(|h| h.contains("Has PR")));
+        assert!(headers.iter().any(|h| h.contains("No PR")));
+
+        app.mrs.items = vec![mr_with_issues, mr_without_issues];
+        app.active_tab = Tab::MergeRequests;
+        app.group_by_column
+            .insert(Tab::MergeRequests, Some("Closes".to_string()));
+        app.rebuild_group_map();
+
+        let mr_headers: Vec<String> = app
+            .group_items
+            .iter()
+            .filter_map(|g| match g {
+                GroupItem::Header(h) => Some(h.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(mr_headers.iter().any(|h| h.contains("Closes Issues")));
+        assert!(mr_headers.iter().any(|h| h.contains("No Issues")));
     }
 }

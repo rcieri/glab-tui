@@ -798,6 +798,7 @@ async fn main() -> Result<()> {
     // though the approval state it derives from was persisted and just
     // loaded above.
     crate::fetch::derive_workflow(&mut app.mrs.items);
+    crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
     app.runners.items = cache.runners;
     app.releases.items = cache.releases;
@@ -1296,6 +1297,7 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::Issues);
                     app.status_message = None;
                     app.issues.items = issues;
+                    crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_issue_select.take() {
                         if let Some(idx) = app.issues.items.iter().position(|i| i.iid == target_iid)
                         {
@@ -1314,6 +1316,7 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::MergeRequests);
                     app.status_message = None;
                     app.mrs.items = mrs;
+                    crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_mr_select.take() {
                         if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == target_iid) {
                             app.mrs.state.select(Some(idx));
@@ -1813,6 +1816,12 @@ async fn main() -> Result<()> {
                     };
                     if let Some(issue) = app.issues.items.iter_mut().find(|i| i.iid == issue_iid) {
                         issue.related_mrs = Some(new_state);
+                        crate::fetch::sync_linked_references(
+                            &mut app.issues.items,
+                            &mut app.mrs.items,
+                        );
+                        app.project_cache.issues = app.issues.items.clone();
+                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                     }
                 }
                 Event::MrRelatedIssuesFetched { mr_iid, result } => {
@@ -1829,6 +1838,12 @@ async fn main() -> Result<()> {
                     };
                     if let Some(mr) = app.mrs.items.iter_mut().find(|m| m.iid == mr_iid) {
                         mr.related_issues = Some(new_state);
+                        crate::fetch::sync_linked_references(
+                            &mut app.issues.items,
+                            &mut app.mrs.items,
+                        );
+                        app.project_cache.mrs = app.mrs.items.clone();
+                        crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                     }
                 }
                 Event::FetchFailed(tab, err_msg) => {
@@ -3350,6 +3365,10 @@ async fn main() -> Result<()> {
                                                 app.issues.items = cache.issues;
                                                 app.mrs.items = cache.mrs;
                                                 crate::fetch::derive_workflow(&mut app.mrs.items);
+                                                crate::fetch::sync_linked_references(
+                                                    &mut app.issues.items,
+                                                    &mut app.mrs.items,
+                                                );
                                                 app.pipelines.items = cache.pipelines;
                                                 app.runners.items = cache.runners;
                                                 app.releases.items = cache.releases;

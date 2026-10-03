@@ -205,19 +205,48 @@ pub(crate) fn render_tab_issues(
                     Alignment::Left,
                 ));
             }
-            if app.is_column_visible(Tab::Issues, "Related MRs") {
+            let show_related_mrs =
+                app.is_column_visible(Tab::Issues, if app.is_github() { "PRs" } else { "MRs" });
+            if show_related_mrs {
                 let related_str = match &i.related_mrs {
                     None if app.fetching_related_mrs.contains(&i.iid) => "…".to_string(),
-                    None => "—".to_string(),
-                    Some(crate::domain::issues::RelatedMrsState::Empty) => "—".to_string(),
+                    None => "--".to_string(),
+                    Some(crate::domain::issues::RelatedMrsState::Empty) => "--".to_string(),
                     Some(crate::domain::issues::RelatedMrsState::Failed(_)) => "!".to_string(),
                     Some(crate::domain::issues::RelatedMrsState::Items(items)) => {
                         let prefix = if app.is_github() { "#" } else { "!" };
-                        items
-                            .iter()
-                            .map(|r| format!("{}{}", prefix, r.iid))
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        if items.is_empty() {
+                            "--".to_string()
+                        } else {
+                            let mut parts = Vec::new();
+                            for r in items.iter().take(2) {
+                                let st = if !r.state.is_empty() {
+                                    r.state.as_str()
+                                } else {
+                                    app.mrs
+                                        .items
+                                        .iter()
+                                        .find(|m| m.iid == r.iid)
+                                        .map(|m| m.state.as_str())
+                                        .unwrap_or("")
+                                };
+                                let sym = match st {
+                                    "opened" | "open" => &icons.state_open,
+                                    "closed" | "close" => &icons.state_closed,
+                                    "merged" => &icons.state_merged,
+                                    _ => "",
+                                };
+                                if sym.is_empty() {
+                                    parts.push(format!("{}{}", prefix, r.iid));
+                                } else {
+                                    parts.push(format!("{}{} {}", prefix, r.iid, sym));
+                                }
+                            }
+                            if items.len() > 2 {
+                                parts.push(format!("+{}", items.len() - 2));
+                            }
+                            parts.join(", ")
+                        }
                     }
                 };
                 cells.push(super::helpers::render_fuzzy_cell(
@@ -303,12 +332,10 @@ pub(crate) fn render_tab_issues(
             header_cells.push(Cell::from("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
-        if app.is_column_visible(Tab::Issues, "Related MRs") {
-            header_cells.push(Cell::from(if app.is_github() {
-                "Related PRs"
-            } else {
-                "Related MRs"
-            }));
+        let show_related_mrs =
+            app.is_column_visible(Tab::Issues, if app.is_github() { "PRs" } else { "MRs" });
+        if show_related_mrs {
+            header_cells.push(Cell::from(if app.is_github() { "PRs" } else { "MRs" }));
             widths.push(col_w(content_area.width, 16));
         }
         if app.is_column_visible(Tab::Issues, "Due Date") {
@@ -866,17 +893,46 @@ pub(crate) fn render_tab_merge_requests(
                     Alignment::Left,
                 ));
             }
-            if app.is_column_visible(Tab::MergeRequests, "Linked Issues") {
+            let show_closes = app.is_column_visible(Tab::MergeRequests, "Closes");
+            if show_closes {
                 let linked_str = match &m.related_issues {
                     None if app.fetching_mr_related_issues.contains(&m.iid) => "…".to_string(),
-                    None => "—".to_string(),
-                    Some(crate::domain::mr::RelatedIssuesState::Empty) => "—".to_string(),
+                    None => "--".to_string(),
+                    Some(crate::domain::mr::RelatedIssuesState::Empty) => "--".to_string(),
                     Some(crate::domain::mr::RelatedIssuesState::Failed(_)) => "!".to_string(),
-                    Some(crate::domain::mr::RelatedIssuesState::Items(items)) => items
-                        .iter()
-                        .map(|r| format!("#{}", r.iid))
-                        .collect::<Vec<_>>()
-                        .join(", "),
+                    Some(crate::domain::mr::RelatedIssuesState::Items(items)) => {
+                        if items.is_empty() {
+                            "--".to_string()
+                        } else {
+                            let mut parts = Vec::new();
+                            for r in items.iter().take(2) {
+                                let st = if !r.state.is_empty() {
+                                    r.state.as_str()
+                                } else {
+                                    app.issues
+                                        .items
+                                        .iter()
+                                        .find(|i| i.iid == r.iid)
+                                        .map(|i| i.state.as_str())
+                                        .unwrap_or("")
+                                };
+                                let sym = match st {
+                                    "opened" | "open" => &icons.state_open,
+                                    "closed" | "close" => &icons.state_closed,
+                                    _ => "",
+                                };
+                                if sym.is_empty() {
+                                    parts.push(format!("#{}", r.iid));
+                                } else {
+                                    parts.push(format!("#{} {}", r.iid, sym));
+                                }
+                            }
+                            if items.len() > 2 {
+                                parts.push(format!("+{}", items.len() - 2));
+                            }
+                            parts.join(", ")
+                        }
+                    }
                 };
                 cells.push(super::helpers::render_fuzzy_cell(
                     &truncate(&linked_str, 16),
@@ -989,8 +1045,8 @@ pub(crate) fn render_tab_merge_requests(
             header_cells.push(Cell::from("Milestone"));
             widths.push(col_w(content_area.width, 18));
         }
-        if app.is_column_visible(Tab::MergeRequests, "Linked Issues") {
-            header_cells.push(Cell::from("Linked Issues"));
+        if app.is_column_visible(Tab::MergeRequests, "Closes") {
+            header_cells.push(Cell::from("Closes"));
             widths.push(col_w(content_area.width, 16));
         }
         if app.is_column_visible(Tab::MergeRequests, "Author") {

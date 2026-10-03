@@ -407,7 +407,7 @@ pub fn build_mr_document(
         },
     ));
     fields.push(crate::app::Field::read_only(
-        "Linked Issues",
+        "Closes issues",
         format_linked_issues_value(mr.related_issues.as_ref(), fetching_linked_issues),
     ));
     fields.push(crate::app::Field::read_only(
@@ -453,12 +453,20 @@ fn format_linked_issues_value(
                 items
                     .iter()
                     .map(|i| {
+                        let badge = match i.state.as_str() {
+                            "opened" | "open" => "OPEN",
+                            "closed" | "close" => "CLOSED",
+                            _ => "",
+                        };
                         let title = truncate_inline(&i.title, 20);
-                        if title.is_empty() {
-                            format!("#{}", i.iid)
-                        } else {
-                            format!("#{} ({})", i.iid, title)
+                        let mut s = format!("#{}", i.iid);
+                        if !badge.is_empty() {
+                            s.push_str(&format!(" [{badge}]"));
                         }
+                        if !title.is_empty() {
+                            s.push_str(&format!(" ({title})"));
+                        }
+                        s
                     })
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -1930,11 +1938,13 @@ mod tests {
                 iid: 12,
                 title: "fix closing flow".into(),
                 state: "merged".into(),
+                project_path: None,
             },
             RelatedMrRef {
                 iid: 14,
                 title: "wire up webhooks".into(),
                 state: "opened".into(),
+                project_path: None,
             },
         ]));
 

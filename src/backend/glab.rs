@@ -701,6 +701,7 @@ impl Backend for GlabBackend {
                 iid: m.iid,
                 title: m.title,
                 state: m.state,
+                project_path: Some(project.to_string()),
             })
             .collect())
     }
@@ -1302,6 +1303,7 @@ impl Backend for GlabBackend {
                 iid: i.iid,
                 title: i.title,
                 state: i.state,
+                project_path: Some(project.to_string()),
             })
             .collect())
     }
@@ -2990,6 +2992,7 @@ mod tests {
                 iid: m.iid,
                 title: m.title,
                 state: m.state,
+                project_path: None,
             })
             .collect();
         assert_eq!(
@@ -2998,12 +3001,14 @@ mod tests {
                 RelatedMrRef {
                     iid: 1471,
                     title: "wire up webhooks".into(),
-                    state: "opened".into()
+                    state: "opened".into(),
+                    project_path: None,
                 },
                 RelatedMrRef {
                     iid: 1502,
                     title: "fix closing flow".into(),
-                    state: "merged".into()
+                    state: "merged".into(),
+                    project_path: None,
                 },
             ]
         );
@@ -3019,6 +3024,7 @@ mod tests {
                 iid: m.iid,
                 title: m.title,
                 state: m.state,
+                project_path: None,
             })
             .collect();
         assert!(refs.is_empty());

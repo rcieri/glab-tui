@@ -344,6 +344,12 @@ impl GhBackend {
             .await
         {
             Ok(raw) => parse_pr_stacks_response(&raw),
+            // Stack info is a non-critical decoration: an empty map means
+            // "no PR in this batch is in a stack" — identical to the
+            // pre-stack behaviour. Matches the GitLab `list_mr_state`
+            // follow-up path in `fetch.rs:347` which also swallows errors
+            // for the same reason. The terminal-commands bar still records
+            // the failure (see `run_gh_command`), so it isn't truly silent.
             Err(_) => std::collections::HashMap::new(),
         }
     }

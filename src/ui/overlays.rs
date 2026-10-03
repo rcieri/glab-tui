@@ -1498,6 +1498,15 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: mr_label,
+            key: d(app.config.keybindings.mrs.view_stack.clone()),
+            action: if is_github {
+                "Browse the stack of the selected stacked PR"
+            } else {
+                "Browse the stack of the selected MR (GitHub-only)"
+            },
+        },
+        Shortcut {
+            category: mr_label,
             key: d(app.config.keybindings.mrs.close_entity.clone()),
             action: if is_github {
                 "Close selected PR"

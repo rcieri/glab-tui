@@ -810,6 +810,10 @@ pub struct KeybindingMrs {
     pub drill_into_scope: String,
     #[serde(default = "def_copy_reference")]
     pub copy_reference: String,
+    /// Open a selector listing the PRs in a stacked GitHub PR, then jump to
+    /// the chosen one. No-op when the selected MR has no `stack` summary.
+    #[serde(default = "def_view_stack")]
+    pub view_stack: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1015,6 +1019,7 @@ keybind_defaults! {
     def_toggle_draft = "s",
     def_view_diff = "D",
     def_view_related_pipelines = "P",
+    def_view_stack = "Y",
     def_jump_related_mrs = "M",
     def_trigger_pipeline = "p",
     def_select_pipeline = "Space",
@@ -1125,6 +1130,7 @@ impl Default for KeybindingMrs {
             select_all: def_select_all(),
             drill_into_scope: def_drill_into_scope(),
             copy_reference: def_copy_reference(),
+            view_stack: def_view_stack(),
         }
     }
 }
@@ -2073,6 +2079,13 @@ page_size = 250
     #[test]
     fn copy_mr_reference_defaults_to_y() {
         assert_eq!(Config::default().keybindings.mrs.copy_reference, "y");
+    }
+
+    #[test]
+    fn view_stack_defaults_to_y() {
+        // Reusing `Y` (capital) keeps `y` free for `copy_reference`. The
+        // mnemonic is `Y` → "stacK" or "stack list"; users can rebind.
+        assert_eq!(Config::default().keybindings.mrs.view_stack, "Y");
     }
 
     #[test]

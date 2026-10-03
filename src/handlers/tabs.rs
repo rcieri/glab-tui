@@ -777,6 +777,75 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         _ if keybinding_matches(
+                            &app.config.keybindings.mrs.view_stack,
+                            key_event,
+                        ) =>
+                        {
+                            // Open a selector over the MR's stack entries so
+                            // the user can pick one to jump into. GitHub-only;
+                            // - GitLab backends always report `stack = None`.
+                            if let Some(ref entries) = mr.stack_entries {
+                                if entries.is_empty() {
+                                    app.show_error(
+                                        "This PR has no stack entries to navigate.".to_string(),
+                                    );
+                                } else {
+                                    app.selector = Some(crate::app::Selector {
+                                        title: format!(
+                                            " Stack #{} — {} PRs ",
+                                            mr.stack.as_ref().map(|s| s.number).unwrap_or(0),
+                                            entries.len(),
+                                        ),
+                                        all_items: entries
+                                            .iter()
+                                            .map(|e| {
+                                                let current_marker = if e.number == mr.iid {
+                                                    " ◀ (current)"
+                                                } else {
+                                                    ""
+                                                };
+                                                let draft_str =
+                                                    if e.is_draft { " [draft]" } else { "" };
+                                                format!(
+                                                    "#{}. #{}: {} ({}){}{}",
+                                                    e.position,
+                                                    e.number,
+                                                    e.title,
+                                                    e.state.to_uppercase(),
+                                                    draft_str,
+                                                    current_marker,
+                                                )
+                                            })
+                                            .collect(),
+                                        selected_items: std::collections::HashSet::new(),
+                                        cursor_idx: entries
+                                            .iter()
+                                            .position(|e| e.number == mr.iid)
+                                            .unwrap_or(0),
+                                        search_query: String::new(),
+                                        is_filtering: false,
+                                        is_loading: false,
+                                        entity_iid: mr_iid,
+                                        entity_type: "mr".to_string(),
+                                        field_type: "stack_entries".to_string(),
+                                        multi_select: false,
+                                        state: {
+                                            let mut s = ListState::default();
+                                            s.select(Some(0));
+                                            s
+                                        },
+                                    });
+                                }
+                            } else if mr.stack.is_some() {
+                                app.show_error(
+                                    "Stack entries still loading — try again in a moment."
+                                        .to_string(),
+                                );
+                            } else {
+                                app.show_error("This PR is not part of a stack.".to_string());
+                            }
+                        }
+                        _ if keybinding_matches(
                             &app.config.keybindings.mrs.open_in_browser,
                             key_event,
                         ) =>

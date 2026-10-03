@@ -821,7 +821,28 @@ pub(crate) fn render_tab_merge_requests(
             }
             if app.is_column_visible(Tab::MergeRequests, "Stack") {
                 let stack_str = if let Some(ref s) = m.stack {
-                    format!("#{} {}/{}", s.number, s.position, s.size)
+                    let summary = format!("#{} {}/{}", s.number, s.position, s.size);
+                    // Tree-style prefix only when the user isn't already
+                    // grouping by Stack — the group banner already conveys
+                    // the chain order, so a glyph on every row would be
+                    // redundant noise.
+                    let grouped_by_stack = app
+                        .group_by_column
+                        .get(&Tab::MergeRequests)
+                        .and_then(|c| c.as_deref())
+                        == Some("Stack");
+                    if !grouped_by_stack {
+                        let glyph = if s.position == 1 {
+                            "┌ "
+                        } else if s.position >= s.size {
+                            "└ "
+                        } else {
+                            "│ "
+                        };
+                        format!("{glyph}{summary}")
+                    } else {
+                        summary
+                    }
                 } else {
                     "—".to_string()
                 };

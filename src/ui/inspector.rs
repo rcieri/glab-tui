@@ -828,11 +828,13 @@ pub(crate) fn build_field_list_items(
                                         Style::default().fg(theme.text_muted).bg(item_bg),
                                     ));
                                 }
-                                if let (Some(excl), Some(open), Some(close)) =
-                                    (item.find('!'), item.find('['), item.find(']'))
+                                if let (Some(open), Some(close)) = (item.find('['), item.find(']'))
                                     && close > open
                                 {
-                                    let iid = &item[excl + 1..open];
+                                    let before_bracket = &item[..open];
+                                    let num = before_bracket
+                                        .trim()
+                                        .trim_start_matches(|c| c == '!' || c == '#');
                                     let state = &item[open + 1..close];
                                     let title = &item[close + 1..];
                                     let (state_fg, state_bg, state_icon) =
@@ -867,7 +869,7 @@ pub(crate) fn build_field_list_items(
                                             _ => (theme.text_muted, item_bg, ""),
                                         };
                                     val_spans.push(Span::styled(
-                                        format!(" {} ", iid),
+                                        format!("!{} ", num),
                                         Style::default()
                                             .fg(theme.text_normal)
                                             .bg(item_bg)
@@ -894,10 +896,19 @@ pub(crate) fn build_field_list_items(
                                         Style::default().fg(theme.text_normal).bg(item_bg),
                                     ));
                                 } else {
-                                    val_spans.push(Span::styled(
-                                        format!(" {}", item),
-                                        Style::default().fg(theme.text_normal).bg(item_bg),
-                                    ));
+                                    let trimmed = item.trim();
+                                    let num = trimmed.trim_start_matches(|c| c == '!' || c == '#');
+                                    if num.chars().all(|c| c.is_ascii_digit()) && !num.is_empty() {
+                                        val_spans.push(Span::styled(
+                                            format!("!{}", num),
+                                            Style::default().fg(theme.text_normal).bg(item_bg),
+                                        ));
+                                    } else {
+                                        val_spans.push(Span::styled(
+                                            format!(" {}", item),
+                                            Style::default().fg(theme.text_normal).bg(item_bg),
+                                        ));
+                                    }
                                 }
                             }
                         } else {
@@ -1575,5 +1586,50 @@ mod tests {
         let label_colors = HashMap::new();
         let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true, true);
         assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_pull_requests_field_renders_with_exclamation_mark() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let doc = EntityDocument {
+            title: "Issue #513".to_string(),
+            fields: vec![Field::read_only(
+                "Pull Requests",
+                "!519 [OPEN] fix linked issues".to_string(),
+            )],
+            content: InspectorContent::Empty(""),
+        };
+        let label_colors = HashMap::new();
+
+        terminal
+            .draw(|f| {
+                render_entity_inspector(
+                    f,
+                    &doc,
+                    f.area(),
+                    InspectorMode::ReadOnly {
+                        scroll: 0,
+                        title_suffix: "",
+                    },
+                    &label_colors,
+                );
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area().width as usize;
+        let rendered = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            rendered.contains("!519"),
+            "Pull requests in issue preview must render with !: got '{rendered}'"
+        );
     }
 }

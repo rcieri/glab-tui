@@ -847,7 +847,7 @@ command = "true"
 key = "Ctrl+q"
 command = "true"
 [[universal]]
-key = "Alt+j"
+key = "Alt+k"
 command = "true"
 [[universal]]
 key = "Alt+r"
@@ -864,7 +864,7 @@ command = "true"
             reasons,
             vec![
                 "never runs: the built-in \"q\" (quit / close details) takes the key first",
-                "never runs: the built-in \"j\" (next row) takes the key first",
+                "never runs: the built-in \"k\" (previous row) takes the key first",
                 "does not run on the pipelines tab(s): the built-in \"r\" (retry) takes the key first",
             ]
         );

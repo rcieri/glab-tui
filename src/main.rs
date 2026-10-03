@@ -1278,6 +1278,21 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+                Event::ChildLevelFetched(parent_id, level) => {
+                    // Drop a reply that arrives after the user has already
+                    // moved to another level.
+                    if app.current_parent_id() == Some(parent_id) {
+                        let cursor = app.pipelines.state.selected();
+                        app.pipelines.items = level.children;
+                        app.pending_triggers = level.pending;
+                        let selected = if app.pipelines.items.is_empty() {
+                            None
+                        } else {
+                            Some(cursor.unwrap_or(0).min(app.pipelines.items.len() - 1))
+                        };
+                        app.pipelines.state.select(selected);
+                    }
+                }
                 Event::PipelineJobs(id, jobs) => {
                     app.fetching_pipelines.remove(&id);
                     app.pipeline_jobs.insert(id, jobs.clone());
@@ -1482,12 +1497,20 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Pipelines);
                     app.refreshed_tabs.insert(app::Tab::Pipelines);
                     app.status_message = None;
-                    app.pipelines.items = pipelines;
-                    if let Some(pipe_id) = app.pending_pipeline_select.take() {
-                        if let Some(idx) =
-                            app.pipelines.items.iter().position(|p| p.id() == pipe_id)
-                        {
-                            app.pipelines.state.select(Some(idx));
+                    if app.nav_depth() > 0 {
+                        // Inside a descent the visible list belongs to a child
+                        // level. A freshly fetched top-level list belongs to
+                        // the outermost frame, so it lands there and shows up
+                        // when the user ascends back out.
+                        app.replace_root_level(pipelines);
+                    } else {
+                        app.pipelines.items = pipelines;
+                        if let Some(pipe_id) = app.pending_pipeline_select.take() {
+                            if let Some(idx) =
+                                app.pipelines.items.iter().position(|p| p.id() == pipe_id)
+                            {
+                                app.pipelines.state.select(Some(idx));
+                            }
                         }
                     }
                     app.update_filter_selection();
@@ -1498,30 +1521,6 @@ async fn main() -> Result<()> {
                     app.project_cache.pipelines = app.pipelines.items.clone();
                     app.project_cache.pipeline_jobs = app.pipeline_jobs.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
-                }
-                Event::PipelineDownstreamsFetched(parent_id, children) => {
-                    // Append any child pipelines we don't already know about.
-                    // Children carry `downstream_of = Some(parent_id)` so the
-                    // UI can render the `↳` badge and walk back up. Dups can
-                    // arrive when the user re-Enters a parent whose children
-                    // are still in the list.
-                    let known: std::collections::HashSet<u64> =
-                        app.pipelines.items.iter().map(|p| p.id()).collect();
-                    for child in children {
-                        if !known.contains(&child.id()) {
-                            app.pipelines.items.push(child);
-                        }
-                    }
-                    // The user is typically on Tab::Jobs by the time Enter's
-                    // bridge fetch answers (Enter switched to Jobs before
-                    // the async fetch landed). Reflow the Pipelines
-                    // selection regardless of the active tab so the
-                    // children pass any active column filter when the user
-                    // later switches back. The active tab is preserved.
-                    let active = app.active_tab;
-                    app.active_tab = crate::app::Tab::Pipelines;
-                    app.update_filter_selection();
-                    app.active_tab = active;
                 }
                 Event::TodosFetched(notifs) => {
                     app.complete_loading_tab(app::Tab::Todos, "Success");

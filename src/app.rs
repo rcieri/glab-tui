@@ -3411,6 +3411,14 @@ fn keybinding_char_sets(
     (prefixes, standalone)
 }
 
+pub struct NavFrame {
+    /// The pipeline that was descended into from this level.
+    pub parent_id: u64,
+    pub items: Vec<crate::domain::pipelines::Pipeline>,
+    pub cursor: Option<usize>,
+    pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
+}
+
 pub struct App {
     pub config: Config,
     /// The first keypress of an in-progress key sequence (e.g. the `g` of
@@ -3461,6 +3469,8 @@ pub struct App {
     pub runners: StatefulTable<crate::domain::runners::Runner>,
     pub releases: StatefulTable<crate::domain::releases::Release>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
+    pub pipeline_nav: Vec<NavFrame>,
+    pub pending_triggers: Vec<crate::domain::pipelines::PendingTrigger>,
     pub fetching_pipelines: std::collections::HashSet<u64>,
     /// Issue iids whose `related_mrs` is currently being fetched. Distinct
     /// from `Issue::related_mrs == None` (genuinely not fetched) — only set
@@ -3634,6 +3644,8 @@ impl Default for App {
             runners: StatefulTable::with_items(vec![]),
             releases: StatefulTable::with_items(vec![]),
             pipeline_jobs: std::collections::HashMap::new(),
+            pipeline_nav: Vec::new(),
+            pending_triggers: Vec::new(),
             fetching_pipelines: std::collections::HashSet::new(),
             fetching_related_mrs: std::collections::HashSet::new(),
             pending_related_mrs_iid: None,
@@ -4562,6 +4574,65 @@ impl App {
             if filters.is_empty() {
                 self.column_filters.remove(&tab);
             }
+        }
+    }
+
+    /// How many levels down the pipeline descent currently is.
+    pub fn nav_depth(&self) -> usize {
+        self.pipeline_nav.len()
+    }
+
+    /// The pipeline whose children are currently listed, if inside a descent.
+    pub fn current_parent_id(&self) -> Option<u64> {
+        self.pipeline_nav.last().map(|frame| frame.parent_id)
+    }
+
+    /// Put a freshly fetched top-level pipeline list where it belongs while a
+    /// descent is open: in the outermost frame, so it appears when the user
+    /// ascends back out rather than replacing the child level on screen.
+    pub fn replace_root_level(&mut self, pipelines: Vec<crate::domain::pipelines::Pipeline>) {
+        match self.pipeline_nav.first_mut() {
+            Some(root) => root.items = pipelines,
+            None => self.pipelines.items = pipelines,
+        }
+    }
+
+    /// The descent path for the tab title, e.g. `#1002 › #2001`. Empty at the
+    /// top level, where the plain tab name says everything.
+    pub fn nav_breadcrumb(&self) -> String {
+        self.pipeline_nav
+            .iter()
+            .map(|frame| format!("#{}", frame.parent_id))
+            .collect::<Vec<_>>()
+            .join(" › ")
+    }
+
+    /// Show one level down in the Pipelines tab, remembering the current level
+    /// so `ascend` can restore it without another API call.
+    pub fn descend_into(&mut self, parent_id: u64, level: crate::domain::pipelines::ChildLevel) {
+        self.pipeline_nav.push(NavFrame {
+            parent_id,
+            items: std::mem::take(&mut self.pipelines.items),
+            cursor: self.pipelines.state.selected(),
+            pending: std::mem::take(&mut self.pending_triggers),
+        });
+        let has_children = !level.children.is_empty();
+        self.pipelines.items = level.children;
+        self.pending_triggers = level.pending;
+        self.pipelines.state.select(has_children.then_some(0));
+    }
+
+    /// Step back out one level. Returns `false` at the top level, where the
+    /// caller keeps whatever `Esc` meant before.
+    pub fn ascend(&mut self) -> bool {
+        match self.pipeline_nav.pop() {
+            Some(frame) => {
+                self.pipelines.items = frame.items;
+                self.pipelines.state.select(frame.cursor);
+                self.pending_triggers = frame.pending;
+                true
+            }
+            None => false,
         }
     }
 
@@ -7404,8 +7475,6 @@ mod tests {
             source: None,
             project_path: "acme/project".to_string(),
             web_url: None,
-
-            downstream_of: None,
         }];
         app.pipelines.state.select(Some(0));
 
@@ -9821,8 +9890,6 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
-
-            downstream_of: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -9839,8 +9906,6 @@ index 123456..789012 100644
             source: None,
             project_path: String::new(),
             web_url: None,
-
-            downstream_of: None,
         };
         app.pipelines.items = vec![p_success, p_failed];
 
@@ -10036,8 +10101,6 @@ index 123456..789012 100644
                 source: Some("push".to_string()),
                 project_path: String::new(),
                 web_url: None,
-
-                downstream_of: None,
             },
             crate::domain::pipelines::Pipeline {
                 id: 2,
@@ -10054,8 +10117,6 @@ index 123456..789012 100644
                 source: Some("schedule".to_string()),
                 project_path: String::new(),
                 web_url: None,
-
-                downstream_of: None,
             },
         ];
         app.column_filters
@@ -10165,8 +10226,6 @@ index 123456..789012 100644
             source: Some("merge_request_event".to_string()),
             project_path: String::new(),
             web_url: None,
-
-            downstream_of: None,
         }];
         let cols: std::collections::HashSet<String> = ["Ref".to_string()].into_iter().collect();
         let jobs = std::collections::HashMap::new();
@@ -10454,7 +10513,6 @@ index 123456..789012 100644
             source: None,
             project_path: "owner/repo".to_string(),
             web_url: Some(String::new()),
-            downstream_of: None,
         };
         let p_failed = crate::domain::pipelines::Pipeline {
             id: 2,
@@ -10578,8 +10636,6 @@ index 123456..789012 100644
                 source: None,
                 project_path: "owner/repo".to_string(),
                 web_url: None,
-
-                downstream_of: None,
             })
             .collect();
         app.pipelines.state.select(Some(2));
@@ -10678,6 +10734,134 @@ index 123456..789012 100644
         let filtered = app.available_tabs();
         assert_eq!(filtered.len(), all_count - 1);
         assert!(!filtered.contains(&Tab::Pipelines));
+    }
+
+    fn nav_pipe(id: u64) -> crate::domain::pipelines::Pipeline {
+        crate::domain::pipelines::Pipeline {
+            id,
+            status: "success".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+        }
+    }
+
+    #[test]
+    fn test_descend_then_ascend_restores_list_cursor_and_pending() {
+        let mut app = App::default();
+        app.pipelines.items = vec![nav_pipe(1001), nav_pipe(1002), nav_pipe(1003)];
+        app.pipelines.state.select(Some(1));
+
+        app.descend_into(
+            1002,
+            crate::domain::pipelines::ChildLevel {
+                children: vec![nav_pipe(2001)],
+                pending: vec![crate::domain::pipelines::PendingTrigger {
+                    bridge_id: 92,
+                    name: "trigger:deploy".to_string(),
+                    status: "manual".to_string(),
+                }],
+            },
+        );
+
+        assert_eq!(
+            app.pipelines.items.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![2001],
+            "the tab now lists the level below"
+        );
+        assert_eq!(app.pipelines.state.selected(), Some(0));
+        assert_eq!(app.pending_triggers.len(), 1);
+        assert_eq!(app.nav_depth(), 1);
+
+        assert!(app.ascend(), "one level down, so ascending succeeds");
+
+        assert_eq!(
+            app.pipelines.items.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![1001, 1002, 1003],
+            "the outer list comes back without refetching"
+        );
+        assert_eq!(
+            app.pipelines.state.selected(),
+            Some(1),
+            "the cursor returns to the row we descended from"
+        );
+        assert!(
+            app.pending_triggers.is_empty(),
+            "the inner level's pending triggers do not outlive it"
+        );
+        assert_eq!(app.nav_depth(), 0);
+
+        assert!(
+            !app.ascend(),
+            "at the top level there is nothing to ascend to"
+        );
+    }
+
+    #[test]
+    fn test_replace_root_level_updates_the_outermost_frame_not_the_visible_list() {
+        let mut app = App::default();
+        app.pipelines.items = vec![nav_pipe(1001), nav_pipe(1002)];
+        app.pipelines.state.select(Some(1));
+        app.descend_into(
+            1002,
+            crate::domain::pipelines::ChildLevel {
+                children: vec![nav_pipe(2001)],
+                pending: Vec::new(),
+            },
+        );
+
+        app.replace_root_level(vec![nav_pipe(1001), nav_pipe(1002), nav_pipe(1003)]);
+
+        assert_eq!(
+            app.pipelines.items.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![2001],
+            "the child level stays on screen"
+        );
+
+        app.ascend();
+        assert_eq!(
+            app.pipelines.items.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![1001, 1002, 1003],
+            "ascending shows the refreshed top-level list"
+        );
+        assert_eq!(
+            app.pipelines.state.selected(),
+            Some(1),
+            "the cursor still points at the pipeline we descended from"
+        );
+    }
+
+    #[test]
+    fn test_nav_breadcrumb_names_the_descent_path() {
+        let mut app = App::default();
+        assert_eq!(app.nav_breadcrumb(), "", "no breadcrumb at the top level");
+
+        let level = |id| crate::domain::pipelines::ChildLevel {
+            children: vec![nav_pipe(id)],
+            pending: Vec::new(),
+        };
+
+        app.descend_into(1002, level(2001));
+        assert_eq!(app.nav_breadcrumb(), "#1002");
+
+        app.descend_into(2001, level(3001));
+        assert_eq!(
+            app.nav_breadcrumb(),
+            "#1002 › #2001",
+            "each level down appends the pipeline it was entered through"
+        );
+
+        app.ascend();
+        assert_eq!(app.nav_breadcrumb(), "#1002");
     }
 
     #[test]

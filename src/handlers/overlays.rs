@@ -777,6 +777,14 @@ pub fn handle_refresh(
                 app.start_loading_tab(app.active_tab);
                 spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
             }
+            if let Some(parent_id) = app.current_parent_id() {
+                crate::fetch::spawn_refresh_child_level(
+                    &client,
+                    app.scope.as_str(),
+                    parent_id,
+                    tx.clone(),
+                );
+            }
             spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
         }
         return true;

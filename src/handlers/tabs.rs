@@ -1142,7 +1142,18 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Pipelines => {
-            if keybinding_matches(&app.config.keybindings.pipelines.run_new, key_event) {
+            if keybinding_matches(&app.config.keybindings.pipelines.enter_jobs, key_event) {
+                let pipe_id = app
+                    .pipelines
+                    .state
+                    .selected()
+                    .and_then(|idx| app.filtered_pipelines().get(idx).map(|p| p.id()));
+                if let Some(pipeline_id) = pipe_id {
+                    if !enter_pipeline_jobs(app, pipeline_id, false).await {
+                        app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
+                    }
+                }
+            } else if keybinding_matches(&app.config.keybindings.pipelines.run_new, key_event) {
                 let current_branch =
                     crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
 
@@ -2561,6 +2572,10 @@ pub async fn handle_active_tab_key(
                     } else {
                         app.active_tab = crate::app::Tab::Pipelines;
                     }
+                } else if app.active_tab == crate::app::Tab::Pipelines && app.nav_depth() > 0 {
+                    // Inside a descent Esc means the level you can see, not a
+                    // job list left over from an earlier visit.
+                    app.ascend();
                 } else if app.active_tab == crate::app::Tab::Pipelines && !app.jobs.items.is_empty()
                 {
                     if app.job_trace.is_some() {
@@ -2629,50 +2644,48 @@ pub async fn handle_active_tab_key(
                         let pipe_info = app
                             .filtered_pipelines()
                             .get(idx)
-                            .map(|p| (p.id(), p.project_path.clone(), p.downstream_of));
-                        if let Some((pipeline_id, pipe_project, downstream_of)) = pipe_info {
-                            if let Some(client) = &app.gitlab_client {
-                                app.loading_tabs.insert(crate::app::Tab::Jobs);
-                                let project_context = if !pipe_project.is_empty() {
-                                    pipe_project.clone()
-                                } else {
-                                    app.scope.as_str().to_string()
-                                };
-                                let fetch_jobs = crate::domain::pipelines::list_pipeline_jobs(
-                                    client,
-                                    &project_context,
-                                    pipeline_id,
-                                );
-                                // Top-level pipelines may also have downstream
-                                // children spawned by `trigger:` jobs; surface
-                                // them so the user can drill into a trigger
-                                // chain that has no jobs of its own. Children
-                                // (downstream_of = Some(_)) skip the lookup
-                                // since their parent is already on screen.
-                                if downstream_of.is_none() {
-                                    crate::fetch::spawn_fetch_pipeline_downstreams(
+                            .map(|p| (p.id(), p.project_path.clone()));
+                        if let Some((pipeline_id, pipe_project)) = pipe_info {
+                            app.loading_tabs.insert(crate::app::Tab::Jobs);
+                            // A group-scoped list mixes projects, so the row's
+                            // own path wins over the scope it was listed under.
+                            let project_context = if !pipe_project.is_empty() {
+                                pipe_project.clone()
+                            } else {
+                                app.scope.as_str().to_string()
+                            };
+                            let bridges = match &app.gitlab_client {
+                                Some(client) => Some(
+                                    crate::domain::pipelines::list_pipeline_bridges(
                                         client,
-                                        project_context.clone(),
+                                        &project_context,
                                         pipeline_id,
-                                        tx.clone(),
+                                    )
+                                    .await,
+                                ),
+                                None => None,
+                            };
+                            match bridges {
+                                Some(Err(_)) => {
+                                    // Never fall back to the jobs path here: a
+                                    // failed fetch would read as "no downstream
+                                    // pipelines", which is the silent emptiness
+                                    // this drill-down exists to remove.
+                                    app.show_error(
+                                        "Failed to fetch downstream pipelines".to_string(),
                                     );
+                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
                                 }
-                                match fetch_jobs.await {
-                                    Ok(jobs) => {
-                                        app.pipeline_jobs.insert(pipeline_id, jobs.clone());
-                                        app.jobs.items = jobs;
-                                        app.active_pipeline_id = Some(pipeline_id);
-                                        app.active_pipeline_project = Some(project_context);
-                                        app.jobs.state.select(Some(0));
-                                        app.detail_scroll = 0;
-                                        app.job_trace = None;
-                                        app.active_tab = crate::app::Tab::Jobs;
-                                        app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                    }
-                                    Err(_) => {
-                                        app.show_error("Failed to fetch jobs".to_string());
-                                        app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                    }
+                                Some(Ok(bridges)) if !bridges.is_empty() => {
+                                    let level = crate::domain::pipelines::bridges_to_level(bridges);
+                                    app.descend_into(pipeline_id, level);
+                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
+                                }
+                                _ => {
+                                    // A leaf pipeline: its own jobs are the
+                                    // level below it.
+                                    enter_pipeline_jobs(app, pipeline_id, true).await;
+                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
                                 }
                             }
                         }
@@ -3192,6 +3205,44 @@ pub(crate) fn jump_to_mr_tab_from_selector(
     jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx);
 }
 
+/// Load a pipeline's own jobs into the Jobs tab, switching to it. Returns
+/// whether the pipeline had any jobs of its own. With `enter_when_empty` false
+/// the tab is left alone when there are none, so the caller does not strand the
+/// user on an empty Jobs tab.
+async fn enter_pipeline_jobs(
+    app: &mut crate::app::App,
+    pipeline_id: u64,
+    enter_when_empty: bool,
+) -> bool {
+    let jobs = match &app.gitlab_client {
+        Some(client) => {
+            crate::domain::pipelines::list_pipeline_jobs(client, app.scope.as_str(), pipeline_id)
+                .await
+                .ok()
+        }
+        None => None,
+    };
+    match jobs {
+        Some(jobs) => {
+            let found_any = !jobs.is_empty();
+            app.pipeline_jobs.insert(pipeline_id, jobs.clone());
+            app.jobs.items = jobs;
+            app.active_pipeline_id = Some(pipeline_id);
+            app.jobs.state.select(Some(0));
+            app.detail_scroll = 0;
+            app.job_trace = None;
+            if found_any || enter_when_empty {
+                app.active_tab = crate::app::Tab::Jobs;
+            }
+            found_any
+        }
+        None => {
+            app.show_error("Failed to fetch jobs".to_string());
+            false
+        }
+    }
+}
+
 /// Switch to the Issues tab and focus the given Issue. If the Issue is
 /// already loaded, focus it immediately; otherwise set `pending_issue_select`
 /// so the `Event::IssuesFetched` handler in `main.rs` can focus it once the
@@ -3510,7 +3561,6 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
-            downstream_of: None,
         };
         app.pipelines.items = vec![pipe];
         app.pipelines.state.select(Some(0));
@@ -3873,7 +3923,6 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
-            downstream_of: None,
         }];
         app.pipelines.state.select(Some(0));
         app.detail_visible = true;

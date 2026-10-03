@@ -489,6 +489,37 @@ impl TestSession {
         Self::with_config(is_github, rows, cols, None)
     }
 
+    /// Launch a session with extra environment variables, used to steer the
+    /// CLI mocks into failure modes the tests need to assert on.
+    pub fn with_envs(is_github: bool, rows: u16, cols: u16, extra: &[(&str, &str)]) -> Self {
+        let sandbox = Sandbox::new(is_github).unwrap();
+        let bin_path = find_glab_tui_binary();
+        let mut envs_vec = sandbox.envs();
+        for (k, v) in extra {
+            envs_vec.push((k.to_string(), v.to_string()));
+        }
+        let envs_ref: Vec<(&str, &str)> = envs_vec
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let pty = Pty::spawn(
+            bin_path.to_str().unwrap(),
+            &[],
+            &envs_ref,
+            rows,
+            cols,
+            Some(&sandbox.repo_dir),
+        )
+        .unwrap();
+
+        Self {
+            sandbox,
+            pty,
+            emulator: TerminalEmulator::new(rows as usize, cols as usize),
+        }
+    }
+
     /// Launch a session with `config_toml` written to the sandbox's global
     /// config before the app starts, so configuration-dependent behaviour is
     /// in effect on the very first fetch.
@@ -571,6 +602,19 @@ impl TestSession {
 
     pub fn send_input(&self, data: &[u8]) {
         self.pty.write_input(data);
+    }
+
+    /// Pump output into the emulator for a fixed time. Needed for assertions
+    /// about what is *not* on screen, where there is nothing to wait for.
+    pub fn settle(&mut self, ms: u64) {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(ms) {
+            let bytes = self.pty.read_output();
+            if !bytes.is_empty() {
+                self.emulator.write_bytes(&bytes);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     pub fn get_cli_calls(&self) -> String {

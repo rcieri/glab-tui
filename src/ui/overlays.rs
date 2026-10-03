@@ -1579,7 +1579,12 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Pipelines",
             key: s("Enter"),
-            action: "View pipeline jobs list",
+            action: "Descend into downstream pipelines, or the pipeline's jobs",
+        },
+        Shortcut {
+            category: "Pipelines",
+            key: d(app.config.keybindings.pipelines.enter_jobs.clone()),
+            action: "View the selected pipeline's own jobs",
         },
         Shortcut {
             category: "Pipelines",

@@ -568,38 +568,27 @@ pub fn dispatch_pending_mr_related_issues_fetch(
     true
 }
 
-/// Fetch the downstream pipelines spawned by a parent's trigger jobs.
-///
-/// Sends `Event::PipelineDownstreamsFetched` with the parent id and the
-/// list of children on success, or `Event::FetchFailed` on error.
-pub fn spawn_fetch_pipeline_downstreams(
+/// Re-fetch the child level currently on screen, so refresh inside a descent
+/// updates what the user is looking at and not only the top-level list. A
+/// failed fetch leaves the level as it was: stale data is honest here, where an
+/// emptied list would not be.
+pub fn spawn_refresh_child_level(
     client: &domain::client::GitlabClient,
-    project: String,
-    parent_pipeline_id: u64,
+    project_context: &str,
+    parent_id: u64,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     let mut client = client.clone();
-    client.tx = None;
+    client.tx = None; // suppress terminal log for background fetches
+    let project_context = project_context.to_string();
     tokio::spawn(async move {
-        match crate::domain::pipelines::list_downstream_pipelines(
-            &client,
-            &project,
-            parent_pipeline_id,
-        )
-        .await
+        if let Ok(bridges) =
+            domain::pipelines::list_pipeline_bridges(&client, &project_context, parent_id).await
         {
-            Ok(children) => {
-                let _ = tx.send(Event::PipelineDownstreamsFetched(
-                    parent_pipeline_id,
-                    children,
-                ));
-            }
-            Err(e) => {
-                let _ = tx.send(Event::FetchFailed(
-                    crate::app::Tab::Pipelines,
-                    format!("Failed to fetch downstream pipelines for #{parent_pipeline_id}: {e}"),
-                ));
-            }
+            let _ = tx.send(Event::ChildLevelFetched(
+                parent_id,
+                domain::pipelines::bridges_to_level(bridges),
+            ));
         }
     });
 }

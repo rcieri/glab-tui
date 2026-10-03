@@ -1208,6 +1208,32 @@ pub(crate) fn render_tab_pipelines(
             App::pipeline_filter_values,
         );
 
+        // Triggers that have not spawned a pipeline are appended as render-only
+        // rows. They never enter `pipelines.items`, so nothing keyed by
+        // pipeline id can see them, and the cursor — bounded by `items.len()` —
+        // cannot land on them.
+        let pending_rows: Vec<crate::domain::pipelines::Pipeline> = app
+            .pending_triggers
+            .iter()
+            .map(|trigger| crate::domain::pipelines::Pipeline {
+                id: 0,
+                status: trigger.status.clone(),
+                r#ref: String::new(),
+                updated_at: String::new(),
+                name: trigger.name.clone(),
+                display_title: String::new(),
+                event: String::new(),
+                head_sha: String::new(),
+                actor_login: String::new(),
+                duration_seconds: None,
+                created_at: None,
+                source: Some("parent_pipeline".to_string()),
+                project_path: String::new(),
+                web_url: None,
+            })
+            .collect();
+        filtered_pipelines.extend(pending_rows.iter());
+
         let rows = filtered_pipelines.iter().enumerate().map(|(idx, p)| {
             let is_row_highlighted = app.pipelines.state.selected() == Some(idx);
             let (status_text, status_color, bg_color) = match p.status() {
@@ -1275,10 +1301,9 @@ pub(crate) fn render_tab_pipelines(
                 ));
             }
             if app.is_column_visible(Tab::Pipelines, "ID") {
-                let id_text = if p.downstream_of.is_some() {
-                    // A child pipeline reached through a parent bridge —
-                    // the `↳` icon marks the row as a descendant.
-                    format!("↳ #{}", p.id())
+                // A trigger that has not spawned has no pipeline to identify.
+                let id_text = if p.id() == 0 {
+                    "—".to_string()
                 } else {
                     format!("#{}", p.id())
                 };

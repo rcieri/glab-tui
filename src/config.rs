@@ -955,6 +955,10 @@ pub struct KeybindingPipelines {
     pub trigger_pipeline: String,
     #[serde(default = "def_run_new")]
     pub run_new: String,
+    /// Show the selected pipeline's own jobs, skipping the descent into its
+    /// downstream pipelines.
+    #[serde(default = "def_enter_jobs")]
+    pub enter_jobs: String,
     #[serde(default)]
     pub retry: String,
     #[serde(default)]
@@ -1206,6 +1210,7 @@ keybind_defaults! {
     def_open_in_browser = "o",
     def_run_new = "n",
     def_enter_pipeline = "p",
+    def_enter_jobs = "Alt+j",
     def_select_job = "Space",
     def_retry_job = "r",
     def_start_job = "S",
@@ -1312,6 +1317,7 @@ impl Default for KeybindingPipelines {
         Self {
             trigger_pipeline: def_trigger_pipeline(),
             run_new: def_run_new(),
+            enter_jobs: def_enter_jobs(),
             retry: def_retry(),
             cancel: def_cancel(),
             open_workflow: def_open_workflow(),
@@ -1691,6 +1697,7 @@ jump_linked_issues = "I"
 
 [keybindings.pipelines]
 trigger_pipeline = "p"
+enter_jobs = "Alt+j"
 select_pipeline = "Space"
 retry = "r"
 cancel = "d"

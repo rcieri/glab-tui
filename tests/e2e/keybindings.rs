@@ -81,3 +81,33 @@ fn test_keybind_case_insensitive() {
 fn test_keybind_during_popup() {
     let _session = TestSession::new(false, 24, 80);
 }
+
+#[test]
+fn test_multi_key_sequence_keybinding() {
+    let config_toml = r#"
+[keybindings.global]
+scroll_top = "gg"
+"#;
+    let mut session = TestSession::with_config(false, 24, 80, Some(config_toml));
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app should reach the Issues tab");
+
+    // `gg` is bound to `scroll_top`. Resolving the sequence triggers the
+    // action handler, which is gated on `detail_visible` and is a no-op
+    // on the default Issues tab — but the sequence machine must still
+    // resolve the binding without crashing the event loop or leaving
+    // the input loop in a bad state.
+    session.send_input(b"g");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    session.send_input(b"g");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // The tab bar is still rendered after the sequence lands, which is
+    // the loosest signal we have from the harness that the app is still
+    // alive and ticking. Behaviour-level assertions live in the unit
+    // tests for `matches_with_pending` and `scroll_top`.
+    session
+        .wait_for_screen_contains("Issues", 1000)
+        .expect("Issues tab should still be visible after `gg`");
+}

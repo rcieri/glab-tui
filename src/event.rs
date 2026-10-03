@@ -46,6 +46,8 @@ pub enum Event {
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
     CommandStarted(String),
     CommandCompleted(crate::app::Tab, Result<(), String>),
+    /// A background custom command finished all its runs.
+    CustomCommandFinished(crate::handlers::custom_commands::RunReport),
     TerminalCommandLogged {
         timestamp: String,
         command: String,
@@ -70,6 +72,11 @@ pub enum Event {
     RelatedMrsFetched {
         issue_iid: u64,
         result: Result<Vec<crate::domain::issues::RelatedMrRef>, String>,
+    },
+    /// Result of fetching issues closed by an MR/PR.
+    MrRelatedIssuesFetched {
+        mr_iid: u64,
+        result: Result<Vec<crate::domain::mr::RelatedIssueRef>, String>,
     },
     /// Single item fetched by the "go to issue/MR by ID" prompt. `Ok` carries
     /// the item so the handler can insert it into the loaded set if absent.

@@ -65,6 +65,14 @@ pub struct Cli {
     )]
     pub dir: Option<String>,
 
+    #[arg(
+        short = 'c',
+        long = "config",
+        value_name = "FILE",
+        help = "Config file to use instead of ~/.config/glab-tui/config.toml"
+    )]
+    pub config: Option<std::path::PathBuf>,
+
     #[arg(short = 'u', long = "update", help = "Check and install updates")]
     pub update: bool,
 

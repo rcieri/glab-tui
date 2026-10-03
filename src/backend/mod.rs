@@ -298,6 +298,13 @@ pub trait Backend: Send + Sync {
     async fn approve_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Revoke your own approval. GitLab only — see the GhBackend impl.
     async fn revoke_mr(&self, project: &str, iid: u64) -> Result<()>;
+    /// Fetch issues closed or referenced by an MR/PR.
+    async fn list_mr_related_issues(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        page_size: usize,
+    ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>>;
     /// Rebase the source branch onto the target. Supported on both hosts.
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Merge the MR/PR.

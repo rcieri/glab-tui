@@ -33,6 +33,152 @@ pub fn derive_workflow(mrs: &mut [crate::domain::mr::MergeRequest]) {
     }
 }
 
+/// Bidirectionally link issues and MRs/PRs across tabs and populate missing states/titles.
+pub fn sync_linked_references(
+    issues: &mut [crate::domain::issues::Issue],
+    mrs: &mut [crate::domain::mr::MergeRequest],
+) {
+    // 1. Cross-populate missing links from MRs to issues
+    for mr in mrs.iter() {
+        if let Some(crate::domain::mr::RelatedIssuesState::Items(linked_issues)) =
+            &mr.related_issues
+        {
+            for issue_ref in linked_issues {
+                if let Some(issue) = issues.iter_mut().find(|i| i.iid == issue_ref.iid) {
+                    match &mut issue.related_mrs {
+                        None | Some(crate::domain::issues::RelatedMrsState::Empty) => {
+                            issue.related_mrs =
+                                Some(crate::domain::issues::RelatedMrsState::Items(vec![
+                                    crate::domain::issues::RelatedMrRef {
+                                        iid: mr.iid,
+                                        title: mr.title.clone(),
+                                        state: mr.state.clone(),
+                                        project_path: if mr.project_path.is_empty() {
+                                            None
+                                        } else {
+                                            Some(mr.project_path.clone())
+                                        },
+                                    },
+                                ]));
+                        }
+                        Some(crate::domain::issues::RelatedMrsState::Items(existing)) => {
+                            if let Some(pos) = existing.iter().position(|r| r.iid == mr.iid) {
+                                if existing[pos].state.is_empty() && !mr.state.is_empty() {
+                                    existing[pos].state = mr.state.clone();
+                                }
+                                if existing[pos].title.is_empty() && !mr.title.is_empty() {
+                                    existing[pos].title = mr.title.clone();
+                                }
+                            } else {
+                                existing.push(crate::domain::issues::RelatedMrRef {
+                                    iid: mr.iid,
+                                    title: mr.title.clone(),
+                                    state: mr.state.clone(),
+                                    project_path: if mr.project_path.is_empty() {
+                                        None
+                                    } else {
+                                        Some(mr.project_path.clone())
+                                    },
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Cross-populate missing links from issues to MRs
+    for issue in issues.iter() {
+        if let Some(crate::domain::issues::RelatedMrsState::Items(related_mrs)) = &issue.related_mrs
+        {
+            for mr_ref in related_mrs {
+                if let Some(mr) = mrs.iter_mut().find(|m| m.iid == mr_ref.iid) {
+                    match &mut mr.related_issues {
+                        None | Some(crate::domain::mr::RelatedIssuesState::Empty) => {
+                            mr.related_issues =
+                                Some(crate::domain::mr::RelatedIssuesState::Items(vec![
+                                    crate::domain::mr::RelatedIssueRef {
+                                        iid: issue.iid,
+                                        title: issue.title.clone(),
+                                        state: issue.state.clone(),
+                                        project_path: if issue.project_path.is_empty() {
+                                            None
+                                        } else {
+                                            Some(issue.project_path.clone())
+                                        },
+                                    },
+                                ]));
+                        }
+                        Some(crate::domain::mr::RelatedIssuesState::Items(existing)) => {
+                            if let Some(pos) = existing.iter().position(|r| r.iid == issue.iid) {
+                                if existing[pos].state.is_empty() && !issue.state.is_empty() {
+                                    existing[pos].state = issue.state.clone();
+                                }
+                                if existing[pos].title.is_empty() && !issue.title.is_empty() {
+                                    existing[pos].title = issue.title.clone();
+                                }
+                            } else {
+                                existing.push(crate::domain::mr::RelatedIssueRef {
+                                    iid: issue.iid,
+                                    title: issue.title.clone(),
+                                    state: issue.state.clone(),
+                                    project_path: if issue.project_path.is_empty() {
+                                        None
+                                    } else {
+                                        Some(issue.project_path.clone())
+                                    },
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Enrich any remaining empty states and titles in issues
+    for issue in issues.iter_mut() {
+        if let Some(crate::domain::issues::RelatedMrsState::Items(existing)) =
+            &mut issue.related_mrs
+        {
+            for r in existing.iter_mut() {
+                if r.state.is_empty() || r.title.is_empty() {
+                    if let Some(mr) = mrs.iter().find(|m| m.iid == r.iid) {
+                        if r.state.is_empty() {
+                            r.state = mr.state.clone();
+                        }
+                        if r.title.is_empty() {
+                            r.title = mr.title.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Enrich any remaining empty states and titles in MRs
+    for mr in mrs.iter_mut() {
+        if let Some(crate::domain::mr::RelatedIssuesState::Items(existing)) = &mut mr.related_issues
+        {
+            for r in existing.iter_mut() {
+                if r.state.is_empty() || r.title.is_empty() {
+                    if let Some(issue) = issues.iter().find(|i| i.iid == r.iid) {
+                        if r.state.is_empty() {
+                            r.state = issue.state.clone();
+                        }
+                        if r.title.is_empty() {
+                            r.title = issue.title.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,6 +210,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         }
     }
 
@@ -175,6 +322,114 @@ mod tests {
         assert_eq!(app.pending_related_mrs_since, None);
         assert!(app.fetching_related_mrs.is_empty());
     }
+
+    #[test]
+    fn test_sync_linked_references_bidirectional() {
+        use crate::domain::issues::{Author as IssueAuthor, Issue, RelatedMrRef, RelatedMrsState};
+        use crate::domain::mr::{RelatedIssueRef, RelatedIssuesState};
+
+        let mut issues = vec![
+            Issue {
+                iid: 1,
+                title: "Bug 1".into(),
+                state: "opened".into(),
+                labels: vec![],
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                created_at: None,
+                closed_at: None,
+                author: IssueAuthor {
+                    username: "alice".into(),
+                },
+                project_path: "owner/repo".into(),
+                web_url: String::new(),
+                description: None,
+                milestone: None,
+                assignees: vec![],
+                due_date: None,
+                related_mrs: Some(RelatedMrsState::Items(vec![RelatedMrRef {
+                    iid: 101,
+                    title: "".into(),
+                    state: "".into(),
+                    project_path: None,
+                }])),
+            },
+            Issue {
+                iid: 2,
+                title: "Bug 2".into(),
+                state: "closed".into(),
+                labels: vec![],
+                updated_at: "2026-01-01T00:00:00Z".into(),
+                created_at: None,
+                closed_at: None,
+                author: IssueAuthor {
+                    username: "bob".into(),
+                },
+                project_path: "owner/repo".into(),
+                web_url: String::new(),
+                description: None,
+                milestone: None,
+                assignees: vec![],
+                due_date: None,
+                related_mrs: None,
+            },
+        ];
+
+        let mut mrs = vec![mr_fixture(101, "charlie", None), {
+            let mut mr = mr_fixture(102, "dave", None);
+            mr.state = "merged".into();
+            mr.related_issues = Some(RelatedIssuesState::Items(vec![RelatedIssueRef {
+                iid: 2,
+                title: "".into(),
+                state: "".into(),
+                project_path: None,
+            }]));
+            mr
+        }];
+        mrs[0].title = "Fix bug 1".into();
+        mrs[0].state = "opened".into();
+
+        sync_linked_references(&mut issues, &mut mrs);
+
+        // Issue 1's related MR 101 should now have title and state enriched
+        if let Some(RelatedMrsState::Items(refs)) = &issues[0].related_mrs {
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].iid, 101);
+            assert_eq!(refs[0].title, "Fix bug 1");
+            assert_eq!(refs[0].state, "opened");
+        } else {
+            panic!("Expected RelatedMrsState::Items on issue 1");
+        }
+
+        // MR 101 should now have issue 1 in related_issues
+        if let Some(RelatedIssuesState::Items(refs)) = &mrs[0].related_issues {
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].iid, 1);
+            assert_eq!(refs[0].title, "Bug 1");
+            assert_eq!(refs[0].state, "opened");
+        } else {
+            panic!("Expected RelatedIssuesState::Items on MR 101");
+        }
+
+        // MR 102's related issue 2 should now have title and state enriched
+        if let Some(RelatedIssuesState::Items(refs)) = &mrs[1].related_issues {
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].iid, 2);
+            assert_eq!(refs[0].title, "Bug 2");
+            assert_eq!(refs[0].state, "closed");
+        } else {
+            panic!("Expected RelatedIssuesState::Items on MR 102");
+        }
+
+        // Issue 2 should now have MR 102 in related_mrs
+        if let Some(RelatedMrsState::Items(refs)) = &issues[1].related_mrs {
+            assert_eq!(refs.len(), 1);
+            assert_eq!(refs[0].iid, 102);
+            assert_eq!(refs[0].title, "mr 102");
+            assert_eq!(refs[0].state, "merged");
+        } else {
+            panic!("Expected RelatedMrsState::Items on issue 2");
+        }
+    }
 }
 
 pub fn spawn_fetch_repo_attributes(
@@ -258,6 +513,56 @@ pub fn dispatch_pending_related_mrs_fetch(
     }
     let project_path = app.project_path_for_issue(iid);
     spawn_fetch_related_mrs(client, &project_path, iid, tx.clone());
+    true
+}
+
+pub fn spawn_fetch_mr_related_issues(
+    client: &domain::client::GitlabClient,
+    project_context: &str,
+    mr_iid: u64,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let mut client = client.clone();
+    client.tx = None;
+    let project_context = project_context.to_string();
+    tokio::spawn(async move {
+        let result = domain::mr::fetch_related_issues(&client, &project_context, mr_iid).await;
+        let result = result.map_err(|e| e.to_string());
+        let _ = tx.send(Event::MrRelatedIssuesFetched { mr_iid, result });
+    });
+}
+
+pub fn dispatch_pending_mr_related_issues_fetch(
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+) -> bool {
+    let Some(iid) = app.pending_mr_related_issues_iid else {
+        return false;
+    };
+    let Some(since) = app.pending_mr_related_issues_since else {
+        app.pending_mr_related_issues_iid = None;
+        return false;
+    };
+    if since.elapsed() < RELATED_MRS_DEBOUNCE {
+        return false;
+    }
+    app.pending_mr_related_issues_iid = None;
+    app.pending_mr_related_issues_since = None;
+
+    if app
+        .mrs
+        .items
+        .iter()
+        .any(|m| m.iid == iid && m.related_issues.is_some())
+    {
+        return false;
+    }
+    if !app.fetching_mr_related_issues.insert(iid) {
+        return false;
+    }
+    let project_path = app.project_path_for_mr(iid);
+    spawn_fetch_mr_related_issues(client, &project_path, iid, tx.clone());
     true
 }
 

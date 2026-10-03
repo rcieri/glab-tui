@@ -58,21 +58,23 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [deployments.rs](src/domain/deployments.rs): Environment and Deployment structures.
     * [workflow_inputs.rs](src/domain/workflow_inputs.rs): `WorkflowInput` / `WorkflowInputType` for `workflow_dispatch` prompt fields.
 * [src/fetch.rs](src/fetch.rs): `spawn_refresh_active_tab()` — dispatches per-tab data fetches (routed through `&Scope`); `spawn_refresh_all_tabs()` — background tab prefetcher when `config.prefetch_tabs` is enabled; `derive_workflow()` — recomputes the derived MR `workflow` column after live fetches and cache loads.
-* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_project_path_from_web_url`, `parse_group`, `parse_remote_host`, `get_current_branch`, `slugify`, `get_workflow_files`.
+* [src/git_helpers.rs](src/git_helpers.rs): Git helpers — `detect_backend` (remote host + CLI auth → `BackendKind`), `parse_project_path` (remote-URL → `namespace/project`), `parse_project_path_from_web_url`, `parse_group`, `parse_remote_host`, `get_current_branch`, `repo_root`, `slugify`, `get_workflow_files`.
+* [src/custom_commands.rs](src/custom_commands.rs): User-defined `[[custom_keybindings.<pane>]]` commands — `CustomCommands::load` (validation, built-in shadow detection, `ConfigProblem` reports), `CommandPane` (universal / issues / mrs / diff and their template arguments), gh-dash style `{{.Name}}` templating (`render`, `TemplateValues`, `GLAB_TUI_*` environment) and `shell_process` (`$SHELL -c`).
 * [src/scope.rs](src/scope.rs): `Scope` enum (`Repository` / `Group`) — `as_str()`, `is_group()`/`is_repository()`, `cli_repo_arg()`/`cli_group_arg()` (glab/gh flag injection), `api_path_prefix()` (with `%2F` URL encoding), and `Display`.
 * [src/handlers/](src/handlers/): Keypress handlers split by concern.
     * [mod.rs](src/handlers/mod.rs): Module declarations.
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
+    * [custom_commands.rs](src/handlers/custom_commands.rs): `run_bound_command` — resolves the highlighted row's template values, runs the custom command through `editor::suspend_while` (or a background thread) and logs the outcome.
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
     * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
     * [update.rs](src/utils/update.rs): GitHub releases self-updater with multi-target Linux asset selection.
-* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`) and ANSI-styled diagnostic output.
+* [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`), flags (`--config` sets `config::use_config_file`, which `Config::config_path()` honours before `GLAB_TUI_CONFIG`/XDG) and ANSI-styled diagnostic output.
 * [src/templates.rs](src/templates.rs): Default issue/MR description templates.
-* [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`).
+* [src/editor.rs](src/editor.rs): External editor integration (`$EDITOR`/`$VISUAL`) and `suspend_and_run` / `suspend_while`, the shared terminal handoff for any foreground child process (or several in one handoff).
 * [src/entity_editor.rs](src/entity_editor.rs): Edit-menu field change logic and creation form helpers.
 * [src/ui/](src/ui/): Ratatui render functions.
     * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
@@ -101,7 +103,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### External Editor Integration
 * The application pauses the UI to open an external `$EDITOR` (or `$VISUAL`, defaulting to `helix`).
-* This is done using `crossterm::terminal::LeaveAlternateScreen`. See `edit_in_editor` in [src/main.rs](src/main.rs) for the boilerplate. Do not reinvent this wheel.
+* This is done using `crossterm::terminal::LeaveAlternateScreen` inside `editor::suspend_and_run` ([src/editor.rs](src/editor.rs)), which `edit_in_editor` and custom commands (via `suspend_while`) share. It also holds off SIGINT/SIGQUIT in glab-tui while the child owns the terminal, so Ctrl+C stops the child only. Any other foreground child process must go through it too. Do not reinvent this wheel.
 
 ### Syntax Highlighting (`syntect`)
 * Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
@@ -190,6 +192,16 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
       || keybinding_matches(&app.config.keybindings.tab.action, &key_event)) => { ... }
   ```
 * Never add bare `KeyCode::Char('x') =>` match arms for user-facing actions. Always go through `keybinding_matches()` so users can remap.
+
+### Custom Keybindings (`[[custom_keybindings.<pane>]]`)
+* User-defined shell commands bound to keys, modelled on gh-dash including its template argument names (`prs` is a serde alias of `mrs`; `normalize_custom_keybindings` renames it per file before the global and repo-local files are merged, since both keys in one merged value is a duplicate field). `Config::custom_keybindings` holds the raw entries; `App::load_custom_commands()` validates them into `App::custom_commands` at startup and after the repo switcher reloads the config, logging every `ConfigProblem` as a failed Terminal-tab entry plus one toast.
+* Panes: `universal` (every tab), `issues`, `mrs`, and `diff` (the MR/PR diff view, dispatched from the catch-all arm of the diff key handler in [src/main.rs](src/main.rs); `FilePath`/`LineNumber` come from `DiffView::cursor_file_position()`). `diff_view_action()` lists the diff view's own keys for shadow reports — it matches key codes regardless of modifiers, so keep it in sync when adding a diff-view key. Template arguments per pane live in `CommandPane::template_arguments()`; row values are resolved in [src/handlers/custom_commands.rs](src/handlers/custom_commands.rs) from the highlighted row. `RepoPath` is `git_helpers::repo_root()` in repository scope and `cache::find_local_checkout()` (recent repos by `origin`) in group scope.
+* Dispatch happens in the last arm of the list-view fallback in `handle_active_tab_key`, so every built-in, configured or hard-wired, wins. `builtin_action()` in [src/custom_commands.rs](src/custom_commands.rs) mirrors that precedence to report shadowed keys; when you hard-wire a new list-view key, add it to `LIST_VIEW_CODE_KEYS` / `tab_hardwired_keys()` when the arm compares only `key_event.code` (any modifier is taken), or to `LIST_VIEW_EXACT_KEYS` / `tab_hardwired_exact_keys()` when it goes through `keybinding_matches` or checks modifiers. Pane-specific custom bindings win over universal ones.
+* A non-empty `selected_issues` / `selected_mrs` turns an `issues` / `mrs` command into a bulk run: `targets()` yields one `Target` per selected item (sorted by project and number), and all renderable runs execute inside one `editor::suspend_while` handoff. Each run is logged with `App::record_command_outcome`; failures raise a single summary toast via `App::raise_error_toast`.
+* `background = true` entries skip the handoff: `execute()` runs them on a thread with stdin/stdout detached (`Handoff::Background`) and sends `Event::CustomCommandFinished(RunReport)`; the main loop logs it through `report_runs()`, the same path terminal runs use. Stderr is always collected so a failure names its cause; it is only echoed to the screen for terminal runs. `detach_from_terminal()` starts background runs with `setsid(2)` (Unix): Go/termenv tools open `/dev/tty` and query the background colour even with stdio redirected, and the terminal's reply would otherwise arrive as keypresses. `tests/e2e/custom_keybindings.rs` guards this.
+* Feedback while a command works: a background run logs each rendered command as `Running` up front (`App::start_command`) and `report_runs()` settles those rows by index (`RunReport::log_rows`, `App::settle_command`); a terminal run prints `glab-tui: running "<label>": <command>` to stderr before starting, so a silent command does not leave a blank screen. Custom-command log rows start with `CUSTOM_COMMAND_LOG_PREFIX`, and the generic "most recent `Running` entry" fallbacks (`show_error`, `CommandCompleted`, `TerminalCommandLogged`) go through `App::latest_running_cli_command()`, which skips them so an unrelated completion cannot stamp a background command finished.
+* Values containing shell metacharacters are refused by `render()` instead of being spliced into `sh -c`; every value is also exported as `GLAB_TUI_<NAME>` so commands can quote it safely. Keep that guard when adding arguments.
+* Keys are parsed with `keybinding::binding_key_event`, the inverse of `keybinding_matches`; a key it rejects is reported as unbindable.
 
 ### DatePicker
 * `DatePicker` in [src/app.rs](src/app.rs) is a modal widget for selecting dates. It holds `year`, `month`, `day` and a `DatePickerAction` enum identifying which field it's editing.

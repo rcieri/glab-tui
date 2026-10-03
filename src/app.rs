@@ -351,6 +351,11 @@ impl Tab {
                     cols.push("Project");
                 }
                 cols.extend(["ID", "State", "Title", "Assignees", "Labels", "Milestone"]);
+                if kind.is_github() {
+                    cols.push("PRs");
+                } else {
+                    cols.push("MRs");
+                }
                 if !kind.is_github() {
                     cols.push("Due Date");
                 }
@@ -380,6 +385,7 @@ impl Tab {
                     cols.push("Pipeline");
                 }
                 cols.push("Milestone");
+                cols.push("Closes");
                 cols.push("Author");
                 cols
             }
@@ -2505,6 +2511,67 @@ impl DiffView {
             })
         }
     }
+
+    /// Repo-relative path and new-side line number under the cursor, for
+    /// opening that spot in an editor. A file row in the tree gives the file's
+    /// first line; a directory row falls back to the diff cursor. A deleted
+    /// line has no new-side number, so it maps to the next surviving line of
+    /// its file (where it was removed), else the previous one; the line is
+    /// `None` only when nothing of the file survives.
+    pub fn cursor_file_position(&self) -> Option<(String, Option<u32>)> {
+        let tree_file = self
+            .focus_on_files
+            .then(|| self.visible_nodes.get(self.selected_visible_idx))
+            .flatten()
+            .and_then(|node| node.file_path.clone());
+        if let Some(path) = tree_file {
+            let line = self
+                .lines
+                .iter()
+                .filter(|line| line.file_path == path)
+                .find_map(|line| line.new_line_num);
+            return Some((path, line));
+        }
+
+        let cursor = self.layout_line(self.cursor_idx)?;
+        if let Some(number) = cursor.new_line_num {
+            return Some((cursor.file_path.clone(), Some(number)));
+        }
+        let in_cursor_file =
+            |line: &DiffLine| cursor.file_path.is_empty() || line.file_path == cursor.file_path;
+        let row_count = if self.side_by_side {
+            self.side_by_side_lines.len()
+        } else {
+            self.lines.len()
+        };
+        let nearest = (self.cursor_idx + 1..row_count)
+            .chain((0..self.cursor_idx).rev())
+            .filter_map(|idx| self.layout_line(idx))
+            .filter(|line| in_cursor_file(line))
+            .find_map(|line| {
+                line.new_line_num
+                    .map(|number| (line.file_path.clone(), number))
+            });
+        match nearest {
+            Some((path, number)) => Some((path, Some(number))),
+            None if !cursor.file_path.is_empty() => Some((cursor.file_path.clone(), None)),
+            None => None,
+        }
+    }
+
+    /// The line shown at row `idx` of the active layout; in side-by-side mode
+    /// the new-side half when it has a line number.
+    fn layout_line(&self, idx: usize) -> Option<&DiffLine> {
+        if !self.side_by_side {
+            return self.lines.get(idx);
+        }
+        let row = self.side_by_side_lines.get(idx)?;
+        match (&row.right, &row.left) {
+            (Some(right), _) if right.new_line_num.is_some() => Some(right),
+            (_, Some(left)) => Some(left),
+            (right, None) => right.as_ref(),
+        }
+    }
 }
 
 pub fn build_side_by_side_lines(lines: &[DiffLine]) -> Vec<SideBySideLine> {
@@ -2800,6 +2867,9 @@ impl DatePicker {
         }
     }
 }
+
+/// Prefix of every terminal-log entry written for a custom keybinding.
+pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 
 #[derive(Debug, Clone)]
 pub struct TerminalCommand {
@@ -3307,7 +3377,9 @@ fn keybinding_char_sets(
                     (Some(c), None, None) => {
                         standalone.insert(c);
                     }
-                    (Some(first), Some(_), None) => {
+                    (Some(first), Some(_), None)
+                        if !crate::keybinding::is_named_two_char_binding(s) =>
+                    {
                         prefixes.insert(first);
                     }
                     _ => {}
@@ -3350,6 +3422,9 @@ pub struct App {
     /// that is both a prefix and a standalone binding still does its single
     /// action when the sequence lapses.
     pub standalone_chars: std::collections::HashSet<char>,
+    /// Validated `[[custom_keybindings.<pane>]]` entries, rebuilt whenever
+    /// the config is loaded.
+    pub custom_commands: crate::custom_commands::CustomCommands,
     pub active_tab: Tab,
     pub running: bool,
     pub scope: crate::scope::Scope,
@@ -3368,6 +3443,7 @@ pub struct App {
     pub active_pipeline_project: Option<String>,
     pub pending_pipeline_select: Option<u64>,
     pub pending_mr_select: Option<u64>,
+    pub pending_issue_select: Option<u64>,
     pub job_trace: Option<String>,
     pub error_message: Option<String>,
     pub error_message_at: Option<std::time::Instant>,
@@ -3397,6 +3473,13 @@ pub struct App {
     /// once this is older than the debounce window, so the GraphQL call lands
     /// for the issue the user actually stopped on.
     pub pending_related_mrs_since: Option<std::time::Instant>,
+    /// MR iids whose `related_issues` is currently being fetched.
+    pub fetching_mr_related_issues: std::collections::HashSet<u64>,
+    /// MR iid whose related-issues fetch has been *requested* by a keypress
+    /// but not yet dispatched.
+    pub pending_mr_related_issues_iid: Option<u64>,
+    /// Wall-clock timestamp of the most recent request in `pending_mr_related_issues_iid`.
+    pub pending_mr_related_issues_since: Option<std::time::Instant>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
     pub edit_menu: Option<EditMenu>,
@@ -3449,6 +3532,11 @@ pub struct App {
 
     pub show_help: bool,
     pub help_search_query: String,
+    /// Highlighted entry of the help list, clamped by the renderer to the
+    /// entries the current context and filter show.
+    pub help_selected: usize,
+    /// Scroll offset of the help table, kept across frames.
+    pub help_table_state: ratatui::widgets::TableState,
     pub diff_view: Option<DiffView>,
     pub review_threads: Option<ReviewThreadsOverview>,
     pub current_comments: Vec<crate::domain::mr::DiscussionNote>,
@@ -3515,6 +3603,7 @@ impl Default for App {
             pending_key: None,
             sequence_prefixes,
             standalone_chars,
+            custom_commands: crate::custom_commands::CustomCommands::default(),
             active_tab: Tab::default(),
             running: true,
             scope: crate::scope::Scope::default(),
@@ -3533,6 +3622,7 @@ impl Default for App {
             active_pipeline_project: None,
             pending_pipeline_select: None,
             pending_mr_select: None,
+            pending_issue_select: None,
             job_trace: None,
             error_message: None,
             error_message_at: None,
@@ -3546,6 +3636,9 @@ impl Default for App {
             fetching_related_mrs: std::collections::HashSet::new(),
             pending_related_mrs_iid: None,
             pending_related_mrs_since: None,
+            fetching_mr_related_issues: std::collections::HashSet::new(),
+            pending_mr_related_issues_iid: None,
+            pending_mr_related_issues_since: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
             edit_menu: None,
@@ -3577,6 +3670,8 @@ impl Default for App {
 
             show_help: false,
             help_search_query: String::new(),
+            help_selected: 0,
+            help_table_state: ratatui::widgets::TableState::default(),
             diff_view: None,
             review_threads: None,
             current_comments: Vec::new(),
@@ -4233,9 +4328,8 @@ impl App {
     /// bulk/submit operation takes precedence, falling back to the most
     /// recent running command.
     pub fn show_error(&mut self, msg: String) {
-        self.error_message_at = Some(std::time::Instant::now());
         let failed_status = format!("Failed: {}", msg);
-        self.error_message = Some(msg);
+        self.raise_error_toast(msg);
         let pos = self
             .terminal_commands
             .iter()
@@ -4245,14 +4339,88 @@ impl App {
                     || cmd.command.contains("submit")
                     || cmd.command.contains("bulk"))
                     && cmd.status == "Running"
+                    && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
             })
-            .or_else(|| {
-                self.terminal_commands
-                    .iter()
-                    .rposition(|cmd| cmd.status == "Running")
-            });
+            .or_else(|| self.latest_running_cli_command());
         if let Some(pos) = pos {
             self.terminal_commands[pos].status = failed_status;
+        }
+    }
+
+    /// Shows the error toast without marking any terminal entry failed, for
+    /// failures already recorded with `record_command_outcome`.
+    pub fn raise_error_toast(&mut self, msg: String) {
+        self.error_message_at = Some(std::time::Instant::now());
+        self.error_message = Some(msg);
+    }
+
+    /// Appends a finished command to the terminal log. A failure also raises
+    /// the error toast; unlike `show_error`, the entry it marks failed is
+    /// this one rather than whichever command is still running.
+    pub fn log_command_outcome(&mut self, command: String, outcome: Result<(), String>) {
+        self.record_command_outcome(command, &outcome);
+        if let Err(error) = outcome {
+            self.raise_error_toast(error);
+        }
+    }
+
+    /// Appends a finished command to the terminal log without a toast.
+    pub fn record_command_outcome(&mut self, command: String, outcome: &Result<(), String>) {
+        let row = self.start_command(command);
+        self.settle_command(row, outcome);
+    }
+
+    /// Appends a command still running to the terminal log and returns its
+    /// row for `settle_command`. The log is append-only, so the row stays valid.
+    pub fn start_command(&mut self, command: String) -> usize {
+        self.terminal_commands.push(TerminalCommand {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            command,
+            status: "Running".to_string(),
+        });
+        self.terminal_commands.len() - 1
+    }
+
+    /// Stamps the outcome on a row returned by `start_command`.
+    pub fn settle_command(&mut self, row: usize, outcome: &Result<(), String>) {
+        if let Some(entry) = self.terminal_commands.get_mut(row) {
+            entry.status = match outcome {
+                Ok(()) => "Success".to_string(),
+                Err(error) => format!("Failed: {error}"),
+            };
+        }
+    }
+
+    /// Most recent running entry started by the `glab`/`gh` event plumbing.
+    /// Custom commands are skipped: they settle their own row by index, and
+    /// an unrelated completion must not stamp a background command finished.
+    pub fn latest_running_cli_command(&self) -> Option<usize> {
+        self.terminal_commands.iter().rposition(|cmd| {
+            cmd.status == "Running" && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
+        })
+    }
+
+    /// Rebuilds `custom_commands` from the current config, logging every
+    /// ignored or shadowed entry in the terminal log.
+    pub fn load_custom_commands(&mut self) {
+        let (commands, problems) = crate::custom_commands::CustomCommands::load(&self.config);
+        let (_, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
+        self.standalone_chars = standalone_chars;
+        self.standalone_chars.extend(commands.character_keys());
+        self.custom_commands = commands;
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        for problem in &problems {
+            self.terminal_commands.push(TerminalCommand {
+                timestamp: timestamp.clone(),
+                command: format!("Custom keybinding: {}", problem.binding),
+                status: format!("Failed: {}", problem.problem),
+            });
+        }
+        if !problems.is_empty() {
+            self.raise_error_toast(format!(
+                "{} custom keybinding problem(s); see the Terminal tab",
+                problems.len()
+            ));
         }
     }
 
@@ -4308,6 +4476,15 @@ impl App {
             }
         }
         if let Some(set) = self.enabled_columns.get(&tab) {
+            if tab == Tab::Issues && matches!(col, "PRs" | "MRs" | "Related PRs" | "Related MRs") {
+                return set.contains("PRs")
+                    || set.contains("MRs")
+                    || set.contains("Related PRs")
+                    || set.contains("Related MRs");
+            }
+            if tab == Tab::MergeRequests && matches!(col, "Closes" | "Linked Issues") {
+                return set.contains("Closes") || set.contains("Linked Issues");
+            }
             set.contains(col)
         } else {
             true
@@ -4453,10 +4630,15 @@ impl App {
             }
         }
         app.apply_config();
+        app.load_custom_commands();
         app
     }
 
     pub fn apply_config(&mut self) {
+        let (sequence_prefixes, standalone_chars) = keybinding_char_sets(&self.config.keybindings);
+        self.sequence_prefixes = sequence_prefixes;
+        self.standalone_chars = standalone_chars;
+
         for tab in Tab::ALL {
             let pane = match tab {
                 Tab::Issues => &self.config.issues,
@@ -4719,6 +4901,14 @@ impl App {
                         .unwrap_or_default(),
                     "ID" => a.iid.to_string(),
                     "Title" => a.title.clone(),
+                    "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &a.related_mrs {
+                        Some(crate::domain::issues::RelatedMrsState::Items(items))
+                            if !items.is_empty() =>
+                        {
+                            format!("{:05}", items.first().map(|r| r.iid).unwrap_or(0))
+                        }
+                        _ => String::new(),
+                    },
                     _ => String::new(),
                 };
                 let val_b = match col.as_str() {
@@ -4738,6 +4928,14 @@ impl App {
                         .unwrap_or_default(),
                     "ID" => b.iid.to_string(),
                     "Title" => b.title.clone(),
+                    "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &b.related_mrs {
+                        Some(crate::domain::issues::RelatedMrsState::Items(items))
+                            if !items.is_empty() =>
+                        {
+                            format!("{:05}", items.first().map(|r| r.iid).unwrap_or(0))
+                        }
+                        _ => String::new(),
+                    },
                     _ => String::new(),
                 };
                 let cmp = match (val_a.parse::<u64>(), val_b.parse::<u64>()) {
@@ -4780,6 +4978,25 @@ impl App {
                 .as_ref()
                 .map(|d| vec![d.clone()])
                 .unwrap_or_default(),
+            "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &item.related_mrs {
+                Some(crate::domain::issues::RelatedMrsState::Items(items)) if !items.is_empty() => {
+                    let mut vals = vec![
+                        "Has PR".to_string(),
+                        "Has MR".to_string(),
+                        "Has PR/MR".to_string(),
+                    ];
+                    vals.extend(items.iter().map(|r| format!("#{}", r.iid)));
+                    vals.extend(items.iter().map(|r| format!("!{}", r.iid)));
+                    vals
+                }
+                _ => vec![
+                    "No PR".to_string(),
+                    "No MR".to_string(),
+                    "No PR/MR".to_string(),
+                    "--".to_string(),
+                    "—".to_string(),
+                ],
+            },
             _ => vec![],
         }
     }
@@ -4947,6 +5164,12 @@ impl App {
                 crate::domain::mr_state::mergeable_sort_key(m.mergeability.as_ref()).to_string()
             }
             "Workflow" => crate::domain::mr_state::workflow_sort_key(m.workflow).to_string(),
+            "Closes" | "Linked Issues" => match &m.related_issues {
+                Some(crate::domain::mr::RelatedIssuesState::Items(items)) if !items.is_empty() => {
+                    format!("{:05}", items.first().map(|r| r.iid).unwrap_or(0))
+                }
+                _ => String::new(),
+            },
             _ => String::new(),
         }
     }
@@ -5020,6 +5243,14 @@ impl App {
             "Workflow" => crate::domain::mr_state::workflow_cell_word(m.workflow)
                 .map(|w| vec![w.to_string()])
                 .unwrap_or_default(),
+            "Closes" | "Linked Issues" => match &m.related_issues {
+                Some(crate::domain::mr::RelatedIssuesState::Items(items)) if !items.is_empty() => {
+                    let mut vals = vec!["Closes Issues".to_string(), "Has Issues".to_string()];
+                    vals.extend(items.iter().map(|r| format!("#{}", r.iid)));
+                    vals
+                }
+                _ => vec!["No Issues".to_string(), "--".to_string(), "—".to_string()],
+            },
             _ => vec![],
         }
     }
@@ -6169,8 +6400,21 @@ impl App {
         let mut values: BTreeSet<String> = BTreeSet::new();
         match tab {
             Tab::Issues => {
+                let is_gh = self.is_github();
                 for item in &self.issues.items {
                     for v in Self::issue_filter_values(item, col) {
+                        if matches!(col, "PRs" | "MRs" | "Related PRs" | "Related MRs") {
+                            if is_gh && (v == "Has MR" || v == "No MR") {
+                                continue;
+                            }
+                            if !is_gh && (v == "Has PR" || v == "No PR") {
+                                continue;
+                            }
+                            if v.starts_with('#') || v == "Has PR/MR" || v == "No PR/MR" || v == "—"
+                            {
+                                continue;
+                            }
+                        }
                         values.insert(v);
                     }
                 }
@@ -6178,6 +6422,11 @@ impl App {
             Tab::MergeRequests => {
                 for item in &self.mrs.items {
                     for v in Self::mr_filter_values(item, col) {
+                        if matches!(col, "Closes" | "Linked Issues") {
+                            if v == "Has Issues" || v == "—" {
+                                continue;
+                            }
+                        }
                         values.insert(v);
                     }
                 }
@@ -6294,6 +6543,24 @@ impl App {
                             let c = i.title.chars().next().unwrap_or('?');
                             c.to_uppercase().to_string()
                         }
+                        "PRs" | "MRs" | "Related PRs" | "Related MRs" => match &i.related_mrs {
+                            Some(crate::domain::issues::RelatedMrsState::Items(items))
+                                if !items.is_empty() =>
+                            {
+                                if col == "PRs" || col == "Related PRs" {
+                                    "Has PR".to_string()
+                                } else {
+                                    "Has MR".to_string()
+                                }
+                            }
+                            _ => {
+                                if col == "PRs" || col == "Related PRs" {
+                                    "No PR".to_string()
+                                } else {
+                                    "No MR".to_string()
+                                }
+                            }
+                        },
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -6354,6 +6621,14 @@ impl App {
                             let c = m.title.chars().next().unwrap_or('?');
                             c.to_uppercase().to_string()
                         }
+                        "Closes" | "Linked Issues" => match &m.related_issues {
+                            Some(crate::domain::mr::RelatedIssuesState::Items(items))
+                                if !items.is_empty() =>
+                            {
+                                "Closes Issues".to_string()
+                            }
+                            _ => "No Issues".to_string(),
+                        },
                         _ => "Unknown".to_string(),
                     };
                     map.entry(key).or_default().push(idx);
@@ -7727,6 +8002,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         };
 
         let mr_draft_title = MergeRequest {
@@ -7751,6 +8027,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         };
 
         let mr_ready = MergeRequest {
@@ -7775,6 +8052,7 @@ mod tests {
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         };
 
         let items = vec![mr_draft_meta, mr_draft_title, mr_ready];
@@ -8150,6 +8428,130 @@ index abcdef..ffffff 100644
         assert_eq!(
             side_by_side[3].right.as_ref().unwrap().content,
             " normal line"
+        );
+    }
+
+    const CURSOR_POSITION_DIFF: &str = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,4 +10,4 @@
+ context ten
+-removed eleven
++added eleven
+ context twelve
+diff --git a/src/gone.rs b/src/gone.rs
+deleted file mode 100644
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone one
+-gone two
+";
+
+    fn diff_row(view: &DiffView, content: &str) -> usize {
+        view.lines
+            .iter()
+            .position(|line| line.content == content)
+            .unwrap_or_else(|| panic!("no diff row {content:?}"))
+    }
+
+    #[test]
+    fn cursor_file_position_uses_the_new_side_line_under_the_cursor() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+
+        view.cursor_idx = diff_row(&view, "+added eleven");
+        assert_eq!(
+            view.cursor_file_position(),
+            Some(("src/lib.rs".to_string(), Some(11)))
+        );
+        view.cursor_idx = diff_row(&view, " context twelve");
+        assert_eq!(
+            view.cursor_file_position(),
+            Some(("src/lib.rs".to_string(), Some(12)))
+        );
+    }
+
+    /// A removed line no longer exists in the checkout; the editor should
+    /// land where it was, i.e. on the next line that survived.
+    #[test]
+    fn cursor_file_position_maps_a_removed_line_to_where_it_was() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+
+        view.cursor_idx = diff_row(&view, "-removed eleven");
+        assert_eq!(
+            view.cursor_file_position(),
+            Some(("src/lib.rs".to_string(), Some(11)))
+        );
+    }
+
+    #[test]
+    fn cursor_file_position_has_no_line_in_a_deleted_file() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+
+        view.cursor_idx = diff_row(&view, "-gone two");
+        assert_eq!(
+            view.cursor_file_position(),
+            Some(("src/gone.rs".to_string(), None)),
+            "must not borrow a line number from src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn cursor_file_position_follows_the_new_side_in_side_by_side_mode() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = false;
+        view.side_by_side = true;
+        view.update_active_lines();
+
+        view.cursor_idx = view
+            .side_by_side_lines
+            .iter()
+            .position(|row| {
+                row.left
+                    .as_ref()
+                    .is_some_and(|line| line.content == "-removed eleven")
+            })
+            .unwrap();
+        assert_eq!(
+            view.cursor_file_position(),
+            Some(("src/lib.rs".to_string(), Some(11)))
+        );
+    }
+
+    #[test]
+    fn cursor_file_position_on_a_tree_row_opens_the_file_at_its_first_line() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = true;
+        view.selected_visible_idx = view
+            .visible_nodes
+            .iter()
+            .position(|node| node.file_path.as_deref() == Some("src/lib.rs"))
+            .unwrap();
+
+        assert_eq!(
+            view.cursor_file_position(),
+            Some(("src/lib.rs".to_string(), Some(10)))
+        );
+    }
+
+    #[test]
+    fn cursor_file_position_on_a_directory_row_uses_the_diff_cursor() {
+        let mut view = DiffView::new(1, "o/r".to_string(), CURSOR_POSITION_DIFF.to_string());
+        view.focus_on_files = true;
+        view.selected_visible_idx = view
+            .visible_nodes
+            .iter()
+            .position(|node| node.is_dir)
+            .unwrap();
+        view.cursor_idx = diff_row(&view, " context twelve");
+
+        assert_eq!(
+            view.cursor_file_position(),
+            Some(("src/lib.rs".to_string(), Some(12)))
         );
     }
 
@@ -9182,6 +9584,7 @@ index 123456..789012 100644
             workflow: None,
             project_path: String::new(),
             web_url: None,
+            related_issues: None,
         }
     }
 
@@ -10246,6 +10649,30 @@ index 123456..789012 100644
     }
 
     #[test]
+    fn keybinding_char_sets_does_not_treat_a_named_two_char_binding_as_a_prefix() {
+        // "Up" is a two-character *named* token (matched literally by
+        // keybinding_matches), not two literal characters. It must not
+        // register 'U' as a sequence-prefix char.
+        let mut keybindings = crate::config::KeybindingConfig::default();
+        keybindings.global.scroll_top = "Up".to_string();
+
+        let (prefixes, standalone) = keybinding_char_sets(&keybindings);
+
+        assert!(!prefixes.contains(&'U'));
+        assert!(!standalone.contains(&'U'));
+    }
+
+    #[test]
+    fn apply_config_rebuilds_keybinding_sequence_sets() {
+        let mut app = App::default();
+        app.config.keybindings.global.next_tab = "zz".to_string();
+
+        app.apply_config();
+
+        assert!(app.sequence_prefixes.contains(&'z'));
+    }
+
+    #[test]
     fn available_tabs_filters_disabled_tabs() {
         let mut app = App::default();
         let all_count = app.available_tabs().len();
@@ -10384,5 +10811,187 @@ index 123456..789012 100644
 
         app.ascend();
         assert_eq!(app.nav_breadcrumb(), "#1002");
+    }
+
+    #[test]
+    fn test_is_column_visible_linked_column_aliases() {
+        let mut app = App::default();
+        let mut issues_set = std::collections::HashSet::new();
+        issues_set.insert("Related MRs".to_string());
+        app.enabled_columns.insert(Tab::Issues, issues_set);
+
+        assert!(app.is_column_visible(Tab::Issues, "PRs"));
+        assert!(app.is_column_visible(Tab::Issues, "MRs"));
+        assert!(app.is_column_visible(Tab::Issues, "Related PRs"));
+        assert!(app.is_column_visible(Tab::Issues, "Related MRs"));
+        assert!(!app.is_column_visible(Tab::Issues, "State"));
+
+        let mut mr_set = std::collections::HashSet::new();
+        mr_set.insert("Linked Issues".to_string());
+        app.enabled_columns.insert(Tab::MergeRequests, mr_set);
+
+        assert!(app.is_column_visible(Tab::MergeRequests, "Closes"));
+        assert!(app.is_column_visible(Tab::MergeRequests, "Linked Issues"));
+        assert!(!app.is_column_visible(Tab::MergeRequests, "State"));
+    }
+
+    #[test]
+    fn test_linked_issues_mrs_filter_and_grouping() {
+        use crate::domain::issues::{Author as IssueAuthor, Issue, RelatedMrRef, RelatedMrsState};
+        use crate::domain::mr::{
+            Author as MrAuthor, MergeRequest, RelatedIssueRef, RelatedIssuesState,
+        };
+
+        let mut app = App::default();
+        let issue_with_pr = Issue {
+            iid: 1,
+            title: "Issue 1".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            created_at: None,
+            closed_at: None,
+            author: IssueAuthor {
+                username: "alice".into(),
+            },
+            project_path: "repo".into(),
+            web_url: String::new(),
+            description: None,
+            milestone: None,
+            assignees: vec![],
+            due_date: None,
+            related_mrs: Some(RelatedMrsState::Items(vec![RelatedMrRef {
+                iid: 101,
+                title: "PR 101".into(),
+                state: "opened".into(),
+                project_path: None,
+            }])),
+        };
+        let issue_without_pr = Issue {
+            iid: 2,
+            title: "Issue 2".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            created_at: None,
+            closed_at: None,
+            author: IssueAuthor {
+                username: "bob".into(),
+            },
+            project_path: "repo".into(),
+            web_url: String::new(),
+            description: None,
+            milestone: None,
+            assignees: vec![],
+            due_date: None,
+            related_mrs: None,
+        };
+
+        let values_with_pr = App::issue_filter_values(&issue_with_pr, "PRs");
+        assert!(values_with_pr.contains(&"Has PR".to_string()));
+        assert!(values_with_pr.contains(&"!101".to_string()));
+
+        let values_without_pr = App::issue_filter_values(&issue_without_pr, "PRs");
+        assert!(values_without_pr.contains(&"No PR".to_string()));
+
+        let mr_with_issues = MergeRequest {
+            iid: 101,
+            title: "MR 101".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            author: MrAuthor {
+                username: "charlie".into(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".into(),
+            source_branch: "feat".into(),
+            sha: None,
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+            project_path: "repo".into(),
+            web_url: None,
+            related_issues: Some(RelatedIssuesState::Items(vec![RelatedIssueRef {
+                iid: 1,
+                title: "Issue 1".into(),
+                state: "opened".into(),
+                project_path: None,
+            }])),
+        };
+        let mr_without_issues = MergeRequest {
+            iid: 102,
+            title: "MR 102".into(),
+            state: "opened".into(),
+            labels: vec![],
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            author: MrAuthor {
+                username: "dave".into(),
+            },
+            milestone: None,
+            assignees: vec![],
+            reviewers: vec![],
+            target_branch: "main".into(),
+            source_branch: "feat2".into(),
+            sha: None,
+            draft: false,
+            description: None,
+            head_pipeline: None,
+            blocking_discussions_resolved: None,
+            approval: None,
+            mergeability: None,
+            workflow: None,
+            project_path: "repo".into(),
+            web_url: None,
+            related_issues: None,
+        };
+
+        let mr_values_with = App::mr_filter_values(&mr_with_issues, "Closes");
+        assert!(mr_values_with.contains(&"Closes Issues".to_string()));
+        assert!(mr_values_with.contains(&"#1".to_string()));
+
+        let mr_values_without = App::mr_filter_values(&mr_without_issues, "Closes");
+        assert!(mr_values_without.contains(&"No Issues".to_string()));
+
+        // Test grouping
+        app.issues.items = vec![issue_with_pr, issue_without_pr];
+        app.active_tab = Tab::Issues;
+        app.group_by_column
+            .insert(Tab::Issues, Some("PRs".to_string()));
+        app.rebuild_group_map();
+
+        let headers: Vec<String> = app
+            .group_items
+            .iter()
+            .filter_map(|g| match g {
+                GroupItem::Header(h) => Some(h.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(headers.iter().any(|h| h.contains("Has PR")));
+        assert!(headers.iter().any(|h| h.contains("No PR")));
+
+        app.mrs.items = vec![mr_with_issues, mr_without_issues];
+        app.active_tab = Tab::MergeRequests;
+        app.group_by_column
+            .insert(Tab::MergeRequests, Some("Closes".to_string()));
+        app.rebuild_group_map();
+
+        let mr_headers: Vec<String> = app
+            .group_items
+            .iter()
+            .filter_map(|g| match g {
+                GroupItem::Header(h) => Some(h.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(mr_headers.iter().any(|h| h.contains("Closes Issues")));
+        assert!(mr_headers.iter().any(|h| h.contains("No Issues")));
     }
 }

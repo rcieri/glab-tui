@@ -3923,7 +3923,6 @@ mod tests {
             source: None,
             project_path: String::new(),
             web_url: None,
-            downstream_of: None,
         }];
         app.pipelines.state.select(Some(0));
         app.detail_visible = true;

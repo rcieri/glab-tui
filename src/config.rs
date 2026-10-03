@@ -1100,8 +1100,8 @@ keybind_defaults! {
     def_scroll_up = "K",
     def_scroll_page_down = "PageDown",
     def_scroll_page_up = "PageUp",
-    def_scroll_half_page_down = "",
-    def_scroll_half_page_up = "",
+    def_scroll_half_page_down = "Ctrl+d",
+    def_scroll_half_page_up = "Ctrl+u",
     def_scroll_to_end = "End",
     def_scroll_top = "Home",
     def_create_issue = "n",
@@ -1589,9 +1589,8 @@ scroll_down = "J"
 scroll_up = "K"
 scroll_page_down = "PageDown"
 scroll_page_up = "PageUp"
-# Half-page scrolling has no default. Vim users bind "Ctrl+d" / "Ctrl+u".
-scroll_half_page_down = ""
-scroll_half_page_up = ""
+scroll_half_page_down = "Ctrl+d"
+scroll_half_page_up = "Ctrl+u"
 scroll_to_end = "End"
 scroll_top = "Home"
 jump_to_id = "g"
@@ -2188,8 +2187,8 @@ page_size = 250
         let global = Config::default().keybindings.global;
         assert_eq!(global.scroll_page_down, "PageDown");
         assert_eq!(global.scroll_page_up, "PageUp");
-        assert_eq!(global.scroll_half_page_down, "");
-        assert_eq!(global.scroll_half_page_up, "");
+        assert_eq!(global.scroll_half_page_down, "Ctrl+d");
+        assert_eq!(global.scroll_half_page_up, "Ctrl+u");
     }
 
     #[test]

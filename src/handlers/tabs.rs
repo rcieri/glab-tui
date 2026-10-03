@@ -3644,9 +3644,9 @@ mod tests {
         assert_eq!(app.detail_scroll, 5);
     }
 
-    /// The page-scroll actions ship no vim bindings: a full page is PageDown /
-    /// PageUp, a half page has no default at all. Every test below drives the
-    /// Ctrl+f/b/d/u spelling, so it has to bind it first.
+    /// Full page scrolling defaults to PageDown / PageUp while half page
+    /// scrolling defaults to Ctrl+d / Ctrl+u. These tests drive the
+    /// Ctrl+f/b/d/u spelling, so we ensure the full page bindings are set.
     fn bind_vim_page_keys(app: &mut App) {
         app.config.keybindings.global.scroll_page_down = "Ctrl+f".to_string();
         app.config.keybindings.global.scroll_page_up = "Ctrl+b".to_string();

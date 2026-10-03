@@ -1,0 +1,59 @@
+# Adwaita Light
+# Based on GNOME's Adwaita Light palette in Helix
+bg = "#ffffff"
+border = "#d8d8d8"
+border_focused = "#1c71d8"
+header_fg = "#1c71d8"
+highlight_bg = "#f6f5f4"
+inactive_bg = "#ededed"
+text_normal = "#2e3436"
+text_muted = "#77767b"
+checked_bg = "#d3e4f9"
+green = "#26a269"
+green_bg = "#e3f5eb"
+red = "#c01c28"
+red_bg = "#fce8e8"
+blue = "#1c71d8"
+blue_bg = "#e1edfb"
+yellow = "#e5a50a"
+yellow_bg = "#fdf5df"
+purple = "#813d9c"
+purple_bg = "#f3e6f7"
+
+# ── Diff ──
+diff_addition_fg = "#26a269"
+diff_addition_bg = "#e3f5eb"
+diff_deletion_fg = "#c01c28"
+diff_deletion_bg = "#fce8e8"
+diff_gutter_bg = "#ffffff"
+diff_sep = "#d8d8d8"
+
+# ── Comments ──
+comment_bg = "#f6f5f4"
+comment_draft_bg = "#fdf5df"
+
+# ── Modals ──
+modal_border = "#1c71d8"
+
+# ── Pipelines ──
+pipeline_success = "#26a269"
+pipeline_failed = "#c01c28"
+pipeline_running = "#1c71d8"
+pipeline_pending = "#e5a50a"
+pipeline_canceled = "#77767b"
+pipeline_skipped = "#77767b"
+
+# ── Badges ──
+badge_group_bg = "#1c71d8"
+
+# ── Label palette ──
+label_palette_0 = "#813d9c"
+label_palette_1 = "#1c71d8"
+label_palette_2 = "#26a269"
+label_palette_3 = "#e5a50a"
+label_palette_4 = "#c01c28"
+label_palette_5 = "#e66100"
+label_palette_6 = "#77767b"
+label_palette_7 = "#2e3436"
+label_palette_8 = "#3584e4"
+label_palette_9 = "#d8d8d8"

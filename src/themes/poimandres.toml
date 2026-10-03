@@ -1,0 +1,59 @@
+# Poimandres
+# Based on the Poimandres palette in Helix
+bg = "#1b1e28"
+border = "#506477"
+border_focused = "#5de4c7"
+header_fg = "#5de4c7"
+highlight_bg = "#303340"
+inactive_bg = "#171922"
+text_normal = "#e4f0fb"
+text_muted = "#767c9d"
+checked_bg = "#30354a"
+green = "#5de4c7"
+green_bg = "#1e383b"
+red = "#d0679d"
+red_bg = "#3d2235"
+blue = "#89ddff"
+blue_bg = "#1d2e3d"
+yellow = "#fffac2"
+yellow_bg = "#363529"
+purple = "#f087bd"
+purple_bg = "#372338"
+
+# ── Diff ──
+diff_addition_fg = "#5de4c7"
+diff_addition_bg = "#1e383b"
+diff_deletion_fg = "#d0679d"
+diff_deletion_bg = "#3d2235"
+diff_gutter_bg = "#1b1e28"
+diff_sep = "#506477"
+
+# ── Comments ──
+comment_bg = "#1b1e28"
+comment_draft_bg = "#363529"
+
+# ── Modals ──
+modal_border = "#5de4c7"
+
+# ── Pipelines ──
+pipeline_success = "#5de4c7"
+pipeline_failed = "#d0679d"
+pipeline_running = "#89ddff"
+pipeline_pending = "#fffac2"
+pipeline_canceled = "#767c9d"
+pipeline_skipped = "#767c9d"
+
+# ── Badges ──
+badge_group_bg = "#89ddff"
+
+# ── Label palette ──
+label_palette_0 = "#f087bd"
+label_palette_1 = "#89ddff"
+label_palette_2 = "#5de4c7"
+label_palette_3 = "#fffac2"
+label_palette_4 = "#d0679d"
+label_palette_5 = "#add7ff"
+label_palette_6 = "#91b4d5"
+label_palette_7 = "#a6accd"
+label_palette_8 = "#767c9d"
+label_palette_9 = "#e4f0fb"

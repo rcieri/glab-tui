@@ -575,6 +575,16 @@ const BUNDLED_THEMES: &[(&str, &str)] = &[
     ("nord-light", include_str!("themes/nord-light.toml")),
     ("cyberpunk", include_str!("themes/cyberpunk.toml")),
     ("dracula-light", include_str!("themes/dracula-light.toml")),
+    ("ayu-dark", include_str!("themes/ayu-dark.toml")),
+    ("ayu-mirage", include_str!("themes/ayu-mirage.toml")),
+    ("ayu-light", include_str!("themes/ayu-light.toml")),
+    ("night-owl", include_str!("themes/night-owl.toml")),
+    ("poimandres", include_str!("themes/poimandres.toml")),
+    ("vesper", include_str!("themes/vesper.toml")),
+    ("sonokai", include_str!("themes/sonokai.toml")),
+    ("pop-dark", include_str!("themes/pop-dark.toml")),
+    ("adwaita-dark", include_str!("themes/adwaita-dark.toml")),
+    ("adwaita-light", include_str!("themes/adwaita-light.toml")),
 ];
 
 pub(crate) fn home_dir() -> PathBuf {
@@ -1889,6 +1899,7 @@ pub fn all_theme_presets() -> Vec<String> {
         }
     }
 
+    presets.sort();
     presets
 }
 
@@ -2327,6 +2338,12 @@ page_size = 250
     #[test]
     fn test_all_theme_presets_includes_all_bundled() {
         let presets = all_theme_presets();
+        let mut sorted_presets = presets.clone();
+        sorted_presets.sort();
+        assert_eq!(
+            presets, sorted_presets,
+            "all_theme_presets() must be sorted alphabetically"
+        );
         for (name, _) in BUNDLED_THEMES {
             assert!(
                 presets.contains(&name.to_string()),

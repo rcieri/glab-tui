@@ -1,0 +1,59 @@
+# Pop Dark
+# Based on the System76 Pop!_OS dark palette in Helix
+bg = "#2b2928"
+border = "#67634f"
+border_focused = "#6dd2fa"
+header_fg = "#6dd2fa"
+highlight_bg = "#3e3b39"
+inactive_bg = "#232120"
+text_normal = "#dedede"
+text_muted = "#9a9a9a"
+checked_bg = "#3a4a5a"
+green = "#73c48f"
+green_bg = "#21382b"
+red = "#f96964"
+red_bg = "#442323"
+blue = "#6dd2fa"
+blue_bg = "#1f313b"
+yellow = "#fdc33b"
+yellow_bg = "#3d321c"
+purple = "#b39df3"
+purple_bg = "#2d283d"
+
+# ── Diff ──
+diff_addition_fg = "#73c48f"
+diff_addition_bg = "#21382b"
+diff_deletion_fg = "#f96964"
+diff_deletion_bg = "#442323"
+diff_gutter_bg = "#2b2928"
+diff_sep = "#67634f"
+
+# ── Comments ──
+comment_bg = "#232120"
+comment_draft_bg = "#3d321c"
+
+# ── Modals ──
+modal_border = "#6dd2fa"
+
+# ── Pipelines ──
+pipeline_success = "#73c48f"
+pipeline_failed = "#f96964"
+pipeline_running = "#6dd2fa"
+pipeline_pending = "#fdc33b"
+pipeline_canceled = "#9a9a9a"
+pipeline_skipped = "#9a9a9a"
+
+# ── Badges ──
+badge_group_bg = "#6dd2fa"
+
+# ── Label palette ──
+label_palette_0 = "#b39df3"
+label_palette_1 = "#6dd2fa"
+label_palette_2 = "#73c48f"
+label_palette_3 = "#fdc33b"
+label_palette_4 = "#f96964"
+label_palette_5 = "#f99848"
+label_palette_6 = "#48b9c7"
+label_palette_7 = "#9a9a9a"
+label_palette_8 = "#67634f"
+label_palette_9 = "#dedede"

@@ -364,11 +364,13 @@ impl GhBackend {
         ];
         if squash {
             args.push("--squash".into());
-        } else if let Some(s) = strategy {
-            match s {
-                "rebase" => args.push("--rebase".into()),
-                _ => args.push("--merge".into()),
-            }
+        } else if matches!(strategy, Some("rebase")) {
+            args.push("--rebase".into());
+        } else {
+            // "Strategy: Merge commit" is the default and is always sent
+            // explicitly so gh pr merge doesn't silently fall back to whatever
+            // the repo's default merge method happens to be.
+            args.push("--merge".into());
         }
         if delete_branch {
             args.push("--delete-branch".into());
@@ -4225,15 +4227,35 @@ mod tests {
     }
 
     #[test]
-    fn gh_merge_args_auto_merge_flag() {
+    fn gh_merge_args_strategy_and_auto_merge() {
+        // auto + squash + delete
         let args = GhBackend::merge_args("owner/repo", 42, true, true, None, true);
+        assert!(args.contains(&"42".to_string()), "iid must be present");
+        assert!(
+            args.contains(&"owner/repo".to_string()),
+            "project must be present"
+        );
         assert!(args.contains(&"--auto".to_string()));
         assert!(args.contains(&"--squash".to_string()));
         assert!(args.contains(&"--delete-branch".to_string()));
+        // squash takes priority — no --merge alongside it
+        assert!(!args.contains(&"--merge".to_string()));
 
-        let args_no_auto =
+        // rebase, no auto-merge
+        let args_rebase =
             GhBackend::merge_args("owner/repo", 42, false, false, Some("rebase"), false);
-        assert!(!args_no_auto.contains(&"--auto".to_string()));
-        assert!(args_no_auto.contains(&"--rebase".to_string()));
+        assert!(!args_rebase.contains(&"--auto".to_string()));
+        assert!(args_rebase.contains(&"--rebase".to_string()));
+        assert!(!args_rebase.contains(&"--merge".to_string()));
+
+        // strategy=None (merge commit) → explicit --merge, not relying on repo default
+        let args_merge_commit = GhBackend::merge_args("owner/repo", 42, false, false, None, false);
+        assert!(
+            args_merge_commit.contains(&"--merge".to_string()),
+            "merge commit strategy must send --merge explicitly"
+        );
+        assert!(!args_merge_commit.contains(&"--squash".to_string()));
+        assert!(!args_merge_commit.contains(&"--rebase".to_string()));
+        assert!(!args_merge_commit.contains(&"--auto".to_string()));
     }
 }

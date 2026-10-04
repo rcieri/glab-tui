@@ -18,10 +18,45 @@ pub(crate) fn try_pop_keyboard_enhancement_flags<W: Write>(w: &mut W) {
     }
 }
 
-pub fn editor_name() -> String {
+pub fn editor_command(file_path: &std::path::Path) -> std::process::Command {
+    let raw = editor_command_string();
+    editor_process(&raw, file_path)
+}
+
+pub fn editor_command_string() -> String {
     std::env::var("EDITOR")
-        .or_else(|_| std::env::var("VISUAL"))
-        .unwrap_or_else(|_| "helix".to_string())
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("VISUAL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| "helix".to_string())
+}
+
+/// Backwards compatibility helper for callers expecting the raw editor command string.
+pub fn editor_name() -> String {
+    editor_command_string()
+}
+
+/// Creates a shell command that executes the editor string, passing the file path
+/// as a positional argument ($@ / %1) so arguments in $EDITOR (e.g. `code --wait`,
+/// `nvim -u minimal.lua`, `omarchy-launch-editor --inline`) are honored without
+/// breaking path escaping.
+pub fn editor_process(editor: &str, file_path: &std::path::Path) -> std::process::Command {
+    if cfg!(windows) {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/C").arg(format!("{editor} %1")).arg(file_path);
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(format!("{editor} \"$@\""))
+            .arg("sh")
+            .arg(file_path);
+        cmd
+    }
 }
 
 pub fn edit_in_editor(current_val: &str, terminal: &mut AppTerminal) -> Option<String> {
@@ -37,8 +72,7 @@ pub fn edit_in_editor_with_suffix(
     std::io::Write::write_all(&mut tmp, current_val.as_bytes()).ok()?;
     let file_path = tmp.into_temp_path();
 
-    let mut editor = std::process::Command::new(editor_name());
-    editor.arg(&file_path);
+    let mut editor = editor_command(&file_path);
     let status = suspend_and_run(&mut editor, terminal).ok()?;
     if !status.success() {
         return None;
@@ -164,4 +198,69 @@ fn leave_tui() -> std::io::Result<()> {
         crossterm::event::DisableMouseCapture,
         crossterm::cursor::Show,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn editor_process_preserves_arguments_and_passes_file_as_positional_arg() {
+        let file_path = Path::new("/tmp/test note.md");
+        let cmd = editor_process("nvim -u minimal.lua --clean", file_path);
+        if cfg!(windows) {
+            assert_eq!(cmd.get_program(), "cmd");
+            let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+            assert_eq!(args[0], "/C");
+            assert_eq!(args[1], "nvim -u minimal.lua --clean %1");
+            assert_eq!(args[2], file_path.as_os_str());
+        } else {
+            assert_eq!(cmd.get_program(), "sh");
+            let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+            assert_eq!(args[0], "-c");
+            assert_eq!(args[1], "nvim -u minimal.lua --clean \"$@\"");
+            assert_eq!(args[2], "sh");
+            assert_eq!(args[3], file_path.as_os_str());
+        }
+    }
+
+    #[test]
+    fn editor_command_string_falls_back_when_editor_is_empty() {
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let prev_editor = std::env::var("EDITOR").ok();
+        let prev_visual = std::env::var("VISUAL").ok();
+
+        // 1. When EDITOR is whitespace, fall back to VISUAL
+        unsafe {
+            std::env::set_var("EDITOR", "   ");
+            std::env::set_var("VISUAL", "code --wait");
+        }
+        assert_eq!(editor_command_string(), "code --wait");
+
+        // 2. When both are empty/whitespace, fall back to default "helix"
+        unsafe {
+            std::env::set_var("EDITOR", "");
+            std::env::set_var("VISUAL", " ");
+        }
+        assert_eq!(editor_command_string(), "helix");
+
+        // 3. When EDITOR has a command with flags, it is returned
+        unsafe {
+            std::env::set_var("EDITOR", "omarchy-launch-editor --inline");
+        }
+        assert_eq!(editor_command_string(), "omarchy-launch-editor --inline");
+
+        // Restore original env
+        unsafe {
+            match prev_editor {
+                Some(v) => std::env::set_var("EDITOR", v),
+                None => std::env::remove_var("EDITOR"),
+            }
+            match prev_visual {
+                Some(v) => std::env::set_var("VISUAL", v),
+                None => std::env::remove_var("VISUAL"),
+            }
+        }
+    }
 }

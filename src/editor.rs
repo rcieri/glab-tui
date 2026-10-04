@@ -36,18 +36,31 @@ pub fn editor_command_string() -> String {
 }
 
 /// Backwards compatibility helper for callers expecting the raw editor command string.
+///
+/// Deprecated: prefer [`editor_command_string`] (returns a full shell command, not
+/// just a binary name). This shim exists to avoid breaking any downstream callers
+/// and will be removed in a future cleanup.
+#[deprecated(since = "0.9.3", note = "use `editor_command_string()` instead")]
 pub fn editor_name() -> String {
     editor_command_string()
 }
 
 /// Creates a shell command that executes the editor string, passing the file path
-/// as a positional argument ($@ / %1) so arguments in $EDITOR (e.g. `code --wait`,
-/// `nvim -u minimal.lua`, `omarchy-launch-editor --inline`) are honored without
-/// breaking path escaping.
-pub fn editor_process(editor: &str, file_path: &std::path::Path) -> std::process::Command {
+/// as a positional argument (`"$@"` on Unix, embedded quoted path on Windows) so
+/// arguments in `$EDITOR` (e.g. `code --wait`, `nvim -u minimal.lua`,
+/// `omarchy-launch-editor --inline`) are honored without breaking path escaping.
+///
+/// Prefer [`editor_command`] for normal use; this is exposed as `pub(crate)` for
+/// unit testing of the command-building logic.
+pub(crate) fn editor_process(editor: &str, file_path: &std::path::Path) -> std::process::Command {
     if cfg!(windows) {
+        // On Windows, `cmd /C "string"` does not expand %1 from subsequent
+        // argument slots — the file path must be embedded directly in the
+        // command string. We quote it with double-quotes; paths containing
+        // double-quotes are vanishingly rare on Windows.
+        let path_str = file_path.to_string_lossy();
         let mut cmd = std::process::Command::new("cmd");
-        cmd.arg("/C").arg(format!("{editor} %1")).arg(file_path);
+        cmd.arg("/C").arg(format!("{editor} \"{path_str}\""));
         cmd
     } else {
         let mut cmd = std::process::Command::new("sh");
@@ -212,9 +225,10 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(cmd.get_program(), "cmd");
             let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+            // Windows: path is embedded directly in the /C string (no %1 expansion)
             assert_eq!(args[0], "/C");
-            assert_eq!(args[1], "nvim -u minimal.lua --clean %1");
-            assert_eq!(args[2], file_path.as_os_str());
+            assert_eq!(args[1], "nvim -u minimal.lua --clean \"/tmp/test note.md\"");
+            assert_eq!(args.len(), 2, "no trailing file arg on Windows");
         } else {
             assert_eq!(cmd.get_program(), "sh");
             let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();

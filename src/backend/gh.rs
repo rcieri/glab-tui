@@ -347,6 +347,38 @@ impl GhBackend {
         name.replace('/', "%2F")
     }
 
+    pub(crate) fn merge_args(
+        project: &str,
+        iid: u64,
+        squash: bool,
+        delete_branch: bool,
+        strategy: Option<&str>,
+        auto_merge: bool,
+    ) -> Vec<String> {
+        let mut args: Vec<String> = vec![
+            "pr".into(),
+            "merge".into(),
+            iid.to_string(),
+            "-R".into(),
+            project.into(),
+        ];
+        if squash {
+            args.push("--squash".into());
+        } else if let Some(s) = strategy {
+            match s {
+                "rebase" => args.push("--rebase".into()),
+                _ => args.push("--merge".into()),
+            }
+        }
+        if delete_branch {
+            args.push("--delete-branch".into());
+        }
+        if auto_merge {
+            args.push("--auto".into());
+        }
+        args
+    }
+
     /// `None` if the lookup fails — an unknown user must yield an unknown
     /// workflow status, never a wrong one. The failure itself is cached
     /// alongside a success, so this never re-issues the `gh api user` call
@@ -1862,26 +1894,7 @@ impl Backend for GhBackend {
         // off the PR's HEAD ref rather than a specific commit SHA. Ignore it.
         _sha: Option<&str>,
     ) -> Result<()> {
-        let mut args: Vec<String> = vec![
-            "pr".into(),
-            "merge".into(),
-            iid.to_string(),
-            "-R".into(),
-            project.into(),
-        ];
-        if squash {
-            args.push("--squash".into());
-        } else if let Some(s) = strategy {
-            match s {
-                "rebase" => args.push("--rebase".into()),
-                _ => args.push("--merge".into()),
-            }
-        }
-        if delete_branch {
-            args.push("--delete-branch".into());
-        }
-        // auto_merge is explicitly ignored for GitHub backend
-        let _ = auto_merge;
+        let args = Self::merge_args(project, iid, squash, delete_branch, strategy, auto_merge);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_gh(&args_refs, "MERGING PR").await?;
         Ok(())
@@ -4209,5 +4222,18 @@ mod tests {
         assert_eq!(entries[2].position, 3);
         assert_eq!(entries[2].number, 103);
         assert!(entries[2].is_draft);
+    }
+
+    #[test]
+    fn gh_merge_args_auto_merge_flag() {
+        let args = GhBackend::merge_args("owner/repo", 42, true, true, None, true);
+        assert!(args.contains(&"--auto".to_string()));
+        assert!(args.contains(&"--squash".to_string()));
+        assert!(args.contains(&"--delete-branch".to_string()));
+
+        let args_no_auto =
+            GhBackend::merge_args("owner/repo", 42, false, false, Some("rebase"), false);
+        assert!(!args_no_auto.contains(&"--auto".to_string()));
+        assert!(args_no_auto.contains(&"--rebase".to_string()));
     }
 }

@@ -198,6 +198,31 @@ impl GitlabClient {
             .await
     }
 
+    /// GitHub's viewed state of a PR's files when `sync` is on; `None` on
+    /// GitLab, with sync off, or when the fetch fails (the terminal log keeps
+    /// the failure), so callers fall back to the local marks.
+    pub async fn synced_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+        sync: bool,
+    ) -> Option<crate::domain::viewed_files::PrViewedFiles> {
+        if !(sync && self.is_github) {
+            return None;
+        }
+        self.backend.list_viewed_files(project, iid).await.ok()
+    }
+
+    pub async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<()> {
+        self.backend
+            .set_files_viewed(pull_request_id, changes)
+            .await
+    }
+
     pub async fn list_mr_state(
         &self,
         project: &str,

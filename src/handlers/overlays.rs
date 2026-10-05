@@ -1251,7 +1251,8 @@ diff --git a/src/lib.rs b/src/lib.rs
         app.hide_reviewed_files = true;
         if let Some(diff_view) = &mut app.diff_view {
             diff_view.restore_review_state(
-                std::collections::HashSet::from(["src/lib.rs".to_string()]),
+                &diff_view.marks_on_this_diff(&["src/lib.rs"]),
+                None,
                 true,
             );
         }

@@ -898,6 +898,73 @@ pub fn spawn_fetch_stack_entries(
     });
 }
 
+/// Fetches an MR/PR diff together with its notes and, when `sync_viewed`,
+/// GitHub's viewed state of its files — concurrently, so syncing does not
+/// make opening the diff slower. Only the diff itself is required: missing
+/// notes or viewed state degrade to none / the local marks.
+pub async fn fetch_diff(
+    client: &domain::client::GitlabClient,
+    project_path: String,
+    mr_iid: u64,
+    sync_viewed: bool,
+) -> anyhow::Result<Event> {
+    let (diff, comments, viewed_files) = tokio::join!(
+        client.get_mr_diff(&project_path, mr_iid),
+        client.list_mr_notes(&project_path, mr_iid),
+        client.synced_viewed_files(&project_path, mr_iid, sync_viewed),
+    );
+    Ok(Event::DiffFetched {
+        mr_iid,
+        project_path,
+        raw_diff: diff?,
+        comments: comments.unwrap_or_default(),
+        viewed_files,
+    })
+}
+
+/// Toggles inside this window reach GitHub as one request, and a file toggled
+/// back and forth sends only its final state.
+const VIEWED_SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Files per "Viewed" mutation; every path is a `gh` argument, and Windows
+/// caps a command line at 32 KiB.
+const VIEWED_SYNC_BATCH: usize = 50;
+
+pub fn spawn_viewed_sync_flush(mr_iid: u64, tx: tokio::sync::mpsc::UnboundedSender<Event>) {
+    tokio::spawn(async move {
+        tokio::time::sleep(VIEWED_SYNC_DEBOUNCE).await;
+        let _ = tx.send(Event::ViewedSyncFlush(mr_iid));
+    });
+}
+
+/// Sends the viewed-state `changes` of a PR to GitHub, one result event per
+/// batch so each batch is settled (or reverted) on its own.
+pub fn spawn_viewed_files_sync(
+    client: &domain::client::GitlabClient,
+    pull_request_id: String,
+    mr_iid: u64,
+    changes: Vec<(String, bool)>,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let client = client.clone();
+    tokio::spawn(async move {
+        for (i, batch) in changes.chunks(VIEWED_SYNC_BATCH).enumerate() {
+            if i > 0 {
+                crate::backend::rate_limit::pace_bulk_operation().await;
+            }
+            let result = client
+                .set_files_viewed(&pull_request_id, batch)
+                .await
+                .map_err(|e| e.to_string());
+            let _ = tx.send(Event::ViewedFilesSynced {
+                mr_iid,
+                changes: batch.to_vec(),
+                result,
+            });
+        }
+    });
+}
+
 /// Kick off background fetches for enabled tabs in order,
 /// skipping the active tab (the caller has already fired its
 /// synchronous fetch), `Tab::Terminal`, and any tab whose data is

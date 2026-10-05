@@ -869,6 +869,132 @@ mod review_threads_types {
     }
 }
 
+/// Values travel as GraphQL variables (`gh api graphql -f name=value`), so
+/// paths and repository names need no escaping. 100 is the connection's
+/// page-size cap.
+const VIEWED_FILES_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!,$cursor:String){\
+     repository(owner:$owner,name:$name){pullRequest(number:$number){id \
+     files(first:100,after:$cursor){pageInfo{hasNextPage endCursor} \
+     nodes{path viewerViewedState}}}}}";
+
+struct ViewedFilesPage {
+    pull_request_id: String,
+    files: Vec<(String, crate::domain::viewed_files::FileViewedState)>,
+    next_cursor: Option<String>,
+}
+
+fn parse_viewed_files_page(raw: &str) -> Result<ViewedFilesPage> {
+    use viewed_files_types::*;
+    let resp: GhResponse = serde_json::from_str(raw)?;
+    if let Some(error) = resp.errors.first() {
+        anyhow::bail!("GraphQL error: {}", error.message);
+    }
+    let pr = resp
+        .data
+        .and_then(|d| d.repository)
+        .and_then(|r| r.pull_request)
+        .context("pull request not found")?;
+    let files = pr.files.unwrap_or_default();
+    let next_cursor = if files.page_info.has_next_page {
+        files.page_info.end_cursor
+    } else {
+        None
+    };
+    Ok(ViewedFilesPage {
+        pull_request_id: pr.id,
+        files: files
+            .nodes
+            .into_iter()
+            .map(|f| (f.path, f.viewer_viewed_state))
+            .collect(),
+        next_cursor,
+    })
+}
+
+/// One aliased mutation per file, `markFileAsViewed` or `unmarkFileAsViewed`,
+/// all in a single request. `$pr` is the pull request's node ID and `$p<i>`
+/// the path of `changes[i]`.
+fn set_files_viewed_mutation(changes: &[(String, bool)]) -> String {
+    use std::fmt::Write;
+    let mut declarations = String::from("$pr:ID!");
+    let mut fields = String::new();
+    for (i, (_, viewed)) in changes.iter().enumerate() {
+        let mutation = if *viewed {
+            "markFileAsViewed"
+        } else {
+            "unmarkFileAsViewed"
+        };
+        let _ = write!(declarations, ",$p{i}:String!");
+        let _ = write!(
+            fields,
+            "f{i}:{mutation}(input:{{pullRequestId:$pr,path:$p{i}}}){{clientMutationId}} "
+        );
+    }
+    format!("mutation({declarations}){{{}}}", fields.trim_end())
+}
+
+fn check_graphql_errors(raw: &str) -> Result<()> {
+    #[derive(Deserialize)]
+    struct GhErrors {
+        #[serde(default)]
+        errors: Vec<viewed_files_types::GhError>,
+    }
+    let resp: GhErrors = serde_json::from_str(raw)?;
+    match resp.errors.first() {
+        Some(error) => anyhow::bail!("GraphQL error: {}", error.message),
+        None => Ok(()),
+    }
+}
+
+mod viewed_files_types {
+    use crate::domain::viewed_files::FileViewedState;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(super) struct GhResponse {
+        pub(super) data: Option<GhData>,
+        #[serde(default)]
+        pub(super) errors: Vec<GhError>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhError {
+        pub(super) message: String,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhData {
+        pub(super) repository: Option<GhRepo>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhRepo {
+        #[serde(rename = "pullRequest")]
+        pub(super) pull_request: Option<GhPr>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhPr {
+        pub(super) id: String,
+        pub(super) files: Option<GhFiles>,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhFiles {
+        #[serde(rename = "pageInfo")]
+        pub(super) page_info: GhPageInfo,
+        pub(super) nodes: Vec<GhFile>,
+    }
+    #[derive(Deserialize, Default)]
+    pub(super) struct GhPageInfo {
+        #[serde(rename = "hasNextPage")]
+        pub(super) has_next_page: bool,
+        #[serde(rename = "endCursor")]
+        pub(super) end_cursor: Option<String>,
+    }
+    #[derive(Deserialize)]
+    pub(super) struct GhFile {
+        pub(super) path: String,
+        #[serde(rename = "viewerViewedState")]
+        pub(super) viewer_viewed_state: FileViewedState,
+    }
+}
+
 #[async_trait]
 impl Backend for GhBackend {
     fn kind(&self) -> super::BackendKind {
@@ -1687,6 +1813,58 @@ impl Backend for GhBackend {
             "Fetching PR Diff",
         )
         .await
+    }
+
+    async fn list_viewed_files(
+        &self,
+        project: &str,
+        iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let query = format!("query={VIEWED_FILES_QUERY}");
+        let owner = format!("owner={owner}");
+        let name = format!("name={repo}");
+        let number = format!("number={iid}");
+        let mut viewed = crate::domain::viewed_files::PrViewedFiles::default();
+        let mut cursor: Option<String> = None;
+        loop {
+            let after = cursor.as_ref().map(|c| format!("cursor={c}"));
+            let mut args = vec![
+                "api", "graphql", "-f", &query, "-f", &owner, "-f", &name, "-F", &number,
+            ];
+            if let Some(after) = after.as_deref() {
+                args.extend(["-f", after]);
+            }
+            let raw = self.run_gh(&args, "Fetching Viewed Files").await?;
+            let page = parse_viewed_files_page(&raw)?;
+            viewed.pull_request_id = page.pull_request_id;
+            viewed.files.extend(page.files);
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return Ok(viewed),
+            }
+        }
+    }
+
+    async fn set_files_viewed(
+        &self,
+        pull_request_id: &str,
+        changes: &[(String, bool)],
+    ) -> Result<()> {
+        let query = format!("query={}", set_files_viewed_mutation(changes));
+        let pr = format!("pr={pull_request_id}");
+        let paths: Vec<String> = changes
+            .iter()
+            .enumerate()
+            .map(|(i, (path, _))| format!("p{i}={path}"))
+            .collect();
+        let mut args = vec!["api", "graphql", "-f", &query, "-f", &pr];
+        for path in &paths {
+            args.extend(["-f", path.as_str()]);
+        }
+        let raw = self.run_gh(&args, "Syncing Viewed Files").await?;
+        check_graphql_errors(&raw)
     }
 
     async fn list_mr_notes(
@@ -3455,6 +3633,49 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn viewed_files_page_reads_states_and_the_next_cursor() {
+        use crate::domain::viewed_files::FileViewedState;
+        let raw = r#"{"data":{"repository":{"pullRequest":{"id":"PR_kw1","files":{
+            "pageInfo":{"hasNextPage":true,"endCursor":"MTAw"},
+            "nodes":[{"path":"a.rs","viewerViewedState":"VIEWED"},
+                     {"path":"b.rs","viewerViewedState":"DISMISSED"},
+                     {"path":"c.rs","viewerViewedState":"UNVIEWED"}]}}}}}"#;
+        let page = parse_viewed_files_page(raw).unwrap();
+        assert_eq!(page.pull_request_id, "PR_kw1");
+        assert_eq!(page.next_cursor.as_deref(), Some("MTAw"));
+        assert_eq!(
+            page.files,
+            vec![
+                ("a.rs".to_string(), FileViewedState::Viewed),
+                ("b.rs".to_string(), FileViewedState::Dismissed),
+                ("c.rs".to_string(), FileViewedState::Unviewed),
+            ]
+        );
+
+        let last = raw.replace("\"hasNextPage\":true", "\"hasNextPage\":false");
+        assert_eq!(parse_viewed_files_page(&last).unwrap().next_cursor, None);
+    }
+
+    #[test]
+    fn viewed_files_errors_and_missing_pull_request_are_errors() {
+        assert!(parse_viewed_files_page(r#"{"errors":[{"message":"nope"}]}"#).is_err());
+        assert!(parse_viewed_files_page(r#"{"data":{"repository":null}}"#).is_err());
+    }
+
+    #[test]
+    fn set_files_viewed_mutation_aliases_each_file_by_its_variable() {
+        let changes = vec![("a.rs".to_string(), true), ("b.rs".to_string(), false)];
+        assert_eq!(
+            set_files_viewed_mutation(&changes),
+            "mutation($pr:ID!,$p0:String!,$p1:String!){\
+             f0:markFileAsViewed(input:{pullRequestId:$pr,path:$p0}){clientMutationId} \
+             f1:unmarkFileAsViewed(input:{pullRequestId:$pr,path:$p1}){clientMutationId}}"
+        );
+        assert!(check_graphql_errors(r#"{"data":{"f0":{"clientMutationId":null}}}"#).is_ok());
+        assert!(check_graphql_errors(r#"{"data":null,"errors":[{"message":"x"}]}"#).is_err());
+    }
 
     #[test]
     fn encode_branch_passes_simple_names_through() {

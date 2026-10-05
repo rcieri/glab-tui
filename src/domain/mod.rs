@@ -11,4 +11,5 @@ pub mod pipelines;
 pub mod releases;
 pub mod review_threads;
 pub mod runners;
+pub mod viewed_files;
 pub mod workflow_inputs;

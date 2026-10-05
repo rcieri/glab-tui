@@ -101,6 +101,8 @@ Tab navigation across Issues, Merge Requests, Pipelines, Runners, and Releases w
 ### Code Review & Diff View
 Review MR/PR diffs in unified or side-by-side view, navigate files, mark files as reviewed, and leave comments.
 
+GitHub does not serve diffs over 20,000 changed lines. For those PRs glab-tui builds the diff with `git` in a local clone of the repository (any clone you have run glab-tui in): it fetches the PR's commits if they are missing and diffs them, without checking anything out.
+
 ![Diff View](assets/demo-diff.gif)
 
 ### Fullscreen Preview & Inspector

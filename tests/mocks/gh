@@ -10,8 +10,45 @@ if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     exit 0
 fi
 
+# Pull requests. MOCK_GH_PR_DIFF_ERROR makes `pr diff` fail the way GitHub
+# does: `too_large` for a diff over 20,000 lines, `not_found` otherwise.
+# MOCK_GH_BASE_OID / MOCK_GH_HEAD_OID answer the commit-id lookup.
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+    cat "$FIXTURES_DIR/gh_prs.json"
+    exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "diff" ]]; then
+    case "$MOCK_GH_PR_DIFF_ERROR" in
+        too_large)
+            echo "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000) (https://api.github.com/repos/test-owner/test-repo/pulls/$3)" >&2
+            echo "PullRequest.diff too_large" >&2
+            exit 1
+            ;;
+        not_found)
+            echo "GraphQL: Could not resolve to a PullRequest with the number of $3. (repository.pullRequest)" >&2
+            exit 1
+            ;;
+    esac
+    cat "$FIXTURES_DIR/mr_diff.txt"
+    exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"baseRefOid,headRefOid"* ]]; then
+    printf '{"baseRefOid":"%s","headRefOid":"%s"}\n' "$MOCK_GH_BASE_OID" "$MOCK_GH_HEAD_OID"
+    exit 0
+fi
+
+# Review submissions pass their payload in a temp file the app deletes
+# afterwards; log it so tests can assert on what was posted.
+if [[ "$1" == "api" && "$2" == *"/reviews" && "$3" == "--input" ]]; then
+    echo "review payload: $(cat "$4")" >> "$LOG_FILE"
+    echo "{}"
+    exit 0
+fi
+
 if [[ "$*" == *"api"* ]]; then
-    if [[ "$*" == *"/issues"* ]]; then
+    if [[ "$*" == *"/pulls/"*"/comments"* ]]; then
+        cat "$FIXTURES_DIR/gh_pr_comments.json"
+    elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"

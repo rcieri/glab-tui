@@ -9,6 +9,7 @@ mod custom_keybindings;
 mod keybindings;
 mod layout;
 mod pagination;
+mod pr_diff_fallback;
 mod review_threads;
 mod scenarios;
 mod tabs;
@@ -492,7 +493,12 @@ impl TestSession {
     /// Launch a session with extra environment variables, used to steer the
     /// CLI mocks into failure modes the tests need to assert on.
     pub fn with_envs(is_github: bool, rows: u16, cols: u16, extra: &[(&str, &str)]) -> Self {
-        let sandbox = Sandbox::new(is_github).unwrap();
+        Self::launch(Sandbox::new(is_github).unwrap(), rows, cols, extra)
+    }
+
+    /// Launch in a sandbox the test has already prepared (e.g. committed to
+    /// its repository), with extra environment variables for the CLI mocks.
+    pub fn launch(sandbox: Sandbox, rows: u16, cols: u16, extra: &[(&str, &str)]) -> Self {
         let bin_path = find_glab_tui_binary();
         let mut envs_vec = sandbox.envs();
         for (k, v) in extra {

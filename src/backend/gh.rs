@@ -444,6 +444,40 @@ impl GhBackend {
         })
         .await
     }
+
+    /// Builds the diff GitHub refuses to serve (over 20,000 lines) with git,
+    /// in the recently used clone whose `origin` is `project`.
+    async fn diff_pr_locally(&self, project: &str, pr_number: u64) -> Result<String> {
+        let lookup_project = project.to_string();
+        let checkout = tokio::task::spawn_blocking(move || {
+            crate::utils::cache::find_local_checkout(&lookup_project)
+        })
+        .await
+        .context("looking up a local clone")?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "the diff of PR #{pr_number} is over GitHub's 20,000-line limit and needs a \
+                 local clone of {project}; run glab-tui in a clone of {project} once, then retry"
+            )
+        })?;
+        let raw = self
+            .run_gh(
+                &[
+                    "pr",
+                    "view",
+                    &pr_number.to_string(),
+                    "-R",
+                    project,
+                    "--json",
+                    "baseRefOid,headRefOid",
+                ],
+                "Fetching PR Commit IDs",
+            )
+            .await?;
+        let commits: PrDiffCommits = serde_json::from_str(&raw)
+            .with_context(|| format!("parsing the commit ids of PR #{pr_number}"))?;
+        diff_pr_in_checkout(self.tx.as_ref(), &checkout, pr_number, &commits).await
+    }
 }
 
 async fn run_gh_command(
@@ -451,7 +485,6 @@ async fn run_gh_command(
     args: &[&str],
     desc: &str,
 ) -> Result<String> {
-    let label = desc.to_uppercase();
     let cmd_str = format!("gh {}", args.join(" "));
 
     let output = Command::new("gh")
@@ -460,28 +493,141 @@ async fn run_gh_command(
         .await
         .with_context(|| format!("Failed to execute: gh {}", args.join(" ")))?;
 
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     if output.status.success() {
         let s = String::from_utf8(output.stdout)?;
-        if let Some(ref tx) = tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{}: {}", label, cmd_str),
-                status: "Success".to_string(),
-            });
-        }
+        log_terminal_command(tx.as_ref(), desc, &cmd_str, "Success".to_string());
         Ok(s)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if let Some(ref tx) = tx {
-            let _ = tx.send(Event::TerminalCommandLogged {
-                timestamp,
-                command: format!("{}: {}", label, cmd_str),
-                status: format!("Failed: {}", err_msg),
-            });
-        }
+        log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {}", err_msg));
         anyhow::bail!("gh command failed: {}", err_msg)
     }
+}
+
+fn log_terminal_command(
+    tx: Option<&UnboundedSender<Event>>,
+    desc: &str,
+    cmd_str: &str,
+    status: String,
+) {
+    if let Some(tx) = tx {
+        let _ = tx.send(Event::TerminalCommandLogged {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            command: format!("{}: {}", desc.to_uppercase(), cmd_str),
+            status,
+        });
+    }
+}
+
+/// Marker GitHub puts in the error when a PR's diff exceeds the 20,000 lines
+/// it serves (`PullRequest.diff too_large`, HTTP 406).
+const PR_DIFF_TOO_LARGE_MARKER: &str = "too_large";
+
+fn is_pr_diff_too_large(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains(PR_DIFF_TOO_LARGE_MARKER)
+}
+
+#[derive(Deserialize)]
+struct PrDiffCommits {
+    #[serde(rename = "baseRefOid")]
+    base: String,
+    #[serde(rename = "headRefOid")]
+    head: String,
+}
+
+/// A full SHA-1 or SHA-256 object name. Anything else is refused before it
+/// reaches a git command line, where it could be read as an option.
+fn is_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// `git -C <checkout>` that can never prompt: the TUI owns the terminal.
+fn git_in(checkout: &str) -> Command {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(checkout)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null());
+    command
+}
+
+async fn has_commit(checkout: &str, oid: &str) -> bool {
+    git_in(checkout)
+        .args(["cat-file", "-e", &format!("{oid}^{{commit}}")])
+        .output()
+        .await
+        .is_ok_and(|output| output.status.success())
+}
+
+async fn run_git_command(
+    tx: Option<&UnboundedSender<Event>>,
+    checkout: &str,
+    args: &[&str],
+    desc: &str,
+) -> Result<String> {
+    let cmd_str = format!("git -C {checkout} {}", args.join(" "));
+    let output = git_in(checkout)
+        .args(args)
+        .output()
+        .await
+        .with_context(|| format!("Failed to execute: {cmd_str}"))?;
+    if output.status.success() {
+        log_terminal_command(tx, desc, &cmd_str, "Success".to_string());
+        // Local files can be in any encoding; the diff view only needs text.
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        log_terminal_command(tx, desc, &cmd_str, format!("Failed: {}", err_msg));
+        anyhow::bail!("git command failed: {}", err_msg)
+    }
+}
+
+/// Diffs a PR with git in `checkout`, fetching its base and head commits from
+/// `origin` only when the clone lacks them. Fetching without a destination
+/// ref writes nothing but `FETCH_HEAD`, so the clone's branches, index and
+/// working tree are left as they were.
+async fn diff_pr_in_checkout(
+    tx: Option<&UnboundedSender<Event>>,
+    checkout: &str,
+    pr_number: u64,
+    commits: &PrDiffCommits,
+) -> Result<String> {
+    for oid in [&commits.base, &commits.head] {
+        if !is_object_id(oid) {
+            anyhow::bail!("unexpected commit id {oid:?} for PR #{pr_number}");
+        }
+    }
+    if !(has_commit(checkout, &commits.base).await && has_commit(checkout, &commits.head).await) {
+        let pr_head = format!("pull/{pr_number}/head");
+        run_git_command(
+            tx,
+            checkout,
+            &["fetch", "--no-tags", "origin", &commits.base, &pr_head],
+            "Fetching PR Commits",
+        )
+        .await?;
+    }
+    // Pinned flags keep user diff config (colour, external drivers, textconv,
+    // prefixes, octal-quoted paths) out of the text the diff view parses.
+    let range = format!("{}...{}", commits.base, commits.head);
+    run_git_command(
+        tx,
+        checkout,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            &range,
+        ],
+        "Diffing PR Locally",
+    )
+    .await
 }
 
 /// Build the GraphQL query that finds the PRs which close (or closed) an issue.
@@ -1682,11 +1828,16 @@ impl Backend for GhBackend {
     }
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
-        self.run_gh(
-            &["pr", "diff", &iid.to_string(), "-R", project],
-            "Fetching PR Diff",
-        )
-        .await
+        match self
+            .run_gh(
+                &["pr", "diff", &iid.to_string(), "-R", project],
+                "Fetching PR Diff",
+            )
+            .await
+        {
+            Err(err) if is_pr_diff_too_large(&err) => self.diff_pr_locally(project, iid).await,
+            result => result,
+        }
     }
 
     async fn list_mr_notes(
@@ -4257,5 +4408,127 @@ mod tests {
         assert!(!args_merge_commit.contains(&"--squash".to_string()));
         assert!(!args_merge_commit.contains(&"--rebase".to_string()));
         assert!(!args_merge_commit.contains(&"--auto".to_string()));
+    }
+
+    #[test]
+    fn only_githubs_too_large_diff_error_triggers_the_local_fallback() {
+        let too_large = anyhow::anyhow!(
+            "gh command failed: could not find pull request diff: HTTP 406: Sorry, the diff \
+             exceeded the maximum number of lines (20000) \
+             (https://api.github.com/repos/o/r/pulls/1)\nPullRequest.diff too_large"
+        );
+        let not_found = anyhow::anyhow!(
+            "gh command failed: GraphQL: Could not resolve to a PullRequest with the number of 9."
+        );
+        assert!(is_pr_diff_too_large(&too_large));
+        assert!(!is_pr_diff_too_large(&not_found));
+    }
+
+    /// Runs git in `dir` with an identity and no signing, so the developer's
+    /// global config cannot break commit creation.
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.name=glab-tui",
+                "-c",
+                "user.email=glab-tui@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// Everything the fallback promises not to touch in a clone.
+    fn clone_state(clone: &std::path::Path) -> [String; 4] {
+        [
+            git(clone, &["symbolic-ref", "HEAD"]),
+            git(clone, &["for-each-ref"]),
+            git(clone, &["status", "--porcelain=v1"]),
+            git(clone, &["diff", "--cached"]),
+        ]
+    }
+
+    #[tokio::test]
+    async fn local_pr_diff_fetches_missing_commits_without_touching_the_clone() {
+        let root = tempfile::tempdir().unwrap();
+        let origin = root.path().join("origin.git");
+        let author = root.path().join("author");
+        let clone = root.path().join("clone");
+        std::fs::create_dir_all(&author).unwrap();
+        git(
+            root.path(),
+            &[
+                "init",
+                "-q",
+                "--bare",
+                "-b",
+                "main",
+                origin.to_str().unwrap(),
+            ],
+        );
+        git(&author, &["init", "-q", "-b", "main"]);
+        git(
+            &author,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        std::fs::write(author.join("kept.txt"), "unchanged\n").unwrap();
+        std::fs::write(author.join("edited.txt"), "before\n").unwrap();
+        git(&author, &["add", "."]);
+        git(&author, &["commit", "-q", "-m", "base"]);
+        git(&author, &["push", "-q", "origin", "main"]);
+        let base = git(&author, &["rev-parse", "HEAD"]).trim().to_string();
+        std::fs::write(author.join("edited.txt"), "after\n").unwrap();
+        std::fs::write(author.join("added.txt"), "new\n").unwrap();
+        git(&author, &["add", "."]);
+        git(&author, &["commit", "-q", "-m", "head"]);
+        let head = git(&author, &["rev-parse", "HEAD"]).trim().to_string();
+        git(&author, &["push", "-q", "origin", "HEAD:refs/pull/7/head"]);
+
+        git(
+            root.path(),
+            &[
+                "clone",
+                "-q",
+                origin.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(clone.join("kept.txt"), "staged local edit\n").unwrap();
+        git(&clone, &["add", "kept.txt"]);
+        std::fs::write(clone.join("edited.txt"), "unstaged local edit\n").unwrap();
+        let before = clone_state(&clone);
+
+        let commits = PrDiffCommits {
+            base,
+            head: head.clone(),
+        };
+        let diff = diff_pr_in_checkout(None, clone.to_str().unwrap(), 7, &commits)
+            .await
+            .unwrap();
+
+        let files: Vec<&str> = diff
+            .lines()
+            .filter(|line| line.starts_with("diff --git "))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                "diff --git a/added.txt b/added.txt",
+                "diff --git a/edited.txt b/edited.txt",
+            ]
+        );
+        assert_eq!(clone_state(&clone), before);
+        git(&clone, &["cat-file", "-e", &format!("{head}^{{commit}}")]);
     }
 }

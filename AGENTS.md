@@ -147,6 +147,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
   - `DiffFetched` event uses named fields: `{ mr_iid, project_path, raw_diff, comments }`.
   - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`).
   - Open diff key is `D` (remappable via `keybindings.mrs.view_diff`).
+* **GitHub diffs over 20,000 lines:** GitHub refuses to serve them (`gh pr diff` fails with HTTP 406 `PullRequest.diff too_large`). `GhBackend::get_mr_diff` then builds the diff with git in the clone `cache::find_local_checkout` finds for the PR's repository (`diff_pr_locally` / `diff_pr_in_checkout` in [src/backend/gh.rs](src/backend/gh.rs)). It only fetches (skipped when both commits are already local) and diffs — no checkout, no branch, no index or working-tree change. Without a known clone the error says a local clone is needed; every other `gh pr diff` error is returned unchanged. Review comments and review submission are unaffected: they go through the API with the same path/line anchors. E2E coverage: `tests/e2e/pr_diff_fallback.rs`.
 * **Dynamic line numbers & tab expansion:** Gutter width is dynamically calculated in `DiffView::new` from the widest line number in the diff (floored at 4). Tabs are expanded to spaces at tab stops at diff parse time (`expand_tabs`) so Go/Makefiles maintain indentation without breaking syntax highlighting or search indices.
 * **Suggestion rendering:** `format_comment_with_suggestions()` in [src/ui/helpers.rs](src/ui/helpers.rs) parses ` ```suggestion ` blocks from comment bodies and renders them as in-line diff (red for original, green for suggested).
 * **Reviewed-file marks:** `m` toggles `DiffView::reviewed_files` (a `HashSet` of diff-relative file paths) for the selected file, or for every file below the selected directory; `M` toggles `DiffView::hide_reviewed`. Both are purely local — neither GitLab nor GitHub's "viewed" state is synced.
@@ -326,6 +327,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List PRs | `gh pr list --json number,title,state,... -R <repo> --state <s> --limit <N>` | Single `--limit` call; the JSON projection includes `reviewDecision`, `latestReviews`, `mergeable`, `mergeStateStatus`, `reviewRequests` to derive the Approval/Mergeable/Workflow columns |
 | Get single PR | `gh pr view <iid> --json ... -R <repo>` | N/A |
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
+| Get PR diff over 20,000 lines (only after `gh pr diff` fails with `too_large`) | `gh pr view <iid> -R <repo> --json baseRefOid,headRefOid`, then in the local clone: `git fetch --no-tags origin <baseRefOid> pull/<iid>/head` (skipped when both commits are local) and `git diff <baseRefOid>...<headRefOid>` | N/A |
 | List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
 | List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` | Single call |
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |

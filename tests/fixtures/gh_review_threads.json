@@ -1,0 +1,15 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            { "isResolved": false, "comments": { "nodes": [ { "databaseId": 201 }, { "databaseId": 202 } ] } },
+            { "isResolved": true, "comments": { "nodes": [ { "databaseId": 203 } ] } },
+            { "isResolved": false, "comments": { "nodes": [ { "databaseId": 204 } ] } }
+          ]
+        }
+      }
+    }
+  }
+}

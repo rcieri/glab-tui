@@ -27,6 +27,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use domain::review::{DraftComment, ReviewEvent};
 use event::{Event, EventHandler};
 use ratatui::{Terminal, backend::CrosstermBackend, widgets::ListState};
 use std::io;
@@ -142,6 +143,43 @@ fn jump_to_unloaded_mr(app: &mut App, iid: u64, events: &EventHandler) {
     };
     let project = app.scope.as_str().to_string();
     crate::fetch::spawn_fetch_mr(&client, &project, iid, events.sender());
+}
+
+/// Runs a review mutation in the background and reports its outcome on the
+/// MRs tab.
+fn spawn_mr_review_task(
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    task: impl Future<Output = Result<()>> + Send + 'static,
+) {
+    tokio::spawn(async move {
+        let result = task.await.map_err(|e| format!("{e:#}"));
+        let _ = tx.send(Event::CommandCompleted(app::Tab::MergeRequests, result));
+    });
+}
+
+/// Posts one diff comment right away, outside review mode, as a single-comment
+/// review so it lands on its line exactly like a submitted draft would.
+fn post_review_comment(
+    app: &App,
+    mr_iid: u64,
+    comment: DraftComment,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let Some(client) = app.gitlab_client.clone() else {
+        return;
+    };
+    let project = app.project_path_for_mr(mr_iid);
+    spawn_mr_review_task(tx, async move {
+        client
+            .submit_review(
+                &project,
+                mr_iid,
+                ReviewEvent::Comment,
+                "",
+                std::slice::from_ref(&comment),
+            )
+            .await
+    });
 }
 
 fn rect_contains(rect: ratatui::layout::Rect, row: u16, col: u16) -> bool {
@@ -766,6 +804,13 @@ async fn main() -> Result<()> {
         }
     }
 
+    if let Some(dir) = &cli.dir {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            eprintln!("Error changing directory to '{}': {}", dir, e);
+            std::process::exit(1);
+        }
+    }
+
     if let Some(cmd) = cli.command {
         match cmd {
             cli::Commands::Doctor => {
@@ -788,6 +833,22 @@ async fn main() -> Result<()> {
                 cli::run_repos_list();
                 return Ok(());
             }
+            cli::Commands::Review { command } => {
+                if cli.group.is_some() {
+                    eprintln!("error: review works on one repository; pass --repo, not --group");
+                    std::process::exit(2);
+                }
+                match cli::review::run(command, cli.repo).await {
+                    Ok(output) => {
+                        println!("{output:#}");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e:#}");
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
     }
 
@@ -797,14 +858,6 @@ async fn main() -> Result<()> {
     }
 
     let custom_repo = cli.repo;
-    let custom_dir = cli.dir;
-
-    if let Some(ref dir) = custom_dir {
-        if let Err(e) = std::env::set_current_dir(dir) {
-            eprintln!("Error changing directory to '{}': {}", dir, e);
-            std::process::exit(1);
-        }
-    }
 
     // Setup terminal
     enable_raw_mode()?;
@@ -2295,53 +2348,27 @@ async fn main() -> Result<()> {
                                         end_old_line_num,
                                     } => {
                                         if !value.trim().is_empty() {
+                                            let comment = DraftComment {
+                                                file_path,
+                                                line_num,
+                                                old_line_num,
+                                                end_line_num,
+                                                end_old_line_num,
+                                                body: value,
+                                            };
                                             if app.in_review_mode {
-                                                app.draft_comments.push(crate::app::DraftComment {
-                                                    file_path,
-                                                    line_num,
-                                                    old_line_num,
-                                                    end_line_num,
-                                                    end_old_line_num,
-                                                    body: value,
-                                                });
+                                                app.draft_comments.push(comment);
                                                 app.status_message = Some(format!(
                                                     "Added draft comment. ({} pending)",
                                                     app.draft_comments.len()
                                                 ));
                                             } else {
-                                                let client = app.gitlab_client.clone().unwrap();
-                                                let project = app.scope.as_str().to_string();
-                                                let body = value;
-                                                let tx = events.sender();
-                                                let tab = app.active_tab;
-                                                tokio::spawn(async move {
-                                                    match client
-                                                        .add_mr_comment(
-                                                            &project,
-                                                            mr_iid,
-                                                            &body,
-                                                            Some(&file_path),
-                                                            line_num.map(|v| v as u64),
-                                                            old_line_num.map(|v| v as u64),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(_) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    tab,
-                                                                    Ok(()),
-                                                                ));
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    tab,
-                                                                    Err(e.to_string()),
-                                                                ));
-                                                        }
-                                                    }
-                                                });
+                                                post_review_comment(
+                                                    &app,
+                                                    mr_iid,
+                                                    comment,
+                                                    events.sender(),
+                                                );
                                             }
                                         }
                                     }
@@ -2602,599 +2629,48 @@ async fn main() -> Result<()> {
                                         ref discussion_id,
                                     } => {
                                         if !value.trim().is_empty() {
-                                            let client = app.gitlab_client.clone();
-                                            let project_context = app.project_path_for_mr(mr_iid);
-                                            let tx = events.sender();
-                                            let is_github =
-                                                client.as_ref().map_or(false, |c| c.is_github);
-                                            let discussion_id_clone = discussion_id.clone();
-                                            let value_clone = value.clone();
-
-                                            let _ = tx.send(Event::CommandStarted(format!(
-                                                "Replying to comment ID {} in MR #{}",
-                                                comment_id, mr_iid
-                                            )));
-
-                                            tokio::spawn(async move {
-                                                if let Some(client) = client {
-                                                    let output = if is_github {
-                                                        let payload = serde_json::json!({
-                                                            "body": value_clone,
-                                                            "in_reply_to": comment_id,
-                                                        });
-                                                        let temp_path =
-                                                            std::env::temp_dir().join(format!(
-                                                                "glab-tui-reply-{}.json",
-                                                                comment_id
-                                                            ));
-                                                        let _ = std::fs::write(
-                                                            &temp_path,
-                                                            serde_json::to_string(&payload)
-                                                                .unwrap(),
-                                                        );
-                                                        let temp_str =
-                                                            temp_path.to_string_lossy().to_string();
-
-                                                        let res = tokio::process::Command::new(
-                                                            "gh",
+                                            if let Some(client) = app.gitlab_client.clone() {
+                                                let project = app.project_path_for_mr(mr_iid);
+                                                let thread_id = discussion_id.clone();
+                                                let body = value.clone();
+                                                let tx = events.sender();
+                                                let _ = tx.send(Event::CommandStarted(format!(
+                                                    "Replying to comment ID {} in MR #{}",
+                                                    comment_id, mr_iid
+                                                )));
+                                                spawn_mr_review_task(tx, async move {
+                                                    client
+                                                        .reply_to_thread(
+                                                            &project, mr_iid, &thread_id, &body,
                                                         )
-                                                        .args([
-                                                            "api",
-                                                            &format!(
-                                                                "repos/{}/pulls/{}/comments",
-                                                                project_context, mr_iid
-                                                            ),
-                                                            "--input",
-                                                            &temp_str,
-                                                            "-X",
-                                                            "POST",
-                                                        ])
-                                                        .output()
-                                                        .await;
-                                                        let _ = std::fs::remove_file(&temp_path);
-                                                        res
-                                                    } else {
-                                                        let encoded_path =
-                                                            project_context.replace("/", "%2F");
-                                                        let payload = serde_json::json!({
-                                                            "body": value_clone,
-                                                        });
-                                                        let temp_path =
-                                                            std::env::temp_dir().join(format!(
-                                                                "glab-tui-reply-{}.json",
-                                                                comment_id
-                                                            ));
-                                                        let _ = std::fs::write(
-                                                            &temp_path,
-                                                            serde_json::to_string(&payload)
-                                                                .unwrap(),
-                                                        );
-                                                        let temp_str =
-                                                            temp_path.to_string_lossy().to_string();
-
-                                                        let res = tokio::process::Command::new("glab")
-                                                            .args([
-                                                                "api",
-                                                                &format!(
-                                                                    "projects/{}/merge_requests/{}/discussions/{}/notes",
-                                                                    encoded_path, mr_iid, discussion_id_clone
-                                                                ),
-                                                                "--input",
-                                                                &temp_str,
-                                                                "-X",
-                                                                "POST"
-                                                            ])
-                                                            .output()
-                                                            .await;
-                                                        let _ = std::fs::remove_file(&temp_path);
-                                                        res
-                                                    };
-
-                                                    match output {
-                                                        Ok(out) if out.status.success() => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::MergeRequests,
-                                                                    Ok(()),
-                                                                ));
-                                                        }
-                                                        Ok(out) => {
-                                                            let err = String::from_utf8_lossy(
-                                                                &out.stderr,
-                                                            )
-                                                            .trim()
-                                                            .to_string();
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::MergeRequests,
-                                                                    Err(err),
-                                                                ));
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::MergeRequests,
-                                                                    Err(e.to_string()),
-                                                                ));
-                                                        }
-                                                    }
-                                                }
-                                            });
+                                                        .await
+                                                });
+                                            }
                                         }
                                     }
                                     crate::app::TextInputAction::SubmitReviewFinal {
                                         mr_iid,
                                         status,
                                     } => {
-                                        let is_github = app.is_github();
-                                        let tx = events.sender();
-                                        let comments = app.draft_comments.clone();
-                                        app.draft_comments.clear();
+                                        let comments = std::mem::take(&mut app.draft_comments);
                                         app.in_review_mode = false;
-
-                                        let project_context = app.project_path_for_mr(mr_iid);
-                                        let status_clone = status.clone();
-                                        let value_clone = value.clone();
-
-                                        tokio::spawn(async move {
-                                            if is_github {
-                                                let github_event = match status_clone.as_str() {
-                                                    "Approve" => "APPROVE",
-                                                    "Request Changes" => "REQUEST_CHANGES",
-                                                    _ => "COMMENT",
-                                                };
-                                                let mut json_comments = serde_json::json!([]);
-                                                if let Some(arr) = json_comments.as_array_mut() {
-                                                    for comment in &comments {
-                                                        let line = comment
-                                                            .line_num
-                                                            .or(comment.old_line_num)
-                                                            .unwrap_or(1);
-                                                        let side = if comment.old_line_num.is_some()
-                                                        {
-                                                            "LEFT"
-                                                        } else {
-                                                            "RIGHT"
-                                                        };
-                                                        let mut obj = serde_json::json!({
-                                                            "path": comment.file_path,
-                                                            "line": line,
-                                                            "side": side,
-                                                            "body": comment.body,
-                                                        });
-                                                        // Add multi-line range if applicable
-                                                        if let Some(end_l) = comment.end_line_num {
-                                                            if let Some(start_l) = comment.line_num
-                                                            {
-                                                                if end_l != start_l {
-                                                                    if let Some(obj_map) =
-                                                                        obj.as_object_mut()
-                                                                    {
-                                                                        obj_map.insert(
-                                                                            "start_line"
-                                                                                .to_string(),
-                                                                            serde_json::json!(
-                                                                                start_l.min(end_l)
-                                                                            ),
-                                                                        );
-                                                                        obj_map.insert(
-                                                                            "start_side"
-                                                                                .to_string(),
-                                                                            serde_json::json!(
-                                                                                "RIGHT"
-                                                                            ),
-                                                                        );
-                                                                        obj_map.insert(
-                                                                            "line".to_string(),
-                                                                            serde_json::json!(
-                                                                                start_l.max(end_l)
-                                                                            ),
-                                                                        );
-                                                                        obj_map.insert(
-                                                                            "side".to_string(),
-                                                                            serde_json::json!(
-                                                                                "RIGHT"
-                                                                            ),
-                                                                        );
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else if let Some(end_o) =
-                                                            comment.end_old_line_num
-                                                        {
-                                                            if let Some(oln) = comment.old_line_num
-                                                            {
-                                                                if end_o != oln {
-                                                                    if let Some(obj_map) =
-                                                                        obj.as_object_mut()
-                                                                    {
-                                                                        obj_map.insert(
-                                                                            "start_line"
-                                                                                .to_string(),
-                                                                            serde_json::json!(
-                                                                                oln.min(end_o)
-                                                                            ),
-                                                                        );
-                                                                        obj_map.insert(
-                                                                            "start_side"
-                                                                                .to_string(),
-                                                                            serde_json::json!(
-                                                                                "LEFT"
-                                                                            ),
-                                                                        );
-                                                                        obj_map.insert(
-                                                                            "line".to_string(),
-                                                                            serde_json::json!(
-                                                                                oln.max(end_o)
-                                                                            ),
-                                                                        );
-                                                                        obj_map.insert(
-                                                                            "side".to_string(),
-                                                                            serde_json::json!(
-                                                                                "LEFT"
-                                                                            ),
-                                                                        );
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        arr.push(obj);
-                                                    }
-                                                }
-                                                let payload = serde_json::json!({
-                                                    "body": value_clone,
-                                                    "event": github_event,
-                                                    "comments": json_comments,
-                                                });
-                                                let temp_path = std::env::temp_dir().join(format!(
-                                                    "glab-tui-review-{}.json",
-                                                    mr_iid
-                                                ));
-                                                if let Ok(_) = std::fs::write(
-                                                    &temp_path,
-                                                    serde_json::to_string(&payload).unwrap(),
-                                                ) {
-                                                    let temp_str =
-                                                        temp_path.to_string_lossy().to_string();
-                                                    let _ =
-                                                        tx.send(Event::CommandStarted(format!(
-                                                            "SUBMITTING REVIEW: gh api repos/{}/pulls/{}/reviews",
-                                                            project_context, mr_iid
-                                                        )));
-                                                    let output = tokio::process::Command::new("gh")
-                                                        .args([
-                                                            "api",
-                                                            &format!(
-                                                                "repos/{}/pulls/{}/reviews",
-                                                                project_context, mr_iid
-                                                            ),
-                                                            "--input",
-                                                            &temp_str,
-                                                        ])
-                                                        .output()
-                                                        .await;
-                                                    let _ = std::fs::remove_file(&temp_path);
-                                                    match output {
-                                                        Ok(out) if out.status.success() => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::MergeRequests,
-                                                                    Ok(()),
-                                                                ));
-                                                        }
-                                                        Ok(out) => {
-                                                            let err = String::from_utf8_lossy(
-                                                                &out.stderr,
-                                                            )
-                                                            .trim()
-                                                            .to_string();
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::MergeRequests,
-                                                                    Err(format!(
-                                                                        "Submit review failed: {}",
-                                                                        err
-                                                                    )),
-                                                                ));
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    app::Tab::MergeRequests,
-                                                                    Err(format!(
-                                                                        "Failed to run gh: {}",
-                                                                        e
-                                                                    )),
-                                                                ));
-                                                        }
-                                                    }
-                                                }
-                                            } else {
-                                                let _ = tx.send(Event::CommandStarted(format!(
-                                                    "SUBMITTING REVIEW: glab mr approve {}; glab mr note create {}",
-                                                    mr_iid, mr_iid
-                                                )));
-                                                let encoded_path =
-                                                    project_context.replace("/", "%2F");
-                                                let mut success = true;
-                                                let mut err_msg = String::new();
-
-                                                // Fetch MR details to get base_sha, start_sha, and head_sha
-                                                let mr_output =
-                                                    tokio::process::Command::new("glab")
-                                                        .args([
-                                                            "api",
-                                                            &format!(
-                                                                "projects/{}/merge_requests/{}",
-                                                                encoded_path, mr_iid
-                                                            ),
-                                                        ])
-                                                        .output()
-                                                        .await;
-
-                                                let (base_sha, start_sha, head_sha) =
-                                                    if let Ok(out) = mr_output {
-                                                        if out.status.success() {
-                                                            if let Ok(v) = serde_json::from_slice::<
-                                                                serde_json::Value,
-                                                            >(
-                                                                &out.stdout
-                                                            ) {
-                                                                let base =
-                                                                    v["diff_refs"]["base_sha"]
-                                                                        .as_str()
-                                                                        .map(|s| s.to_string());
-                                                                let start =
-                                                                    v["diff_refs"]["start_sha"]
-                                                                        .as_str()
-                                                                        .map(|s| s.to_string());
-                                                                let head =
-                                                                    v["diff_refs"]["head_sha"]
-                                                                        .as_str()
-                                                                        .map(|s| s.to_string());
-                                                                (base, start, head)
-                                                            } else {
-                                                                (None, None, None)
-                                                            }
-                                                        } else {
-                                                            (None, None, None)
-                                                        }
-                                                    } else {
-                                                        (None, None, None)
-                                                    };
-
-                                                for comment in &comments {
-                                                    let mut position = serde_json::json!({
-                                                        "position_type": "text",
-                                                        "new_path": comment.file_path,
-                                                    });
-                                                    if let Some(ref base) = base_sha {
-                                                        position["base_sha"] =
-                                                            serde_json::json!(base);
-                                                    }
-                                                    if let Some(ref start) = start_sha {
-                                                        position["start_sha"] =
-                                                            serde_json::json!(start);
-                                                    }
-                                                    if let Some(ref head) = head_sha {
-                                                        position["head_sha"] =
-                                                            serde_json::json!(head);
-                                                    }
-                                                    if let Some(line_num) = comment.line_num {
-                                                        position["new_line"] =
-                                                            serde_json::json!(line_num);
-                                                    }
-                                                    if let Some(old_line_num) = comment.old_line_num
-                                                    {
-                                                        position["old_line"] =
-                                                            serde_json::json!(old_line_num);
-                                                        position["old_path"] =
-                                                            serde_json::json!(comment.file_path);
-                                                    }
-
-                                                    // Multi-line range for GitLab
-                                                    if let Some(end_l) = comment.end_line_num {
-                                                        if let Some(start_l) = comment.line_num {
-                                                            if end_l != start_l {
-                                                                let line_range = serde_json::json!({
-                                                                    "start": {"line_code": "", "type": "new_line"},
-                                                                    "end": {"line_code": "", "type": "new_line"},
-                                                                });
-                                                                if let Some(lr) =
-                                                                    line_range.as_object()
-                                                                {
-                                                                    position["line_range"] = serde_json::json!({
-                                                                        "start": {
-                                                                            "line_code": "",
-                                                                            "type": "new_line",
-                                                                            "new_line": start_l.min(end_l),
-                                                                        },
-                                                                        "end": {
-                                                                            "line_code": "",
-                                                                            "type": "new_line",
-                                                                            "new_line": start_l.max(end_l),
-                                                                        },
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    } else if let Some(end_o) =
-                                                        comment.end_old_line_num
-                                                    {
-                                                        if let Some(start_o) = comment.old_line_num
-                                                        {
-                                                            if end_o != start_o {
-                                                                let line_range = serde_json::json!({
-                                                                    "start": {"line_code": "", "type": "old_line"},
-                                                                    "end": {"line_code": "", "type": "old_line"},
-                                                                });
-                                                                if let Some(lr) =
-                                                                    line_range.as_object()
-                                                                {
-                                                                    position["line_range"] = serde_json::json!({
-                                                                        "start": {
-                                                                            "line_code": "",
-                                                                            "type": "old_line",
-                                                                            "old_line": start_o.min(end_o),
-                                                                        },
-                                                                        "end": {
-                                                                            "line_code": "",
-                                                                            "type": "old_line",
-                                                                            "old_line": start_o.max(end_o),
-                                                                        },
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-
-                                                    let draft_payload = serde_json::json!({
-                                                        "note": comment.body,
-                                                        "position": position,
-                                                    });
-                                                    let temp_path = std::env::temp_dir().join(
-                                                        format!("glab-tui-draft-{}.json", mr_iid),
-                                                    );
-                                                    if let Ok(_) = std::fs::write(
-                                                        &temp_path,
-                                                        serde_json::to_string(&draft_payload)
-                                                            .unwrap(),
-                                                    ) {
-                                                        let temp_str =
-                                                            temp_path.to_string_lossy().to_string();
-                                                        let output = tokio::process::Command::new("glab")
-                                                            .args([
-                                                                "api",
-                                                                &format!("projects/{}/merge_requests/{}/draft_notes", encoded_path, mr_iid),
-                                                                "--input",
-                                                                &temp_str,
-                                                                "-X",
-                                                                "POST",
-                                                            ])
-                                                            .output()
-                                                            .await;
-                                                        let _ = std::fs::remove_file(&temp_path);
-                                                        if let Ok(out) = output {
-                                                            if !out.status.success() {
-                                                                success = false;
-                                                                err_msg = String::from_utf8_lossy(
-                                                                    &out.stderr,
-                                                                )
-                                                                .trim()
-                                                                .to_string();
-                                                                break;
-                                                            }
-                                                        } else {
-                                                            success = false;
-                                                            err_msg = "Failed to run glab api"
-                                                                .to_string();
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-
-                                                if success {
-                                                    let publish_success = if !comments.is_empty() {
-                                                        let publish_output = tokio::process::Command::new("glab")
-                                                            .args([
-                                                                "api",
-                                                                &format!("projects/{}/merge_requests/{}/draft_notes/bulk_publish", encoded_path, mr_iid),
-                                                                "-X",
-                                                                "POST",
-                                                            ])
-                                                            .output()
-                                                            .await;
-                                                        match publish_output {
-                                                            Ok(out) if out.status.success() => true,
-                                                            Ok(out) => {
-                                                                err_msg = String::from_utf8_lossy(
-                                                                    &out.stderr,
-                                                                )
-                                                                .trim()
-                                                                .to_string();
-                                                                false
-                                                            }
-                                                            Err(e) => {
-                                                                err_msg = format!(
-                                                                    "Failed to publish draft notes: {}",
-                                                                    e
-                                                                );
-                                                                false
-                                                            }
-                                                        }
-                                                    } else {
-                                                        true
-                                                    };
-
-                                                    if publish_success {
-                                                        if status_clone == "Approve" {
-                                                            let approve_output =
-                                                                tokio::process::Command::new(
-                                                                    "glab",
-                                                                )
-                                                                .args([
-                                                                    "mr",
-                                                                    "approve",
-                                                                    &mr_iid.to_string(),
-                                                                ])
-                                                                .output()
-                                                                .await;
-                                                            if let Ok(out) = approve_output {
-                                                                if !out.status.success() {
-                                                                    let approval_err =
-                                                                        String::from_utf8_lossy(
-                                                                            &out.stderr,
-                                                                        )
-                                                                        .trim()
-                                                                        .to_string();
-                                                                    let _ = tx.send(Event::FetchFailed(
-                                                                        app::Tab::MergeRequests,
-                                                                        format!("MR approval failed: {}", approval_err),
-                                                                    ));
-                                                                }
-                                                            }
-                                                        }
-
-                                                        if !value_clone.trim().is_empty() {
-                                                            let _ = tokio::process::Command::new(
-                                                                "glab",
-                                                            )
-                                                            .args([
-                                                                "mr",
-                                                                "note",
-                                                                "create",
-                                                                &mr_iid.to_string(),
-                                                                "-m",
-                                                                &value_clone,
-                                                            ])
-                                                            .output()
-                                                            .await;
-                                                        }
-
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            app::Tab::MergeRequests,
-                                                            Ok(()),
-                                                        ));
-                                                    } else {
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            app::Tab::MergeRequests,
-                                                            Err(format!(
-                                                                "Bulk publish failed: {}",
-                                                                err_msg
-                                                            )),
-                                                        ));
-                                                    }
-                                                } else {
-                                                    let _ = tx.send(Event::CommandCompleted(
-                                                        app::Tab::MergeRequests,
-                                                        Err(format!(
-                                                            "Draft notes creation failed: {}",
-                                                            err_msg
-                                                        )),
-                                                    ));
-                                                }
-                                            }
-                                        });
+                                        if let Some(client) = app.gitlab_client.clone() {
+                                            let project = app.project_path_for_mr(mr_iid);
+                                            let event = ReviewEvent::from_label(&status);
+                                            let body = value.clone();
+                                            let tx = events.sender();
+                                            let _ = tx.send(Event::CommandStarted(format!(
+                                                "Submitting review on MR #{}",
+                                                mr_iid
+                                            )));
+                                            spawn_mr_review_task(tx, async move {
+                                                client
+                                                    .submit_review(
+                                                        &project, mr_iid, event, &body, &comments,
+                                                    )
+                                                    .await
+                                            });
+                                        }
                                     }
                                     crate::app::TextInputAction::EditNewField { field_idx } => {
                                         // Write the value directly into the edit_menu fields
@@ -4487,74 +3963,36 @@ async fn main() -> Result<()> {
                                                     "Resolve Thread" | "Unresolve Thread" => {
                                                         let is_resolve =
                                                             action_str == "Resolve Thread";
-                                                        let client = app.gitlab_client.clone();
-                                                        let project_context =
-                                                            app.project_path_for_mr(mr_iid);
-                                                        let tx = events.sender();
-                                                        let discussion_id = comment
-                                                            .discussion_id
-                                                            .clone()
-                                                            .unwrap_or_default();
-
-                                                        let status_desc = if is_resolve {
-                                                            "Resolving"
-                                                        } else {
-                                                            "Unresolving"
-                                                        };
-                                                        let _ = tx.send(Event::CommandStarted(
-                                                            format!(
-                                                                "{} thread MR #{}",
-                                                                status_desc, mr_iid
-                                                            ),
-                                                        ));
-
-                                                        tokio::spawn(async move {
-                                                            if let Some(client) = client {
-                                                                let encoded_path = project_context
-                                                                    .replace("/", "%2F");
-                                                                let res_str = if is_resolve {
-                                                                    "true"
-                                                                } else {
-                                                                    "false"
-                                                                };
-                                                                let output = tokio::process::Command::new("glab")
-                                                                    .args([
-                                                                        "api",
-                                                                        &format!(
-                                                                            "projects/{}/merge_requests/{}/discussions/{}?resolved={}",
-                                                                            encoded_path, mr_iid, discussion_id, res_str
-                                                                        ),
-                                                                        "-X",
-                                                                        "PUT",
-                                                                    ])
-                                                                    .output()
-                                                                    .await;
-
-                                                                match output {
-                                                                    Ok(out)
-                                                                        if out.status.success() =>
-                                                                    {
-                                                                        let _ = tx.send(Event::CommandCompleted(
-                                                                            app::Tab::MergeRequests,
-                                                                            Ok(()),
-                                                                        ));
-                                                                    }
-                                                                    Ok(out) => {
-                                                                        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                                                                        let _ = tx.send(Event::CommandCompleted(
-                                                                            app::Tab::MergeRequests,
-                                                                            Err(err),
-                                                                        ));
-                                                                    }
-                                                                    Err(e) => {
-                                                                        let _ = tx.send(Event::CommandCompleted(
-                                                                            app::Tab::MergeRequests,
-                                                                            Err(e.to_string()),
-                                                                        ));
-                                                                    }
-                                                                }
-                                                            }
-                                                        });
+                                                        if let Some(client) =
+                                                            app.gitlab_client.clone()
+                                                        {
+                                                            let project =
+                                                                app.project_path_for_mr(mr_iid);
+                                                            let thread_id = comment
+                                                                .discussion_id
+                                                                .clone()
+                                                                .unwrap_or_default();
+                                                            let status_desc = if is_resolve {
+                                                                "Resolving"
+                                                            } else {
+                                                                "Unresolving"
+                                                            };
+                                                            let tx = events.sender();
+                                                            let _ = tx.send(Event::CommandStarted(
+                                                                format!(
+                                                                    "{} thread MR #{}",
+                                                                    status_desc, mr_iid
+                                                                ),
+                                                            ));
+                                                            spawn_mr_review_task(tx, async move {
+                                                                client
+                                                                    .set_thread_resolved(
+                                                                        &project, mr_iid,
+                                                                        &thread_id, is_resolve,
+                                                                    )
+                                                                    .await
+                                                            });
+                                                        }
                                                     }
                                                     "Edit Comment" => {
                                                         let client = app.gitlab_client.clone();
@@ -8364,56 +7802,27 @@ async fn main() -> Result<()> {
                                     let comment_content = edit_in_editor("", &mut terminal);
                                     if let Some(body) = comment_content {
                                         if !body.trim().is_empty() {
+                                            let comment = DraftComment {
+                                                file_path: range.file_path.clone(),
+                                                line_num: range.line_num,
+                                                old_line_num: range.old_line_num,
+                                                end_line_num: range.end_line_num,
+                                                end_old_line_num: range.end_old_line_num,
+                                                body,
+                                            };
                                             if app.in_review_mode {
-                                                app.draft_comments.push(crate::app::DraftComment {
-                                                    file_path: range.file_path.clone(),
-                                                    line_num: range.line_num,
-                                                    old_line_num: range.old_line_num,
-                                                    end_line_num: range.end_line_num,
-                                                    end_old_line_num: range.end_old_line_num,
-                                                    body,
-                                                });
+                                                app.draft_comments.push(comment);
                                                 app.status_message = Some(format!(
                                                     "Added draft comment. ({} pending)",
                                                     app.draft_comments.len()
                                                 ));
                                             } else {
-                                                let client = app.gitlab_client.clone().unwrap();
-                                                let project = app.scope.as_str().to_string();
-                                                let mr_iid = diff_view.mr_iid;
-                                                let file_path = range.file_path.clone();
-                                                let line_num = range.line_num;
-                                                let old_line_num = range.old_line_num;
-                                                let tx = events.sender();
-                                                let tab = app.active_tab;
-                                                tokio::spawn(async move {
-                                                    match client
-                                                        .add_mr_comment(
-                                                            &project,
-                                                            mr_iid,
-                                                            &body,
-                                                            Some(&file_path),
-                                                            line_num.map(|v| v as u64),
-                                                            old_line_num.map(|v| v as u64),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(_) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    tab,
-                                                                    Ok(()),
-                                                                ));
-                                                        }
-                                                        Err(e) => {
-                                                            let _ =
-                                                                tx.send(Event::CommandCompleted(
-                                                                    tab,
-                                                                    Err(e.to_string()),
-                                                                ));
-                                                        }
-                                                    }
-                                                });
+                                                post_review_comment(
+                                                    &app,
+                                                    diff_view.mr_iid,
+                                                    comment,
+                                                    events.sender(),
+                                                );
                                             }
                                         }
                                     }
@@ -8486,54 +7895,27 @@ async fn main() -> Result<()> {
                                     if let Some(suggestion) = editor_content {
                                         let body = format!("```suggestion\n{}\n```", suggestion);
 
+                                        let comment = DraftComment {
+                                            file_path: range.file_path.clone(),
+                                            line_num: range.line_num,
+                                            old_line_num: range.old_line_num,
+                                            end_line_num: range.end_line_num,
+                                            end_old_line_num: range.end_old_line_num,
+                                            body,
+                                        };
                                         if app.in_review_mode {
-                                            app.draft_comments.push(crate::app::DraftComment {
-                                                file_path: range.file_path.clone(),
-                                                line_num: range.line_num,
-                                                old_line_num: range.old_line_num,
-                                                end_line_num: range.end_line_num,
-                                                end_old_line_num: range.end_old_line_num,
-                                                body,
-                                            });
+                                            app.draft_comments.push(comment);
                                             app.status_message = Some(format!(
                                                 "Added suggestion draft. ({} pending)",
                                                 app.draft_comments.len()
                                             ));
                                         } else {
-                                            let client = app.gitlab_client.clone().unwrap();
-                                            let project = app.scope.as_str().to_string();
-                                            let mr_iid = diff_view.mr_iid;
-                                            let file_path = range.file_path.clone();
-                                            let line_num = range.line_num;
-                                            let old_line_num = range.old_line_num;
-                                            let tx = events.sender();
-                                            let tab = app.active_tab;
-                                            tokio::spawn(async move {
-                                                match client
-                                                    .add_mr_comment(
-                                                        &project,
-                                                        mr_iid,
-                                                        &body,
-                                                        Some(&file_path),
-                                                        line_num.map(|v| v as u64),
-                                                        old_line_num.map(|v| v as u64),
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(_) => {
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            tab,
-                                                            Ok(()),
-                                                        ));
-                                                    }
-                                                    Err(e) => {
-                                                        let _ = tx.send(Event::CommandCompleted(
-                                                            tab,
-                                                            Err(e.to_string()),
-                                                        ));
-                                                    }
-                                                }
-                                            });
+                                            post_review_comment(
+                                                &app,
+                                                diff_view.mr_iid,
+                                                comment,
+                                                events.sender(),
+                                            );
                                         }
                                     }
                                     diff_view.selection_start = None;

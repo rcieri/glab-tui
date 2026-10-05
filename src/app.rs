@@ -3,6 +3,7 @@
 use crate::backend::BackendKind;
 use crate::config::{Config, KeybindingConfig, THEME, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
+use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::format::{expand_tabs, strip_ansi_escapes};
@@ -2637,16 +2638,6 @@ pub struct CommentRange {
     pub end_line_num: Option<u32>,
     pub end_old_line_num: Option<u32>,
     pub lines: Vec<DiffLine>,
-}
-
-#[derive(Clone, Debug)]
-pub struct DraftComment {
-    pub file_path: String,
-    pub line_num: Option<u32>,
-    pub old_line_num: Option<u32>,
-    pub end_line_num: Option<u32>,
-    pub end_old_line_num: Option<u32>,
-    pub body: String,
 }
 
 impl DraftComment {

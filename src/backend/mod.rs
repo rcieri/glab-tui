@@ -10,6 +10,7 @@ use crate::domain::mr::{DiscussionNote, MergeRequest};
 use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
+use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
 use crate::event::Event;
 use crate::scope::Scope;
@@ -338,14 +339,31 @@ pub trait Backend: Send + Sync {
         milestone: &str,
         issue_iid: Option<u64>,
     ) -> Result<()>;
-    async fn add_mr_comment(
+    /// Posts `comments` and `body` as one review carrying `event`.
+    async fn submit_review(
         &self,
         project: &str,
         iid: u64,
+        event: ReviewEvent,
         body: &str,
-        file_path: Option<&str>,
-        line: Option<u64>,
-        old_line: Option<u64>,
+        comments: &[DraftComment],
+    ) -> Result<()>;
+    /// `thread_id` is a GitLab discussion id, or the id of a GitHub thread's
+    /// first review comment.
+    async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<()>;
+    /// Resolve or reopen a discussion. GitLab only — see the GhBackend impl.
+    async fn set_thread_resolved(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        resolved: bool,
     ) -> Result<()>;
     async fn update_mr(&self, project: &str, iid: u64, update: &MrUpdate) -> Result<()>;
     async fn update_mr_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {

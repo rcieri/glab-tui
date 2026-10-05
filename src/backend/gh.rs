@@ -8,6 +8,7 @@ use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
 use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
+use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
 use crate::event::Event;
 use crate::scope::Scope;
@@ -867,6 +868,49 @@ mod review_threads_types {
         #[serde(rename = "databaseId")]
         pub(super) database_id: u64,
     }
+}
+
+fn github_review_event(event: ReviewEvent) -> &'static str {
+    match event {
+        ReviewEvent::Comment => "COMMENT",
+        ReviewEvent::Approve => "APPROVE",
+        ReviewEvent::RequestChanges => "REQUEST_CHANGES",
+    }
+}
+
+/// One `comments[]` entry of the create-review endpoint. An unchanged line
+/// carries both line numbers; it is anchored on the new side, because GitHub
+/// reads `line` against the side it is given.
+fn github_review_comment(comment: &DraftComment) -> serde_json::Value {
+    let (side, start, end) = match (comment.line_num, comment.old_line_num) {
+        (Some(line), _) => ("RIGHT", line, comment.end_line_num),
+        (None, Some(line)) => ("LEFT", line, comment.end_old_line_num),
+        (None, None) => ("RIGHT", 1, None),
+    };
+    let mut value = serde_json::json!({
+        "path": comment.file_path,
+        "line": start,
+        "side": side,
+        "body": comment.body,
+    });
+    if let Some(end) = end.filter(|&end| end != start) {
+        value["start_line"] = serde_json::json!(start.min(end));
+        value["start_side"] = serde_json::json!(side);
+        value["line"] = serde_json::json!(start.max(end));
+    }
+    value
+}
+
+fn github_review_payload(
+    event: ReviewEvent,
+    body: &str,
+    comments: &[DraftComment],
+) -> serde_json::Value {
+    serde_json::json!({
+        "body": body,
+        "event": github_review_event(event),
+        "comments": comments.iter().map(github_review_comment).collect::<Vec<_>>(),
+    })
 }
 
 #[async_trait]
@@ -1986,29 +2030,60 @@ impl Backend for GhBackend {
         Ok(())
     }
 
-    async fn add_mr_comment(
+    async fn submit_review(
         &self,
         project: &str,
         iid: u64,
+        event: ReviewEvent,
         body: &str,
-        _file_path: Option<&str>,
-        _line: Option<u64>,
-        _old_line: Option<u64>,
+        comments: &[DraftComment],
     ) -> Result<()> {
-        self.run_gh(
-            &[
-                "pr",
-                "comment",
-                &iid.to_string(),
-                "-R",
-                project,
-                "--body",
-                body,
-            ],
-            "ADDING PR COMMENT",
+        let payload = github_review_payload(event, body, comments).to_string();
+        self.raw_api(
+            &format!("/repos/{}/pulls/{}/reviews", project, iid),
+            "POST",
+            Some(&payload),
+            "SUBMITTING REVIEW",
         )
         .await?;
         Ok(())
+    }
+
+    async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<()> {
+        let root_comment_id: u64 = thread_id.parse().with_context(|| {
+            format!(
+                "GitHub thread ids are the numeric id of the thread's first comment, got '{}'",
+                thread_id
+            )
+        })?;
+        let payload = serde_json::json!({ "body": body, "in_reply_to": root_comment_id });
+        self.raw_api(
+            &format!("/repos/{}/pulls/{}/comments", project, iid),
+            "POST",
+            Some(&payload.to_string()),
+            "REPLYING TO THREAD",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_thread_resolved(
+        &self,
+        _project: &str,
+        _iid: u64,
+        _thread_id: &str,
+        _resolved: bool,
+    ) -> Result<()> {
+        // Only the GraphQL `resolveReviewThread` mutation resolves a thread,
+        // and it takes the thread's node id, which the REST comment listing
+        // this backend reads does not carry.
+        anyhow::bail!("Resolving review threads isn't supported on GitHub")
     }
 
     // ── PR Field Updates ──
@@ -3455,6 +3530,54 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn draft(
+        line: Option<u32>,
+        old: Option<u32>,
+        end: Option<u32>,
+        end_old: Option<u32>,
+    ) -> DraftComment {
+        DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: line,
+            old_line_num: old,
+            end_line_num: end,
+            end_old_line_num: end_old,
+            body: "note".to_string(),
+        }
+    }
+
+    #[test]
+    fn review_comment_on_unchanged_line_uses_the_new_side() {
+        let c = github_review_comment(&draft(Some(12), Some(10), None, None));
+        assert_eq!(
+            (c["side"].as_str(), c["line"].as_u64()),
+            (Some("RIGHT"), Some(12))
+        );
+        assert!(c.get("start_line").is_none());
+    }
+
+    #[test]
+    fn review_comment_range_on_old_side_spans_low_to_high() {
+        let c = github_review_comment(&draft(None, Some(9), None, Some(5)));
+        assert_eq!(c["side"], "LEFT");
+        assert_eq!(c["start_side"], "LEFT");
+        assert_eq!(
+            (c["start_line"].as_u64(), c["line"].as_u64()),
+            (Some(5), Some(9))
+        );
+    }
+
+    #[test]
+    fn review_payload_holds_every_comment_in_one_review() {
+        let comments = [
+            draft(Some(1), None, None, None),
+            draft(None, Some(2), None, None),
+        ];
+        let payload = github_review_payload(ReviewEvent::RequestChanges, "summary", &comments);
+        assert_eq!(payload["event"], "REQUEST_CHANGES");
+        assert_eq!(payload["comments"].as_array().map(Vec::len), Some(2));
+    }
 
     #[test]
     fn encode_branch_passes_simple_names_through() {

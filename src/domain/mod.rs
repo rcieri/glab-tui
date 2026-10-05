@@ -9,6 +9,7 @@ pub mod mr_state;
 pub mod notifications;
 pub mod pipelines;
 pub mod releases;
+pub mod review;
 pub mod review_threads;
 pub mod runners;
 pub mod workflow_inputs;

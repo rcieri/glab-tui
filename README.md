@@ -84,7 +84,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
 - **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
-- **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories)
+- **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories), `review` (read threads and post review comments as JSON, for scripts and agents)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — 28 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
@@ -411,6 +411,7 @@ glab-tui --tab pipelines
 | `cache` | *(subcommand)* | List cached data files with sizes |
 | `open` | `<entity> <id>` | Open an entity in the browser **without launching the TUI** — valid entities: `issue`, `mr`, `pr`, `pipeline`, `job`, `milestone` |
 | `repos` | *(subcommand)* | List recently-used and sibling repositories |
+| `review` | `threads\|comment\|submit\|reply\|resolve <n>` | Read and post MR/PR review comments **without launching the TUI**; prints JSON (see [Review from scripts and agents](#review-from-scripts-and-agents)) |
 
 The TUI will launch in the terminal, auto-detecting the project context and fetching the Issues tab immediately.
 
@@ -425,6 +426,35 @@ glab-tui open issue 42              # open issue #42 in your browser
 glab-tui open mr 7                  # open MR/PR #7 in your browser
 glab-tui repos                      # list recently-used repositories
 ```
+
+### Review from scripts and agents
+
+`glab-tui review` runs the diff view's review operations without starting the TUI, so coding agents, scripts and CI bots can read threads and post review comments. It honours `-r/--repo` and `-d/--dir` (before or after `review`) and the same GitHub/GitLab detection as the TUI.
+
+```sh
+glab-tui review threads 42                                    # review threads as JSON
+glab-tui review comment 42 --file src/a.rs --line 10 "body"   # one inline comment
+glab-tui review comment 42 --file src/a.rs --line 10 --end-line 14 --side old "body"
+glab-tui review submit 42 --event approve --body "LGTM" --input comments.json
+glab-tui review submit 42 --event request-changes --input -  # comments from stdin
+glab-tui review reply 42 --thread <id> "body"
+glab-tui review resolve 42 --thread <id> [--unresolve]         # GitLab only
+```
+
+- **Output**: JSON on stdout. On failure (CLI not authenticated, MR/PR not found, a line outside the diff) nothing is printed to stdout, the error goes to stderr, and the exit code is non-zero.
+- **`--input`** (file, or `-` for stdin): a JSON array of comments. `side` is `new` (default) or `old` and says which side of the diff `line`/`end_line` count on. Every anchor is checked against the MR/PR diff before anything is posted.
+
+  ```json
+  [
+    { "file": "src/a.rs", "line": 10, "body": "single line" },
+    { "file": "src/a.rs", "line": 3, "end_line": 6, "side": "old", "body": "range on removed lines" }
+  ]
+  ```
+
+- **One review**: `submit` posts every comment together. GitHub gets a single `pulls/{n}/reviews` call; GitLab gets one draft note per comment followed by one `bulk_publish`, then `glab mr approve` for `--event approve` and the `--body` summary as a note. GitLab has no request-changes verdict, so `request-changes` there only publishes the comments and summary. `comment` is a one-comment review.
+- **Unchanged lines** carry both line numbers (GitLab requires both); GitHub anchors them on the new side.
+- **`threads`** prints, per thread: `id` (pass it to `reply`/`resolve`), `classification` (`general`, `in-diff`, `outdated` against the current diff), `anchor` (`file`, `line`, `side`), `resolvable`, `resolved` and the `notes` (`id`, `author`, `body`, `created_at`). On GitHub only pull-request review comments are listed, and a thread id is the id of its first comment.
+- **`resolve`** on GitHub exits non-zero: it is not supported there.
 
 ---
 
@@ -800,7 +830,8 @@ src/
 ├── editor.rs        # External editor integration ($EDITOR)
 ├── entity_editor.rs # Edit-menu field change logic
 ├── templates.rs     # Default issue/MR/PR description templates
-├── cli.rs           # CLI subcommands (doctor, clean-cache, cache, open, repos)
+├── cli.rs           # CLI subcommands (doctor, clean-cache, cache, open, repos, review)
+├── cli/review.rs    # `review` subcommand: threads/comment/submit/reply/resolve as JSON
 ├── themes/          # Bundled theme TOML files
 ├── backend/         # CLI backend layer
 │   ├── mod.rs       # Backend trait (~40 methods)
@@ -811,6 +842,7 @@ src/
 │   ├── client.rs    # GitlabClient wrapper (backend + page_size + event tx)
 │   ├── issues.rs    # Issue struct + list/get/create/edit
 │   ├── mr.rs        # MergeRequest/PR, DiscussionNote, NotePosition
+│   ├── review.rs    # ReviewEvent + DraftComment, shared by the diff view and `review`
 │   ├── pipelines.rs # Pipeline + Job types, dedup, retry logic, unit tests
 │   ├── runners.rs   # Runner type + list/edit logic
 │   ├── releases.rs  # Release type + list/create/edit

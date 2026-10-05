@@ -8,6 +8,7 @@ use crate::domain::mr::{DiscussionNote, MergeRequest};
 use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
+use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
 use crate::event::Event;
 use crate::scope::Scope;
@@ -527,6 +528,31 @@ impl GlabBackend {
         args.push("--yes".into());
         args
     }
+
+    async fn mr_diff_refs(&self, project: &str, iid: u64) -> Result<GiDiffRefs> {
+        #[derive(Deserialize)]
+        struct GiMr {
+            diff_refs: Option<GiDiffRefs>,
+        }
+        let raw = self
+            .run_glab(
+                &[
+                    "mr",
+                    "view",
+                    &iid.to_string(),
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                ],
+                "FETCHING MR DIFF REFS",
+            )
+            .await?;
+        serde_json::from_str::<GiMr>(&raw)
+            .context("Failed to parse glab mr view output")?
+            .diff_refs
+            .with_context(|| format!("!{} has no diff refs to anchor comments on", iid))
+    }
 }
 
 /// Serde shape returned by the GitLab `/closed_by` endpoint.
@@ -536,6 +562,49 @@ struct GiClosedBy {
     iid: u64,
     title: String,
     state: String,
+}
+
+/// The commits a merge request's diff is computed between; GitLab needs all
+/// three in every diff note position.
+#[derive(Deserialize)]
+struct GiDiffRefs {
+    base_sha: String,
+    start_sha: String,
+    head_sha: String,
+}
+
+/// Body of `POST .../draft_notes` for one review comment.
+fn gitlab_draft_note_payload(comment: &DraftComment, diff_refs: &GiDiffRefs) -> serde_json::Value {
+    let mut position = serde_json::json!({
+        "position_type": "text",
+        "new_path": comment.file_path,
+        "base_sha": diff_refs.base_sha,
+        "start_sha": diff_refs.start_sha,
+        "head_sha": diff_refs.head_sha,
+    });
+    if let Some(line) = comment.line_num {
+        position["new_line"] = serde_json::json!(line);
+    }
+    if let Some(old_line) = comment.old_line_num {
+        position["old_line"] = serde_json::json!(old_line);
+        position["old_path"] = serde_json::json!(comment.file_path);
+    }
+    let range = match (comment.line_num, comment.end_line_num) {
+        (Some(start), Some(end)) => Some(("new_line", start, end)),
+        _ => match (comment.old_line_num, comment.end_old_line_num) {
+            (Some(start), Some(end)) if comment.end_line_num.is_none() => {
+                Some(("old_line", start, end))
+            }
+            _ => None,
+        },
+    };
+    if let Some((line_type, start, end)) = range.filter(|&(_, start, end)| start != end) {
+        position["line_range"] = serde_json::json!({
+            "start": { "line_code": "", "type": line_type, line_type: start.min(end) },
+            "end": { "line_code": "", "type": line_type, line_type: start.max(end) },
+        });
+    }
+    serde_json::json!({ "note": comment.body, "position": position })
 }
 
 #[async_trait]
@@ -1439,32 +1508,113 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn add_mr_comment(
+    async fn submit_review(
         &self,
         project: &str,
         iid: u64,
+        event: ReviewEvent,
         body: &str,
-        file_path: Option<&str>,
-        line: Option<u64>,
-        _old_line: Option<u64>,
+        comments: &[DraftComment],
     ) -> Result<()> {
-        let mut args: Vec<String> =
-            vec!["mr".into(), "note".into(), "create".into(), iid.to_string()];
-        if !project.is_empty() {
-            args.push("-R".into());
-            args.push(project.into());
+        if !comments.is_empty() {
+            let diff_refs = self.mr_diff_refs(project, iid).await?;
+            let endpoint = format!(
+                "/projects/{}/merge_requests/{}/draft_notes",
+                Self::encode_path(project),
+                iid
+            );
+            for (created, comment) in comments.iter().enumerate() {
+                let payload = gitlab_draft_note_payload(comment, &diff_refs).to_string();
+                self.raw_api(&endpoint, "POST", Some(&payload), "CREATING DRAFT NOTE")
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "draft note on {} failed; {} earlier draft note(s) of this review stay pending on !{}",
+                            comment.file_path, created, iid
+                        )
+                    })?;
+            }
+            self.raw_api(
+                &format!("{}/bulk_publish", endpoint),
+                "POST",
+                None,
+                "PUBLISHING DRAFT NOTES",
+            )
+            .await?;
         }
-        args.extend(["-m".into(), body.into()]);
-        if let Some(path) = file_path {
-            args.push("--file-path".into());
-            args.push(path.into());
+        if event == ReviewEvent::Approve {
+            self.approve_mr(project, iid).await?;
         }
-        if let Some(l) = line {
-            args.push("--line".into());
-            args.push(l.to_string());
+        if !body.trim().is_empty() {
+            self.run_glab(
+                &[
+                    "mr",
+                    "note",
+                    "create",
+                    &iid.to_string(),
+                    "-R",
+                    project,
+                    "-m",
+                    body,
+                ],
+                "ADDING REVIEW SUMMARY",
+            )
+            .await?;
         }
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run_glab(&args_refs, "ADDING MR COMMENT").await?;
+        Ok(())
+    }
+
+    async fn reply_to_thread(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        body: &str,
+    ) -> Result<()> {
+        self.run_glab(
+            &[
+                "mr",
+                "note",
+                "create",
+                &iid.to_string(),
+                "-R",
+                project,
+                "--reply",
+                thread_id,
+                "-m",
+                body,
+            ],
+            "REPLYING TO THREAD",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_thread_resolved(
+        &self,
+        project: &str,
+        iid: u64,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<()> {
+        let (action, desc) = if resolved {
+            ("resolve", "RESOLVING THREAD")
+        } else {
+            ("reopen", "REOPENING THREAD")
+        };
+        self.run_glab(
+            &[
+                "mr",
+                "note",
+                action,
+                thread_id,
+                &iid.to_string(),
+                "-R",
+                project,
+            ],
+            desc,
+        )
+        .await?;
         Ok(())
     }
 
@@ -2870,6 +3020,57 @@ async fn open_in_web_browser(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn diff_refs() -> GiDiffRefs {
+        GiDiffRefs {
+            base_sha: "base".to_string(),
+            start_sha: "start".to_string(),
+            head_sha: "head".to_string(),
+        }
+    }
+
+    fn draft(
+        line: Option<u32>,
+        old: Option<u32>,
+        end: Option<u32>,
+        end_old: Option<u32>,
+    ) -> DraftComment {
+        DraftComment {
+            file_path: "src/lib.rs".to_string(),
+            line_num: line,
+            old_line_num: old,
+            end_line_num: end,
+            end_old_line_num: end_old,
+            body: "note".to_string(),
+        }
+    }
+
+    #[test]
+    fn draft_note_on_unchanged_line_carries_both_lines() {
+        let payload =
+            gitlab_draft_note_payload(&draft(Some(12), Some(10), None, None), &diff_refs());
+        let position = &payload["position"];
+        assert_eq!(
+            (position["new_line"].as_u64(), position["old_line"].as_u64()),
+            (Some(12), Some(10))
+        );
+        assert_eq!(position["head_sha"], "head");
+        assert!(position.get("line_range").is_none());
+    }
+
+    #[test]
+    fn draft_note_range_on_old_side_uses_old_line_range() {
+        let payload = gitlab_draft_note_payload(&draft(None, Some(9), None, Some(5)), &diff_refs());
+        let range = &payload["position"]["line_range"];
+        assert_eq!(range["start"]["type"], "old_line");
+        assert_eq!(
+            (
+                range["start"]["old_line"].as_u64(),
+                range["end"]["old_line"].as_u64()
+            ),
+            (Some(5), Some(9))
+        );
+    }
 
     #[test]
     fn url_encode_branch_escapes_slash() {

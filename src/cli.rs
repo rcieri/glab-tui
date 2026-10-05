@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::process::Command;
 
+pub mod review;
+
 // ── ANSI color helpers ──
 const C_RESET: &str = "\x1b[0m";
 const C_BOLD: &str = "\x1b[1m";
@@ -47,6 +49,7 @@ pub struct Cli {
     #[arg(
         short = 'r',
         long = "repo",
+        global = true,
         help = "Specify git repo context (e.g., group/repo)"
     )]
     pub repo: Option<String>,
@@ -61,6 +64,7 @@ pub struct Cli {
     #[arg(
         short = 'd',
         long = "dir",
+        global = true,
         help = "Specify local repository directory to run in"
     )]
     pub dir: Option<String>,
@@ -111,6 +115,11 @@ pub enum Commands {
     },
     /// List recently-used repositories
     Repos,
+    /// Read and post MR/PR review comments without the TUI; prints JSON
+    Review {
+        #[command(subcommand)]
+        command: review::ReviewCommand,
+    },
 }
 
 pub async fn run_doctor() {

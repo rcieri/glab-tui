@@ -1,0 +1,46 @@
+[
+  {
+    "id": 201,
+    "body": "Anchored question on this call.",
+    "user": { "login": "reviewer-user" },
+    "created_at": "2026-07-06T09:00:00Z",
+    "path": "src/lib.rs",
+    "line": 3,
+    "side": "RIGHT",
+    "start_line": null,
+    "in_reply_to_id": null
+  },
+  {
+    "id": 202,
+    "body": "Answered in the next push.",
+    "user": { "login": "test-user" },
+    "created_at": "2026-07-06T09:30:00Z",
+    "path": "src/lib.rs",
+    "line": 3,
+    "side": "RIGHT",
+    "start_line": null,
+    "in_reply_to_id": 201
+  },
+  {
+    "id": 203,
+    "body": "Why drop the old fetch?",
+    "user": { "login": "reviewer-user" },
+    "created_at": "2026-07-06T10:00:00Z",
+    "path": "src/lib.rs",
+    "line": 2,
+    "side": "LEFT",
+    "start_line": null,
+    "in_reply_to_id": null
+  },
+  {
+    "id": 204,
+    "body": "Outdated remark on a rebased line.",
+    "user": { "login": "reviewer-user" },
+    "created_at": "2026-07-06T11:00:00Z",
+    "path": "src/lib.rs",
+    "line": 90,
+    "side": "RIGHT",
+    "start_line": null,
+    "in_reply_to_id": null
+  }
+]

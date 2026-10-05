@@ -4,14 +4,40 @@ FIXTURES_DIR="${TEST_FIXTURES_DIR}"
 
 echo "gh $*" >> "$LOG_FILE"
 
+# Generic failure injection: fail any call whose arguments contain the value.
+if [[ -n "$TEST_GH_FAIL_MATCH" && "$*" == *"$TEST_GH_FAIL_MATCH"* ]]; then
+    echo "mock: HTTP 404: Not Found" >&2
+    exit 1
+fi
+
+# Request bodies piped with `--input -`, one per line, for payload assertions.
+if [[ " $* " == *" --input - "* ]]; then
+    { cat; echo; } >> "$LOG_FILE.stdin"
+fi
+
 # Match arguments to determine response
 if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     echo "mock github job trace output"
     exit 0
 fi
 
+if [[ "$*" == *"pr diff"* ]]; then
+    cat "$FIXTURES_DIR/mr_diff.txt"
+    exit 0
+fi
+
 if [[ "$*" == *"api"* ]]; then
-    if [[ "$*" == *"/issues"* ]]; then
+    if [[ "$*" == *"reviewThreads"* ]]; then
+        cat "$FIXTURES_DIR/gh_review_threads.json"
+    elif [[ "$*" == *"/pulls/"*"/reviews"* ]]; then
+        echo '{"id": 1}'
+    elif [[ "$*" == *"/pulls/"*"/comments"* ]]; then
+        if [[ " $* " == *" -X POST "* ]]; then
+            echo '{"id": 1}'
+        else
+            cat "$FIXTURES_DIR/gh_pr_comments.json"
+        fi
+    elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"

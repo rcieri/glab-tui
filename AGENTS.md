@@ -362,6 +362,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 |---|---|---|
 | List PR review comments | `GET /repos/{}/pulls/{}/comments?per_page=<N>` | `gh pr view --json comments` lacks inline line/position fields needed for diff review |
 | Get current user login | `gh api user --jq .login` | Needed to derive "your" workflow/approval state for the MR/PR review columns |
+| PR stack positions (Stack column) | `gh api graphql` with one aliased `pullRequest(number: N) { stack stackEntry }` per listed PR | `gh pr list --json` has no stack fields. Runs once per PR-list fetch, only while `App::is_stack_column_needed()` (Stack column shown or grouped by), via `spawn_fetch_pr_stack_summaries` after `MrsFetched` |
+| One PR's stack | `gh api graphql` over `pullRequest(number:N) { stackEntry stack { entries(first:50) } }` | No native command. On demand only: the inspector (`dispatch_inspected_pr_stack_fetch`, debounced) and `Y` (`view_stack`). Results live in `App::pr_stacks` for the session and are re-applied after every list refresh by `App::apply_pr_stacks` |
 | Cancel job | `POST /repos/{}/actions/jobs/{}/cancel` | No per-job cancel in `gh` |
 | List runners | `GET /repos/{}/actions/runners?per_page=<N>` | No native command |
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |

@@ -1256,11 +1256,17 @@ async fn main() -> Result<()> {
                             &mut app,
                             &events.sender(),
                         );
+                        let _ = crate::fetch::dispatch_inspected_pr_stack_fetch(
+                            &client,
+                            &mut app,
+                            &events.sender(),
+                        );
                     } else {
                         app.pending_related_mrs_iid = None;
                         app.pending_related_mrs_since = None;
                         app.pending_mr_related_issues_iid = None;
                         app.pending_mr_related_issues_since = None;
+                        app.pr_stack_candidate = None;
                     }
                     if app.active_tab == app::Tab::Jobs
                         && app.job_trace_follow
@@ -1438,6 +1444,7 @@ async fn main() -> Result<()> {
                     app.refreshed_tabs.insert(app::Tab::MergeRequests);
                     app.status_message = None;
                     app.mrs.items = mrs;
+                    app.apply_pr_stacks();
                     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_mr_select.take() {
                         if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == target_iid) {
@@ -1445,25 +1452,14 @@ async fn main() -> Result<()> {
                         }
                     }
                     app.update_filter_selection();
-                    // Kick off the lazy stack-entries fetch for every stacked
-                    // PR whose entries have not been loaded yet. GitHub only —
-                    // GitLab returns `Ok(None)` from the backend default and
-                    // does not need a follow-up call.
-                    if app.gitlab_client.as_ref().is_some_and(|c| c.is_github) {
-                        for mr in &app.mrs.items {
-                            if mr.stack.is_some() && mr.stack_entries.is_none() {
-                                let project_path = if !mr.project_path.is_empty() {
-                                    mr.project_path.clone()
-                                } else {
-                                    app.scope.as_str().to_string()
-                                };
-                                crate::fetch::spawn_fetch_stack_entries(
-                                    app.gitlab_client.as_ref().unwrap(),
-                                    &project_path,
-                                    mr.iid,
-                                    events.sender(),
-                                );
-                            }
+                    if app.is_stack_column_needed() {
+                        if let Some(client) = &app.gitlab_client {
+                            crate::fetch::spawn_fetch_pr_stack_summaries(
+                                client,
+                                app.scope.as_str(),
+                                app.mrs.items.iter().map(|mr| mr.iid).collect(),
+                                events.sender(),
+                            );
                         }
                     }
                     crate::handlers::tabs::maybe_fetch_mr_related_issues(
@@ -1489,6 +1485,7 @@ async fn main() -> Result<()> {
                 Event::MrFetched(iid, Ok(mr)) => {
                     if !app.mrs.items.iter().any(|m| m.iid == iid) {
                         app.mrs.items.push(mr);
+                        app.apply_pr_stacks();
                         app.update_filter_selection();
                     }
                     app.focus_mr(iid);
@@ -1502,48 +1499,47 @@ async fn main() -> Result<()> {
                 Event::MrFetched(iid, Err(err)) => {
                     app.show_error(format!("Failed to fetch MR #{}: {}", iid, err));
                 }
-                Event::StackEntriesFetched {
+                Event::PrStackFetched {
                     pr_number,
                     project_path,
                     result,
                 } => {
-                    // Locate the MR by both iid and project_path so an
-                    // in-flight fetch for a now-stale repo doesn't update a
-                    // row from a different scope (group → repo switch).
-                    let target = app.mrs.items.iter().position(|m| {
-                        m.iid == pr_number
-                            && (m.project_path == project_path
-                                || (m.project_path.is_empty()
-                                    && app.scope.as_str() == project_path))
-                    });
-                    let mut changed = false;
-                    if let Some(idx) = target {
-                        match result {
-                            Ok(Some(entries)) => {
-                                app.mrs.items[idx].stack_entries = Some(entries);
-                                changed = true;
-                            }
-                            Ok(None) => {
-                                // The PR is not actually in a stack; clear the
-                                // summary so the column drops the misleading
-                                // "#N pos/size" hint.
-                                app.mrs.items[idx].stack = None;
-                                app.mrs.items[idx].stack_entries = None;
-                                changed = true;
-                            }
-                            Err(_e) => {
-                                // Non-critical: leave the summary and let the
-                                // user retry. The other GitLab fetch helpers
-                                // follow the same swallow-and-retry pattern
-                                // (`list_mr_state` in `fetch.rs:347`).
-                            }
-                        }
-                        if changed {
-                            app.update_filter_selection();
-                            app.project_cache.mrs = app.mrs.items.clone();
-                            crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
-                        }
+                    let pr = (project_path, pr_number);
+                    app.fetching_pr_stacks.remove(&pr);
+                    let is_awaited = app.pending_stack_selector.as_ref() == Some(&pr);
+                    if is_awaited {
+                        app.pending_stack_selector = None;
+                        app.status_message = None;
                     }
+                    match result {
+                        Ok(stack) => {
+                            app.record_pr_stack(&pr.0, pr.1, stack);
+                            app.update_filter_selection();
+                            if is_awaited
+                                && app.selector.is_none()
+                                && app.selected_mr_ref().as_ref() == Some(&pr)
+                            {
+                                crate::handlers::tabs::open_stack_selector(&mut app, &pr.0, pr.1);
+                            }
+                        }
+                        // The inspector simply keeps showing no stack; only an
+                        // explicit `view_stack` press is owed an answer.
+                        Err(e) if is_awaited => {
+                            app.show_error(format!(
+                                "Failed to fetch the stack of PR #{}: {e}",
+                                pr.1
+                            ));
+                        }
+                        Err(_) => {}
+                    }
+                }
+                Event::PrStackSummariesFetched {
+                    project_path,
+                    pr_numbers,
+                    stacks,
+                } => {
+                    app.record_pr_stack_summaries(&project_path, &pr_numbers, stacks);
+                    app.update_filter_selection();
                 }
                 Event::PipelinesFetched(pipelines) => {
                     app.complete_loading_tab(app::Tab::Pipelines, "Success");

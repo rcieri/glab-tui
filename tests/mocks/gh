@@ -21,13 +21,42 @@ if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     exit 0
 fi
 
-# Pull requests. MOCK_GH_PR_DIFF_ERROR makes `pr diff` fail the way GitHub
-# does: `too_large` for a diff over 20,000 lines, `not_found` otherwise.
-# MOCK_GH_BASE_OID / MOCK_GH_HEAD_OID answer the commit-id lookup.
-if [[ "$1" == "pr" && "$2" == "list" ]]; then
+# Stacked PRs: #10 and #11 form stack #7 (positions 1 and 2), #12 is in no
+# stack. The per-PR query is matched first: it also asks for `stackEntry`.
+if [[ "$*" == "pr list"* ]]; then
     cat "$FIXTURES_DIR/gh_prs.json"
     exit 0
 fi
+
+if [[ "$*" == "api graphql"*"entries(first"* ]]; then
+    STACK_ENTRIES='"entries":{"nodes":[
+        {"position":1,"pullRequest":{"number":10,"title":"Stack bottom","state":"OPEN","isDraft":false}},
+        {"position":2,"pullRequest":{"number":11,"title":"Stack top","state":"OPEN","isDraft":false}}]}'
+    case "$*" in
+        *"pullRequest(number:10)"*)
+            echo "{\"data\":{\"repository\":{\"pullRequest\":{\"stackEntry\":{\"position\":1},\"stack\":{\"number\":7,\"size\":2,$STACK_ENTRIES}}}}}"
+            ;;
+        *"pullRequest(number:11)"*)
+            echo "{\"data\":{\"repository\":{\"pullRequest\":{\"stackEntry\":{\"position\":2},\"stack\":{\"number\":7,\"size\":2,$STACK_ENTRIES}}}}}"
+            ;;
+        *)
+            echo '{"data":{"repository":{"pullRequest":{"stackEntry":null,"stack":null}}}}'
+            ;;
+    esac
+    exit 0
+fi
+
+if [[ "$*" == "api graphql"*"stackEntry"* ]]; then
+    echo '{"data":{"repository":{
+        "pr_10":{"number":10,"stack":{"number":7,"size":2},"stackEntry":{"position":1}},
+        "pr_11":{"number":11,"stack":{"number":7,"size":2},"stackEntry":{"position":2}},
+        "pr_12":{"number":12,"stack":null,"stackEntry":null}}}}'
+    exit 0
+fi
+
+# Pull requests. MOCK_GH_PR_DIFF_ERROR makes `pr diff` fail the way GitHub
+# does: `too_large` for a diff over 20,000 lines, `not_found` otherwise.
+# MOCK_GH_BASE_OID / MOCK_GH_HEAD_OID answer the commit-id lookup.
 if [[ "$1" == "pr" && "$2" == "diff" ]]; then
     case "$MOCK_GH_PR_DIFF_ERROR" in
         too_large)

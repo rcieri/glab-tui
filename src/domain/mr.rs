@@ -110,6 +110,23 @@ pub struct StackEntry {
     pub is_draft: bool,
 }
 
+/// A PR's full stack, fetched on demand for one PR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrStack {
+    pub info: StackInfo,
+    pub entries: Vec<StackEntry>,
+}
+
+/// What the session has learned about one PR's stack membership.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StackLookup {
+    NotStacked,
+    /// Position only, from the batch query behind the Stack column. The
+    /// entries still have to be fetched before the breakdown can render.
+    Summary(StackInfo),
+    Full(PrStack),
+}
+
 impl MergeRequest {
     pub fn markdown_reference(&self, kind: crate::backend::BackendKind) -> String {
         let title = self

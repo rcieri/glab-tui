@@ -3580,6 +3580,21 @@ pub struct App {
     pub pending_mr_related_issues_iid: Option<u64>,
     /// Wall-clock timestamp of the most recent request in `pending_mr_related_issues_iid`.
     pub pending_mr_related_issues_since: Option<std::time::Instant>,
+    /// Stack knowledge gathered this session, by project path then PR number.
+    /// List fetches return PRs without stack data, so this is what survives a
+    /// refresh; `apply_pr_stacks` copies it onto `mrs.items`.
+    pub pr_stacks: std::collections::HashMap<
+        String,
+        std::collections::HashMap<u64, crate::domain::mr::StackLookup>,
+    >,
+    /// PRs (project path, number) whose on-demand stack fetch is in flight.
+    pub fetching_pr_stacks: std::collections::HashSet<(String, u64)>,
+    /// PR whose stack selector opens once its stack fetch lands: `view_stack`
+    /// was pressed before the session knew the stack.
+    pub pending_stack_selector: Option<(String, u64)>,
+    /// PR open in the inspector and when it got there. Its stack is fetched
+    /// only once it has stayed selected for the debounce window.
+    pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
     pub edit_menu: Option<EditMenu>,
@@ -3739,6 +3754,10 @@ impl Default for App {
             fetching_mr_related_issues: std::collections::HashSet::new(),
             pending_mr_related_issues_iid: None,
             pending_mr_related_issues_since: None,
+            pr_stacks: std::collections::HashMap::new(),
+            fetching_pr_stacks: std::collections::HashSet::new(),
+            pending_stack_selector: None,
+            pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
             edit_menu: None,
@@ -4039,6 +4058,125 @@ impl App {
             .map(|m| m.project_path.clone())
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| self.scope.as_str().to_string())
+    }
+
+    /// The project a listed MR/PR belongs to: its own path, or the repository
+    /// in scope when the list left it empty.
+    fn mr_project<'a>(
+        scope: &'a crate::scope::Scope,
+        mr: &'a crate::domain::mr::MergeRequest,
+    ) -> &'a str {
+        if mr.project_path.is_empty() {
+            scope.as_str()
+        } else {
+            &mr.project_path
+        }
+    }
+
+    /// An MR/PR as (project path, number), the key of the session's stack
+    /// knowledge.
+    pub fn mr_ref(&self, mr: &crate::domain::mr::MergeRequest) -> (String, u64) {
+        (Self::mr_project(&self.scope, mr).to_string(), mr.iid)
+    }
+
+    /// The highlighted MR/PR as (project path, number).
+    pub fn selected_mr_ref(&self) -> Option<(String, u64)> {
+        let idx = self.mrs.state.selected()?;
+        Some(self.mr_ref(self.filtered_mrs().get(idx)?))
+    }
+
+    pub fn pr_stack(
+        &self,
+        project: &str,
+        pr_number: u64,
+    ) -> Option<&crate::domain::mr::StackLookup> {
+        self.pr_stacks.get(project)?.get(&pr_number)
+    }
+
+    /// Whether the batch stack positions are on screen: the Stack column is
+    /// shown, or the PR list is grouped by it. Stacks exist only for GitHub
+    /// repositories.
+    pub fn is_stack_column_needed(&self) -> bool {
+        self.is_github()
+            && self.scope.is_repository()
+            && (self.is_column_visible(Tab::MergeRequests, "Stack")
+                || self
+                    .group_by_column
+                    .get(&Tab::MergeRequests)
+                    .and_then(Option::as_deref)
+                    == Some("Stack"))
+    }
+
+    /// Record the result of an on-demand stack fetch; `None` means the PR is
+    /// not in a stack.
+    pub fn record_pr_stack(
+        &mut self,
+        project: &str,
+        pr_number: u64,
+        stack: Option<crate::domain::mr::PrStack>,
+    ) {
+        let lookup = match stack {
+            Some(stack) => crate::domain::mr::StackLookup::Full(stack),
+            None => crate::domain::mr::StackLookup::NotStacked,
+        };
+        self.pr_stacks
+            .entry(project.to_string())
+            .or_default()
+            .insert(pr_number, lookup);
+        self.apply_pr_stacks();
+    }
+
+    /// Fold a batch of stack positions for `pr_numbers` into the session. A
+    /// queried PR missing from `stacks` is not stacked. Fetched entries are
+    /// kept while the PR's position is unchanged and dropped once it moves.
+    pub fn record_pr_stack_summaries(
+        &mut self,
+        project: &str,
+        pr_numbers: &[u64],
+        mut stacks: std::collections::HashMap<u64, crate::domain::mr::StackInfo>,
+    ) {
+        use crate::domain::mr::StackLookup;
+        let known = self.pr_stacks.entry(project.to_string()).or_default();
+        for &pr_number in pr_numbers {
+            let lookup = match stacks.remove(&pr_number) {
+                None => StackLookup::NotStacked,
+                Some(info) => match known.get(&pr_number) {
+                    Some(StackLookup::Full(stack)) if stack.info == info => continue,
+                    _ => StackLookup::Summary(info),
+                },
+            };
+            known.insert(pr_number, lookup);
+        }
+        self.apply_pr_stacks();
+    }
+
+    /// Copy the session's stack knowledge onto `mrs.items`. PRs the session
+    /// knows nothing about keep what the list or the cache gave them.
+    pub fn apply_pr_stacks(&mut self) {
+        use crate::domain::mr::StackLookup;
+        for mr in self.mrs.items.iter_mut() {
+            let Some(lookup) = self
+                .pr_stacks
+                .get(Self::mr_project(&self.scope, mr))
+                .and_then(|prs| prs.get(&mr.iid))
+            else {
+                continue;
+            };
+            match lookup {
+                StackLookup::NotStacked => {
+                    mr.stack = None;
+                    mr.stack_entries = None;
+                }
+                StackLookup::Summary(info) => {
+                    mr.stack = Some(info.clone());
+                    mr.stack_entries = None;
+                }
+                StackLookup::Full(stack) => {
+                    mr.stack = Some(stack.info.clone());
+                    mr.stack_entries = Some(stack.entries.clone());
+                }
+            }
+        }
     }
 
     pub fn project_path_for_pipeline(&self, id: u64) -> String {
@@ -11119,6 +11257,121 @@ index 123456..789012 100644
         let filtered = app.filtered_mrs();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].iid, 101);
+    }
+
+    fn stack_info(size: usize, position: usize) -> crate::domain::mr::StackInfo {
+        crate::domain::mr::StackInfo {
+            number: 7,
+            size,
+            position,
+        }
+    }
+
+    fn full_stack(position: usize) -> crate::domain::mr::PrStack {
+        crate::domain::mr::PrStack {
+            info: stack_info(2, position),
+            entries: vec![crate::domain::mr::StackEntry {
+                position,
+                number: 11,
+                title: "Stack top".to_string(),
+                state: "open".to_string(),
+                is_draft: false,
+            }],
+        }
+    }
+
+    fn app_listing_prs(iids: &[u64]) -> App {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        app.mrs.items = iids
+            .iter()
+            .map(|&iid| mr_fixture(iid, "opened", "user1", false, "PR"))
+            .collect();
+        app
+    }
+
+    #[test]
+    fn refreshed_pr_list_gets_back_the_stack_fetched_earlier_in_the_session() {
+        let mut app = app_listing_prs(&[11, 12]);
+        app.record_pr_stack("owner/repo", 11, Some(full_stack(2)));
+        app.record_pr_stack("owner/repo", 12, None);
+
+        app.mrs.items = vec![
+            mr_fixture(11, "opened", "user1", false, "PR"),
+            mr_fixture(12, "opened", "user1", false, "PR"),
+        ];
+        app.apply_pr_stacks();
+
+        assert_eq!(app.mrs.items[0].stack, Some(stack_info(2, 2)));
+        assert_eq!(app.mrs.items[0].stack_entries, Some(full_stack(2).entries));
+        assert_eq!(app.mrs.items[1].stack, None);
+        assert_eq!(app.mrs.items[1].stack_entries, None);
+    }
+
+    #[test]
+    fn stack_summaries_keep_fetched_entries_while_the_position_is_unchanged() {
+        let mut app = app_listing_prs(&[11]);
+        app.record_pr_stack("owner/repo", 11, Some(full_stack(2)));
+
+        app.record_pr_stack_summaries(
+            "owner/repo",
+            &[11],
+            [(11, stack_info(2, 2))].into_iter().collect(),
+        );
+
+        assert_eq!(
+            app.pr_stack("owner/repo", 11),
+            Some(&crate::domain::mr::StackLookup::Full(full_stack(2)))
+        );
+        assert_eq!(app.mrs.items[0].stack_entries, Some(full_stack(2).entries));
+    }
+
+    #[test]
+    fn stack_summaries_drop_fetched_entries_once_the_position_moves() {
+        let mut app = app_listing_prs(&[11]);
+        app.record_pr_stack("owner/repo", 11, Some(full_stack(2)));
+
+        app.record_pr_stack_summaries(
+            "owner/repo",
+            &[11],
+            [(11, stack_info(3, 2))].into_iter().collect(),
+        );
+
+        assert_eq!(
+            app.pr_stack("owner/repo", 11),
+            Some(&crate::domain::mr::StackLookup::Summary(stack_info(3, 2)))
+        );
+        assert_eq!(app.mrs.items[0].stack, Some(stack_info(3, 2)));
+        assert_eq!(app.mrs.items[0].stack_entries, None);
+    }
+
+    #[test]
+    fn stack_summaries_mark_queried_prs_missing_from_the_batch_as_not_stacked() {
+        let mut app = app_listing_prs(&[11, 12]);
+        app.record_pr_stack("owner/repo", 12, Some(full_stack(1)));
+
+        app.record_pr_stack_summaries(
+            "owner/repo",
+            &[11, 12],
+            [(11, stack_info(2, 2))].into_iter().collect(),
+        );
+
+        assert_eq!(
+            app.pr_stack("owner/repo", 12),
+            Some(&crate::domain::mr::StackLookup::NotStacked)
+        );
+        assert_eq!(app.mrs.items[1].stack, None);
+        assert_eq!(app.mrs.items[1].stack_entries, None);
+    }
+
+    #[test]
+    fn stack_knowledge_of_one_repository_leaves_another_repositorys_prs_alone() {
+        let mut app = app_listing_prs(&[11]);
+        app.mrs.items[0].stack = Some(stack_info(2, 2));
+
+        app.record_pr_stack("other/repo", 11, None);
+
+        assert_eq!(app.mrs.items[0].stack, Some(stack_info(2, 2)));
     }
 
     #[test]

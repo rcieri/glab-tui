@@ -102,6 +102,93 @@ pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender
     app.pending_mr_related_issues_since = Some(std::time::Instant::now());
 }
 
+/// `view_stack`: open the selector over the PR's stack. When the session does
+/// not know the stack yet it is fetched first and the selector opens once it
+/// lands (see `Event::PrStackFetched`).
+fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &UnboundedSender<Event>) {
+    use crate::domain::mr::StackLookup;
+    let pr = app.mr_ref(mr);
+    let is_known = matches!(
+        app.pr_stack(&pr.0, pr.1),
+        Some(StackLookup::NotStacked | StackLookup::Full(_))
+    );
+    // Stacks exist only in GitHub repositories; anywhere else the answer is
+    // already known to be "not stacked".
+    let can_be_stacked = app.is_github() && app.scope.is_repository();
+    if !is_known && can_be_stacked {
+        if let Some(client) = app.gitlab_client.clone() {
+            crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
+            app.status_message = Some(format!("Loading the stack of PR #{}…", pr.1));
+            app.pending_stack_selector = Some(pr);
+            return;
+        }
+    }
+    open_stack_selector(app, &pr.0, pr.1);
+}
+
+/// Open the selector over a PR's stack the session already knows, so the
+/// user can jump to another PR in it, or say why there is nothing to open.
+pub(crate) fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
+    use crate::domain::mr::StackLookup;
+    let Some(StackLookup::Full(stack)) = app.pr_stack(project, pr_number) else {
+        app.show_error("This PR is not part of a stack.".to_string());
+        return;
+    };
+    if stack.entries.is_empty() {
+        app.show_error("This PR has no stack entries to navigate.".to_string());
+        return;
+    }
+    let current_marker = format!(
+        " {} (current)",
+        crate::config::ICONS.read().unwrap().nav_prev
+    );
+    let selector = crate::app::Selector {
+        title: format!(
+            " Stack #{} — {} PRs ",
+            stack.info.number,
+            stack.entries.len(),
+        ),
+        all_items: stack
+            .entries
+            .iter()
+            .map(|e| {
+                format!(
+                    "#{}. #{}: {} ({}){}{}",
+                    e.position,
+                    e.number,
+                    e.title,
+                    e.state.to_uppercase(),
+                    if e.is_draft { " [draft]" } else { "" },
+                    if e.number == pr_number {
+                        current_marker.as_str()
+                    } else {
+                        ""
+                    },
+                )
+            })
+            .collect(),
+        selected_items: std::collections::HashSet::new(),
+        cursor_idx: stack
+            .entries
+            .iter()
+            .position(|e| e.number == pr_number)
+            .unwrap_or(0),
+        search_query: String::new(),
+        is_filtering: false,
+        is_loading: false,
+        entity_iid: pr_number,
+        entity_type: "mr".to_string(),
+        field_type: "stack_entries".to_string(),
+        multi_select: false,
+        state: {
+            let mut s = ListState::default();
+            s.select(Some(0));
+            s
+        },
+    };
+    app.selector = Some(selector);
+}
+
 /// Scrolls the detail pane by a full or half page for the
 /// `scroll_page_down`/`scroll_page_up`/`scroll_half_page_down`/
 /// `scroll_half_page_up` bindings, against the usable height of
@@ -872,75 +959,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            // Open a selector over the MR's stack entries so
-                            // the user can pick one to jump into. GitHub-only;
-                            // - GitLab backends always report `stack = None`.
-                            if let Some(ref entries) = mr.stack_entries {
-                                if entries.is_empty() {
-                                    app.show_error(
-                                        "This PR has no stack entries to navigate.".to_string(),
-                                    );
-                                } else {
-                                    app.selector = Some(crate::app::Selector {
-                                        title: format!(
-                                            " Stack #{} — {} PRs ",
-                                            mr.stack.as_ref().map(|s| s.number).unwrap_or(0),
-                                            entries.len(),
-                                        ),
-                                        all_items: entries
-                                            .iter()
-                                            .map(|e| {
-                                                let current_marker = if e.number == mr.iid {
-                                                    format!(
-                                                        " {} (current)",
-                                                        crate::config::ICONS
-                                                            .read()
-                                                            .unwrap()
-                                                            .nav_prev
-                                                    )
-                                                } else {
-                                                    String::new()
-                                                };
-                                                let draft_str =
-                                                    if e.is_draft { " [draft]" } else { "" };
-                                                format!(
-                                                    "#{}. #{}: {} ({}){}{}",
-                                                    e.position,
-                                                    e.number,
-                                                    e.title,
-                                                    e.state.to_uppercase(),
-                                                    draft_str,
-                                                    current_marker,
-                                                )
-                                            })
-                                            .collect(),
-                                        selected_items: std::collections::HashSet::new(),
-                                        cursor_idx: entries
-                                            .iter()
-                                            .position(|e| e.number == mr.iid)
-                                            .unwrap_or(0),
-                                        search_query: String::new(),
-                                        is_filtering: false,
-                                        is_loading: false,
-                                        entity_iid: mr_iid,
-                                        entity_type: "mr".to_string(),
-                                        field_type: "stack_entries".to_string(),
-                                        multi_select: false,
-                                        state: {
-                                            let mut s = ListState::default();
-                                            s.select(Some(0));
-                                            s
-                                        },
-                                    });
-                                }
-                            } else if mr.stack.is_some() {
-                                app.show_error(
-                                    "Stack entries still loading — try again in a moment."
-                                        .to_string(),
-                                );
-                            } else {
-                                app.show_error("This PR is not part of a stack.".to_string());
-                            }
+                            view_stack(app, &mr, &tx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.open_in_browser,

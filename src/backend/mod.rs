@@ -510,14 +510,25 @@ pub trait Backend: Send + Sync {
     }
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String>;
 
-    /// For GitHub stacked PRs (`gh stack`), fetch all entries in the PR's stack.
-    /// Backends without stacked PR support (GitLab) return `Ok(None)`.
-    async fn get_pr_stack_entries(
+    /// For GitHub stacked PRs (`gh stack`), fetch one PR's stack: its own
+    /// position plus every entry. `Ok(None)` means the PR is not in a stack;
+    /// backends without stacked PR support (GitLab) always return it.
+    async fn get_pr_stack(
         &self,
         _project: &str,
         _pr_number: u64,
-    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+    ) -> Result<Option<crate::domain::mr::PrStack>> {
         Ok(None)
+    }
+
+    /// Stack position of each listed PR, in one query. A PR absent from the
+    /// map is not in a stack. Backends without stacked PRs return an empty map.
+    async fn list_pr_stack_summaries(
+        &self,
+        _project: &str,
+        _pr_numbers: &[u64],
+    ) -> Result<HashMap<u64, crate::domain::mr::StackInfo>> {
+        Ok(HashMap::new())
     }
 
     // ── Pipeline / Job actions ──

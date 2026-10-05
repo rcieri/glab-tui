@@ -347,6 +347,88 @@ mod tests {
         assert!(app.fetching_related_mrs.is_empty());
     }
 
+    /// A GitHub app on the PRs tab with the inspector open on PR #11.
+    fn app_inspecting_pr_11() -> app::App {
+        let mut app = app::App::new();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: true,
+            backend: crate::backend::create_backend(true),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+        });
+        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        app.active_tab = app::Tab::MergeRequests;
+        app.detail_visible = true;
+        app.mrs.items = vec![mr_fixture(11, "alice", None)];
+        app.mrs.state.select(Some(0));
+        app
+    }
+
+    fn pr_11() -> (String, u64) {
+        ("owner/repo".to_string(), 11)
+    }
+
+    #[tokio::test]
+    async fn inspector_fetches_a_pr_stack_only_after_the_selection_rests() {
+        let mut app = app_inspecting_pr_11();
+        let client = app.gitlab_client.clone().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+        assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+        assert!(app.fetching_pr_stacks.is_empty());
+
+        let rested = std::time::Instant::now() - RELATED_MRS_DEBOUNCE;
+        app.pr_stack_candidate = Some((pr_11(), rested));
+        assert!(dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+        assert_eq!(app.fetching_pr_stacks, [pr_11()].into_iter().collect());
+        assert_eq!(app.pr_stack_candidate, None);
+
+        assert!(
+            !dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx),
+            "an in-flight fetch is not requested again"
+        );
+    }
+
+    #[test]
+    fn inspector_fetches_no_stack_the_session_already_settled() {
+        for known in [None, Some(pr_stack_of_11())] {
+            let mut app = app_inspecting_pr_11();
+            let client = app.gitlab_client.clone().unwrap();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            app.record_pr_stack("owner/repo", 11, known);
+            app.pr_stack_candidate =
+                Some((pr_11(), std::time::Instant::now() - RELATED_MRS_DEBOUNCE));
+
+            assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+            assert_eq!(app.pr_stack_candidate, None);
+        }
+    }
+
+    #[test]
+    fn closed_inspector_fetches_no_stack() {
+        let mut app = app_inspecting_pr_11();
+        app.detail_visible = false;
+        let client = app.gitlab_client.clone().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        app.pr_stack_candidate = Some((pr_11(), std::time::Instant::now() - RELATED_MRS_DEBOUNCE));
+
+        assert!(!dispatch_inspected_pr_stack_fetch(&client, &mut app, &tx));
+        assert_eq!(app.pr_stack_candidate, None);
+    }
+
+    fn pr_stack_of_11() -> crate::domain::mr::PrStack {
+        crate::domain::mr::PrStack {
+            info: crate::domain::mr::StackInfo {
+                number: 7,
+                size: 2,
+                position: 2,
+            },
+            entries: Vec::new(),
+        }
+    }
+
     #[test]
     fn test_sync_linked_references_bidirectional() {
         use crate::domain::issues::{Author as IssueAuthor, Issue, RelatedMrRef, RelatedMrsState};
@@ -894,30 +976,105 @@ pub fn spawn_fetch_mr(
     });
 }
 
-/// Fetch the full list of PRs that belong to a GitHub stacked PR. Called
-/// lazily, once per stacked MR, after `list_mrs` populates the lightweight
-/// `stack: Some(StackInfo)` summary. The PR number + project path identify the
-/// MR in `app.mrs.items` so the handler can drop the entries back in place.
-///
-/// GitLab returns `Ok(None)` from the backend trait default — it has no stack
-/// concept — so this helper is effectively GitHub-only.
-pub fn spawn_fetch_stack_entries(
+/// Fetch one PR's stack on demand, unless that fetch is already in flight.
+/// The result arrives as `Event::PrStackFetched`; returns whether a fetch
+/// was started.
+pub fn request_pr_stack(
     client: &domain::client::GitlabClient,
-    project_path: &str,
-    pr_number: u64,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
-) {
-    let mut client = client.clone();
-    client.tx = None;
-    let project_path = project_path.to_string();
+    app: &mut app::App,
+    pr: (String, u64),
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+) -> bool {
+    if !app.fetching_pr_stacks.insert(pr.clone()) {
+        return false;
+    }
+    let (project_path, pr_number) = pr;
+    let client = client.clone().muted();
+    let tx = tx.clone();
     tokio::spawn(async move {
-        let result = client.get_pr_stack_entries(&project_path, pr_number).await;
-        let _ = tx.send(Event::StackEntriesFetched {
+        let result = client.get_pr_stack(&project_path, pr_number).await;
+        let _ = tx.send(Event::PrStackFetched {
             pr_number,
-            project_path: project_path.clone(),
+            project_path,
             result: result.map_err(|e| e.to_string()),
         });
     });
+    true
+}
+
+/// Fetch the stack positions behind the Stack column for `pr_numbers`, in one
+/// query. A failure sends nothing, so the column keeps what it showed: stack
+/// positions decorate the list and nothing acts on them.
+pub fn spawn_fetch_pr_stack_summaries(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+    pr_numbers: Vec<u64>,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    let client = client.clone().muted();
+    let project_path = project_path.to_string();
+    tokio::spawn(async move {
+        if let Ok(stacks) = client
+            .list_pr_stack_summaries(&project_path, &pr_numbers)
+            .await
+        {
+            let _ = tx.send(Event::PrStackSummariesFetched {
+                project_path,
+                pr_numbers,
+                stacks,
+            });
+        }
+    });
+}
+
+/// Fetch the stack of the PR open in the inspector once it has stayed
+/// selected for `RELATED_MRS_DEBOUNCE`, so scrolling with the inspector open
+/// only fetches where the user stops. Called from `Event::Tick`; returns
+/// whether a fetch was started.
+pub fn dispatch_inspected_pr_stack_fetch(
+    client: &domain::client::GitlabClient,
+    app: &mut app::App,
+    tx: &tokio::sync::mpsc::UnboundedSender<Event>,
+) -> bool {
+    let Some(pr) = inspected_pr_without_stack(app) else {
+        app.pr_stack_candidate = None;
+        return false;
+    };
+    match &app.pr_stack_candidate {
+        Some((candidate, since)) if *candidate == pr => {
+            if since.elapsed() < RELATED_MRS_DEBOUNCE {
+                return false;
+            }
+        }
+        _ => {
+            app.pr_stack_candidate = Some((pr, std::time::Instant::now()));
+            return false;
+        }
+    }
+    app.pr_stack_candidate = None;
+    request_pr_stack(client, app, pr, tx)
+}
+
+/// The PR shown in the inspector, when the session has neither its entries
+/// nor a verdict that it is unstacked. Stacks exist only in GitHub
+/// repositories, so other backends and group scope never ask.
+fn inspected_pr_without_stack(app: &app::App) -> Option<(String, u64)> {
+    if !app.is_github()
+        || !app.scope.is_repository()
+        || app.active_tab != app::Tab::MergeRequests
+        || !app.detail_visible
+    {
+        return None;
+    }
+    let pr = app.selected_mr_ref()?;
+    let is_known = matches!(
+        app.pr_stack(&pr.0, pr.1),
+        Some(domain::mr::StackLookup::NotStacked | domain::mr::StackLookup::Full(_))
+    );
+    if is_known || app.fetching_pr_stacks.contains(&pr) {
+        return None;
+    }
+    Some(pr)
 }
 
 /// Kick off background fetches for enabled tabs in order,

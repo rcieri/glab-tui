@@ -13,6 +13,7 @@ mod pr_diff_fallback;
 mod review_cli;
 mod review_threads;
 mod scenarios;
+mod stacked_prs;
 mod tabs;
 mod workspace;
 

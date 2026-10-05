@@ -401,35 +401,6 @@ impl GhBackend {
             .as_deref()
     }
 
-    async fn fetch_pr_stacks_for_repo(
-        &self,
-        project: &str,
-        pr_numbers: &[u64],
-    ) -> std::collections::HashMap<u64, crate::domain::mr::StackInfo> {
-        if pr_numbers.is_empty() {
-            return std::collections::HashMap::new();
-        }
-        let owner = project.split('/').next().unwrap_or(project);
-        let repo = project.split('/').nth(1).unwrap_or(project);
-        let query = pr_stack_graphql_query(owner, repo, pr_numbers);
-        match self
-            .run_gh(
-                &["api", "graphql", "-f", &format!("query={query}")],
-                "Fetching PR Stacks",
-            )
-            .await
-        {
-            Ok(raw) => parse_pr_stacks_response(&raw),
-            // Stack info is a non-critical decoration: an empty map means
-            // "no PR in this batch is in a stack" — identical to the
-            // pre-stack behaviour. Matches the GitLab `list_mr_state`
-            // follow-up path in `fetch.rs:347` which also swallows errors
-            // for the same reason. The terminal-commands bar still records
-            // the failure (see `run_gh_command`), so it isn't truly silent.
-            Err(_) => std::collections::HashMap::new(),
-        }
-    }
-
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
         let tx = self.tx.clone();
         let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -767,13 +738,14 @@ fn parse_pr_stacks_response(
     map
 }
 
-/// Build a GraphQL query to fetch all entries in a PR's stack.
+/// Build a GraphQL query to fetch a PR's stack position and all its entries.
 fn pr_stack_entries_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
     let repo = repo.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
         "{{ repository(owner:\"{owner}\",name:\"{repo}\") {{ \
          pullRequest(number:{pr_number}) {{ \
+         stackEntry {{ position }} \
          stack {{ \
            number \
            size \
@@ -809,11 +781,12 @@ mod pr_stack_entries_types {
 
     #[derive(Deserialize)]
     pub(super) struct GhStackEntriesPr {
+        #[serde(rename = "stackEntry")]
+        pub(super) stack_entry: Option<pr_stack_types::GhPrStackEntryObj>,
         pub(super) stack: Option<GhStackEntriesStackObj>,
     }
 
     #[derive(Deserialize)]
-    #[allow(dead_code)]
     pub(super) struct GhStackEntriesStackObj {
         pub(super) number: u64,
         pub(super) size: usize,
@@ -843,9 +816,7 @@ mod pr_stack_entries_types {
     }
 }
 
-fn parse_pr_stack_entries_response(
-    raw: &str,
-) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+fn parse_pr_stack_entries_response(raw: &str) -> Result<Option<crate::domain::mr::PrStack>> {
     let Ok(resp) = serde_json::from_str::<pr_stack_entries_types::GhStackEntriesResp>(raw) else {
         return Ok(None);
     };
@@ -858,14 +829,13 @@ fn parse_pr_stack_entries_response(
     let Some(pr) = repo.pull_request else {
         return Ok(None);
     };
-    let Some(stack) = pr.stack else {
+    let (Some(stack), Some(own_entry)) = (pr.stack, pr.stack_entry) else {
         return Ok(None);
     };
-    let Some(entries_obj) = stack.entries else {
-        return Ok(None);
-    };
-    let mut list: Vec<crate::domain::mr::StackEntry> = entries_obj
-        .nodes
+    let mut entries: Vec<crate::domain::mr::StackEntry> = stack
+        .entries
+        .map(|e| e.nodes)
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|node| {
             let pr_details = node.pull_request?;
@@ -878,11 +848,15 @@ fn parse_pr_stack_entries_response(
             })
         })
         .collect();
-    if list.is_empty() {
-        return Ok(None);
-    }
-    list.sort_by_key(|e| e.position);
-    Ok(Some(list))
+    entries.sort_by_key(|e| e.position);
+    Ok(Some(crate::domain::mr::PrStack {
+        info: crate::domain::mr::StackInfo {
+            number: stack.number,
+            size: stack.size,
+            position: own_entry.position,
+        },
+        entries,
+    }))
 }
 
 /// Build the GraphQL query that finds the issues which a PR closes.
@@ -1508,8 +1482,6 @@ impl Backend for GhBackend {
 
                 let me = self.current_user().await;
                 let gh_prs: Vec<GhPr> = serde_json::from_str(&raw)?;
-                let pr_numbers: Vec<u64> = gh_prs.iter().map(|gp| gp.number).collect();
-                let stacks = self.fetch_pr_stacks_for_repo(project, &pr_numbers).await;
                 Ok(gh_prs
                     .into_iter()
                     .map(|gp| {
@@ -1602,7 +1574,7 @@ impl Backend for GhBackend {
                             project_path: project.to_string(),
                             web_url: gp.url,
                             related_issues,
-                            stack: stacks.get(&gp.number).cloned(),
+                            stack: None,
                             stack_entries: None,
                         }
                     })
@@ -1855,21 +1827,41 @@ impl Backend for GhBackend {
         })
     }
 
-    async fn get_pr_stack_entries(
+    async fn get_pr_stack(
         &self,
         project: &str,
         pr_number: u64,
-    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
+    ) -> Result<Option<crate::domain::mr::PrStack>> {
         let owner = project.split('/').next().unwrap_or(project);
         let repo = project.split('/').nth(1).unwrap_or(project);
         let query = pr_stack_entries_graphql_query(owner, repo, pr_number, 50);
         let raw = self
             .run_gh(
                 &["api", "graphql", "-f", &format!("query={query}")],
-                "Fetching PR Stack Entries",
+                "Fetching PR Stack",
             )
             .await?;
         parse_pr_stack_entries_response(&raw)
+    }
+
+    async fn list_pr_stack_summaries(
+        &self,
+        project: &str,
+        pr_numbers: &[u64],
+    ) -> Result<HashMap<u64, crate::domain::mr::StackInfo>> {
+        if pr_numbers.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let owner = project.split('/').next().unwrap_or(project);
+        let repo = project.split('/').nth(1).unwrap_or(project);
+        let query = pr_stack_graphql_query(owner, repo, pr_numbers);
+        let raw = self
+            .run_gh(
+                &["api", "graphql", "-f", &format!("query={query}")],
+                "Fetching PR Stacks",
+            )
+            .await?;
+        Ok(parse_pr_stacks_response(&raw))
     }
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
@@ -4474,18 +4466,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pr_stack_entries_graphql_query() {
-        let q = pr_stack_entries_graphql_query("rcieri", "glab-tui", 101, 50);
-        assert!(q.contains("pullRequest(number:101)"));
-        assert!(q.contains("entries(first:50)"));
-    }
-
-    #[test]
-    fn test_parse_pr_stack_entries_response() {
+    fn stack_query_response_carries_the_prs_position_and_its_entries_in_order() {
         let json = r#"{
             "data": {
                 "repository": {
                     "pullRequest": {
+                        "stackEntry": { "position": 2 },
                         "stack": {
                             "number": 7,
                             "size": 3,
@@ -4525,20 +4511,36 @@ mod tests {
                 }
             }
         }"#;
-        let entries = parse_pr_stack_entries_response(json).unwrap().unwrap();
-        assert_eq!(entries.len(), 3);
-        // Sorted by position
-        assert_eq!(entries[0].position, 1);
-        assert_eq!(entries[0].number, 101);
-        assert_eq!(entries[0].state, "merged");
-        assert!(!entries[0].is_draft);
+        let stack = parse_pr_stack_entries_response(json).unwrap().unwrap();
+        let entry =
+            |position, number, title: &str, state: &str, is_draft| crate::domain::mr::StackEntry {
+                position,
+                number,
+                title: title.to_string(),
+                state: state.to_string(),
+                is_draft,
+            };
+        assert_eq!(
+            stack,
+            crate::domain::mr::PrStack {
+                info: crate::domain::mr::StackInfo {
+                    number: 7,
+                    size: 3,
+                    position: 2,
+                },
+                entries: vec![
+                    entry(1, 101, "Base PR", "merged", false),
+                    entry(2, 102, "Middle PR", "open", false),
+                    entry(3, 103, "Top PR", "open", true),
+                ],
+            }
+        );
+    }
 
-        assert_eq!(entries[1].position, 2);
-        assert_eq!(entries[1].number, 102);
-
-        assert_eq!(entries[2].position, 3);
-        assert_eq!(entries[2].number, 103);
-        assert!(entries[2].is_draft);
+    #[test]
+    fn stack_query_response_without_a_stack_entry_means_not_stacked() {
+        let json = r#"{"data":{"repository":{"pullRequest":{"stackEntry":null,"stack":null}}}}"#;
+        assert_eq!(parse_pr_stack_entries_response(json).unwrap(), None);
     }
 
     #[test]

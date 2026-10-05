@@ -183,12 +183,22 @@ impl GitlabClient {
         self.backend.get_mr_diff(project, iid).await
     }
 
-    pub async fn get_pr_stack_entries(
+    pub async fn get_pr_stack(
         &self,
         project: &str,
         pr_number: u64,
-    ) -> Result<Option<Vec<crate::domain::mr::StackEntry>>> {
-        self.backend.get_pr_stack_entries(project, pr_number).await
+    ) -> Result<Option<crate::domain::mr::PrStack>> {
+        self.backend.get_pr_stack(project, pr_number).await
+    }
+
+    pub async fn list_pr_stack_summaries(
+        &self,
+        project: &str,
+        pr_numbers: &[u64],
+    ) -> Result<std::collections::HashMap<u64, crate::domain::mr::StackInfo>> {
+        self.backend
+            .list_pr_stack_summaries(project, pr_numbers)
+            .await
     }
 
     pub async fn list_mr_notes(

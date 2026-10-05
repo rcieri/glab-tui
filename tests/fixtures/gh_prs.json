@@ -1,5 +1,38 @@
 [
   {
+    "number": 11,
+    "title": "Stack top",
+    "state": "OPEN",
+    "author": {"login": "test-user"},
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "headRefName": "stack/top",
+    "baseRefName": "stack/bottom",
+    "isDraft": false
+  },
+  {
+    "number": 10,
+    "title": "Stack bottom",
+    "state": "OPEN",
+    "author": {"login": "test-user"},
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "headRefName": "stack/bottom",
+    "baseRefName": "main",
+    "isDraft": false
+  },
+  {
+    "number": 12,
+    "title": "Lone change",
+    "state": "OPEN",
+    "author": {"login": "test-user"},
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "headRefName": "lone",
+    "baseRefName": "main",
+    "isDraft": false
+  },
+  {
     "number": 1,
     "title": "Rewrite the monorepo build",
     "state": "OPEN",

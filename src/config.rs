@@ -1105,7 +1105,7 @@ pub struct KeybindingMrs {
     #[serde(default = "def_copy_reference")]
     pub copy_reference: String,
     /// Open a selector listing the PRs in a stacked GitHub PR, then jump to
-    /// the chosen one. No-op when the selected MR has no `stack` summary.
+    /// the chosen one. Fetches the stack first when the session lacks it.
     #[serde(default = "def_view_stack")]
     pub view_stack: String,
     #[serde(default = "def_jump_linked_issues")]

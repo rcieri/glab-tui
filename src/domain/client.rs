@@ -279,6 +279,12 @@ impl GitlabClient {
         body: &str,
         comments: &[DraftComment],
     ) -> Result<()> {
+        if let Some(comment) = comments
+            .iter()
+            .find(|c| c.line_num.is_none() && c.old_line_num.is_none())
+        {
+            anyhow::bail!("comment on {} has no diff line", comment.file_path);
+        }
         self.backend
             .submit_review(project, iid, event, body, comments)
             .await

@@ -2482,7 +2482,7 @@ impl DiffView {
             self.lines.get(self.cursor_idx).cloned()
         };
 
-        let line = sline_opt?;
+        let line = sline_opt.filter(|l| l.new_line_num.is_some() || l.old_line_num.is_some())?;
         if line.line_type == DiffLineType::Deletion {
             Some(CommentRange {
                 file_path: line.file_path.clone(),
@@ -8657,6 +8657,19 @@ diff --git a/foo.txt b/foo.txt
             }),
             line_type: DiffLineType::Normal,
         }
+    }
+
+    #[test]
+    fn comment_range_skips_rows_without_a_line_number() {
+        let mut view = DiffView::new(
+            1,
+            "g/p".to_string(),
+            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-x\n+y\n".to_string(),
+        );
+        view.cursor_idx = 0;
+        assert!(view.get_comment_range().is_none(), "file header row");
+        view.cursor_idx = view.lines.iter().position(|l| l.content == "+y").unwrap();
+        assert_eq!(view.get_comment_range().unwrap().line_num, Some(1));
     }
 
     #[test]

@@ -885,6 +885,7 @@ fn github_review_comment(comment: &DraftComment) -> serde_json::Value {
     let (side, start, end) = match (comment.line_num, comment.old_line_num) {
         (Some(line), _) => ("RIGHT", line, comment.end_line_num),
         (None, Some(line)) => ("LEFT", line, comment.end_old_line_num),
+        // `GitlabClient::submit_review` rejects comments without a line first.
         (None, None) => ("RIGHT", 1, None),
     };
     let mut value = serde_json::json!({

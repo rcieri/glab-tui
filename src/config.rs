@@ -118,6 +118,27 @@ pub struct Theme {
     pub label_palette: [Color; 10],
 }
 
+/// Glyph family the UI draws its icons from. Nerd Font glyphs live in the
+/// Unicode Private Use Area: a terminal without a Nerd Font substitutes
+/// whatever fallback font has those code points (often a double-width CJK
+/// font), so every icon shifts the rest of its row by one cell.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IconSet {
+    #[default]
+    Nerd,
+    Ascii,
+}
+
+impl IconSet {
+    pub fn icons(self) -> Icons {
+        match self {
+            IconSet::Nerd => Icons::nerd(),
+            IconSet::Ascii => Icons::ascii(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icons {
     pub tab_issue: String,
@@ -219,10 +240,18 @@ pub struct Icons {
     pub folder_expanded: String,
     pub folder_collapsed: String,
     pub file_reviewed: String,
+    pub user: String,
+    pub tag: String,
+    pub date: String,
+    pub clock: String,
+    pub lock: String,
+    pub link: String,
+    pub identifier: String,
+    pub chart: String,
 }
 
 impl Icons {
-    pub fn default() -> Self {
+    pub fn nerd() -> Self {
         Self {
             tab_issue: "\u{f41b}".to_string(),
             tab_pr: "\u{f407}".to_string(),
@@ -323,6 +352,128 @@ impl Icons {
             folder_expanded: "\u{f07c}".to_string(),
             folder_collapsed: "\u{f07b}".to_string(),
             file_reviewed: "\u{f4a7}".to_string(),
+            user: "\u{f007}".to_string(),
+            tag: "\u{f02b}".to_string(),
+            date: "\u{f073}".to_string(),
+            clock: "\u{f017}".to_string(),
+            lock: "\u{f023}".to_string(),
+            link: "\u{f0c1}".to_string(),
+            identifier: "\u{f029}".to_string(),
+            chart: "\u{f080}".to_string(),
+        }
+    }
+
+    /// One printable ASCII character per icon, so every glyph is exactly one
+    /// cell wide in any font.
+    pub fn ascii() -> Self {
+        Self {
+            tab_issue: "#".to_string(),
+            tab_pr: "!".to_string(),
+            tab_pipeline: ">".to_string(),
+            tab_job: "*".to_string(),
+            tab_runner: "@".to_string(),
+            tab_release: "^".to_string(),
+            tab_todo: "+".to_string(),
+            tab_milestone: "%".to_string(),
+            tab_branch: "/".to_string(),
+            tab_environment: "=".to_string(),
+            tab_terminal: "$".to_string(),
+            status_success: "+".to_string(),
+            status_failed: "x".to_string(),
+            status_running: ">".to_string(),
+            status_pending: "~".to_string(),
+            status_canceled: "/".to_string(),
+            status_skipped: "-".to_string(),
+            status_manual: "=".to_string(),
+            status_unknown: "?".to_string(),
+            header_github: "*".to_string(),
+            header_gitlab: "*".to_string(),
+            label_navigation: "=".to_string(),
+            label_terminal: "$".to_string(),
+            label_fetching: "~".to_string(),
+            label_searching: "/".to_string(),
+            label_filtered: "=".to_string(),
+            state_open: "o".to_string(),
+            state_closed: "x".to_string(),
+            state_merged: "+".to_string(),
+            status_draft: "~".to_string(),
+            status_ready: "o".to_string(),
+            approval_approved: "+".to_string(),
+            approval_changes: "x".to_string(),
+            approval_pending: ".".to_string(),
+            merge_conflict: "x".to_string(),
+            merge_rebase: "~".to_string(),
+            merge_clean: "+".to_string(),
+            merge_checking: "?".to_string(),
+            flag_unresolved: "!".to_string(),
+            workflow_returned: "<".to_string(),
+            workflow_review: "?".to_string(),
+            workflow_yours: ">".to_string(),
+            workflow_approved: "+".to_string(),
+            workflow_inactive: ".".to_string(),
+            workflow_approved_others: "+".to_string(),
+            runner_online: "*".to_string(),
+            runner_paused: "=".to_string(),
+            runner_offline: ".".to_string(),
+            highlight_arrow: ">".to_string(),
+            separator: ">".to_string(),
+            check_on: "+".to_string(),
+            check_off: "-".to_string(),
+            radio_on: "*".to_string(),
+            radio_off: "o".to_string(),
+            label_details: "i".to_string(),
+            label_columns: "|".to_string(),
+            label_group: "=".to_string(),
+            label_order: "^".to_string(),
+            label_theme: "*".to_string(),
+            label_save: "s".to_string(),
+            label_branch: "/".to_string(),
+            label_environment: "=".to_string(),
+            label_deployment: "^".to_string(),
+            label_milestone: "%".to_string(),
+            label_loading: "~".to_string(),
+            comment: "\"".to_string(),
+            comment_draft: "'".to_string(),
+            thread_unresolved: "o".to_string(),
+            matrix_variant: "*".to_string(),
+            dot_success: "+".to_string(),
+            dot_failed: "x".to_string(),
+            dot_running: ">".to_string(),
+            dot_canceled: "/".to_string(),
+            dot_pending: "~".to_string(),
+            dot_skipped: "-".to_string(),
+            suggestion_start: "+--- Code Suggestion ---".to_string(),
+            suggestion_end: "+--- End of Suggestion ---".to_string(),
+            label_files: "/".to_string(),
+            label_configure: "*".to_string(),
+            label_diff: "+".to_string(),
+            label_page_size: "#".to_string(),
+            label_metrics: "%".to_string(),
+            label_stages: ">".to_string(),
+            label_calendar: "@".to_string(),
+            label_keyboard: "?".to_string(),
+            label_search_global: "/".to_string(),
+            label_select: "v".to_string(),
+            action_delete: "x".to_string(),
+            action_close: "x".to_string(),
+            action_reopen: "o".to_string(),
+            action_merge: "+".to_string(),
+            action_edit: "e".to_string(),
+            action_create: "+".to_string(),
+            action_reply: "<".to_string(),
+            action_review: "?".to_string(),
+            readonly: "-".to_string(),
+            folder_expanded: "v".to_string(),
+            folder_collapsed: ">".to_string(),
+            file_reviewed: "+".to_string(),
+            user: "@".to_string(),
+            tag: "#".to_string(),
+            date: "@".to_string(),
+            clock: "~".to_string(),
+            lock: "!".to_string(),
+            link: "&".to_string(),
+            identifier: "#".to_string(),
+            chart: "%".to_string(),
         }
     }
 }
@@ -1530,6 +1681,8 @@ pub struct Config {
     /// startup and repository switches. Off by default to conserve API quota.
     #[serde(default = "def_prefetch_tabs")]
     pub prefetch_tabs: bool,
+    /// `ascii` for terminals without a Nerd Font installed.
+    pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
     pub ui: UiConfig,
     pub issues: PaneConfig,
@@ -1559,6 +1712,7 @@ impl Default for Config {
             keybinding_timeout_ms: def_keybinding_timeout_ms(),
             fetch_label_colors: def_fetch_label_colors(),
             prefetch_tabs: def_prefetch_tabs(),
+            icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
             issues: PaneConfig::default(),
@@ -1621,6 +1775,10 @@ page_size = 100
 
 # Eagerly prefetch data for all enabled tabs in the background on startup / repo switch.
 # prefetch_tabs = false
+
+# Icon glyphs: "nerd" needs a Nerd Font (https://www.nerdfonts.com) in the terminal.
+# Use "ascii" when boxes and columns are misaligned because no Nerd Font is installed.
+# icons = "nerd"
 
 # How long a captured first keypress of a two-character key sequence stays
 # pending before the prefix is dispatched as a single keypress.
@@ -1882,7 +2040,7 @@ toggle_wrap = "w"
 }
 
 pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
-pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Icons::default()));
+pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().icons.icons()));
 
 pub fn all_theme_presets() -> Vec<String> {
     let mut presets: Vec<String> = BUNDLED_THEMES
@@ -2098,6 +2256,12 @@ pub fn reload_theme() {
     }
 }
 
+pub fn reload_icons() {
+    if let Ok(mut icons) = ICONS.write() {
+        *icons = Config::load().icons.icons();
+    }
+}
+
 pub fn set_theme_preset(name: &str) {
     if let Some(preset) = Theme::preset(name) {
         if let Ok(mut theme) = THEME.write() {
@@ -2109,6 +2273,15 @@ pub fn set_theme_preset(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_icon_set_uses_only_single_width_ascii() {
+        // Debug escapes non-printable code points (Private Use Area included)
+        // as `\u{…}`, so both checks are needed to catch a stray glyph.
+        let rendered = format!("{:?}", IconSet::Ascii.icons());
+        assert!(rendered.is_ascii(), "{rendered}");
+        assert!(!rendered.contains("\\u{"), "{rendered}");
+    }
 
     #[test]
     fn empty_color_string_maps_to_reset() {

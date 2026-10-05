@@ -127,7 +127,7 @@ Inline entity editing with searchable multi-select overlays for labels, assignee
 | **Rust** (stable, edition 2024) | Install via [rustup](https://rustup.rs/) |
 | **[`glab`](https://gitlab.com/gitlab-org/cli)** / **[`gh`](https://cli.github.com/)** | Either `glab` (for GitLab repos, authenticated via `glab auth login`) or `gh` (for GitHub repos, authenticated via `gh auth login`) must be on `$PATH`. You only need the CLI for the service you use. |
 | **`git`** | Used to auto-detect the current project from the `origin` remote, or from the default repository `gh` recorded for the clone |
-| **A terminal emulator** | Any terminal that supports 256 colours and Unicode |
+| **A terminal emulator** | Any terminal that supports 256 colours and Unicode. Icons use a [Nerd Font](https://www.nerdfonts.com) by default; without one, set `icons = "ascii"` in `config.toml` |
 
 > **Windows note:** the binary works on Windows. Editor integration uses `cmd /c` automatically when `$OS` is Windows.
 
@@ -280,6 +280,11 @@ theme_preset = "default"   # default | tokyo-night | gruvbox | nord | catppuccin
 # available, falling back to the theme palette. Set to false to always use the
 # theme palette.
 # fetch_label_colors = true
+
+# Icon glyphs. "nerd" (default) needs a Nerd Font in the terminal; without one
+# the glyphs fall back to other fonts, often double-width, and borders and
+# columns drift out of line. "ascii" draws every icon as one ASCII character.
+# icons = "nerd"
 
 # Override individual colors (takes precedence over theme_preset)
 # [theme]

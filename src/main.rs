@@ -3522,6 +3522,7 @@ async fn main() -> Result<()> {
                                                     app.apply_config();
                                                     app.load_custom_commands();
                                                     crate::config::reload_theme();
+                                                    crate::config::reload_icons();
 
                                                     if let Ok(context) =
                                                         domain::client::get_project_context().await

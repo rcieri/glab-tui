@@ -3100,7 +3100,7 @@ pub(crate) fn render_tab_branches(
             if app.is_column_visible(Tab::Branches, "Protected") {
                 let cell = if b.protected {
                     Cell::from(Span::styled(
-                        format!(" \u{f023} YES "),
+                        format!(" {} YES ", icons.lock),
                         Style::default()
                             .fg(theme.yellow)
                             .bg(if is_selected {

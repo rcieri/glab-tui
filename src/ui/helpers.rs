@@ -773,7 +773,7 @@ pub(crate) fn badge_style_for(
                 theme.blue,
                 active_bg(theme.blue_bg),
                 true,
-                Some(format!(" \u{f007} YOURS ")),
+                Some(format!(" {} YOURS ", icons.user)),
             ),
             "AWAITING" => (
                 theme.yellow,

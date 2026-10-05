@@ -88,6 +88,22 @@ fn test_missing_config_presets() {
     );
 }
 
+fn is_private_use(c: char) -> bool {
+    matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0x10FFFD)
+}
+
+#[test]
+fn ascii_icons_render_without_private_use_glyphs() {
+    let mut session = TestSession::with_config(false, 30, 120, Some("icons = \"ascii\"\n"));
+    session.wait_for_screen_contains("# Issues", 30000).unwrap();
+    session.wait_for_screen_contains("OPEN", 30000).unwrap();
+    session.settle(500);
+
+    let screen = session.emulator.get_text();
+    let glyphs: Vec<char> = screen.chars().filter(|&c| is_private_use(c)).collect();
+    assert_eq!(glyphs, Vec::<char>::new(), "screen:\n{screen}");
+}
+
 #[test]
 fn test_invalid_toml_repo_config() {
     let _session = TestSession::new(false, 24, 80);

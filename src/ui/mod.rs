@@ -840,24 +840,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         name_display.push('/');
                     }
 
-                    // Rename indicator: show old → new
-                    if let Some(ref old_path) = node.old_file_path {
-                        if let Some(ref new_path) = node.file_path {
-                            let full = format!("{} → {}", old_path, new_path);
-                            name_display = if full.chars().count() > panel_inner_width / 2 {
-                                let old_base = old_path
-                                    .rsplit_once('/')
-                                    .map_or(old_path.as_str(), |(_, n)| n);
-                                let new_base = new_path
-                                    .rsplit_once('/')
-                                    .map_or(new_path.as_str(), |(_, n)| n);
-                                format!("{} → {}", old_base, new_base)
-                            } else {
-                                full
-                            };
-                        }
-                    }
-
                     // Build stats (right-aligned, colored): only for files, not directories
                     let stats_str = if !node.is_dir {
                         let mut s = String::new();
@@ -887,6 +869,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         + count_suffix.chars().count();
 
                     let prefix = format!(" {}{}", indent, indicator);
+                    if let (Some(old_path), Some(new_path)) = (&node.old_file_path, &node.file_path)
+                    {
+                        name_display = crate::ui::helpers::rename_label(
+                            old_path,
+                            new_path,
+                            panel_inner_width
+                                .saturating_sub(prefix.chars().count() + stats_total_len),
+                        );
+                    }
                     let (name_display_padded, padding) = crate::ui::helpers::diff_tree_row_layout(
                         panel_inner_width,
                         &prefix,

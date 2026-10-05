@@ -9,6 +9,36 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Fetches the MR/PR diff and opens the diff view when it is built. A second
+/// request while one is in flight is dropped: it would repeat every CLI call
+/// and build the view twice.
+fn spawn_open_diff(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
+    mr_iid: u64,
+    project_context: String,
+) {
+    if app.diff_loading {
+        return;
+    }
+    let Some(client) = app.gitlab_client.clone() else {
+        app.show_error("No backend client available to fetch diff".to_string());
+        return;
+    };
+    app.diff_loading = true;
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let event = match crate::fetch::fetch_diff_view(&client, &project_context, mr_iid).await {
+            Ok((diff_view, comments)) => Event::DiffFetched {
+                diff_view,
+                comments,
+            },
+            Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err)),
+        };
+        let _ = tx.send(event);
+    });
+}
+
 /// Record a request to fetch related MRs/PRs for the currently selected issue.
 ///
 /// This is intentionally *cheap*: it just stores the iid in
@@ -806,46 +836,12 @@ pub async fn handle_active_tab_key(
                                 key_event,
                             )) =>
                         {
-                            app.diff_loading = true;
-                            let tx = tx.clone();
-                            let mr_iid = mr_iid;
-                            let client = app.gitlab_client.clone();
                             let project_context = if !mr.project_path.is_empty() {
                                 mr.project_path.clone()
                             } else {
                                 app.scope.as_str().to_string()
                             };
-                            tokio::spawn(async move {
-                                let Some(client) = client else {
-                                    let _ = tx.send(Event::DiffFetchFailed(
-                                        "No backend client available to fetch diff".to_string(),
-                                    ));
-                                    return;
-                                };
-
-                                let (diff_res, comments_res) = tokio::join!(
-                                    client.get_mr_diff(&project_context, mr_iid),
-                                    client.list_mr_notes(&project_context, mr_iid)
-                                );
-
-                                match diff_res {
-                                    Ok(raw_diff) => {
-                                        let comments = comments_res.unwrap_or_default();
-                                        let _ = tx.send(Event::DiffFetched {
-                                            mr_iid,
-                                            project_path: project_context,
-                                            raw_diff,
-                                            comments,
-                                        });
-                                    }
-                                    Err(err) => {
-                                        let _ = tx.send(Event::DiffFetchFailed(format!(
-                                            "Failed to fetch diff: {}",
-                                            err
-                                        )));
-                                    }
-                                }
-                            });
+                            spawn_open_diff(app, &tx, mr_iid, project_context);
                         }
                         _ if (key_event.code == KeyCode::Char('P')
                             || keybinding_matches(

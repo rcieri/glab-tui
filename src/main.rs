@@ -1985,13 +1985,12 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::DiffFetched {
-                    mr_iid,
-                    project_path,
-                    raw_diff,
+                    diff_view,
                     comments,
                 } => {
                     app.diff_loading = false;
-                    let mut diff_view = crate::app::DiffView::new(mr_iid, project_path, raw_diff);
+                    let mut diff_view = *diff_view;
+                    let mr_iid = diff_view.mr_iid;
                     // Restore the files marked as reviewed on an earlier pass.
                     diff_view.restore_review_state(
                         app.reviewed_files_for_mr(mr_iid),
@@ -2094,17 +2093,16 @@ async fn main() -> Result<()> {
                                     let Some(client) = client else {
                                         return;
                                     };
-                                    let (diff_res, comments_res) = tokio::join!(
-                                        client.get_mr_diff(&project_context, mr_iid),
-                                        client.list_mr_notes(&project_context, mr_iid)
-                                    );
-
-                                    if let Ok(raw_diff) = diff_res {
-                                        let comments = comments_res.unwrap_or_default();
-                                        let _ = tx.send(Event::DiffFetched {
+                                    if let Ok((diff_view, comments)) =
+                                        crate::fetch::fetch_diff_view(
+                                            &client,
+                                            &project_context,
                                             mr_iid,
-                                            project_path: project_context,
-                                            raw_diff,
+                                        )
+                                        .await
+                                    {
+                                        let _ = tx.send(Event::DiffFetched {
+                                            diff_view,
                                             comments,
                                         });
                                     }

@@ -40,8 +40,20 @@ pub enum Event {
         project_path: String,
         raw_diff: String,
         comments: Vec<crate::domain::mr::DiscussionNote>,
+        /// GitHub's viewed state of the PR's files; `None` when sync is off,
+        /// on GitLab, or when the fetch failed (local marks apply instead).
+        viewed_files: Option<crate::domain::viewed_files::PrViewedFiles>,
     },
     DiffFetchFailed(String),
+    /// The debounce window of the GitHub "Viewed" sync for this MR/PR closed.
+    ViewedSyncFlush(u64),
+    /// One GitHub "Viewed" sync request finished; `changes` maps paths to the
+    /// viewed state that was sent.
+    ViewedFilesSynced {
+        mr_iid: u64,
+        changes: Vec<(String, bool)>,
+        result: Result<(), String>,
+    },
     TodosFetched(Vec<crate::domain::notifications::Notification>),
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
     CommandStarted(String),

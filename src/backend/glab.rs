@@ -1151,6 +1151,24 @@ impl Backend for GlabBackend {
         .await
     }
 
+    async fn list_viewed_files(
+        &self,
+        _project: &str,
+        _iid: u64,
+    ) -> Result<crate::domain::viewed_files::PrViewedFiles> {
+        // GitLab keeps "Viewed" checkboxes in browser localStorage only; no
+        // API exposes them.
+        anyhow::bail!("GitLab has no server-side viewed-file state")
+    }
+
+    async fn set_files_viewed(
+        &self,
+        _pull_request_id: &str,
+        _changes: &[(String, bool)],
+    ) -> Result<()> {
+        anyhow::bail!("GitLab has no server-side viewed-file state")
+    }
+
     async fn list_mr_notes(
         &self,
         project: &str,

@@ -1989,14 +1989,26 @@ async fn main() -> Result<()> {
                     project_path,
                     raw_diff,
                     comments,
+                    viewed_files,
                 } => {
                     app.diff_loading = false;
+                    let previous = app.diff_view.take().filter(|v| v.mr_iid == mr_iid);
+                    let reopened = previous.is_none();
                     let mut diff_view = crate::app::DiffView::new(mr_iid, project_path, raw_diff);
-                    // Restore the files marked as reviewed on an earlier pass.
                     diff_view.restore_review_state(
-                        app.reviewed_files_for_mr(mr_iid),
+                        &app.review_marks_for_mr(mr_iid),
+                        viewed_files,
                         app.hide_reviewed_files,
                     );
+                    diff_view.adopt_viewed_sync(previous.and_then(|v| v.viewed_sync));
+                    app.store_review_marks(mr_iid, diff_view.review_marks());
+                    let changed = diff_view.changed_since_review.len();
+                    if reopened && changed > 0 {
+                        app.status_message = Some(format!(
+                            "{} reviewed file(s) changed since you reviewed them",
+                            changed
+                        ));
+                    }
                     app.diff_view = Some(diff_view);
                     app.current_comments = comments;
                     if let (Some(overview), Some(diff_view)) =
@@ -2021,6 +2033,51 @@ async fn main() -> Result<()> {
                     app.diff_loading = false;
                     app.show_error(err_msg);
                     app.error_has_cli_detail = true;
+                }
+                Event::ViewedSyncFlush(mr_iid) => {
+                    if let (Some(diff_view), Some(client)) = (
+                        app.diff_view.as_mut().filter(|v| v.mr_iid == mr_iid),
+                        app.gitlab_client.as_ref(),
+                    ) {
+                        if let Some(sync) = diff_view.viewed_sync.as_mut() {
+                            let changes = sync.take_changes();
+                            if !changes.is_empty() {
+                                crate::fetch::spawn_viewed_files_sync(
+                                    client,
+                                    sync.pull_request_id().to_string(),
+                                    mr_iid,
+                                    changes,
+                                    events.sender(),
+                                );
+                            }
+                        }
+                    }
+                }
+                Event::ViewedFilesSynced {
+                    mr_iid,
+                    changes,
+                    result,
+                } => {
+                    let mut reverted_marks = None;
+                    if let Some(diff_view) = app.diff_view.as_mut().filter(|v| v.mr_iid == mr_iid) {
+                        if let Some(sync) = diff_view.viewed_sync.as_mut() {
+                            let corrections = sync.settle(&changes, result.is_ok());
+                            if diff_view.apply_review_corrections(&corrections) > 0 {
+                                reverted_marks = Some(diff_view.review_marks());
+                            }
+                        }
+                    }
+                    if let Some(marks) = reverted_marks {
+                        app.store_review_marks(mr_iid, marks);
+                    }
+                    if let Err(err) = result {
+                        app.show_error(format!(
+                            "Could not sync the viewed state of {} file(s) with GitHub; reverted: {}",
+                            changes.len(),
+                            err
+                        ));
+                        app.error_has_cli_detail = true;
+                    }
                 }
                 Event::TerminalCommandLogged {
                     timestamp,
@@ -2090,23 +2147,20 @@ async fn main() -> Result<()> {
                                 let project_context = diff_view.project_path.clone();
                                 let tx = events.sender();
                                 let mr_iid = diff_view.mr_iid;
+                                let sync_viewed = app.config.sync_viewed_files;
                                 tokio::spawn(async move {
                                     let Some(client) = client else {
                                         return;
                                     };
-                                    let (diff_res, comments_res) = tokio::join!(
-                                        client.get_mr_diff(&project_context, mr_iid),
-                                        client.list_mr_notes(&project_context, mr_iid)
-                                    );
-
-                                    if let Ok(raw_diff) = diff_res {
-                                        let comments = comments_res.unwrap_or_default();
-                                        let _ = tx.send(Event::DiffFetched {
-                                            mr_iid,
-                                            project_path: project_context,
-                                            raw_diff,
-                                            comments,
-                                        });
+                                    if let Ok(event) = crate::fetch::fetch_diff(
+                                        &client,
+                                        project_context,
+                                        mr_iid,
+                                        sync_viewed,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(event);
                                     }
                                 });
                             }
@@ -7949,23 +8003,23 @@ async fn main() -> Result<()> {
                                 if !diff_view.focus_on_files {
                                     diff_view.update_selected_file_from_cursor();
                                 }
-                                let target = {
-                                    let paths = diff_view.selected_file_paths();
-                                    if paths.len() == 1 {
-                                        paths[0].clone()
-                                    } else {
-                                        format!("{} files", paths.len())
-                                    }
+                                let paths = diff_view.selected_file_paths();
+                                let target = if paths.len() == 1 {
+                                    paths[0].clone()
+                                } else {
+                                    format!("{} files", paths.len())
                                 };
                                 if let Some((_, marked)) = diff_view.toggle_reviewed() {
-                                    app.store_reviewed_files_for_mr(
+                                    app.store_review_marks(
                                         diff_view.mr_iid,
-                                        &diff_view.reviewed_files,
+                                        diff_view.review_marks(),
                                     );
-                                    crate::utils::cache::save_cache(
-                                        app.scope.as_str(),
-                                        &app.project_cache,
-                                    );
+                                    if diff_view.queue_viewed_sync(&paths, marked) {
+                                        crate::fetch::spawn_viewed_sync_flush(
+                                            diff_view.mr_iid,
+                                            events.sender(),
+                                        );
+                                    }
                                     let (reviewed, total) = diff_view.review_progress();
                                     app.status_message = Some(format!(
                                         "{} {} ({}/{} reviewed)",

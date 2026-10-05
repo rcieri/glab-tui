@@ -808,8 +808,8 @@ pub async fn handle_active_tab_key(
                         {
                             app.diff_loading = true;
                             let tx = tx.clone();
-                            let mr_iid = mr_iid;
                             let client = app.gitlab_client.clone();
+                            let sync_viewed = app.config.sync_viewed_files;
                             let project_context = if !mr.project_path.is_empty() {
                                 mr.project_path.clone()
                             } else {
@@ -822,29 +822,17 @@ pub async fn handle_active_tab_key(
                                     ));
                                     return;
                                 };
-
-                                let (diff_res, comments_res) = tokio::join!(
-                                    client.get_mr_diff(&project_context, mr_iid),
-                                    client.list_mr_notes(&project_context, mr_iid)
-                                );
-
-                                match diff_res {
-                                    Ok(raw_diff) => {
-                                        let comments = comments_res.unwrap_or_default();
-                                        let _ = tx.send(Event::DiffFetched {
-                                            mr_iid,
-                                            project_path: project_context,
-                                            raw_diff,
-                                            comments,
-                                        });
-                                    }
-                                    Err(err) => {
-                                        let _ = tx.send(Event::DiffFetchFailed(format!(
-                                            "Failed to fetch diff: {}",
-                                            err
-                                        )));
-                                    }
-                                }
+                                let event = crate::fetch::fetch_diff(
+                                    &client,
+                                    project_context,
+                                    mr_iid,
+                                    sync_viewed,
+                                )
+                                .await
+                                .unwrap_or_else(|err| {
+                                    Event::DiffFetchFailed(format!("Failed to fetch diff: {}", err))
+                                });
+                                let _ = tx.send(event);
                             });
                         }
                         _ if (key_event.code == KeyCode::Char('P')

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+- **Reviewed marks follow the code** — A file marked as reviewed (`m`) in the diff view now remembers a fingerprint of the diff it was marked on. When a later push or rebase changes that file, it comes back unreviewed with a "changed since review" indicator (`~` in ASCII mode), counted in the tree header; untouched files keep their mark. Marks saved by earlier versions carried no fingerprint and are dropped once (#537).
+- **GitHub "Viewed" sync** — On GitHub, reviewed marks are your pull request's "Viewed" checkboxes: their state loads with the diff, `m` updates GitHub in the background (rapid toggles batched, a directory sent as one request, failures reverted with an error toast), and files GitHub reports as changed since viewed get the "changed since review" indicator and stay visible under `M`. Local marks are never uploaded automatically. Turn it off with `sync_viewed_files = false`. GitLab offers no API for its viewed state, so marks stay local there (#537).
+
 ### Bug Fixes
 - **Column filter reset via picker** — Opening a column's value-filter selector, unchecking every value, and pressing `Enter` now clears the filter for that column instead of silently re-applying the focused value (which made resets impossible). The README's "uncheck values to widen or clear the filter" guidance now works end-to-end (#510).
 - **Usable without a Nerd Font** — A new `icons` config option (`"nerd"` by default, or `"ascii"`) swaps every UI icon for ASCII. Terminals without a Nerd Font, such as COSMIC Terminal's defaults, rendered the Private Use Area glyphs from a double-width fallback font, pushing boxes and columns out of line. Field, badge, Protected-column, diff-cursor, comment-bubble and code-suggestion glyphs that bypassed the icon table now go through it too. The date-picker arrows (`◀`/`▶`), which COSMIC's fallback fonts draw two cells wide, become `<`/`>` in ASCII mode (#538).

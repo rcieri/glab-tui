@@ -10,7 +10,6 @@
 
 use crate::{Sandbox, TestSession};
 use std::path::Path;
-use std::time::Duration;
 
 const PR_TITLE: &str = "Rewrite the monorepo build";
 const PR_FILES: [&str; 4] = ["app.rs", "new.rs", "old.md", "build.sh"];
@@ -92,11 +91,13 @@ fn clone_state(repo: &Path) -> [String; 5] {
     ]
 }
 
-/// Sends keys one at a time: the app reads a burst of bytes as one sequence.
-fn press_keys(session: &TestSession, keys: &[u8]) {
+/// Sends keys one at a time (the app reads a burst of bytes as one sequence)
+/// and keeps draining the app's output in between: a PTY whose buffer fills
+/// up blocks the app's redraw, and with it the event loop.
+fn press_keys(session: &mut TestSession, keys: &[u8]) {
     for key in keys {
         session.send_input(&[*key]);
-        std::thread::sleep(Duration::from_millis(150));
+        session.settle(150);
     }
 }
 
@@ -147,22 +148,25 @@ fn too_large_pr_diff_is_built_from_the_local_clone() {
 
     session.send_input(b"\t");
     move_cursor_to(&mut session, "run();");
-    press_keys(&session, b"c");
+    press_keys(&mut session, b"c");
     session
         .wait_for_screen_contains("Add Comment to src/app.rs", 5000)
         .expect("c should open the comment input on the cursor line");
-    press_keys(&session, b"Call site\r");
+    press_keys(&mut session, b"Call site\r");
     session
         .wait_for_screen_contains("REVIEW MODE: ON (1 pending)", 5000)
         .expect("the inline comment should be kept as a draft");
-    press_keys(&session, b"r");
+    press_keys(&mut session, b"r");
     session
         .wait_for_screen_contains("Submit Pull Request Review", 5000)
         .expect("r should offer the review outcomes");
-    press_keys(&session, b"jj\r");
-    press_keys(&session, b"Done\r");
+    press_keys(&mut session, b"jj\r");
+    session
+        .wait_for_screen_contains("Submit Review (Comment)", 5000)
+        .expect("choosing Comment should ask for the review summary");
+    press_keys(&mut session, b"Done\r");
 
-    let payload = wait_for_review_payload(&session);
+    let payload = wait_for_review_payload(&mut session);
     assert_eq!(
         payload,
         r#"{"body":"Done","comments":[{"body":"Call site","line":2,"path":"src/app.rs","side":"RIGHT"}],"event":"COMMENT"}"#
@@ -195,9 +199,9 @@ fn move_cursor_to(session: &mut TestSession, code: &str) {
 }
 
 /// The review payload the mock `gh` logged when the review was submitted.
-fn wait_for_review_payload(session: &TestSession) -> String {
+fn wait_for_review_payload(session: &mut TestSession) -> String {
     const PREFIX: &str = "review payload: ";
-    for _ in 0..100 {
+    for _ in 0..200 {
         if let Some(line) = session
             .get_cli_calls()
             .lines()
@@ -205,9 +209,13 @@ fn wait_for_review_payload(session: &TestSession) -> String {
         {
             return line.to_string();
         }
-        std::thread::sleep(Duration::from_millis(50));
+        session.settle(50);
     }
-    panic!("no review was submitted: {}", session.get_cli_calls());
+    panic!(
+        "no review was submitted: {}\nscreen:\n{}",
+        session.get_cli_calls(),
+        session.emulator.get_text()
+    );
 }
 
 #[test]
@@ -262,4 +270,30 @@ fn other_pr_diff_errors_skip_the_local_fallback() {
         !session.get_cli_calls().contains("baseRefOid"),
         "only the too_large error may start the local fallback"
     );
+}
+
+#[test]
+fn pressing_d_again_while_the_diff_loads_fetches_it_once() {
+    let mut session = TestSession::with_envs(true, 40, 140, &[]);
+    session
+        .wait_for_screen_contains("Issues", 30000)
+        .expect("app should reach the Issues tab");
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains(PR_TITLE, 15000)
+        .expect("PRs tab should list the fixture PR");
+
+    // One write: the second `D` reaches the app before the first fetch ends.
+    session.send_input(b"DD");
+    session
+        .wait_for_screen_contains("Pull Request Diff #1", 15000)
+        .expect("D should open the diff");
+    session.settle(1000);
+
+    let diff_calls = session
+        .get_cli_calls()
+        .lines()
+        .filter(|line| line.starts_with("gh pr diff "))
+        .count();
+    assert_eq!(diff_calls, 1);
 }

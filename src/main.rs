@@ -4196,7 +4196,7 @@ async fn main() -> Result<()> {
 
                                     if field_type == "stack_entries" {
                                         // Each line is formatted
-                                        // "<pos>. #<iid>: <title> (STATE) ... [draft] ◀ (current)".
+                                        // "<pos>. #<iid>: <title> (STATE) ... [draft] <nav_prev> (current)".
                                         // Pick the `#iid` token via a `split('#')`
                                         // pass that handles any extra `#` in
                                         // titles without tripping the parse.

@@ -125,9 +125,9 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .bg(THEME.read().unwrap().bg)
             };
 
-            let search_p = Paragraph::new(search_text)
+            let search_p = Paragraph::new(Span::styled(search_text, search_style))
                 .block(search_block)
-                .style(search_style)
+                .style(Style::default().bg(THEME.read().unwrap().bg))
                 .wrap(ratatui::widgets::Wrap { trim: true });
 
             if let Some(sc) = search_chunk {
@@ -363,7 +363,13 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             12 => "December",
             _ => "",
         };
-        let header_str = format!("◀  {} {}  ▶", month_str, date_picker.year);
+        let header_str = {
+            let icons = ICONS.read().unwrap();
+            format!(
+                "{}  {} {}  {}",
+                icons.nav_prev, month_str, date_picker.year, icons.nav_next
+            )
+        };
         let header_p = Paragraph::new(header_str)
             .alignment(Alignment::Center)
             .style(

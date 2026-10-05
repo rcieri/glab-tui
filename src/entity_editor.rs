@@ -456,9 +456,9 @@ pub fn build_mr_document(
             }
             for entry in entries {
                 let current_marker = if entry.number == mr.iid {
-                    " ◀ (current)"
+                    format!(" {} (current)", icons.nav_prev)
                 } else {
-                    ""
+                    String::new()
                 };
                 let draft_str = if entry.is_draft { " [draft]" } else { "" };
                 description.push_str(&format!(
@@ -2382,7 +2382,8 @@ mod tests {
         if let crate::app::InspectorContent::Markdown(content) = doc.content {
             assert!(content.contains("### Stack #7 (3 PRs)"));
             assert!(content.contains("1. #101: Base PR (MERGED)"));
-            assert!(content.contains("2. #102: Middle PR (OPEN) ◀ (current)"));
+            let nav_prev = crate::config::ICONS.read().unwrap().nav_prev.clone();
+            assert!(content.contains(&format!("2. #102: Middle PR (OPEN) {nav_prev} (current)")));
             assert!(content.contains("3. #103: Top PR (OPEN) [draft]"));
         } else {
             panic!("Expected Markdown content");

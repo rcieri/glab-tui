@@ -231,6 +231,7 @@ fn merge_syntax_with_fuzzy(
 
 pub fn render(f: &mut Frame, app: &mut App) {
     let size = f.area();
+    let cursor_marker = format!(" {} ", ICONS.read().unwrap().pointer);
 
     // Paint full canvas with theme background so theme renders consistently regardless of terminal emulator defaults
     f.render_widget(
@@ -1061,7 +1062,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         left_spans.extend(vec![
                             Span::styled(
                                 if is_cursor {
-                                    " ❯ "
+                                    cursor_marker.as_str()
                                 } else if in_selection {
                                     " ▐ "
                                 } else {
@@ -1204,7 +1205,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     } else {
                         left_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
                             if is_cursor {
-                                " ❯ "
+                                cursor_marker.as_str()
                             } else if in_selection {
                                 " ▐ "
                             } else {
@@ -1230,7 +1231,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         right_spans.extend(vec![
                             Span::styled(
                                 if is_cursor {
-                                    " ❯ "
+                                    cursor_marker.as_str()
                                 } else if in_selection {
                                     " ▐ "
                                 } else {
@@ -1373,7 +1374,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     } else {
                         right_spans.extend(crate::ui::helpers::empty_side_gutter_spans(
                             if is_cursor {
-                                " ❯ "
+                                cursor_marker.as_str()
                             } else if in_selection {
                                 " ▐ "
                             } else {
@@ -1431,7 +1432,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .fg(THEME.read().unwrap().yellow)
                             .add_modifier(Modifier::BOLD);
 
-                        let right_prefix_first = format!(" 💬 Draft Note{}: ", range_info);
+                        let bubble = ICONS.read().unwrap().comment_bubble.clone();
+                        let right_prefix_first = format!(" {bubble} Draft Note{}: ", range_info);
+                        let left_prefix_first = format!(" {bubble} Draft ");
+                        let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());
 
                         let formatted_lines = format_comment_with_suggestions(
                             &comment.body,
@@ -1448,12 +1452,16 @@ pub fn render(f: &mut Frame, app: &mut App) {
                         for (i, (right_prefix, prefix_style, content_spans)) in
                             formatted_lines.into_iter().enumerate()
                         {
-                            let left_prefix = if i == 0 { " 💬 Draft " } else { "          " };
+                            let left_prefix = if i == 0 {
+                                &left_prefix_first
+                            } else {
+                                &left_prefix_rest
+                            };
 
                             left_list_lines.push(
                                 Line::from(vec![
                                     Span::styled("         ", Style::default()),
-                                    Span::styled(left_prefix, prefix_style),
+                                    Span::styled(left_prefix.clone(), prefix_style),
                                 ])
                                 .style(comment_style),
                             );
@@ -1490,7 +1498,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .fg(THEME.read().unwrap().blue)
                             .add_modifier(Modifier::BOLD);
 
-                        let right_prefix_first = format!(" 💬 @{}: ", comment.author.username);
+                        let bubble = ICONS.read().unwrap().comment_bubble.clone();
+                        let right_prefix_first =
+                            format!(" {bubble} @{}: ", comment.author.username);
+                        let left_prefix_first = format!(" {bubble} Comment ");
+                        let left_prefix_rest = " ".repeat(Span::raw(&left_prefix_first).width());
 
                         let (start_new, end_new, start_old, end_old, file_path) =
                             if let Some(ref pos) = comment.position {
@@ -1526,15 +1538,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             formatted_lines.into_iter().enumerate()
                         {
                             let left_prefix = if i == 0 {
-                                " 💬 Comment "
+                                &left_prefix_first
                             } else {
-                                "            "
+                                &left_prefix_rest
                             };
 
                             left_list_lines.push(
                                 Line::from(vec![
                                     Span::styled("         ", Style::default()),
-                                    Span::styled(left_prefix, prefix_style),
+                                    Span::styled(left_prefix.clone(), prefix_style),
                                 ])
                                 .style(comment_style),
                             );
@@ -1586,7 +1598,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                     let mut line_spans = vec![
                         Span::styled(
                             if is_cursor {
-                                " ❯ "
+                                cursor_marker.as_str()
                             } else if in_selection {
                                 " ▐ "
                             } else {
@@ -1789,7 +1801,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .fg(THEME.read().unwrap().yellow)
                             .add_modifier(Modifier::BOLD);
 
-                        let right_prefix_first = format!(" 💬 Draft Note{}: ", range_info);
+                        let right_prefix_first = format!(
+                            " {} Draft Note{}: ",
+                            ICONS.read().unwrap().comment_bubble,
+                            range_info
+                        );
 
                         let formatted_lines = format_comment_with_suggestions(
                             &comment.body,
@@ -1835,7 +1851,11 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             .fg(THEME.read().unwrap().blue)
                             .add_modifier(Modifier::BOLD);
 
-                        let right_prefix_first = format!(" 💬 @{}: ", comment.author.username);
+                        let right_prefix_first = format!(
+                            " {} @{}: ",
+                            ICONS.read().unwrap().comment_bubble,
+                            comment.author.username
+                        );
 
                         let (start_new, end_new, start_old, end_old, file_path) =
                             if let Some(ref pos) = comment.position {

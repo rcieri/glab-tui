@@ -895,9 +895,15 @@ pub async fn handle_active_tab_key(
                                             .iter()
                                             .map(|e| {
                                                 let current_marker = if e.number == mr.iid {
-                                                    " ◀ (current)"
+                                                    format!(
+                                                        " {} (current)",
+                                                        crate::config::ICONS
+                                                            .read()
+                                                            .unwrap()
+                                                            .nav_prev
+                                                    )
                                                 } else {
-                                                    ""
+                                                    String::new()
                                                 };
                                                 let draft_str =
                                                     if e.is_draft { " [draft]" } else { "" };

@@ -248,6 +248,10 @@ pub struct Icons {
     pub link: String,
     pub identifier: String,
     pub chart: String,
+    pub nav_prev: String,
+    pub nav_next: String,
+    pub comment_bubble: String,
+    pub pointer: String,
 }
 
 impl Icons {
@@ -360,11 +364,15 @@ impl Icons {
             link: "\u{f0c1}".to_string(),
             identifier: "\u{f029}".to_string(),
             chart: "\u{f080}".to_string(),
+            nav_prev: "◀".to_string(),
+            nav_next: "▶".to_string(),
+            comment_bubble: "💬".to_string(),
+            pointer: "❯".to_string(),
         }
     }
 
-    /// One printable ASCII character per icon, so every glyph is exactly one
-    /// cell wide in any font.
+    /// Printable ASCII only, so every glyph is exactly one cell wide in any
+    /// font.
     pub fn ascii() -> Self {
         Self {
             tab_issue: "#".to_string(),
@@ -474,6 +482,10 @@ impl Icons {
             link: "&".to_string(),
             identifier: "#".to_string(),
             chart: "%".to_string(),
+            nav_prev: "<".to_string(),
+            nav_next: ">".to_string(),
+            comment_bubble: "\"".to_string(),
+            pointer: ">".to_string(),
         }
     }
 }

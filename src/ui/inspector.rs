@@ -664,6 +664,7 @@ pub(crate) fn build_field_list_items(
                                     .add_modifier(Modifier::ITALIC),
                             ));
                         } else {
+                            val_spans.push(Span::styled(" ", Style::default().bg(item_bg)));
                             let parts: Vec<&str> = truncated.split(',').collect();
                             for (idx, part) in parts.iter().enumerate() {
                                 if idx > 0 {
@@ -840,6 +841,7 @@ pub(crate) fn build_field_list_items(
                                 || val.contains("[MERGED]"))
                         {
                             // Render each !iid [STATE] title as a colored span.
+                            val_spans.push(Span::styled(" ", Style::default().bg(item_bg)));
                             for (idx, item) in val.split(", ").enumerate() {
                                 if idx > 0 {
                                     val_spans.push(Span::styled(
@@ -924,7 +926,7 @@ pub(crate) fn build_field_list_items(
                                         ));
                                     } else {
                                         val_spans.push(Span::styled(
-                                            format!(" {}", item),
+                                            item.to_string(),
                                             Style::default().fg(theme.text_normal).bg(item_bg),
                                         ));
                                     }
@@ -1001,7 +1003,7 @@ fn build_wrapped_text_lines(
 
     if chunks.is_empty() {
         let mut spans = vec![Span::styled(
-            format!(" {} {:<label_width$} ", icon, label),
+            format!(" {} {:<label_width$}  ", icon, label),
             label_style,
         )];
         if is_editing {
@@ -1035,14 +1037,14 @@ fn build_wrapped_text_lines(
         if idx == 0 {
             line_spans.push(Span::styled(format!(" {} ", icon), icon_style));
             line_spans.push(Span::styled(
-                format!("{:<label_width$} ", label),
+                format!("{:<label_width$}  ", label),
                 label_style,
             ));
         } else {
             // Continuation line indentation that aligns exactly under the
             // value column of the first line.
             line_spans.push(Span::styled(
-                format!(" {:<width$}   ", "", width = label_width + 3),
+                format!("{:<width$}", "", width = label_width + 5),
                 label_style,
             ));
         }

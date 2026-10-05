@@ -1,8 +1,9 @@
-use crate::config::THEME;
+use crate::config::{ICONS, THEME};
 use crate::utils::format::sanitize_untrusted;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
+    text::Span,
 };
 
 pub(crate) fn format_comment_with_suggestions(
@@ -19,6 +20,11 @@ pub(crate) fn format_comment_with_suggestions(
     let mut result_lines = Vec::new();
     let mut in_suggestion = false;
     let mut is_first = true;
+    let continuation_prefix = " ".repeat(Span::raw(prefix).width());
+    let (suggestion_start, suggestion_end) = {
+        let icons = ICONS.read().unwrap();
+        (icons.suggestion_start.clone(), icons.suggestion_end.clone())
+    };
 
     // Retrieve original lines for suggestion diff
     let mut original_lines: Vec<crate::app::DiffLine> = Vec::new();
@@ -66,7 +72,7 @@ pub(crate) fn format_comment_with_suggestions(
             is_first = false;
             prefix.to_string()
         } else {
-            " ".repeat(prefix.len())
+            continuation_prefix.clone()
         };
 
         if is_suggestion_start {
@@ -78,7 +84,7 @@ pub(crate) fn format_comment_with_suggestions(
                     Style::default()
                         .fg(THEME.read().unwrap().green)
                         .add_modifier(Modifier::BOLD),
-                    "┌─── Code Suggestion ───".to_string(),
+                    suggestion_start.clone(),
                 )],
             ));
 
@@ -120,7 +126,7 @@ pub(crate) fn format_comment_with_suggestions(
                     spans.push((Style::default().fg(code_fg).bg(code_bg), clean_content));
                 }
 
-                result_lines.push((" ".repeat(prefix.len()), prefix_style, spans));
+                result_lines.push((continuation_prefix.clone(), prefix_style, spans));
             }
         } else if is_suggestion_end {
             in_suggestion = false;
@@ -131,7 +137,7 @@ pub(crate) fn format_comment_with_suggestions(
                     Style::default()
                         .fg(THEME.read().unwrap().green)
                         .add_modifier(Modifier::BOLD),
-                    "└─── End of Suggestion ───".to_string(),
+                    suggestion_end.clone(),
                 )],
             ));
         } else if in_suggestion {
@@ -423,13 +429,33 @@ mod tests {
 
         assert_eq!(formatted.len(), 6);
         assert_eq!(formatted[0].2[0].1, "This is a comment");
-        assert_eq!(formatted[1].2[0].1, "┌─── Code Suggestion ───");
+        let icons = crate::config::ICONS.read().unwrap();
+        assert_eq!(formatted[1].2[0].1, icons.suggestion_start);
         assert_eq!(formatted[2].2[0].1, "│ - ");
         assert_eq!(formatted[2].2[1].1, "old line content");
         assert_eq!(formatted[3].2[0].1, "│ + ");
         assert_eq!(formatted[3].2[1].1, "new line content");
-        assert_eq!(formatted[4].2[0].1, "└─── End of Suggestion ───");
+        assert_eq!(formatted[4].2[0].1, icons.suggestion_end);
         assert_eq!(formatted[5].2[0].1, "outside suggestion");
+    }
+
+    #[test]
+    fn comment_continuation_lines_align_under_a_wide_prefix() {
+        let prefix = " 💬 @alice: ";
+        let formatted = format_comment_with_suggestions(
+            "first line\nsecond line",
+            "src/app.rs",
+            None,
+            None,
+            None,
+            None,
+            &[],
+            prefix,
+            Style::default(),
+        );
+
+        assert_eq!(formatted[0].0, prefix);
+        assert_eq!(formatted[1].0, " ".repeat(12));
     }
 
     #[test]

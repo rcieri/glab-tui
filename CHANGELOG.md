@@ -6,7 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 - **Column filter reset via picker** — Opening a column's value-filter selector, unchecking every value, and pressing `Enter` now clears the filter for that column instead of silently re-applying the focused value (which made resets impossible). The README's "uncheck values to widen or clear the filter" guidance now works end-to-end (#510).
-- **Usable without a Nerd Font** — A new `icons` config option (`"nerd"` by default, or `"ascii"`) swaps every UI icon for a single ASCII character. Terminals without a Nerd Font, such as COSMIC Terminal's defaults, rendered the Private Use Area glyphs from a double-width fallback font, pushing boxes and columns out of line. Field, badge, and Protected-column icons that bypassed the icon table now go through it too (#538).
+- **Usable without a Nerd Font** — A new `icons` config option (`"nerd"` by default, or `"ascii"`) swaps every UI icon for ASCII. Terminals without a Nerd Font, such as COSMIC Terminal's defaults, rendered the Private Use Area glyphs from a double-width fallback font, pushing boxes and columns out of line. Field, badge, Protected-column, diff-cursor, comment-bubble and code-suggestion glyphs that bypassed the icon table now go through it too. The date-picker arrows (`◀`/`▶`), which COSMIC's fallback fonts draw two cells wide, become `<`/`>` in ASCII mode (#538).
+- **Inspector value column** — Multi-select, pull-request and wrapped values (Assignees, Labels, Milestone, Pull Requests, long titles) now start in the same column as every other field value; continuation lines of wrapped titles align under the first line (#538).
+- **Multi-line diff comments** — Continuation lines of diff comments were indented by the prefix's byte length instead of its display width, shifting them two columns right of the first line (#538).
+- **Selector filter borders** — The italic placeholder in selector filter boxes no longer italicises the box borders, which terminals without an italic face (e.g. Fira Mono) drew slanted (#538).
 
 ## [0.9.2] - 2026-09-26
 

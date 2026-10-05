@@ -98,14 +98,14 @@ fn is_light_color(color: Color) -> bool {
 /// somewhere to show its highlight. That cell is deliberately absent otherwise:
 /// painting it in the gutter colour ran the gutter one column past where a
 /// numbered row ends it, which read as a ragged edge on every padding row.
-pub(crate) fn empty_side_gutter_spans(
-    marker: &'static str,
+pub(crate) fn empty_side_gutter_spans<'a>(
+    marker: &'a str,
     marker_style: Style,
     num_style: Style,
     sep_style: Style,
     num_width: usize,
     sel_bg: Option<Color>,
-) -> Vec<Span<'static>> {
+) -> Vec<Span<'a>> {
     let mut spans = vec![
         Span::styled(marker, marker_style),
         Span::styled(" ".repeat(num_width + 1), num_style),
@@ -373,7 +373,10 @@ pub(crate) fn append_stage_summaries(
                 format!("{:15} ", truncate(&sanitize_untrusted(&s.name), 15)),
                 Style::default().fg(THEME.read().unwrap().text_normal),
             ),
-            Span::styled(" ❯ ", Style::default().fg(THEME.read().unwrap().text_muted)),
+            Span::styled(
+                format!(" {} ", crate::config::ICONS.read().unwrap().pointer),
+                Style::default().fg(THEME.read().unwrap().text_muted),
+            ),
             Span::styled(
                 format!("{:>4} ", format!("{}%", s.percent)),
                 Style::default()
@@ -1113,12 +1116,13 @@ mod tests {
 
         assert_eq!(formatted.len(), 6);
         assert_eq!(formatted[0].2[0].1, "This is a comment");
-        assert_eq!(formatted[1].2[0].1, "┌─── Code Suggestion ───");
+        let icons = crate::config::ICONS.read().unwrap();
+        assert_eq!(formatted[1].2[0].1, icons.suggestion_start);
         assert_eq!(formatted[2].2[0].1, "│ - ");
         assert_eq!(formatted[2].2[1].1, "old line content");
         assert_eq!(formatted[3].2[0].1, "│ + ");
         assert_eq!(formatted[3].2[1].1, "new line content");
-        assert_eq!(formatted[4].2[0].1, "└─── End of Suggestion ───");
+        assert_eq!(formatted[4].2[0].1, icons.suggestion_end);
         assert_eq!(formatted[5].2[0].1, "outside suggestion");
     }
 

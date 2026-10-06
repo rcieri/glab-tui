@@ -29,7 +29,9 @@ impl GitlabClient {
                     .await
                     .is_github()
             }
-            _ => config.backend.is_some_and(BackendKind::is_github),
+            _ => crate::git_helpers::detect_backend_without_remote(config.backend)
+                .await
+                .is_github(),
         };
         let backend = crate::backend::create_backend(is_github);
         Ok(Self {

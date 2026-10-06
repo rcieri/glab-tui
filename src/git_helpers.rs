@@ -119,13 +119,28 @@ pub async fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>
     }
 
     let (gh_authenticated, glab_authenticated) = tokio::join!(
-        auth_status("gh", &raw_host, true),
-        auth_status("glab", &raw_host, false),
+        auth_status("gh", Some(&raw_host), true),
+        auth_status("glab", Some(&raw_host), false),
     );
+    backend_from_auth(gh_authenticated, glab_authenticated)
+}
+
+/// Backend for a repository named without a checkout (e.g. `--repo owner/name`
+/// outside a clone): there is no host to probe, so ask which CLI is logged in at all.
+pub async fn detect_backend_without_remote(override_kind: Option<BackendKind>) -> BackendKind {
+    if let Some(kind) = override_kind {
+        return kind;
+    }
+    let (gh_authenticated, glab_authenticated) = tokio::join!(
+        auth_status("gh", None, true),
+        auth_status("glab", None, false)
+    );
+    backend_from_auth(gh_authenticated, glab_authenticated)
+}
+
+fn backend_from_auth(gh_authenticated: bool, glab_authenticated: bool) -> BackendKind {
     if gh_authenticated && !glab_authenticated {
         BackendKind::GitHub
-    } else if glab_authenticated && !gh_authenticated {
-        BackendKind::GitLab
     } else {
         BackendKind::GitLab
     }
@@ -139,9 +154,9 @@ pub async fn detect_backend(remote_url: &str, override_kind: Option<BackendKind>
 /// Sets `GIT_TERMINAL_PROMPT=0` so any HTTPS credential prompt fails
 /// fast rather than blocking the spawned thread indefinitely, mirroring
 /// the convention established in `ensure_source_branch_pushed`.
-async fn auth_status(program: &str, host: &str, active: bool) -> bool {
+async fn auth_status(program: &str, host: Option<&str>, active: bool) -> bool {
     let program = program.to_string();
-    let host = host.to_string();
+    let host = host.map(str::to_string);
     tokio::task::spawn_blocking(move || {
         let mut command = std::process::Command::new(&program);
         command.env("GIT_TERMINAL_PROMPT", "0");
@@ -149,7 +164,9 @@ async fn auth_status(program: &str, host: &str, active: bool) -> bool {
         if active {
             command.arg("--active");
         }
-        command.args(["--hostname", &host]);
+        if let Some(host) = host {
+            command.args(["--hostname", &host]);
+        }
         command.output().is_ok_and(|output| output.status.success())
     })
     .await

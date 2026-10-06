@@ -3359,7 +3359,12 @@ async fn run_gh_raw_api(
                 }
                 Ok(s)
             } else {
-                let err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                let mut err_msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                // `gh api` prints only the HTTP status on stderr; GitHub's reason
+                // (e.g. "Can not approve your own pull request") is in the body on stdout.
+                if let Some(details) = github_error_details(&out.stdout) {
+                    err_msg = format!("{err_msg}: {details}");
+                }
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
@@ -3382,6 +3387,28 @@ async fn run_gh_raw_api(
             Err(e.into())
         }
     }
+}
+
+fn github_error_details(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let details: Vec<String> = value
+        .get("errors")?
+        .as_array()?
+        .iter()
+        .filter_map(|e| {
+            let text = |key| e.get(key).and_then(serde_json::Value::as_str);
+            match (
+                e.as_str().or_else(|| text("message")),
+                text("field"),
+                text("code"),
+            ) {
+                (Some(message), _, _) => Some(message.to_string()),
+                (None, Some(field), Some(code)) => Some(format!("{field} {code}")),
+                _ => None,
+            }
+        })
+        .collect();
+    (!details.is_empty()).then(|| details.join("; "))
 }
 
 /// Compute duration in seconds between two ISO 8601 timestamps.
@@ -3531,6 +3558,19 @@ pub fn parse_github_actions_runs(raw: &str) -> Result<Vec<Pipeline>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_error_details_reads_string_and_object_errors() {
+        let body = br#"{"message":"Unprocessable Entity","errors":["Review Can not approve your own pull request",{"resource":"PullRequestReviewComment","code":"custom","message":"line must be part of the diff"},{"resource":"PullRequestReviewComment","field":"in_reply_to","code":"invalid"}],"status":"422"}"#;
+        assert_eq!(
+            github_error_details(body).as_deref(),
+            Some(
+                "Review Can not approve your own pull request; line must be part of the diff; in_reply_to invalid"
+            )
+        );
+        assert_eq!(github_error_details(br#"{"message":"Not Found"}"#), None);
+        assert_eq!(github_error_details(b"not json"), None);
+    }
 
     fn draft(
         line: Option<u32>,

@@ -12,6 +12,9 @@ use crate::{Sandbox, TestSession};
 use std::path::Path;
 
 const PR_TITLE: &str = "Rewrite the monorepo build";
+/// Rows above the fixture PR in `gh_prs.json`, which it shares with the
+/// stacked-PR tests.
+const ROWS_ABOVE_PR: &[u8] = b"jjj";
 const PR_FILES: [&str; 4] = ["app.rs", "new.rs", "old.md", "build.sh"];
 /// Marker the diff pane draws in front of the cursor row.
 const CURSOR_MARKER: &str = "❯";
@@ -110,6 +113,7 @@ fn open_pr_diff(session: &mut TestSession) {
     session
         .wait_for_screen_contains(PR_TITLE, 15000)
         .expect("PRs tab should list the fixture PR");
+    press_keys(session, ROWS_ABOVE_PR);
     session.send_input(b"D");
 }
 
@@ -282,6 +286,7 @@ fn pressing_d_again_while_the_diff_loads_fetches_it_once() {
     session
         .wait_for_screen_contains(PR_TITLE, 15000)
         .expect("PRs tab should list the fixture PR");
+    press_keys(&mut session, ROWS_ABOVE_PR);
 
     // One write: the second `D` reaches the app before the first fetch ends.
     session.send_input(b"DD");

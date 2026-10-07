@@ -933,6 +933,47 @@ pub(crate) fn diff_tree_row_layout(
     (name_display, padding)
 }
 
+/// Label of a renamed file in the diff tree, whose row already sits under the
+/// new directory:
+/// - moved, same name: `moved.txt ← old/dir/`
+/// - renamed in place: `old.rs → new.rs`
+/// - moved and renamed: `old/dir/old.rs → new.rs`
+///
+/// The old location loses characters from the left (`…`) to fit `max_chars`,
+/// so the part next to the file name stays readable.
+pub(crate) fn rename_label(old_path: &str, new_path: &str, max_chars: usize) -> String {
+    let (old_dir, old_name) = old_path.rsplit_once('/').unwrap_or(("", old_path));
+    let (new_dir, new_name) = new_path.rsplit_once('/').unwrap_or(("", new_path));
+    if old_name == new_name {
+        let head = format!("{new_name} ← ");
+        let from = if old_dir.is_empty() {
+            "./".to_string()
+        } else {
+            format!("{old_dir}/")
+        };
+        let room = max_chars.saturating_sub(head.chars().count());
+        return format!("{head}{}", truncate_left(&from, room));
+    }
+    if old_dir == new_dir {
+        return format!("{old_name} → {new_name}");
+    }
+    let suffix = format!(" → {new_name}");
+    let room = max_chars.saturating_sub(suffix.chars().count());
+    format!("{}{suffix}", truncate_left(old_path, room))
+}
+
+fn truncate_left(text: &str, max_chars: usize) -> String {
+    let len = text.chars().count();
+    if len <= max_chars {
+        return text.to_string();
+    }
+    let kept: String = text
+        .chars()
+        .skip(len - max_chars.saturating_sub(1))
+        .collect();
+    format!("…{kept}")
+}
+
 /// Count the rows `Paragraph` renders for `lines`: `lines.len()` unwrapped,
 /// or per-`Line` word-wrapping at `width` (via `count_wrapped_lines`) when
 /// `wrap` is set — the same approximation the job-trace path already uses,
@@ -1176,6 +1217,32 @@ mod tests {
         let (name, padding) = diff_tree_row_layout(30, "   ", "a_very_long_file_name_indeed.rs", 8);
         assert!(name.ends_with("..."));
         assert!(row_width("   ", &name, &padding, 8) <= 30 + 3);
+    }
+
+    #[test]
+    fn rename_label_names_where_a_file_came_from() {
+        assert_eq!(
+            rename_label("old/moved.txt", "docs/moved.txt", 40),
+            "moved.txt ← old/"
+        );
+        assert_eq!(
+            rename_label("moved.txt", "docs/moved.txt", 40),
+            "moved.txt ← ./"
+        );
+        assert_eq!(rename_label("docs/a.rs", "docs/b.rs", 40), "a.rs → b.rs");
+        assert_eq!(rename_label("old/a.rs", "docs/b.rs", 40), "old/a.rs → b.rs");
+    }
+
+    #[test]
+    fn rename_label_trims_the_old_location_from_the_left_to_fit() {
+        assert_eq!(
+            rename_label("very/long/old/dir/moved.txt", "docs/moved.txt", 20),
+            "moved.txt ← …ld/dir/"
+        );
+        assert_eq!(
+            rename_label("very/long/old/a.rs", "docs/b.rs", 16),
+            "…old/a.rs → b.rs"
+        );
     }
 
     /// Rendered width of a span run, in cells.

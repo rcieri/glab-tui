@@ -1,0 +1,24 @@
+[
+  {
+    "number": 1,
+    "title": "Rewrite the monorepo build",
+    "state": "OPEN",
+    "labels": [],
+    "author": {"login": "octocat"},
+    "body": "",
+    "createdAt": "2026-07-06T12:00:00Z",
+    "updatedAt": "2026-07-06T12:00:00Z",
+    "headRefName": "rewrite-build",
+    "baseRefName": "main",
+    "isDraft": false,
+    "assignees": [],
+    "milestone": null,
+    "reviewDecision": "",
+    "latestReviews": [],
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "reviewRequests": [],
+    "url": "https://github.com/test-owner/test-repo/pull/1",
+    "closingIssuesReferences": []
+  }
+]

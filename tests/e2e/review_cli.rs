@@ -123,7 +123,7 @@ fn test_review_threads_on_github_reads_side_and_resolution() {
 
     assert_eq!(
         threads.as_array().map(Vec::len),
-        Some(3),
+        Some(4),
         "replies join their thread"
     );
 

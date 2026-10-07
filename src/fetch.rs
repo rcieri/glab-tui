@@ -3,6 +3,28 @@ use crate::domain;
 use crate::event::Event;
 use crate::git_helpers::get_current_branch;
 
+/// Fetches an MR/PR diff with its review comments and builds the `DiffView`
+/// on a blocking thread, so the event loop keeps drawing (and the loading
+/// overlay stays up) while a large diff is parsed and highlighted. Comments
+/// that fail to load leave the diff viewable without them.
+pub async fn fetch_diff_view(
+    client: &domain::client::GitlabClient,
+    project_path: &str,
+    mr_iid: u64,
+) -> anyhow::Result<(Box<app::DiffView>, Vec<domain::mr::DiscussionNote>)> {
+    let (diff_res, comments_res) = tokio::join!(
+        client.get_mr_diff(project_path, mr_iid),
+        client.list_mr_notes(project_path, mr_iid)
+    );
+    let raw_diff = diff_res?;
+    let project_path = project_path.to_string();
+    let diff_view = tokio::task::spawn_blocking(move || {
+        Box::new(app::DiffView::new(mr_iid, project_path, raw_diff))
+    })
+    .await?;
+    Ok((diff_view, comments_res.unwrap_or_default()))
+}
+
 /// Derive `workflow` for every MR in place.
 ///
 /// Called from three sites: the live fetch path below, and both cache-load

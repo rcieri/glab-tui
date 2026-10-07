@@ -35,10 +35,10 @@ pub enum Event {
         branches: Vec<String>,
     },
     FetchFailed(crate::app::Tab, String),
+    /// The view is built off the event loop: parsing and highlighting a large
+    /// diff takes seconds.
     DiffFetched {
-        mr_iid: u64,
-        project_path: String,
-        raw_diff: String,
+        diff_view: Box<crate::app::DiffView>,
         comments: Vec<crate::domain::mr::DiscussionNote>,
     },
     DiffFetchFailed(String),

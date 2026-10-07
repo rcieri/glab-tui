@@ -125,6 +125,38 @@ fn merge_options_from(
     (squash, delete_branch, strategy, auto_merge)
 }
 
+/// The merge method the dialog's strategy options pick, with the precedence
+/// `GhBackend::merge_args` gives them.
+fn merge_method_from(options: &[crate::app::SubmitOption]) -> crate::domain::mr::MergeMethod {
+    use crate::domain::mr::MergeMethod;
+    match merge_options_from(options) {
+        (true, ..) => MergeMethod::Squash,
+        (false, _, Some("rebase"), _) => MergeMethod::Rebase,
+        _ => MergeMethod::Merge,
+    }
+}
+
+/// The PRs among `items` (project path, number) that sit in a stack, which
+/// only the stack merge can merge. A failed lookup leaves a project's PRs to
+/// the plain merge, whose error then names the problem.
+async fn stacked_prs(
+    client: &crate::domain::client::GitlabClient,
+    items: &[(String, u64, Option<String>)],
+) -> std::collections::HashSet<(String, u64)> {
+    let mut by_project: std::collections::HashMap<&str, Vec<u64>> =
+        std::collections::HashMap::new();
+    for (project, iid, _) in items {
+        by_project.entry(project).or_default().push(*iid);
+    }
+    let mut stacked = std::collections::HashSet::new();
+    for (project, iids) in by_project {
+        if let Ok(stacks) = client.list_pr_stack_summaries(project, &iids).await {
+            stacked.extend(stacks.into_keys().map(|iid| (project.to_string(), iid)));
+        }
+    }
+    stacked
+}
+
 fn run_submit_action(
     app: &mut App,
     confirm_action: crate::app::ConfirmAction,
@@ -412,8 +444,33 @@ fn run_submit_action(
                 ));
             });
         }
+        crate::app::ConfirmAction::MergeStack(pr_number) => {
+            let method = merge_method_from(&options);
+            let project_path = app.project_path_for_mr(pr_number);
+            let merged: Vec<u64> = match app.pr_stack(&project_path, pr_number) {
+                Some(crate::domain::mr::StackLookup::Full(stack)) => {
+                    stack.downstack_open_entries().map(|e| e.number).collect()
+                }
+                _ => vec![pr_number],
+            };
+            app.mrs.items.retain(|m| !merged.contains(&m.iid));
+            app.update_filter_selection();
+            let Some(client) = app.gitlab_client.clone() else {
+                return;
+            };
+            tokio::spawn(async move {
+                let result = client
+                    .merge_pr_stack(&project_path, pr_number, method)
+                    .await;
+                let _ = tx.send(Event::CommandCompleted(
+                    crate::app::Tab::MergeRequests,
+                    result.map_err(|e| e.to_string()),
+                ));
+            });
+        }
         crate::app::ConfirmAction::BulkMergeMrs(items) => {
             let (squash, delete_branch, merge_strategy, auto_merge) = merge_options_from(&options);
+            let method = merge_method_from(&options);
             // Snapshot each MR's head SHA before removing the rows so the
             // async merge loop can forward `--sha` to GitLab 19.2+ (#470).
             let mut items_with_sha: Vec<(String, u64, Option<String>)> =
@@ -428,7 +485,12 @@ fn run_submit_action(
                             && (project_path.is_empty() || m.project_path == *project_path)
                     })
                     .and_then(|m| m.sha.clone());
-                items_with_sha.push((project_path.clone(), *mr_iid, sha));
+                let project = if project_path.is_empty() {
+                    app.scope.as_str().to_string()
+                } else {
+                    project_path.clone()
+                };
+                items_with_sha.push((project, *mr_iid, sha));
                 if let Some(pos) = app.mrs.items.iter().position(|m| {
                     m.iid == *mr_iid && (project_path.is_empty() || m.project_path == *project_path)
                 }) {
@@ -440,33 +502,31 @@ fn run_submit_action(
                 return;
             };
             let tx2 = tx.clone();
-            let scope = app.scope.as_str().to_string();
             let total = items.len();
             tokio::spawn(async move {
+                let stacked = stacked_prs(&client, &items_with_sha).await;
                 let mut failures: Vec<(u64, String)> = Vec::new();
-                for (i, (project_path, mr_iid, sha)) in items_with_sha.into_iter().enumerate() {
+                for (i, (proj, mr_iid, sha)) in items_with_sha.into_iter().enumerate() {
                     if i > 0 {
                         crate::backend::rate_limit::pace_bulk_operation().await;
                     }
-                    let proj = if !project_path.is_empty() {
-                        project_path
+                    let result = if stacked.contains(&(proj.clone(), mr_iid)) {
+                        client.merge_pr_stack(&proj, mr_iid, method).await
                     } else {
-                        scope.clone()
+                        client
+                            .merge_mr(
+                                &proj,
+                                mr_iid,
+                                squash,
+                                delete_branch,
+                                merge_strategy,
+                                auto_merge,
+                                sha.as_deref(),
+                            )
+                            .await
                     };
-                    match client
-                        .merge_mr(
-                            &proj,
-                            mr_iid,
-                            squash,
-                            delete_branch,
-                            merge_strategy,
-                            auto_merge,
-                            sha.as_deref(),
-                        )
-                        .await
-                    {
-                        Ok(_) => {}
-                        Err(e) => failures.push((mr_iid, e.to_string())),
+                    if let Err(e) = result {
+                        failures.push((mr_iid, e.to_string()));
                     }
                 }
                 let _ = tx2.send(Event::CommandCompleted(

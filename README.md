@@ -572,7 +572,7 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `a` | Approve selected MR | `approve_mr` |
 | `A` | Revoke your approval *(GitLab only)* | `revoke_mr` |
 | `R` | Rebase source branch onto target | `rebase_mr` |
-| `m` | Merge selected MR (squash + remove source branch) | `merge_mr` |
+| `m` | Merge selected MR (squash + remove source branch). On GitHub, a stacked PR merges together with every open PR below it in its stack, all or nothing, and the dialog lists them first | `merge_mr` |
 | `y` | Copy selected MR/PR as formatted Markdown link (`[!42: Title](URL)` / `[#42: Title](URL)`) | `copy_reference` |
 | `D` | View diff of selected MR in terminal | `view_diff` |
 | `P` | View related pipelines from MR detail | `view_related_pipelines` |

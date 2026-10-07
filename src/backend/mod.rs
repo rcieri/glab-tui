@@ -531,6 +531,18 @@ pub trait Backend: Send + Sync {
         Ok(HashMap::new())
     }
 
+    /// Merge a stacked PR together with every open PR below it in its stack,
+    /// all or nothing. On a base branch with a merge queue the PRs are queued
+    /// instead, and the queue picks the merge method.
+    async fn merge_pr_stack(
+        &self,
+        _project: &str,
+        _pr_number: u64,
+        _method: crate::domain::mr::MergeMethod,
+    ) -> Result<()> {
+        anyhow::bail!("stacked merge requests are GitHub-only")
+    }
+
     // ── Pipeline / Job actions ──
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;
     async fn cancel_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()>;

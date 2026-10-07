@@ -1506,25 +1506,31 @@ async fn main() -> Result<()> {
                 } => {
                     let pr = (project_path, pr_number);
                     app.fetching_pr_stacks.remove(&pr);
-                    let is_awaited = app.pending_stack_selector.as_ref() == Some(&pr);
-                    if is_awaited {
-                        app.pending_stack_selector = None;
+                    let awaited = app
+                        .pending_stack_action
+                        .take_if(|(pending, _)| *pending == pr)
+                        .map(|(_, action)| action);
+                    if awaited.is_some() {
                         app.status_message = None;
                     }
                     match result {
                         Ok(stack) => {
                             app.record_pr_stack(&pr.0, pr.1, stack);
                             app.update_filter_selection();
-                            if is_awaited
-                                && app.selector.is_none()
-                                && app.selected_mr_ref().as_ref() == Some(&pr)
-                            {
-                                crate::handlers::tabs::open_stack_selector(&mut app, &pr.0, pr.1);
+                            if let Some(action) = awaited {
+                                if app.selector.is_none()
+                                    && app.submit_dialog.is_none()
+                                    && app.selected_mr_ref().as_ref() == Some(&pr)
+                                {
+                                    crate::handlers::tabs::run_stack_action(
+                                        &mut app, &pr.0, pr.1, action,
+                                    );
+                                }
                             }
                         }
                         // The inspector simply keeps showing no stack; only an
-                        // explicit `view_stack` press is owed an answer.
-                        Err(e) if is_awaited => {
+                        // explicit key press is owed an answer.
+                        Err(e) if awaited.is_some() => {
                             app.show_error(format!(
                                 "Failed to fetch the stack of PR #{}: {e}",
                                 pr.1

@@ -859,6 +859,61 @@ fn parse_pr_stack_entries_response(raw: &str) -> Result<Option<crate::domain::mr
     }))
 }
 
+/// How long to wait between polls of a pending asynchronous merge, and how
+/// many polls to make before reporting it as still running.
+const ASYNC_MERGE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+const ASYNC_MERGE_MAX_POLLS: u32 = 90;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AsyncMergeStatus {
+    Pending,
+    Merged,
+    Enqueued,
+    Failed,
+}
+
+#[derive(Deserialize)]
+struct AsyncMergeResult {
+    status: AsyncMergeStatus,
+    #[serde(default)]
+    details: AsyncMergeDetails,
+}
+
+#[derive(Deserialize, Default)]
+struct AsyncMergeDetails {
+    message: Option<String>,
+    uuid: Option<String>,
+}
+
+/// Where an asynchronous merge stands. A merge queue takes over an enqueued
+/// PR, so being enqueued settles the request as much as being merged does.
+#[derive(Debug, PartialEq, Eq)]
+enum AsyncMergeProgress {
+    Settled,
+    Pending { uuid: String },
+}
+
+fn parse_async_merge_result(raw: &str) -> Result<AsyncMergeProgress> {
+    let result: AsyncMergeResult =
+        serde_json::from_str(raw).context("parsing GitHub's asynchronous merge result")?;
+    match result.status {
+        AsyncMergeStatus::Merged | AsyncMergeStatus::Enqueued => Ok(AsyncMergeProgress::Settled),
+        AsyncMergeStatus::Failed => {
+            let message = result
+                .details
+                .message
+                .unwrap_or_else(|| "GitHub reported the merge as failed".to_string());
+            anyhow::bail!("{message}")
+        }
+        AsyncMergeStatus::Pending => result
+            .details
+            .uuid
+            .map(|uuid| AsyncMergeProgress::Pending { uuid })
+            .ok_or_else(|| anyhow::anyhow!("GitHub reported a pending merge without its uuid")),
+    }
+}
+
 /// Build the GraphQL query that finds the issues which a PR closes.
 fn related_issues_graphql_query(owner: &str, repo: &str, pr_number: u64, first: usize) -> String {
     let owner = owner.replace('\\', "\\\\").replace('"', "\\\"");
@@ -1862,6 +1917,44 @@ impl Backend for GhBackend {
             )
             .await?;
         Ok(parse_pr_stacks_response(&raw))
+    }
+
+    /// `gh pr merge` cannot merge a stacked PR: GitHub refuses stacks on the
+    /// GraphQL mutation it calls, and the asynchronous merge endpoint is the
+    /// only one that accepts them.
+    async fn merge_pr_stack(
+        &self,
+        project: &str,
+        pr_number: u64,
+        method: crate::domain::mr::MergeMethod,
+    ) -> Result<()> {
+        let endpoint = format!("repos/{project}/pulls/{pr_number}/merge-async");
+        let body = serde_json::json!({ "merge_method": method.as_api_str() }).to_string();
+        let raw = self
+            .raw_api(&endpoint, "PUT", Some(&body), "Merging PR Stack")
+            .await?;
+        let mut progress = parse_async_merge_result(&raw)?;
+        let mut polls = 0;
+        while let AsyncMergeProgress::Pending { uuid } = progress {
+            if polls == ASYNC_MERGE_MAX_POLLS {
+                anyhow::bail!(
+                    "GitHub is still merging PR #{pr_number} after {} seconds; check it on GitHub",
+                    ASYNC_MERGE_POLL_INTERVAL.as_secs() * u64::from(ASYNC_MERGE_MAX_POLLS)
+                );
+            }
+            polls += 1;
+            tokio::time::sleep(ASYNC_MERGE_POLL_INTERVAL).await;
+            let raw = self
+                .raw_api(
+                    &format!("{endpoint}/{uuid}"),
+                    "GET",
+                    None,
+                    "Checking PR Stack Merge",
+                )
+                .await?;
+            progress = parse_async_merge_result(&raw)?;
+        }
+        Ok(())
     }
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
@@ -3713,6 +3806,39 @@ mod tests {
         );
         assert_eq!(github_error_details(br#"{"message":"Not Found"}"#), None);
         assert_eq!(github_error_details(b"not json"), None);
+    }
+
+    #[test]
+    fn a_pending_async_merge_is_polled_by_its_uuid() {
+        let raw = r#"{"status":"pending","details":{"message":"Merge request accepted","uuid":"5f1c","merge_method":"squash","merge_action":"default","expected_head_sha":"abc"}}"#;
+        assert_eq!(
+            parse_async_merge_result(raw).unwrap(),
+            AsyncMergeProgress::Pending {
+                uuid: "5f1c".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn merged_and_enqueued_async_merges_are_settled() {
+        for raw in [
+            r#"{"status":"merged","details":{"message":"Pull request merged","sha":"abc"}}"#,
+            r#"{"status":"enqueued","details":{"message":"Added to the merge queue"}}"#,
+        ] {
+            assert_eq!(
+                parse_async_merge_result(raw).unwrap(),
+                AsyncMergeProgress::Settled
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_async_merge_reports_githubs_message() {
+        let raw = r#"{"status":"failed","details":{"message":"Required status check \"ci\" is failing"}}"#;
+        assert_eq!(
+            parse_async_merge_result(raw).unwrap_err().to_string(),
+            "Required status check \"ci\" is failing"
+        );
     }
 
     fn draft(

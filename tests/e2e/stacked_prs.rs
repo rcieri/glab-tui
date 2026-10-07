@@ -156,3 +156,88 @@ fn visible_stack_column_costs_one_batch_query_per_list_fetch() {
         Vec::<String>::new()
     );
 }
+
+fn request_bodies(session: &TestSession) -> Vec<String> {
+    std::fs::read_to_string(format!("{}.stdin", session.sandbox.log_path.display()))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn merging_a_stacked_pr_merges_its_downstack_through_the_async_endpoint() {
+    let mut session = session_on_prs_tab(None);
+    session.send_input(b"m");
+    session
+        .wait_for_screen_contains("Merge Stack #7 through #11", 15000)
+        .expect("m on a stacked PR should open the stack merge dialog");
+    let dialog = session.emulator.get_text();
+    assert!(dialog.contains("#10: Stack bottom"), "{dialog}");
+    assert!(dialog.contains("#11: Stack top"), "{dialog}");
+
+    session.send_input(b"\r");
+    wait_for_calls(&mut session, "merge-async/mock-merge-uuid", 1);
+
+    let requests = calls_matching(&session, "-X PUT");
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert!(
+        requests[0].ends_with("/pulls/11/merge-async"),
+        "{requests:?}"
+    );
+    assert_eq!(
+        request_bodies(&session),
+        vec![r#"{"merge_method":"squash"}"#]
+    );
+    assert_eq!(calls_matching(&session, "pr merge"), Vec::<String>::new());
+}
+
+#[test]
+fn merging_a_pr_outside_any_stack_keeps_using_gh_pr_merge() {
+    let mut session = session_on_prs_tab(None);
+    session.send_input(b"jj");
+    session.settle(300);
+    session.send_input(b"m");
+    session
+        .wait_for_screen_contains("Delete source branch", 15000)
+        .expect("m on a lone PR should open the plain merge dialog");
+
+    session.send_input(b"\r");
+    wait_for_calls(&mut session, "pr merge 12", 1);
+
+    assert_eq!(
+        calls_matching(&session, "merge-async"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn bulk_merge_sends_stacked_prs_through_the_async_endpoint() {
+    let mut session = session_on_prs_tab(None);
+    session.send_input(b" ");
+    session.settle(300);
+    session.send_input(b"jj");
+    session.settle(300);
+    session.send_input(b" ");
+    session.settle(300);
+    session.send_input(b"m");
+    session
+        .wait_for_screen_contains("Merge 2 ", 15000)
+        .expect("m with two PRs selected should open the bulk merge dialog");
+
+    session.send_input(b"\r");
+    wait_for_calls(&mut session, "pr merge 12", 1);
+    wait_for_calls(&mut session, "merge-async/mock-merge-uuid", 1);
+
+    let requests = calls_matching(&session, "-X PUT");
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert!(
+        requests[0].ends_with("/pulls/11/merge-async"),
+        "{requests:?}"
+    );
+    assert_eq!(
+        calls_matching(&session, "pr merge 11"),
+        Vec::<String>::new()
+    );
+}

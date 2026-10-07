@@ -975,25 +975,26 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
     if let Some(dialog) = &app.submit_dialog {
         let theme = THEME.read().unwrap();
-        let icon =
-            match dialog.action {
-                crate::app::ConfirmAction::DeleteMilestone(_)
-                | crate::app::ConfirmAction::DeleteRelease(_)
-                | crate::app::ConfirmAction::DeleteBranch(_)
-                | crate::app::ConfirmAction::DeleteIssue(_)
-                | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
-                crate::app::ConfirmAction::CloseIssue(_)
-                | crate::app::ConfirmAction::CloseMr(_)
-                | crate::app::ConfirmAction::CloseMilestone(_) => icons.action_close.clone(),
-                crate::app::ConfirmAction::ReopenIssue(_)
-                | crate::app::ConfirmAction::ReopenMr(_)
-                | crate::app::ConfirmAction::ReopenMilestone(_) => icons.action_reopen.clone(),
-                crate::app::ConfirmAction::MergeMr(_)
-                | crate::app::ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
-                crate::app::ConfirmAction::RevokeMr(_)
-                | crate::app::ConfirmAction::SubmitReview(_) => icons.action_review.clone(),
-                crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
-            };
+        let icon = match dialog.action {
+            crate::app::ConfirmAction::DeleteMilestone(_)
+            | crate::app::ConfirmAction::DeleteRelease(_)
+            | crate::app::ConfirmAction::DeleteBranch(_)
+            | crate::app::ConfirmAction::DeleteIssue(_)
+            | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),
+            crate::app::ConfirmAction::CloseIssue(_)
+            | crate::app::ConfirmAction::CloseMr(_)
+            | crate::app::ConfirmAction::CloseMilestone(_) => icons.action_close.clone(),
+            crate::app::ConfirmAction::ReopenIssue(_)
+            | crate::app::ConfirmAction::ReopenMr(_)
+            | crate::app::ConfirmAction::ReopenMilestone(_) => icons.action_reopen.clone(),
+            crate::app::ConfirmAction::MergeMr(_)
+            | crate::app::ConfirmAction::MergeStack(_)
+            | crate::app::ConfirmAction::BulkMergeMrs(_) => icons.action_merge.clone(),
+            crate::app::ConfirmAction::RevokeMr(_) | crate::app::ConfirmAction::SubmitReview(_) => {
+                icons.action_review.clone()
+            }
+            crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
+        };
         let option_rows = dialog.options.len();
 
         let title = format!(" {} {} ", icon, dialog.title);
@@ -1494,7 +1495,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
             category: mr_label,
             key: d(app.config.keybindings.mrs.merge_mr.clone()),
             action: if is_github {
-                "Merge selected PR (configure squash/delete)"
+                "Merge selected PR (a stacked PR merges with the open PRs below it)"
             } else {
                 "Merge selected MR (configure squash/delete)"
             },

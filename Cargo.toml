@@ -10,6 +10,11 @@ homepage = "https://github.com/rcieri/glab-tui"
 readme = "README.md"
 keywords = ["gitlab", "github", "tui", "terminal", "git"]
 categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    "/assets",
+    "/.github",
+    "/scripts",
+]
 
 [[bin]]
 name = "glab-tui"

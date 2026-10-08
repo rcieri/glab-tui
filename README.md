@@ -86,7 +86,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories), `review` (read threads and post review comments as JSON, for scripts and agents)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
-- **Themes** — 28 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
+- **Themes** — 38 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
 - **Configurable keybindings** — every action is remappable in `~/.config/glab-tui/config.toml`
 
 ---
@@ -574,6 +574,8 @@ Every table tab (Issues, MRs/PRs, Pipelines, Jobs, Runners, Releases, Todos, Mil
 | `R` | Rebase source branch onto target | `rebase_mr` |
 | `m` | Merge selected MR (squash + remove source branch). On GitHub, a stacked PR merges together with every open PR below it in its stack, all or nothing, and the dialog lists them first | `merge_mr` |
 | `y` | Copy selected MR/PR as formatted Markdown link (`[!42: Title](URL)` / `[#42: Title](URL)`) | `copy_reference` |
+| `Y` | Browse and jump to PR in a GitHub stacked PR chain | `view_stack` |
+| `I` | Jump to linked issues from selected MR | `jump_linked_issues` |
 | `D` | View diff of selected MR in terminal | `view_diff` |
 | `P` | View related pipelines from MR detail | `view_related_pipelines` |
 | `Space` | Select MR for bulk editing | `select_mr` |
@@ -646,7 +648,8 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Drill into selected pipeline (show its jobs) | — |
+| `Enter` | Drill into selected pipeline (show downstream pipelines or jobs) | — |
+| `Alt+j` | View selected pipeline's own jobs directly (skip downstream pipelines) | `enter_jobs` |
 | `Esc` / `Backspace` | Go back (jobs → pipelines, trace → jobs) | — |
 | `n` | Create / run a pipeline with an interactive form (branch/ref, workflow inputs, variables) | — |
 | `p` | Trigger a new pipeline from the current branch (`glab ci run --mr`) | `trigger_pipeline` |
@@ -680,6 +683,9 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | — |
 | `j` / `↓` | (in trace view) scroll down | — |
 | `k` / `↑` | (in trace view) scroll up | — |
+| `PageDown` / `PageUp` | (in trace view) page down / up | — |
+| `Ctrl+d` / `Ctrl+u` | (in trace view) scroll half page down / up | — |
+| `Home` / `End` | (in trace view) jump to top / bottom | — |
 
 ---
 
@@ -814,6 +820,7 @@ Searchable multi-select popups are used for choosing labels, assignees, reviewer
 | [`syntect`](https://crates.io/crates/syntect) | 5 | Syntax highlighting in diff and preview panes |
 | [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) | 0.13.0 | CommonMark and GFM markdown renderer for details panes |
 | [`arboard`](https://crates.io/crates/arboard) | 3.6 | System clipboard integration for copy shortcuts |
+| [`libc`](https://crates.io/crates/libc) | 0.2 | POSIX process management and terminal session isolation |
 
 All API calls are made by shelling out to `gh api` or `glab api` (depending on the repository host; you only need the CLI matching the service you use) — no personal access token or direct HTTP client is required inside the binary.
 

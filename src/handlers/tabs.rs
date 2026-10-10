@@ -1170,13 +1170,19 @@ pub async fn handle_active_tab_key(
                     .selected()
                     .and_then(|idx| app.filtered_pipelines().get(idx).map(|p| p.id()));
                 if let Some(pipeline_id) = pipe_id {
-                    if !enter_pipeline_jobs(app, pipeline_id, false).await {
-                        app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
-                    }
+                    let project_context = app.scope.as_str().to_string();
+                    spawn_open_pipeline(
+                        app,
+                        &tx,
+                        pipeline_id,
+                        project_context,
+                        PipelineOpening::OwnJobs,
+                    );
                 }
             } else if keybinding_matches(&app.config.keybindings.pipelines.run_new, key_event) {
-                let current_branch =
-                    crate::git_helpers::get_current_branch().unwrap_or_else(|| "main".to_string());
+                let current_branch = crate::git_helpers::get_current_branch()
+                    .await
+                    .unwrap_or_else(|| "main".to_string());
 
                 let is_github = app.is_github();
                 let mut fields = vec![];
@@ -1246,11 +1252,12 @@ pub async fn handle_active_tab_key(
                 &key_event,
             ) {
                 if let Some(client) = app.gitlab_client.clone() {
-                    let branch = crate::git_helpers::get_current_branch()
-                        .unwrap_or_else(|| "main".to_string());
                     let project_path = app.scope.as_str().to_string();
                     let tx2 = tx.clone();
                     tokio::spawn(async move {
+                        let branch = crate::git_helpers::get_current_branch()
+                            .await
+                            .unwrap_or_else(|| "main".to_string());
                         let result = client
                             .run_pipeline(&project_path, &branch, false, &vec![], &vec![], "")
                             .await;
@@ -2667,48 +2674,20 @@ pub async fn handle_active_tab_key(
                             .get(idx)
                             .map(|p| (p.id(), p.project_path.clone()));
                         if let Some((pipeline_id, pipe_project)) = pipe_info {
-                            app.loading_tabs.insert(crate::app::Tab::Jobs);
                             // A group-scoped list mixes projects, so the row's
                             // own path wins over the scope it was listed under.
                             let project_context = if !pipe_project.is_empty() {
-                                pipe_project.clone()
+                                pipe_project
                             } else {
                                 app.scope.as_str().to_string()
                             };
-                            let bridges = match &app.gitlab_client {
-                                Some(client) => Some(
-                                    crate::domain::pipelines::list_pipeline_bridges(
-                                        client,
-                                        &project_context,
-                                        pipeline_id,
-                                    )
-                                    .await,
-                                ),
-                                None => None,
-                            };
-                            match bridges {
-                                Some(Err(_)) => {
-                                    // Never fall back to the jobs path here: a
-                                    // failed fetch would read as "no downstream
-                                    // pipelines", which is the silent emptiness
-                                    // this drill-down exists to remove.
-                                    app.show_error(
-                                        "Failed to fetch downstream pipelines".to_string(),
-                                    );
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                }
-                                Some(Ok(bridges)) if !bridges.is_empty() => {
-                                    let level = crate::domain::pipelines::bridges_to_level(bridges);
-                                    app.descend_into(pipeline_id, level);
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                }
-                                _ => {
-                                    // A leaf pipeline: its own jobs are the
-                                    // level below it.
-                                    enter_pipeline_jobs(app, pipeline_id, true).await;
-                                    app.loading_tabs.remove(&crate::app::Tab::Jobs);
-                                }
-                            }
+                            spawn_open_pipeline(
+                                app,
+                                &tx,
+                                pipeline_id,
+                                project_context,
+                                PipelineOpening::Descend,
+                            );
                         }
                     }
                 }
@@ -3226,40 +3205,116 @@ pub(crate) fn jump_to_mr_tab_from_selector(
     jump_to_mr_tab(app, mr_iid, Some(client.clone()), tx);
 }
 
-/// Load a pipeline's own jobs into the Jobs tab, switching to it. Returns
-/// whether the pipeline had any jobs of its own. With `enter_when_empty` false
-/// the tab is left alone when there are none, so the caller does not strand the
-/// user on an empty Jobs tab.
-async fn enter_pipeline_jobs(
-    app: &mut crate::app::App,
+/// How a pipeline was opened from the Pipelines tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineOpening {
+    /// Only the pipeline's own jobs. None of them leaves the user on the
+    /// Pipelines tab instead of stranding them on an empty Jobs tab.
+    OwnJobs,
+    /// The level below the pipeline: its downstream pipelines, or for a leaf
+    /// pipeline its own jobs, entered even when there are none.
+    Descend,
+}
+
+/// What lies below a pipeline opened from the Pipelines tab.
+#[derive(Clone, Debug)]
+pub enum PipelineContents {
+    Downstream(crate::domain::pipelines::ChildLevel),
+    Jobs(Vec<crate::domain::pipelines::Job>),
+}
+
+/// Fetches what lies below `pipeline_id` off the event loop and reports it as
+/// `Event::PipelineOpened`, applied by `apply_opened_pipeline`.
+fn spawn_open_pipeline(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
     pipeline_id: u64,
-    enter_when_empty: bool,
-) -> bool {
-    let jobs = match &app.gitlab_client {
-        Some(client) => {
-            crate::domain::pipelines::list_pipeline_jobs(client, app.scope.as_str(), pipeline_id)
-                .await
-                .ok()
-        }
-        None => None,
+    project_context: String,
+    opening: PipelineOpening,
+) {
+    let Some(client) = app.gitlab_client.clone() else {
+        app.show_error("Failed to fetch jobs".to_string());
+        return;
     };
-    match jobs {
-        Some(jobs) => {
-            let found_any = !jobs.is_empty();
+    app.loading_tabs.insert(crate::app::Tab::Jobs);
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = fetch_pipeline_contents(&client, &project_context, pipeline_id, opening).await;
+        let _ = tx.send(Event::PipelineOpened {
+            pipeline_id,
+            opening,
+            result,
+        });
+    });
+}
+
+async fn fetch_pipeline_contents(
+    client: &crate::domain::client::GitlabClient,
+    project_context: &str,
+    pipeline_id: u64,
+    opening: PipelineOpening,
+) -> Result<PipelineContents, String> {
+    if opening == PipelineOpening::Descend {
+        // Never fall back to the jobs path on failure: a failed fetch would
+        // read as "no downstream pipelines", which is the silent emptiness
+        // this drill-down exists to remove.
+        let bridges =
+            crate::domain::pipelines::list_pipeline_bridges(client, project_context, pipeline_id)
+                .await
+                .map_err(|_| "Failed to fetch downstream pipelines".to_string())?;
+        if !bridges.is_empty() {
+            return Ok(PipelineContents::Downstream(
+                crate::domain::pipelines::bridges_to_level(bridges),
+            ));
+        }
+    }
+    crate::domain::pipelines::list_pipeline_jobs(client, project_context, pipeline_id)
+        .await
+        .map(PipelineContents::Jobs)
+        .map_err(|_| "Failed to fetch jobs".to_string())
+}
+
+/// Applies an `Event::PipelineOpened` reply. A reply for a pipeline that is no
+/// longer listed on the Pipelines tab (the user moved on while it was in
+/// flight) only caches the jobs, so it never yanks the user to another view.
+pub(crate) fn apply_opened_pipeline(
+    app: &mut App,
+    pipeline_id: u64,
+    opening: PipelineOpening,
+    result: Result<PipelineContents, String>,
+) {
+    app.loading_tabs.remove(&crate::app::Tab::Jobs);
+    let contents = match result {
+        Ok(contents) => contents,
+        Err(message) => {
+            app.show_error(message);
+            return;
+        }
+    };
+    let is_still_listed = app.active_tab == crate::app::Tab::Pipelines
+        && app.pipelines.items.iter().any(|p| p.id() == pipeline_id);
+    match contents {
+        PipelineContents::Downstream(level) => {
+            if is_still_listed {
+                app.descend_into(pipeline_id, level);
+            }
+        }
+        PipelineContents::Jobs(jobs) => {
             app.pipeline_jobs.insert(pipeline_id, jobs.clone());
+            if !is_still_listed {
+                return;
+            }
+            let has_jobs = !jobs.is_empty();
             app.jobs.items = jobs;
             app.active_pipeline_id = Some(pipeline_id);
             app.jobs.state.select(Some(0));
             app.detail_scroll = 0;
             app.job_trace = None;
-            if found_any || enter_when_empty {
+            if has_jobs || opening == PipelineOpening::Descend {
                 app.active_tab = crate::app::Tab::Jobs;
+            } else {
+                app.show_error(format!("Pipeline {pipeline_id} has no jobs of its own"));
             }
-            found_any
-        }
-        None => {
-            app.show_error("Failed to fetch jobs".to_string());
-            false
         }
     }
 }
@@ -3974,5 +4029,73 @@ mod tests {
         )
         .await;
         assert_eq!(app.error_message, None);
+    }
+
+    fn listed_pipeline(id: u64) -> crate::domain::pipelines::Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": "success", "ref": "main", "updated_at": "",
+            "name": "", "display_title": "", "event": "", "head_sha": "",
+            "actor_login": "", "project_path": ""
+        }))
+        .unwrap()
+    }
+
+    fn job(id: u64) -> crate::domain::pipelines::Job {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "status": "success", "stage": "test", "name": "unit"
+        }))
+        .unwrap()
+    }
+
+    /// The user left the Pipelines tab while the jobs fetch was in flight: the
+    /// reply is cached but must not pull them onto the Jobs tab.
+    #[test]
+    fn jobs_reply_after_leaving_pipelines_is_cached_without_switching_tabs() {
+        let mut app = App::default();
+        app.pipelines.items = vec![listed_pipeline(7)];
+        app.active_tab = crate::app::Tab::Issues;
+        app.loading_tabs.insert(crate::app::Tab::Jobs);
+
+        apply_opened_pipeline(
+            &mut app,
+            7,
+            PipelineOpening::Descend,
+            Ok(PipelineContents::Jobs(vec![job(70)])),
+        );
+
+        assert_eq!(app.active_tab, crate::app::Tab::Issues);
+        assert_eq!(app.active_pipeline_id, None);
+        assert!(app.jobs.items.is_empty());
+        let cached: Vec<u64> = app.pipeline_jobs[&7].iter().map(|j| j.id()).collect();
+        assert_eq!(cached, vec![70]);
+        assert!(!app.loading_tabs.contains(&crate::app::Tab::Jobs));
+    }
+
+    /// Enter pressed twice before the first reply: the first reply descends,
+    /// so the second finds its pipeline no longer listed and must not push a
+    /// second level.
+    #[test]
+    fn downstream_reply_for_a_pipeline_no_longer_listed_does_not_descend() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![listed_pipeline(7)];
+        let level = || crate::domain::pipelines::ChildLevel {
+            children: vec![listed_pipeline(8)],
+            pending: vec![],
+        };
+
+        for _ in 0..2 {
+            apply_opened_pipeline(
+                &mut app,
+                7,
+                PipelineOpening::Descend,
+                Ok(PipelineContents::Downstream(level())),
+            );
+        }
+
+        assert_eq!(app.nav_depth(), 1);
+        assert_eq!(app.current_parent_id(), Some(7));
+        let listed: Vec<u64> = app.pipelines.items.iter().map(|p| p.id()).collect();
+        assert_eq!(listed, vec![8]);
     }
 }

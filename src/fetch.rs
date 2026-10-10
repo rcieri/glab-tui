@@ -826,7 +826,7 @@ pub fn spawn_refresh_active_tab(
                 }
             }
             app::Tab::Jobs => {
-                let branch_name = get_current_branch();
+                let branch_name = get_current_branch().await;
                 let mut found_pipeline_id = None;
 
                 if let Some(branch) = &branch_name {

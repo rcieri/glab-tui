@@ -727,24 +727,14 @@ use handlers::overlays::*;
 // sequence-timeout redispatch inside `main` below.
 // ---------------------------------------------------------------------------
 
-/// After a key dispatch changed `app.scope`, rebuild the GitLab/GitHub
-/// client for the new scope, reload its cache into `app`, and kick off a
-/// background refresh. No-op if the scope didn't change. Shared by the live
-/// keypress dispatch and the sequence-timeout redispatch so both apply the
-/// same post-processing when a standalone action switches scope.
-async fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events: &EventHandler) {
+/// After a key dispatch changed `app.scope`, reload its cache into `app` and
+/// start building the GitLab/GitHub client for the new scope. No-op if the
+/// scope didn't change. Shared by the live keypress dispatch and the
+/// sequence-timeout redispatch so both apply the same post-processing when a
+/// standalone action switches scope.
+fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events: &EventHandler) {
     if app.scope == *old_scope {
         return;
-    }
-
-    if let Ok(mut client) = domain::client::GitlabClient::new(&app.config).await {
-        client.page_size = app.config.page_size;
-        client.api_per_page = app.config.api_per_page_clamped();
-        client.tx = Some(events.sender());
-        client.backend.set_tx(events.sender());
-        app.gitlab_client = Some(client.clone());
-    } else {
-        app.gitlab_client = None;
     }
 
     let cache = crate::utils::cache::load_cache(app.scope.as_str());
@@ -764,22 +754,72 @@ async fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events
     app.cached_labels = cache.labels;
     app.cached_members = cache.members;
 
-    if let Some(client) = app.gitlab_client.clone() {
-        let tx = events.sender();
-        app.start_loading_tab(app.active_tab);
-        spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
-        if app.config.prefetch_tabs {
-            spawn_refresh_all_tabs(
-                &client,
-                &app.scope,
-                app.active_tab,
-                app.available_tabs(),
-                app.loaded_tabs.clone(),
-                tx.clone(),
-            );
-        }
-        spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
+    app.start_loading_tab(app.active_tab);
+    spawn_client_for_scope(app, events);
+}
+
+/// Builds the client for `app.scope` off the event loop: backend detection
+/// shells out to `git remote` and `gh`/`glab auth status`, which can take
+/// seconds on a slow network. Until `Event::ClientReady` arrives the app has
+/// no client, so nothing runs against the previous scope's backend.
+fn spawn_client_for_scope(app: &mut App, events: &EventHandler) {
+    app.gitlab_client = None;
+    let config = app.config.clone();
+    let scope = app.scope.clone();
+    let tx = events.sender();
+    tokio::spawn(async move {
+        let result = domain::client::GitlabClient::new(&config)
+            .await
+            .map_err(|e| format!("Failed to initialize backend client: {e}"));
+        let _ = tx.send(Event::ClientReady { scope, result });
+    });
+}
+
+/// Installs a client built by `spawn_client_for_scope` and starts the refresh
+/// for its scope. A client for a scope the user already left is dropped.
+fn apply_client_ready(
+    app: &mut App,
+    scope: scope::Scope,
+    result: Result<domain::client::GitlabClient, String>,
+    events: &EventHandler,
+) {
+    if app.scope != scope {
+        return;
     }
+    let mut client = match result {
+        Ok(client) => client,
+        Err(message) => {
+            app.loading_tabs.remove(&app.active_tab);
+            app.show_error(message);
+            return;
+        }
+    };
+    client.page_size = app.config.page_size;
+    client.api_per_page = app.config.api_per_page_clamped();
+    client.tx = Some(events.sender());
+    client.backend.set_tx(events.sender());
+    app.gitlab_client = Some(client.clone());
+    // Remember the group implied by a repository scope so the Switch view
+    // accumulates every group worked in (see startup).
+    if let scope::Scope::Repository(r) = &app.scope {
+        if let Some((group, _)) = r.rsplit_once('/') {
+            crate::utils::cache::add_recent_group(group);
+        }
+    }
+
+    let tx = events.sender();
+    spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+    if app.config.prefetch_tabs {
+        spawn_refresh_all_tabs(
+            &client,
+            &app.scope,
+            app.active_tab,
+            app.available_tabs(),
+            app.loaded_tabs.clone(),
+            tx.clone(),
+        );
+    }
+    spawn_fetch_repo_attributes(&client.muted(), &app.scope, tx);
 }
 
 #[tokio::main]
@@ -1238,7 +1278,7 @@ async fn main() -> Result<()> {
                                         None,
                                     )
                                     .await;
-                                    sync_after_scope_change(&mut app, &old_scope, &events).await;
+                                    sync_after_scope_change(&mut app, &old_scope, &events);
                                 }
                             }
                         } else {
@@ -1336,6 +1376,16 @@ async fn main() -> Result<()> {
                             app.last_attr_refresh = std::time::Instant::now();
                         }
                     }
+                }
+                Event::PipelineOpened {
+                    pipeline_id,
+                    opening,
+                    result,
+                } => {
+                    handlers::tabs::apply_opened_pipeline(&mut app, pipeline_id, opening, result);
+                }
+                Event::ClientReady { scope, result } => {
+                    apply_client_ready(&mut app, scope, result, &events);
                 }
                 Event::ChildLevelFetched(parent_id, level) => {
                     // Drop a reply that arrives after the user has already
@@ -2932,19 +2982,6 @@ async fn main() -> Result<()> {
                                                     crate::scope::Scope::Group(group_name.clone());
                                                 app.reset_on_scope_change();
                                                 crate::utils::cache::add_recent_group(&group_name);
-                                                if let Ok(mut client) =
-                                                    domain::client::GitlabClient::new(&app.config)
-                                                        .await
-                                                {
-                                                    client.page_size = app.config.page_size;
-                                                    client.api_per_page =
-                                                        app.config.api_per_page_clamped();
-                                                    client.tx = Some(events.sender());
-                                                    client.backend.set_tx(events.sender());
-                                                    app.gitlab_client = Some(client.clone());
-                                                } else {
-                                                    app.gitlab_client = None;
-                                                }
                                                 let cache = crate::utils::cache::load_cache(
                                                     app.scope.as_str(),
                                                 );
@@ -2965,21 +3002,8 @@ async fn main() -> Result<()> {
                                                 app.branches.items = cache.branches;
                                                 app.environments.items = cache.environments;
                                                 app.milestone_issues_cache = cache.milestone_issues;
-                                                if let Some(client) = app.gitlab_client.clone() {
-                                                    let tx = events.sender();
-                                                    app.start_loading_tab(app.active_tab);
-                                                    spawn_refresh_active_tab(
-                                                        &client,
-                                                        &app.scope,
-                                                        app.active_tab,
-                                                        tx.clone(),
-                                                    );
-                                                    spawn_fetch_repo_attributes(
-                                                        &client.muted(),
-                                                        &app.scope,
-                                                        tx,
-                                                    );
-                                                }
+                                                app.start_loading_tab(app.active_tab);
+                                                spawn_client_for_scope(&mut app, &events);
                                                 continue;
                                             }
 
@@ -3002,34 +3026,6 @@ async fn main() -> Result<()> {
                                                         );
                                                     }
                                                     app.reset_on_scope_change();
-                                                    if let Ok(mut client) =
-                                                        domain::client::GitlabClient::new(
-                                                            &app.config,
-                                                        )
-                                                        .await
-                                                    {
-                                                        client.page_size = app.config.page_size;
-                                                        client.api_per_page =
-                                                            app.config.api_per_page_clamped();
-                                                        client.tx = Some(events.sender());
-                                                        client.backend.set_tx(events.sender());
-                                                        app.gitlab_client = Some(client.clone());
-                                                        // Remember the group implied by the
-                                                        // switched-to repo (see startup).
-                                                        if let crate::scope::Scope::Repository(r) =
-                                                            &app.scope
-                                                        {
-                                                            if let Some(group) = r
-                                                                .rsplit_once('/')
-                                                                .map(|(g, _)| g.to_string())
-                                                            {
-                                                                crate::utils::cache::
-                                                                    add_recent_group(&group);
-                                                            }
-                                                        }
-                                                    } else {
-                                                        app.gitlab_client = None;
-                                                    }
 
                                                     app.loaded_tabs.clear();
                                                     app.loading_tabs.clear();
@@ -3134,46 +3130,34 @@ async fn main() -> Result<()> {
                                                     );
                                                     app.update_filter_selection();
 
-                                                    if let Some(client) = &app.gitlab_client {
-                                                        let has_cached = match app.active_tab {
-                                                            app::Tab::Issues => {
-                                                                !app.issues.items.is_empty()
-                                                            }
-                                                            app::Tab::MergeRequests => {
-                                                                !app.mrs.items.is_empty()
-                                                            }
-                                                            app::Tab::Pipelines => {
-                                                                !app.pipelines.items.is_empty()
-                                                            }
-                                                            app::Tab::Runners => {
-                                                                !app.runners.items.is_empty()
-                                                            }
-                                                            app::Tab::Releases => {
-                                                                !app.releases.items.is_empty()
-                                                            }
-                                                            app::Tab::Todos => {
-                                                                !app.todos.items.is_empty()
-                                                            }
-                                                            app::Tab::Milestones => {
-                                                                !app.milestones.items.is_empty()
-                                                            }
-                                                            _ => false,
-                                                        };
-                                                        if !has_cached {
-                                                            app.loading_tabs.insert(app.active_tab);
+                                                    let has_cached = match app.active_tab {
+                                                        app::Tab::Issues => {
+                                                            !app.issues.items.is_empty()
                                                         }
-                                                        spawn_refresh_active_tab(
-                                                            client,
-                                                            &app.scope,
-                                                            app.active_tab,
-                                                            events.sender(),
-                                                        );
-                                                        spawn_fetch_repo_attributes(
-                                                            &client.clone().muted(),
-                                                            &app.scope,
-                                                            events.sender(),
-                                                        );
+                                                        app::Tab::MergeRequests => {
+                                                            !app.mrs.items.is_empty()
+                                                        }
+                                                        app::Tab::Pipelines => {
+                                                            !app.pipelines.items.is_empty()
+                                                        }
+                                                        app::Tab::Runners => {
+                                                            !app.runners.items.is_empty()
+                                                        }
+                                                        app::Tab::Releases => {
+                                                            !app.releases.items.is_empty()
+                                                        }
+                                                        app::Tab::Todos => {
+                                                            !app.todos.items.is_empty()
+                                                        }
+                                                        app::Tab::Milestones => {
+                                                            !app.milestones.items.is_empty()
+                                                        }
+                                                        _ => false,
+                                                    };
+                                                    if !has_cached {
+                                                        app.loading_tabs.insert(app.active_tab);
                                                     }
+                                                    spawn_client_for_scope(&mut app, &events);
                                                 } else {
                                                     app.show_error(format!(
                                                         "Could not change directory to: {}",
@@ -8432,7 +8416,7 @@ async fn main() -> Result<()> {
                     )
                     .await;
 
-                    sync_after_scope_change(&mut app, &old_scope, &events).await;
+                    sync_after_scope_change(&mut app, &old_scope, &events);
                 }
                 _ => {}
             }

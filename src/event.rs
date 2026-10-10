@@ -17,6 +17,18 @@ pub enum Event {
     PipelineJobs(u64, Vec<crate::domain::pipelines::Job>),
     /// The children of the pipeline currently descended into, re-fetched.
     ChildLevelFetched(u64, crate::domain::pipelines::ChildLevel),
+    /// What lies below a pipeline opened from the Pipelines tab.
+    PipelineOpened {
+        pipeline_id: u64,
+        opening: crate::handlers::tabs::PipelineOpening,
+        result: Result<crate::handlers::tabs::PipelineContents, String>,
+    },
+    /// The backend client for `scope`, built off the event loop because its
+    /// backend detection runs `git` and `gh`/`glab auth status`.
+    ClientReady {
+        scope: crate::scope::Scope,
+        result: Result<crate::domain::client::GitlabClient, String>,
+    },
     IssuesFetched(Vec<crate::domain::issues::Issue>),
     MrsFetched(Vec<crate::domain::mr::MergeRequest>),
     PipelinesFetched(Vec<crate::domain::pipelines::Pipeline>),
@@ -118,11 +130,14 @@ impl EventHandler {
         let (sender, receiver) = mpsc::unbounded_channel();
         let _sender = sender.clone();
 
-        tokio::spawn(async move {
+        // A dedicated OS thread, not a tokio task: crossterm's poll and read
+        // block, and on a runtime worker they would stall every task queued
+        // behind them for up to the poll timeout.
+        std::thread::spawn(move || {
             let mut last_tick = Instant::now();
             loop {
                 if PAUSED.load(Ordering::Relaxed) {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    std::thread::sleep(Duration::from_millis(50));
                     last_tick = Instant::now();
                     continue;
                 }
@@ -132,8 +147,14 @@ impl EventHandler {
                     .unwrap_or_else(|| Duration::from_secs(0));
                 let poll_timeout = std::cmp::min(timeout, Duration::from_millis(20));
 
-                if event::poll(poll_timeout).expect("failed to poll new events") {
-                    let e = match event::read().expect("failed to read event") {
+                let Ok(has_event) = event::poll(poll_timeout) else {
+                    break;
+                };
+                if has_event {
+                    let Ok(raw) = event::read() else {
+                        break;
+                    };
+                    let e = match raw {
                         CrosstermEvent::Key(e) => {
                             if e.kind == event::KeyEventKind::Press {
                                 Event::Key(e)

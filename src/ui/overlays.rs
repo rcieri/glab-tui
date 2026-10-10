@@ -2509,4 +2509,83 @@ command = "true"
             "empty keybinding shortcut should be filtered from help: {text_empty:?}",
         );
     }
+
+    /// The merge dialog for the fixture MR, the most crowded `SubmitDialog`:
+    /// a body line, five options and both buttons.
+    fn render_merge_dialog(width: u16, height: u16) -> Terminal<TestBackend> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut app = App::default();
+        app.mrs.items =
+            serde_json::from_str(include_str!("../../tests/fixtures/mrs.json")).unwrap();
+        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+            crate::app::ConfirmAction::MergeMr(2),
+            &app,
+        ));
+        terminal
+            .draw(|f| render_overlays(f, &mut app, f.area()))
+            .unwrap();
+        terminal
+    }
+
+    /// One line per buffer row, trailing blanks trimmed, with the icons the
+    /// dialog draws rewritten into the ASCII set: `ICONS` comes from the
+    /// developer's own config, the snapshot must not.
+    fn snapshot_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for row in buffer.content.chunks(buffer.area.width as usize) {
+            let line: String = row.iter().map(|cell| cell.symbol()).collect();
+            text.push_str(line.trim_end());
+            text.push('\n');
+        }
+        let icons = crate::config::ICONS.read().unwrap();
+        let ascii = crate::config::Icons::ascii();
+        [
+            (&icons.action_merge, &ascii.action_merge),
+            (&icons.check_on, &ascii.check_on),
+            (&icons.check_off, &ascii.check_off),
+        ]
+        .into_iter()
+        .fold(text, |text, (icon, replacement)| {
+            text.replace(icon.as_str(), replacement)
+        })
+    }
+
+    /// Compares against `src/ui/snapshots/<name>.txt`. Set
+    /// `GLAB_TUI_UPDATE_SNAPSHOTS=1` to rewrite the file after an intended
+    /// layout change.
+    fn assert_snapshot(name: &str, actual: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/ui/snapshots")
+            .join(format!("{name}.txt"));
+        if std::env::var_os("GLAB_TUI_UPDATE_SNAPSHOTS").is_some() {
+            std::fs::write(&path, actual).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}\nactual:\n{actual}", path.display()))
+            .replace("\r\n", "\n");
+        assert_eq!(
+            actual, expected,
+            "{name} changed; rerun with GLAB_TUI_UPDATE_SNAPSHOTS=1 if intended"
+        );
+    }
+
+    #[test]
+    fn merge_dialog_at_60_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(60, 24);
+        assert_snapshot("submit_dialog_merge_60x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn merge_dialog_at_80_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(80, 24);
+        assert_snapshot("submit_dialog_merge_80x24", &snapshot_text(&terminal));
+    }
+
+    #[test]
+    fn merge_dialog_at_120_columns_matches_snapshot() {
+        let terminal = render_merge_dialog(120, 24);
+        assert_snapshot("submit_dialog_merge_120x24", &snapshot_text(&terminal));
+    }
 }

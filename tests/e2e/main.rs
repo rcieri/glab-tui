@@ -3,7 +3,6 @@ use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-mod combinations;
 mod config;
 mod custom_keybindings;
 mod keybindings;
@@ -13,6 +12,7 @@ mod pr_diff_fallback;
 mod review_cli;
 mod review_threads;
 mod scenarios;
+mod secondary_tabs;
 mod stacked_prs;
 mod tabs;
 mod workspace;
@@ -625,8 +625,34 @@ impl TestSession {
         }
     }
 
+    /// Sends keys one at a time, feeding the output in between: the app reads
+    /// a burst of bytes as one key sequence.
+    pub fn press_keys(&mut self, keys: &[u8]) {
+        for key in keys {
+            self.send_input(&[*key]);
+            self.settle(150);
+        }
+    }
+
     pub fn get_cli_calls(&self) -> String {
         std::fs::read_to_string(&self.sandbox.log_path).unwrap_or_default()
+    }
+
+    /// Feeds output to the emulator until the CLI mocks have logged a call
+    /// containing `expected`.
+    pub fn wait_for_cli_call(&mut self, expected: &str, timeout_ms: u64) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        while Instant::now() < deadline {
+            if self.get_cli_calls().contains(expected) {
+                return Ok(());
+            }
+            self.settle(10);
+        }
+        Err(format!(
+            "Timeout waiting for a CLI call containing '{expected}'. Calls:\n{}\nCurrent screen:\n{}",
+            self.get_cli_calls(),
+            self.emulator.get_text()
+        ))
     }
 }
 

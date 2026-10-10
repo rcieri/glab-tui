@@ -4,5 +4,11 @@
     "description": "Shared Runner 1",
     "status": "online",
     "active": true
+  },
+  {
+    "id": 9877,
+    "description": "Docker Runner 2",
+    "status": "offline",
+    "active": true
   }
 ]

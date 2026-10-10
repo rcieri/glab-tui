@@ -1,0 +1,25 @@
+[
+  {
+    "id": 1,
+    "name": "production",
+    "state": "available",
+    "external_url": "https://production.example.com",
+    "last_deployment": {
+      "id": 100,
+      "iid": 1,
+      "ref": "main",
+      "tag": false,
+      "sha": "a1b2c3d4e5f67890123456789012345678901234",
+      "status": "success",
+      "created_at": "2026-07-06T10:00:00Z",
+      "updated_at": "2026-07-06T10:05:00Z"
+    }
+  },
+  {
+    "id": 2,
+    "name": "staging",
+    "state": "stopped",
+    "external_url": "https://staging.example.com",
+    "last_deployment": null
+  }
+]

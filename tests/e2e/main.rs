@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 mod config;
 mod custom_keybindings;
+mod group_scope_actions;
 mod job_trace;
 mod keybindings;
 mod layout;
@@ -502,6 +503,17 @@ impl TestSession {
     /// Launch in a sandbox the test has already prepared (e.g. committed to
     /// its repository), with extra environment variables for the CLI mocks.
     pub fn launch(sandbox: Sandbox, rows: u16, cols: u16, extra: &[(&str, &str)]) -> Self {
+        Self::launch_with_args(sandbox, rows, cols, &[], extra)
+    }
+
+    /// Like `launch`, with command-line arguments for glab-tui (e.g. `-g`).
+    pub fn launch_with_args(
+        sandbox: Sandbox,
+        rows: u16,
+        cols: u16,
+        args: &[&str],
+        extra: &[(&str, &str)],
+    ) -> Self {
         let bin_path = find_glab_tui_binary();
         let mut envs_vec = sandbox.envs();
         for (k, v) in extra {
@@ -514,7 +526,7 @@ impl TestSession {
 
         let pty = Pty::spawn(
             bin_path.to_str().unwrap(),
-            &[],
+            args,
             &envs_ref,
             rows,
             cols,

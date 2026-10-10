@@ -11,6 +11,16 @@ impl Scope {
         }
     }
 
+    /// The project a listed issue, MR or milestone belongs to. Rows fetched
+    /// without a project of their own stand for the scope itself.
+    pub fn project_of<'a>(&'a self, row_project_path: &'a str) -> &'a str {
+        if row_project_path.is_empty() {
+            self.as_str()
+        } else {
+            row_project_path
+        }
+    }
+
     pub fn is_group(&self) -> bool {
         matches!(self, Scope::Group(_))
     }

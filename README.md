@@ -609,7 +609,7 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 | Key | Action |
 |---|---|
-| `q` / `Esc` | Exit diff view (or cancel current selection / search) |
+| `q` / `Esc` | Exit diff view (or cancel current selection / search). With draft comments pending, asks to **Submit**, **Keep drafts** (close, keep them for later), **Discard** them, or **Cancel** (`Esc`, back to the diff) |
 | `Tab` | Toggle focus between file tree and diff pane |
 | `h` / `←` | In file tree: collapse directory; in diff: focus file tree |
 | `l` / `→` | In file tree: expand directory / open file |

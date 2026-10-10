@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 mod config;
 mod custom_keybindings;
+mod environments;
 mod group_scope_actions;
 mod job_trace;
 mod keybindings;

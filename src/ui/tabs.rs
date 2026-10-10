@@ -2085,13 +2085,16 @@ pub(crate) fn render_tab_runners(
             detail_rect,
         );
     } else {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = app
-            .enabled_columns
-            .get(&Tab::Runners)
-            .unwrap_or(&default_set);
-        let mut filtered_runners =
-            App::filter_runners_list(&app.runners.items, &app.search_query, enabled_cols);
+        let mut filtered_runners = App::filtered_runners_list(
+            &app.runners.items,
+            &app.search_query,
+            &app.enabled_columns,
+            app.group_ascending
+                .get(&Tab::Runners)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Runners).unwrap_or(&None),
+        );
         App::apply_column_filters(
             &mut filtered_runners,
             &app.column_filters,
@@ -3048,13 +3051,16 @@ pub(crate) fn render_tab_branches(
             content_area,
         );
     } else {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = app
-            .enabled_columns
-            .get(&Tab::Branches)
-            .unwrap_or(&default_set);
-        let mut filtered =
-            App::filter_branches_list(&app.branches.items, &app.search_query, enabled_cols);
+        let mut filtered = App::filtered_branches_list(
+            &app.branches.items,
+            &app.search_query,
+            &app.enabled_columns,
+            app.group_ascending
+                .get(&Tab::Branches)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Branches).unwrap_or(&None),
+        );
         App::apply_column_filters(
             &mut filtered,
             &app.column_filters,
@@ -3082,7 +3088,11 @@ pub(crate) fn render_tab_branches(
             if app.is_column_visible(Tab::Branches, "Default") {
                 let cell = if b.default {
                     Cell::from(Span::styled(
-                        format!(" {} YES ", icons.radio_on),
+                        format!(
+                            " {} {} ",
+                            icons.radio_on,
+                            crate::app::branch_flag_display(b.default)
+                        ),
                         Style::default()
                             .fg(theme.green)
                             .bg(if is_selected {
@@ -3093,14 +3103,21 @@ pub(crate) fn render_tab_branches(
                             .add_modifier(Modifier::BOLD),
                     ))
                 } else {
-                    Cell::from(Span::styled(" NO ", Style::default().fg(theme.text_muted)))
+                    Cell::from(Span::styled(
+                        format!(" {} ", crate::app::branch_flag_display(b.default)),
+                        Style::default().fg(theme.text_muted),
+                    ))
                 };
                 cells.push(cell);
             }
             if app.is_column_visible(Tab::Branches, "Protected") {
                 let cell = if b.protected {
                     Cell::from(Span::styled(
-                        format!(" {} YES ", icons.lock),
+                        format!(
+                            " {} {} ",
+                            icons.lock,
+                            crate::app::branch_flag_display(b.protected)
+                        ),
                         Style::default()
                             .fg(theme.yellow)
                             .bg(if is_selected {
@@ -3111,7 +3128,10 @@ pub(crate) fn render_tab_branches(
                             .add_modifier(Modifier::BOLD),
                     ))
                 } else {
-                    Cell::from(Span::styled(" NO ", Style::default().fg(theme.text_muted)))
+                    Cell::from(Span::styled(
+                        format!(" {} ", crate::app::branch_flag_display(b.protected)),
+                        Style::default().fg(theme.text_muted),
+                    ))
                 };
                 cells.push(cell);
             }
@@ -3246,13 +3266,16 @@ pub(crate) fn render_tab_environments(
             content_area,
         );
     } else {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = app
-            .enabled_columns
-            .get(&Tab::Environments)
-            .unwrap_or(&default_set);
-        let mut filtered =
-            App::filter_environments_list(&app.environments.items, &app.search_query, enabled_cols);
+        let mut filtered = App::filtered_environments_list(
+            &app.environments.items,
+            &app.search_query,
+            &app.enabled_columns,
+            app.group_ascending
+                .get(&Tab::Environments)
+                .copied()
+                .unwrap_or(true),
+            app.group_by_column.get(&Tab::Environments).unwrap_or(&None),
+        );
         App::apply_column_filters(
             &mut filtered,
             &app.column_filters,

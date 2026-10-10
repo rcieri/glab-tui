@@ -1,4 +1,147 @@
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+/// A binding string from the config, parsed. Every reading of a binding
+/// (`keybinding_matches`, `matches_with_pending`, `binding_key_event`, the
+/// sequence-prefix set) goes through `Key::parse`, so they cannot disagree on
+/// what a spelling means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Key {
+    /// A named key (`Enter`, `Up`, `F5`, `Shift+Tab`, `Space`). Matches its
+    /// key whatever modifiers are held.
+    Named(KeyCode),
+    /// `Tab`: unlike the other named keys, only without modifiers.
+    Tab,
+    /// `Ctrl+Enter`. Also matches `Ctrl+j` and a bare `\n`, which is what
+    /// many terminals send for it.
+    CtrlEnter,
+    /// `Alt+Enter`.
+    AltEnter,
+    /// `Ctrl+<letter>`, stored lowercase.
+    Ctrl(char),
+    /// `Alt+<ascii char>`, stored lowercase.
+    Alt(char),
+    /// One plain ASCII character.
+    Char(char),
+    /// Two or more plain characters typed one after another (`gg`).
+    Sequence(Vec<char>),
+}
+
+impl Key {
+    /// Parses a binding, or `None` when it can never match a key. Named keys
+    /// and `+` combinations take precedence over a character sequence; a
+    /// space inside a longer binding is reserved, so `"g g"` parses to
+    /// nothing while a lone `" "` is the space character.
+    pub fn parse(binding: &str) -> Option<Key> {
+        let named = match binding {
+            "Tab" => return Some(Key::Tab),
+            "Ctrl+Enter" | "Ctrl+Return" => return Some(Key::CtrlEnter),
+            "Alt+Enter" | "Alt+Return" => return Some(Key::AltEnter),
+            "Shift+Tab" => Some(KeyCode::BackTab),
+            "Enter" => Some(KeyCode::Enter),
+            "Esc" => Some(KeyCode::Esc),
+            "Backspace" => Some(KeyCode::Backspace),
+            "Space" => Some(KeyCode::Char(' ')),
+            "Up" => Some(KeyCode::Up),
+            "Down" => Some(KeyCode::Down),
+            "Left" => Some(KeyCode::Left),
+            "Right" => Some(KeyCode::Right),
+            "Home" => Some(KeyCode::Home),
+            "End" => Some(KeyCode::End),
+            "PageUp" => Some(KeyCode::PageUp),
+            "PageDown" => Some(KeyCode::PageDown),
+            _ => None,
+        };
+        if let Some(code) = named {
+            return Some(Key::Named(code));
+        }
+        if let Some(number) = binding.strip_prefix('F').filter(|n| n.len() <= 2) {
+            if let Ok(n) = number.parse::<u8>() {
+                return Some(Key::Named(KeyCode::F(n)));
+            }
+            if number.is_empty() {
+                return None;
+            }
+        }
+        if binding.len() > 1 {
+            if let Some((modifier, key)) = binding.split_once('+') {
+                let mut chars = key.chars();
+                let (Some(c), None) = (chars.next(), chars.next()) else {
+                    return None;
+                };
+                return match modifier {
+                    "Ctrl" | "ctrl" | "CTRL" if c.is_ascii_alphabetic() => {
+                        Some(Key::Ctrl(c.to_ascii_lowercase()))
+                    }
+                    "Alt" | "alt" | "ALT" if c.is_ascii() => Some(Key::Alt(c.to_ascii_lowercase())),
+                    _ => None,
+                };
+            }
+        }
+        let chars: Vec<char> = binding.chars().collect();
+        match chars.as_slice() {
+            [] => None,
+            [c] => c.is_ascii().then_some(Key::Char(*c)),
+            _ if chars.contains(&' ') => None,
+            _ => Some(Key::Sequence(chars)),
+        }
+    }
+
+    /// Whether `event` is this key. A sequence never matches a single event.
+    pub fn matches(&self, event: &KeyEvent) -> bool {
+        match self {
+            Key::Named(code) => event.code == *code,
+            Key::Tab => event.code == KeyCode::Tab && event.modifiers.is_empty(),
+            Key::CtrlEnter => {
+                (event.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        event.code,
+                        KeyCode::Enter | KeyCode::Char('j' | '\n' | '\r')
+                    ))
+                    || (event.code == KeyCode::Char('\n') && event.modifiers.is_empty())
+            }
+            Key::AltEnter => {
+                event.modifiers.contains(KeyModifiers::ALT) && event.code == KeyCode::Enter
+            }
+            Key::Ctrl(c) => {
+                let ascii_ctrl = (*c as u8 - b'a' + 1) as char;
+                match event.code {
+                    KeyCode::Char(ch) => {
+                        (ch.to_ascii_lowercase() == *c
+                            && event.modifiers.contains(KeyModifiers::CONTROL))
+                            || ch == ascii_ctrl
+                    }
+                    _ => false,
+                }
+            }
+            Key::Alt(c) => match event.code {
+                KeyCode::Char(ch) => {
+                    ch.to_ascii_lowercase() == *c && event.modifiers.contains(KeyModifiers::ALT)
+                }
+                _ => false,
+            },
+            Key::Char(c) => {
+                event.code == KeyCode::Char(*c) && event.modifiers == expected_modifiers(*c)
+            }
+            Key::Sequence(_) => false,
+        }
+    }
+
+    /// The key event this key stands for, or `None` for a sequence, which
+    /// is not one keypress.
+    pub fn event(&self) -> Option<KeyEvent> {
+        let (code, modifiers) = match self {
+            Key::Named(code) => (*code, KeyModifiers::NONE),
+            Key::Tab => (KeyCode::Tab, KeyModifiers::NONE),
+            Key::CtrlEnter => (KeyCode::Enter, KeyModifiers::CONTROL),
+            Key::AltEnter => (KeyCode::Enter, KeyModifiers::ALT),
+            Key::Ctrl(c) => (KeyCode::Char(*c), KeyModifiers::CONTROL),
+            Key::Alt(c) => (KeyCode::Char(*c), KeyModifiers::ALT),
+            Key::Char(c) => (KeyCode::Char(*c), expected_modifiers(*c)),
+            Key::Sequence(_) => return None,
+        };
+        Some(KeyEvent::new(code, modifiers))
+    }
+}
 
 /// The modifiers a binding character's own KeyEvent must carry: `SHIFT` for
 /// an uppercase letter (crossterm 0.29 attaches it to every uppercase
@@ -11,194 +154,33 @@ fn expected_modifiers(c: char) -> KeyModifiers {
     }
 }
 
-pub fn keybinding_matches(binding: &str, event: &crossterm::event::KeyEvent) -> bool {
-    match binding {
-        "Tab" => event.code == KeyCode::Tab && event.modifiers.is_empty(),
-        "Shift+Tab" => event.code == KeyCode::BackTab,
-        "Enter" => event.code == KeyCode::Enter,
-        "Esc" => event.code == KeyCode::Esc,
-        "Backspace" => event.code == KeyCode::Backspace,
-        "Space" => event.code == KeyCode::Char(' '),
-        "Up" => event.code == KeyCode::Up,
-        "Down" => event.code == KeyCode::Down,
-        "Left" => event.code == KeyCode::Left,
-        "Right" => event.code == KeyCode::Right,
-        "Home" => event.code == KeyCode::Home,
-        "End" => event.code == KeyCode::End,
-        "PageUp" => event.code == KeyCode::PageUp,
-        "PageDown" => event.code == KeyCode::PageDown,
-        "F5" => event.code == KeyCode::F(5),
-        "Ctrl+Enter" | "Ctrl+Return" => {
-            (event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL)
-                && (event.code == KeyCode::Enter
-                    || event.code == KeyCode::Char('j')
-                    || event.code == KeyCode::Char('\n')
-                    || event.code == KeyCode::Char('\r')))
-                || (event.code == KeyCode::Char('\n') && event.modifiers.is_empty())
-        }
-        "Alt+Enter" | "Alt+Return" => {
-            event
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::ALT)
-                && event.code == KeyCode::Enter
-        }
-        other if other.starts_with('F') && other.len() <= 3 => {
-            if let Ok(n) = other[1..].parse::<u8>() {
-                event.code == KeyCode::F(n)
-            } else {
-                false
-            }
-        }
-        other
-            if (other.starts_with("Alt+")
-                || other.starts_with("alt+")
-                || other.starts_with("ALT+"))
-                && other.len() == 5 =>
-        {
-            let c = (other.as_bytes()[4] as char).to_ascii_lowercase();
-            match event.code {
-                KeyCode::Char(ch) => {
-                    ch.to_ascii_lowercase() == c
-                        && event
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::ALT)
-                }
-                _ => false,
-            }
-        }
-        other
-            if (other.starts_with("Ctrl+")
-                || other.starts_with("ctrl+")
-                || other.starts_with("CTRL+"))
-                && other.len() == 6 =>
-        {
-            let c = (other.as_bytes()[5] as char).to_ascii_lowercase();
-            if c.is_ascii_lowercase() {
-                let ascii_ctrl = (c as u8 - b'a' + 1) as char;
-                match event.code {
-                    KeyCode::Char(ch) => {
-                        (ch.to_ascii_lowercase() == c
-                            && event
-                                .modifiers
-                                .contains(crossterm::event::KeyModifiers::CONTROL))
-                            || ch == ascii_ctrl
-                    }
-                    _ => false,
-                }
-            } else {
-                false
-            }
-        }
-        other if other.len() == 1 => {
-            let c = other.chars().next().unwrap();
-            event.code == KeyCode::Char(c) && event.modifiers == expected_modifiers(c)
-        }
-        _ => false,
-    }
-}
-
-/// The two-character named key tokens `keybinding_matches` matches
-/// literally (the arrow key `"Up"`, the function key `"F5"`), as opposed to
-/// two literal characters. `keybinding_char_sets` (in `src/app.rs`) uses
-/// this to avoid registering their first character as a sequence prefix.
-pub fn is_named_two_char_binding(binding: &str) -> bool {
-    matches!(binding, "Up" | "F5")
+pub fn keybinding_matches(binding: &str, event: &KeyEvent) -> bool {
+    Key::parse(binding).is_some_and(|key| key.matches(event))
 }
 
 /// Like `keybinding_matches`, but also resolves two-character sequence
 /// bindings (e.g. `"gg"`) against a pending first keypress. `pending` is the
 /// character captured on the previous keystroke, if any.
-///
-/// Tries `keybinding_matches` first, so named two-character tokens like
-/// `"Up"` or `"F5"` keep matching their key normally instead of being
-/// misread as a two-character sequence.
-pub fn matches_with_pending(
-    binding: &str,
-    pending: Option<char>,
-    event: &crossterm::event::KeyEvent,
-) -> bool {
-    if keybinding_matches(binding, event) {
-        return true;
+pub fn matches_with_pending(binding: &str, pending: Option<char>, event: &KeyEvent) -> bool {
+    match Key::parse(binding) {
+        Some(Key::Sequence(chars)) => match chars.as_slice() {
+            [first, second] => {
+                pending == Some(*first)
+                    && event.code == KeyCode::Char(*second)
+                    && event.modifiers.is_empty()
+            }
+            _ => false,
+        },
+        Some(key) => key.matches(event),
+        None => false,
     }
-    if binding.chars().count() == 2 && !binding.contains('+') {
-        let mut chars = binding.chars();
-        if let (Some(first), Some(second)) = (chars.next(), chars.next()) {
-            return pending == Some(first)
-                && event.code == KeyCode::Char(second)
-                && event.modifiers.is_empty();
-        }
-    }
-    false
 }
 
 /// The key event a single-key binding stands for, or `None` when the binding
-/// is not spelled in the grammar `keybinding_matches` accepts. Lets a binding
-/// be tested against other bindings without a real keypress.
-pub fn binding_key_event(binding: &str) -> Option<crossterm::event::KeyEvent> {
-    use crossterm::event::KeyEvent;
-    let named = match binding {
-        "Tab" => Some(KeyCode::Tab),
-        "Shift+Tab" => Some(KeyCode::BackTab),
-        "Enter" => Some(KeyCode::Enter),
-        "Esc" => Some(KeyCode::Esc),
-        "Backspace" => Some(KeyCode::Backspace),
-        "Space" => Some(KeyCode::Char(' ')),
-        "Up" => Some(KeyCode::Up),
-        "Down" => Some(KeyCode::Down),
-        "Left" => Some(KeyCode::Left),
-        "Right" => Some(KeyCode::Right),
-        "Home" => Some(KeyCode::Home),
-        "End" => Some(KeyCode::End),
-        "PageUp" => Some(KeyCode::PageUp),
-        "PageDown" => Some(KeyCode::PageDown),
-        _ => None,
-    };
-    if let Some(code) = named {
-        return Some(KeyEvent::new(code, KeyModifiers::NONE));
-    }
-    match binding {
-        "Ctrl+Enter" | "Ctrl+Return" => {
-            return Some(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
-        }
-        "Alt+Enter" | "Alt+Return" => {
-            return Some(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
-        }
-        _ => {}
-    }
-    if let Some(number) = binding.strip_prefix('F').filter(|n| n.len() <= 2) {
-        return number
-            .parse::<u8>()
-            .ok()
-            .map(|n| KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
-    }
-    if let Some((modifier, key)) = binding.split_once('+').filter(|_| binding.len() > 1) {
-        let modifiers = match modifier {
-            "Ctrl" | "ctrl" | "CTRL" => KeyModifiers::CONTROL,
-            "Alt" | "alt" | "ALT" => KeyModifiers::ALT,
-            _ => return None,
-        };
-        let mut chars = key.chars();
-        return match (chars.next(), chars.next()) {
-            (Some(c), None)
-                if c.is_ascii_alphabetic() || (modifiers == KeyModifiers::ALT && c.is_ascii()) =>
-            {
-                Some(KeyEvent::new(
-                    KeyCode::Char(c.to_ascii_lowercase()),
-                    modifiers,
-                ))
-            }
-            _ => None,
-        };
-    }
-    let mut chars = binding.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii() => {
-            Some(KeyEvent::new(KeyCode::Char(c), expected_modifiers(c)))
-        }
-        _ => None,
-    }
+/// is not one keypress. Lets a binding be tested against other bindings
+/// without a real keypress.
+pub fn binding_key_event(binding: &str) -> Option<KeyEvent> {
+    Key::parse(binding)?.event()
 }
 
 #[cfg(test)]
@@ -224,6 +206,12 @@ mod tests {
     fn lone_space_binding_does_not_match_shifted_space() {
         let event = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::SHIFT);
         assert!(!keybinding_matches(" ", &event));
+    }
+
+    #[test]
+    fn space_with_inner_space_never_resolves_as_sequence() {
+        let event = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+        assert!(!super::matches_with_pending("g ", Some('g'), &event));
     }
 
     /// Named keys match their key whatever modifiers are held; `Tab` is the

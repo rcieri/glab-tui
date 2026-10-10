@@ -3499,15 +3499,18 @@ pub struct PendingKey {
 }
 
 /// Splits every string leaf of `keybindings` into sequence-prefix
-/// characters (the first character of a two-character binding, e.g. `gg`)
-/// and standalone characters (a one-character binding). Non-string values
-/// and bindings of any other length are skipped.
+/// characters (the first character of a two-character sequence, e.g. `gg`)
+/// and standalone characters (a one-character binding), as `Key::parse`
+/// reads them. Named keys such as `Up` or `F1`, non-string values and
+/// longer sequences are skipped.
 fn keybinding_char_sets(
     keybindings: &KeybindingConfig,
 ) -> (
     std::collections::HashSet<char>,
     std::collections::HashSet<char>,
 ) {
+    use crate::keybinding::Key;
+
     fn walk(
         value: &toml::Value,
         prefixes: &mut std::collections::HashSet<char>,
@@ -3519,20 +3522,15 @@ fn keybinding_char_sets(
                     walk(v, prefixes, standalone);
                 }
             }
-            toml::Value::String(s) => {
-                let mut chars = s.chars();
-                match (chars.next(), chars.next(), chars.next()) {
-                    (Some(c), None, None) => {
-                        standalone.insert(c);
-                    }
-                    (Some(first), Some(_), None)
-                        if !crate::keybinding::is_named_two_char_binding(s) =>
-                    {
-                        prefixes.insert(first);
-                    }
-                    _ => {}
+            toml::Value::String(s) => match Key::parse(s) {
+                Some(Key::Char(c)) => {
+                    standalone.insert(c);
                 }
-            }
+                Some(Key::Sequence(chars)) if chars.len() == 2 => {
+                    prefixes.insert(chars[0]);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -11098,6 +11096,16 @@ index 123456..789012 100644
 
         assert!(!prefixes.contains(&'U'));
         assert!(!standalone.contains(&'U'));
+    }
+
+    #[test]
+    fn keybinding_char_sets_does_not_treat_a_function_key_as_a_prefix() {
+        let mut keybindings = crate::config::KeybindingConfig::default();
+        keybindings.global.scroll_top = "F1".to_string();
+
+        let (prefixes, _) = keybinding_char_sets(&keybindings);
+
+        assert!(!prefixes.contains(&'F'));
     }
 
     #[test]

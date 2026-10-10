@@ -1,6 +1,6 @@
 use crate::app::{App, Tab};
 use crate::config::THEME;
-use crate::utils::format::{format_ref, time_ago, truncate};
+use crate::utils::format::{format_ref, sanitize_untrusted, time_ago, truncate};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Rect},
@@ -1725,7 +1725,7 @@ pub(crate) fn render_tab_jobs(
                     j.needs().join(", ")
                 };
                 row_cells.push(Cell::from(Span::styled(
-                    truncate(&needs_str, 25),
+                    truncate(&sanitize_untrusted(&needs_str), 25),
                     Style::default().fg(theme.text_muted),
                 )));
             }
@@ -3305,7 +3305,7 @@ pub(crate) fn render_tab_environments(
             if app.is_column_visible(Tab::Environments, "URL") {
                 let url = e.external_url.as_deref().unwrap_or("-");
                 cells.push(Cell::from(Span::styled(
-                    url,
+                    sanitize_untrusted(url),
                     Style::default().fg(theme.blue),
                 )));
             }
@@ -3897,6 +3897,110 @@ mod tests {
         assert_eq!(
             app.detail_scroll, 192,
             "detail_scroll should clamp to the trace's max_scroll, not keep counting past it"
+        );
+    }
+
+    fn buffer_rows(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn render_tab_jobs_strips_escape_sequences_from_needs() {
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.jobs.items = vec![crate::domain::pipelines::Job {
+            id: 1,
+            status: "success".to_string(),
+            stage: "test".to_string(),
+            name: "deploy".to_string(),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: vec![
+                "\u{1b}[31mbuild\u{1b}[0m".to_string(),
+                "\u{9b}2Jlint".to_string(),
+            ],
+        }];
+        app.enabled_columns
+            .entry(Tab::Jobs)
+            .or_default()
+            .insert("Needs".to_string());
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_jobs(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 10),
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let rows = buffer_rows(&terminal);
+        let job_row = rows
+            .iter()
+            .find(|row| row.contains("deploy"))
+            .expect("job row rendered");
+        assert!(job_row.contains("build, lint"), "row: {job_row:?}");
+        assert!(!job_row.contains("[31m"), "row: {job_row:?}");
+        assert!(!job_row.contains("2Jlint"), "row: {job_row:?}");
+    }
+
+    #[test]
+    fn render_tab_environments_strips_escape_sequences_from_url() {
+        let backend = TestBackend::new(160, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.environments.items = vec![crate::domain::deployments::Environment {
+            id: 1,
+            name: "production".to_string(),
+            state: "available".to_string(),
+            external_url: Some(
+                "\u{1b}]8;;https://evil.example\u{7}https://prod.example\u{1b}]8;;\u{7}\u{1b}[2J"
+                    .to_string(),
+            ),
+            last_deployment: None,
+        }];
+        app.enabled_columns
+            .entry(Tab::Environments)
+            .or_default()
+            .insert("URL".to_string());
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render_tab_environments(
+                    f,
+                    &mut app,
+                    Rect::new(0, 0, area.width, 10),
+                    Rect::new(0, 10, area.width, 10),
+                    Block::default(),
+                    Style::default(),
+                    Style::default(),
+                );
+            })
+            .unwrap();
+
+        let rows = buffer_rows(&terminal);
+        let env_row = rows
+            .iter()
+            .find(|row| row.contains("production"))
+            .expect("environment row rendered");
+        assert_eq!(
+            env_row.split_whitespace().collect::<Vec<_>>(),
+            ["production", "available", "N/A", "https://prod.example"],
         );
     }
 }

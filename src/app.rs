@@ -3884,6 +3884,27 @@ pub(crate) fn runner_status_display(raw: &str) -> &'static str {
     }
 }
 
+/// Text the Branches table shows in its Default and Protected cells. Used by
+/// both `branch_filter_values` (the column filter picker) and
+/// `render_tab_branches`.
+pub(crate) fn branch_flag_display(is_set: bool) -> &'static str {
+    if is_set { "YES" } else { "NO" }
+}
+
+/// Group-by sort key: numeric cell text (IDs) orders by value, everything
+/// else lexically. Numbers sort before text.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum GroupKey {
+    Number(u64),
+    Text(String),
+}
+
+impl GroupKey {
+    fn new(value: String) -> Self {
+        value.parse().map(Self::Number).unwrap_or(Self::Text(value))
+    }
+}
+
 /// Build the zero-padded percent string used as the sort/group key for the
 /// Milestones "Progress" column. Prefers the cheap aggregate derived from
 /// `Issue.milestone` (see `App::rebuild_milestone_progress_cache`) and
@@ -5940,14 +5961,33 @@ impl App {
         }
     }
 
-    pub fn filtered_runners(&self) -> Vec<&crate::domain::runners::Runner> {
+    pub fn filtered_runners_list<'a>(
+        items: &'a [crate::domain::runners::Runner],
+        query: &str,
+        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
+        ascending: bool,
+        group_by_column: &Option<String>,
+    ) -> Vec<&'a crate::domain::runners::Runner> {
         let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Runners)
-            .unwrap_or(&default_set);
-        let mut list: Vec<&crate::domain::runners::Runner> =
-            Self::filter_runners_list(&self.runners.items, &self.search_query, enabled_cols);
+        let enabled_cols = enabled_columns.get(&Tab::Runners).unwrap_or(&default_set);
+        let mut list = Self::filter_runners_list(items, query, enabled_cols);
+        if let Some(col) = group_by_column {
+            Self::sort_by_column_values(&mut list, col, ascending, Self::runner_filter_values);
+        }
+        list
+    }
+
+    pub fn filtered_runners(&self) -> Vec<&crate::domain::runners::Runner> {
+        let mut list = Self::filtered_runners_list(
+            &self.runners.items,
+            &self.search_query,
+            &self.enabled_columns,
+            self.group_ascending
+                .get(&Tab::Runners)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Runners).unwrap_or(&None),
+        );
         Self::apply_column_filters(
             &mut list,
             &self.column_filters,
@@ -5986,7 +6026,7 @@ impl App {
                     check_match(&item.released_at);
                     check_match(&crate::utils::format::time_ago(&item.released_at));
                 }
-                if enabled_cols.contains("Description") {
+                if enabled_cols.contains("Release Notes") {
                     if let Some(ref desc) = item.description {
                         check_match(desc);
                     }
@@ -6017,7 +6057,7 @@ impl App {
                     "Tag" => a.tag_name.clone(),
                     "Release Name" => a.name.clone(),
                     "Date" => a.released_at.clone(),
-                    "Description" => a.description.clone().unwrap_or_default(),
+                    "Release Notes" => a.description.clone().unwrap_or_default(),
                     "Author" => a.author_name.clone().unwrap_or_default(),
                     _ => String::new(),
                 };
@@ -6025,7 +6065,7 @@ impl App {
                     "Tag" => b.tag_name.clone(),
                     "Release Name" => b.name.clone(),
                     "Date" => b.released_at.clone(),
-                    "Description" => b.description.clone().unwrap_or_default(),
+                    "Release Notes" => b.description.clone().unwrap_or_default(),
                     "Author" => b.author_name.clone().unwrap_or_default(),
                     _ => String::new(),
                 };
@@ -6043,7 +6083,7 @@ impl App {
         match col {
             "Tag" => vec![item.tag_name.clone()],
             "Release Name" => vec![item.name.clone()],
-            "Description" => item
+            "Release Notes" => item
                 .description
                 .clone()
                 .map(|d| vec![d])
@@ -6396,23 +6436,55 @@ impl App {
             .collect()
     }
 
+    /// Filter values for one Branches column. The first value is the cell
+    /// text the picker offers; the trailing `true`/`false` keeps Default and
+    /// Protected filters saved before the picker used the cell text working.
     pub fn branch_filter_values(item: &crate::domain::branches::Branch, col: &str) -> Vec<String> {
         match col {
             "Name" => vec![item.name.clone()],
-            "Default" => vec![item.default.to_string()],
-            "Protected" => vec![item.protected.to_string()],
+            "Default" => vec![
+                branch_flag_display(item.default).to_string(),
+                item.default.to_string(),
+            ],
+            "Protected" => vec![
+                branch_flag_display(item.protected).to_string(),
+                item.protected.to_string(),
+            ],
+            "SHA" => Some(item.commit_sha.clone())
+                .filter(|sha| !sha.is_empty())
+                .into_iter()
+                .collect(),
             _ => vec![],
         }
     }
 
-    pub fn filtered_branches(&self) -> Vec<&crate::domain::branches::Branch> {
+    pub fn filtered_branches_list<'a>(
+        items: &'a [crate::domain::branches::Branch],
+        query: &str,
+        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
+        ascending: bool,
+        group_by_column: &Option<String>,
+    ) -> Vec<&'a crate::domain::branches::Branch> {
         let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Branches)
-            .unwrap_or(&default_set);
-        let mut list =
-            Self::filter_branches_list(&self.branches.items, &self.search_query, enabled_cols);
+        let enabled_cols = enabled_columns.get(&Tab::Branches).unwrap_or(&default_set);
+        let mut list = Self::filter_branches_list(items, query, enabled_cols);
+        if let Some(col) = group_by_column {
+            Self::sort_by_column_values(&mut list, col, ascending, Self::branch_filter_values);
+        }
+        list
+    }
+
+    pub fn filtered_branches(&self) -> Vec<&crate::domain::branches::Branch> {
+        let mut list = Self::filtered_branches_list(
+            &self.branches.items,
+            &self.search_query,
+            &self.enabled_columns,
+            self.group_ascending
+                .get(&Tab::Branches)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Branches).unwrap_or(&None),
+        );
         Self::apply_column_filters(
             &mut list,
             &self.column_filters,
@@ -6434,6 +6506,7 @@ impl App {
                 .as_ref()
                 .map(|d| vec![d.status.clone()])
                 .unwrap_or_default(),
+            "URL" => item.external_url.clone().into_iter().collect(),
             _ => vec![],
         }
     }
@@ -6468,16 +6541,36 @@ impl App {
             .collect()
     }
 
-    pub fn filtered_environments(&self) -> Vec<&crate::domain::deployments::Environment> {
+    pub fn filtered_environments_list<'a>(
+        items: &'a [crate::domain::deployments::Environment],
+        query: &str,
+        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
+        ascending: bool,
+        group_by_column: &Option<String>,
+    ) -> Vec<&'a crate::domain::deployments::Environment> {
         let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
+        let enabled_cols = enabled_columns
             .get(&Tab::Environments)
             .unwrap_or(&default_set);
-        let mut list = Self::filter_environments_list(
+        let mut list = Self::filter_environments_list(items, query, enabled_cols);
+        if let Some(col) = group_by_column {
+            Self::sort_by_column_values(&mut list, col, ascending, Self::environment_filter_values);
+        }
+        list
+    }
+
+    pub fn filtered_environments(&self) -> Vec<&crate::domain::deployments::Environment> {
+        let mut list = Self::filtered_environments_list(
             &self.environments.items,
             &self.search_query,
-            enabled_cols,
+            &self.enabled_columns,
+            self.group_ascending
+                .get(&Tab::Environments)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column
+                .get(&Tab::Environments)
+                .unwrap_or(&None),
         );
         Self::apply_column_filters(
             &mut list,
@@ -6655,6 +6748,24 @@ impl App {
         }
     }
 
+    /// Order `list` for group-by on `col`, keyed by the cell text
+    /// `get_values` reports (its first value), so rows group by what the
+    /// column shows.
+    fn sort_by_column_values<T>(
+        list: &mut [&T],
+        col: &str,
+        ascending: bool,
+        get_values: impl Fn(&T, &str) -> Vec<String>,
+    ) {
+        let key =
+            |item: &&T| GroupKey::new(get_values(item, col).into_iter().next().unwrap_or_default());
+        if ascending {
+            list.sort_by_cached_key(key);
+        } else {
+            list.sort_by_cached_key(|item| std::cmp::Reverse(key(item)));
+        }
+    }
+
     pub fn collect_unique_column_values(&self, tab: Tab, col: &str) -> Vec<String> {
         use std::collections::BTreeSet;
         let mut values: BTreeSet<String> = BTreeSet::new();
@@ -6738,7 +6849,9 @@ impl App {
             }
             Tab::Branches => {
                 for item in &self.branches.items {
-                    for v in Self::branch_filter_values(item, col) {
+                    // Offer the displayed value only: the trailing entries of
+                    // `branch_filter_values` are back-compat aliases.
+                    if let Some(v) = Self::branch_filter_values(item, col).into_iter().next() {
                         values.insert(v);
                     }
                 }
@@ -7381,6 +7494,203 @@ mod tests {
         };
         let values = App::milestone_filter_values(&closed, "State");
         assert_eq!(values, vec!["CLOSED".to_string()]);
+    }
+
+    fn release_fixture(tag: &str, notes: &str) -> crate::domain::releases::Release {
+        serde_json::from_value(serde_json::json!({
+            "name": tag,
+            "tag_name": tag,
+            "released_at": "2026-01-01T00:00:00Z",
+            "description": notes,
+        }))
+        .unwrap()
+    }
+
+    fn branch_fixture(
+        name: &str,
+        is_default: bool,
+        is_protected: bool,
+    ) -> crate::domain::branches::Branch {
+        serde_json::from_value(serde_json::json!({
+            "name": name,
+            "default": is_default,
+            "protected": is_protected,
+            "web_url": "",
+        }))
+        .unwrap()
+    }
+
+    fn column_filter(
+        tab: Tab,
+        col: &str,
+        value: &str,
+    ) -> std::collections::HashMap<
+        Tab,
+        std::collections::HashMap<String, std::collections::HashSet<String>>,
+    > {
+        std::collections::HashMap::from([(
+            tab,
+            std::collections::HashMap::from([(
+                col.to_string(),
+                std::collections::HashSet::from([value.to_string()]),
+            )]),
+        )])
+    }
+
+    #[test]
+    fn release_notes_column_searches_groups_and_filters_by_notes_text() {
+        let mut app = App::default();
+        app.releases.items = vec![
+            release_fixture("v1", "Zeta rollback"),
+            release_fixture("v2", "Alpha hotfix"),
+        ];
+        app.enabled_columns.insert(
+            Tab::Releases,
+            std::collections::HashSet::from(["Release Notes".to_string()]),
+        );
+        let tags = |list: Vec<&crate::domain::releases::Release>| {
+            list.iter().map(|r| r.tag_name.clone()).collect::<Vec<_>>()
+        };
+
+        app.search_query = "hotfix".to_string();
+        assert_eq!(tags(app.filtered_releases()), vec!["v2"]);
+
+        app.search_query.clear();
+        app.group_by_column
+            .insert(Tab::Releases, Some("Release Notes".to_string()));
+        assert_eq!(tags(app.filtered_releases()), vec!["v2", "v1"]);
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Releases, "Release Notes"),
+            vec!["Alpha hotfix", "Zeta rollback"]
+        );
+        app.column_filters = column_filter(Tab::Releases, "Release Notes", "Zeta rollback");
+        assert_eq!(tags(app.filtered_releases()), vec!["v1"]);
+    }
+
+    #[test]
+    fn branch_flag_filters_offer_and_match_the_cell_text() {
+        let mut app = App::default();
+        app.branches.items = vec![
+            branch_fixture("main", true, true),
+            branch_fixture("feature", false, false),
+        ];
+        let names = |list: Vec<&crate::domain::branches::Branch>| {
+            list.iter().map(|b| b.name.clone()).collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Branches, "Default"),
+            vec!["NO", "YES"]
+        );
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Branches, "Protected"),
+            vec!["NO", "YES"]
+        );
+
+        app.column_filters = column_filter(Tab::Branches, "Default", "YES");
+        assert_eq!(names(app.filtered_branches()), vec!["main"]);
+        app.column_filters = column_filter(Tab::Branches, "Protected", "NO");
+        assert_eq!(names(app.filtered_branches()), vec!["feature"]);
+    }
+
+    #[test]
+    fn branch_flag_filters_saved_as_true_false_still_match() {
+        let mut app = App::default();
+        app.branches.items = vec![
+            branch_fixture("main", true, true),
+            branch_fixture("feature", false, false),
+        ];
+        app.column_filters = column_filter(Tab::Branches, "Protected", "false");
+        let names: Vec<_> = app
+            .filtered_branches()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect();
+        assert_eq!(names, vec!["feature"]);
+    }
+
+    #[test]
+    fn group_by_orders_runners_by_cell_text_with_numeric_ids() {
+        let mut app = App::default();
+        app.runners.items = serde_json::from_value(serde_json::json!([
+            {"id": 10, "description": "b", "status": "paused", "active": true},
+            {"id": 9, "description": "c", "status": "online", "active": true},
+            {"id": 100, "description": "a", "status": "offline", "active": false},
+        ]))
+        .unwrap();
+        let ids = |app: &App| {
+            app.filtered_runners()
+                .iter()
+                .map(|r| r.id)
+                .collect::<Vec<_>>()
+        };
+
+        app.group_by_column
+            .insert(Tab::Runners, Some("ID".to_string()));
+        assert_eq!(ids(&app), vec![9, 10, 100]);
+
+        app.group_ascending.insert(Tab::Runners, false);
+        assert_eq!(ids(&app), vec![100, 10, 9]);
+
+        app.group_ascending.insert(Tab::Runners, true);
+        app.group_by_column
+            .insert(Tab::Runners, Some("Status".to_string()));
+        assert_eq!(ids(&app), vec![100, 9, 10]);
+    }
+
+    #[test]
+    fn group_by_orders_branches_by_cell_text() {
+        let mut app = App::default();
+        app.branches.items = vec![
+            branch_fixture("feature", false, true),
+            branch_fixture("main", true, false),
+            branch_fixture("docs", false, false),
+        ];
+        app.group_by_column
+            .insert(Tab::Branches, Some("Default".to_string()));
+        app.group_ascending.insert(Tab::Branches, false);
+        let names: Vec<_> = app
+            .filtered_branches()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect();
+        assert_eq!(names, vec!["main", "feature", "docs"]);
+
+        app.group_ascending.insert(Tab::Branches, true);
+        app.group_by_column
+            .insert(Tab::Branches, Some("Name".to_string()));
+        let names: Vec<_> = app
+            .filtered_branches()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect();
+        assert_eq!(names, vec!["docs", "feature", "main"]);
+    }
+
+    #[test]
+    fn group_by_orders_environments_by_cell_text() {
+        let mut app = App::default();
+        app.environments.items = serde_json::from_value(serde_json::json!([
+            {"id": 1, "name": "staging", "state": "stopped", "external_url": "https://b.example"},
+            {"id": 2, "name": "production", "state": "available", "external_url": "https://a.example"},
+            {"id": 3, "name": "review", "state": "available"},
+        ]))
+        .unwrap();
+        let names = |app: &App| {
+            app.filtered_environments()
+                .iter()
+                .map(|e| e.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        app.group_by_column
+            .insert(Tab::Environments, Some("State".to_string()));
+        assert_eq!(names(&app), vec!["production", "review", "staging"]);
+
+        app.group_by_column
+            .insert(Tab::Environments, Some("URL".to_string()));
+        assert_eq!(names(&app), vec!["review", "production", "staging"]);
     }
 
     #[test]

@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **Multi-line diff comments** — Continuation lines of diff comments were indented by the prefix's byte length instead of its display width, shifting them two columns right of the first line (#538).
 - **Selector filter borders** — The italic placeholder in selector filter boxes no longer italicises the box borders, which terminals without an italic face (e.g. Fira Mono) drew slanted (#538).
 - **Stacked-PR queries only when shown** — GitHub PR refreshes no longer run the stacked-PR GraphQL queries for data nothing displays. The batch stack query runs once per PR-list fetch only while the `Stack` column is shown (or the list is grouped by it), and a PR's full stack is fetched once per session when the inspector opens on it or `Y` is pressed, instead of once per stacked PR on every refresh (#547).
+- **Column logic matches the rendered columns**: On Releases, search, group-by and the value filter now read the `Release Notes` column (they looked for a `Description` column that does not exist). Branches `Default`/`Protected` filters offer and match the `YES`/`NO` cell text instead of `true`/`false`, and filters saved as `true`/`false` keep working. Group-by now reorders the Runners, Branches and Environments tabs, which used to ignore it (#566).
 
 ## [0.9.2] - 2026-09-26
 

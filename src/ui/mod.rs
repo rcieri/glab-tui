@@ -22,7 +22,7 @@ use self::modal::clear_area;
 use self::overlays::render_overlays;
 use crate::app::{App, DiffLine, Tab};
 use crate::config::{ICONS, THEME};
-use crate::utils::format::truncate;
+use crate::utils::format::{sanitize_untrusted, truncate};
 use std::collections::HashSet;
 
 /// Render the active edit/create menu as an interactive inspector into the
@@ -1957,7 +1957,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         let show_hint = app.error_has_cli_detail;
 
         // First content line: "  <icon> <msg>  "
-        let label = format!("  {} {}  ", icons.status_failed, msg);
+        let label = format!("  {} {}  ", icons.status_failed, sanitize_untrusted(msg));
         let hint = "  Full details in the terminal log below  ";
 
         // Box width: content line width (plus hint width when shown), capped to terminal width
@@ -2024,5 +2024,44 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 .wrap(Wrap { trim: false });
             f.render_widget(toast, inner);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn error_toast_strips_escape_sequences_from_cli_stderr() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::default();
+        app.error_message = Some(
+            "push rejected: \u{1b}]8;;https://evil.example\u{7}feature\u{1b}]8;;\u{7}\u{1b}[5m!"
+                .to_string(),
+        );
+
+        terminal.draw(|f| render(f, &mut app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        let toast_row: String = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .find(|row| row.contains("push rejected"))
+            .expect("toast rendered");
+        let icon = ICONS.read().unwrap().status_failed.clone();
+        let toast_start = toast_row.find(&icon).expect("toast starts with its icon");
+        let toast_text = toast_row[toast_start..]
+            .split('│')
+            .next()
+            .map(str::trim_end);
+        assert_eq!(
+            toast_text,
+            Some(format!("{icon} push rejected: feature!").as_str())
+        );
     }
 }

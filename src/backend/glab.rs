@@ -529,6 +529,21 @@ impl GlabBackend {
         args
     }
 
+    /// Ref and job names come from pipeline data anyone who can push a branch
+    /// or edit `.gitlab-ci.yml` controls, so they follow `--` and a name like
+    /// `--help` or `-R` stays a positional argument instead of a glab flag.
+    fn download_artifact_args(project: &str, ref_name: &str, job_name: &str) -> Vec<String> {
+        let mut args: Vec<String> = vec!["job".into(), "artifact".into()];
+        if !project.is_empty() {
+            args.push("-R".into());
+            args.push(project.into());
+        }
+        args.push("--".into());
+        args.push(ref_name.into());
+        args.push(job_name.into());
+        args
+    }
+
     async fn mr_diff_refs(&self, project: &str, iid: u64) -> Result<GiDiffRefs> {
         #[derive(Deserialize)]
         struct GiMr {
@@ -1935,13 +1950,7 @@ impl Backend for GlabBackend {
     }
 
     async fn download_artifact(&self, project: &str, ref_name: &str, job_name: &str) -> Result<()> {
-        let mut args: Vec<String> = vec!["job".into(), "artifact".into()];
-        if !project.is_empty() {
-            args.push("-R".into());
-            args.push(project.into());
-        }
-        args.push(ref_name.into());
-        args.push(job_name.into());
+        let args = Self::download_artifact_args(project, ref_name, job_name);
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "DOWNLOADING ARTIFACT").await?;
         Ok(())
@@ -3286,6 +3295,32 @@ mod tests {
         // and let glab behave as it did pre-19.2.
         let args = GlabBackend::merge_args("group/project", 42, false, false, None, false, None);
         assert!(!args.iter().any(|a| a.starts_with("--sha")));
+    }
+
+    #[test]
+    fn download_artifact_args_keep_dash_prefixed_ref_and_job_names_positional() {
+        let args = GlabBackend::download_artifact_args("group/project", "-R", "--help");
+        assert_eq!(
+            args,
+            vec![
+                "job",
+                "artifact",
+                "-R",
+                "group/project",
+                "--",
+                "-R",
+                "--help"
+            ]
+        );
+    }
+
+    #[test]
+    fn download_artifact_args_without_project_still_end_options_before_names() {
+        let args = GlabBackend::download_artifact_args("", "--repo=evil/project", "-p");
+        assert_eq!(
+            args,
+            vec!["job", "artifact", "--", "--repo=evil/project", "-p"]
+        );
     }
 
     // ── iid batching (GraphQL 100-node connection cap) ──

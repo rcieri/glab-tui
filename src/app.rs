@@ -60,15 +60,30 @@ fn file_extension(file_path: &str) -> Option<&str> {
     }
 }
 
-/// Highlight a single line's content using syntect, returning colored spans.
+/// Strips the `+`, `-` or space marker unified diff puts in front of every
+/// hunk line.
+pub(crate) fn strip_diff_marker(line: &str) -> &str {
+    line.strip_prefix(['+', '-', ' ']).unwrap_or(line)
+}
+
+/// Highlight one diff hunk line: its leading marker is dropped and the code
+/// after it is highlighted with [`highlight_code`].
+pub(crate) fn highlight_diff_line(
+    file_path: &str,
+    line: &str,
+) -> Option<Vec<(ratatui::style::Style, String)>> {
+    highlight_code(file_path, strip_diff_marker(line), None)
+}
+
+/// Highlight a single line of code exactly as given, returning colored spans.
 ///
 /// Colors are derived from the active theme's semantic tokens (mapped from each
 /// token's syntect scope name) so highlighting always matches the active theme
 /// rather than a hardcoded syntect palette. Font modifiers (bold/italic) come
 /// from syntect's resolved style.
-pub fn highlight_line_syntax(
+pub(crate) fn highlight_code(
     file_path: &str,
-    line_content: &str,
+    code: &str,
     ext: Option<&str>,
 ) -> Option<Vec<(ratatui::style::Style, String)>> {
     let ext = ext.or_else(|| file_extension(file_path))?;
@@ -78,20 +93,6 @@ pub fn highlight_line_syntax(
 
     let theme = THEME.read().unwrap();
     let theme = theme.clone();
-
-    // Remove the leading +/-/space for syntax highlighting, but keep the actual code.
-    let code = if line_content.starts_with('+')
-        || line_content.starts_with('-')
-        || line_content.starts_with(' ')
-    {
-        if line_content.len() > 1 {
-            &line_content[1..]
-        } else {
-            ""
-        }
-    } else {
-        line_content
-    };
 
     if code.is_empty() {
         return Some(vec![(
@@ -1716,7 +1717,7 @@ impl DiffView {
                         .entry(current_file.clone())
                         .or_insert((0, 0))
                         .1 += 1;
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlight_diff_line(&current_file, line);
                     (DiffLineType::Addition, None, line_new, highlighted)
                 }
                 Row::Deletion => {
@@ -1727,7 +1728,7 @@ impl DiffView {
                         .entry(current_file.clone())
                         .or_insert((0, 0))
                         .0 += 1;
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlight_diff_line(&current_file, line);
                     (DiffLineType::Deletion, line_old, None, highlighted)
                 }
                 Row::Context => {
@@ -1736,7 +1737,7 @@ impl DiffView {
                     new_line_num = new_line_num.map(|n| n + 1);
                     hunk_old_left = hunk_old_left.saturating_sub(1);
                     hunk_new_left = hunk_new_left.saturating_sub(1);
-                    let highlighted = highlight_line_syntax(&current_file, line, None);
+                    let highlighted = highlight_diff_line(&current_file, line);
                     (DiffLineType::Normal, line_old, line_new, highlighted)
                 }
             };
@@ -8197,10 +8198,10 @@ mod tests {
     }
 
     #[test]
-    fn test_highlight_line_syntax_returns_theme_colors() {
+    fn test_highlight_code_returns_theme_colors() {
         // A Rust keyword line should produce spans carrying a non-default fg
         // color derived from the active theme (not a hardcoded palette).
-        let spans = highlight_line_syntax("main.rs", "let x = 1;", None);
+        let spans = highlight_code("main.rs", "let x = 1;", None);
         let spans = spans.expect("highlighting should succeed");
         assert!(!spans.is_empty());
         // At least one token (e.g. the `let` keyword) should carry an fg color.
@@ -9694,6 +9695,25 @@ new mode 100755
             highlighted_lines > 0,
             "fixture produced no highlighted lines, so this proves nothing"
         );
+    }
+
+    #[test]
+    fn diff_view_highlights_each_hunk_line_without_its_marker() {
+        let view = DiffView::new(42, "owner/repo".to_string(), tab_indented_diff());
+        let highlighted: Vec<(String, String)> = view
+            .all_lines
+            .iter()
+            .filter_map(|line| {
+                let spans = line.syntax_highlighted.as_ref()?;
+                let text = spans.iter().map(|(_, t)| t.as_str()).collect();
+                Some((line.content[1..].to_string(), text))
+            })
+            .collect();
+
+        assert_eq!(highlighted.len(), 6);
+        for (code, text) in highlighted {
+            assert_eq!(text, code);
+        }
     }
 
     #[test]

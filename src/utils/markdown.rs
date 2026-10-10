@@ -5,7 +5,7 @@ use pulldown_cmark::{
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::app::highlight_line_syntax;
+use crate::app::highlight_code;
 use crate::config::Theme;
 use crate::utils::format::sanitize_untrusted;
 
@@ -500,7 +500,7 @@ impl<'a> MarkdownRenderer<'a> {
         let lang_ext: Option<&str> = resolved.as_deref();
 
         for code_line in code_block.content.lines() {
-            let content_spans: Vec<Span<'static>> = highlight_line_syntax("", code_line, lang_ext)
+            let content_spans: Vec<Span<'static>> = highlight_code("", code_line, lang_ext)
                 .map(|highlighted| {
                     highlighted
                         .into_iter()
@@ -850,8 +850,20 @@ mod tests {
 
         assert_eq!(
             text,
-            "┌─ rust\n│ fn main() {\n│    println!(\"hello\");\n│ }\n└─"
+            "┌─ rust\n│ fn main() {\n│     println!(\"hello\");\n│ }\n└─"
         );
+    }
+
+    #[test]
+    fn fenced_code_lines_starting_with_a_diff_marker_character_render_whole() {
+        let md = "```yaml\n- item\n+ plus\n  nested: true\n```";
+        let text = render_markdown_for_test(md)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(text, "┌─ yaml\n│ - item\n│ + plus\n│   nested: true\n└─");
     }
 
     #[test]

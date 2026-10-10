@@ -2456,6 +2456,7 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_environments();
                     if let Some(env) = filtered.get(selected_idx) {
                         let env_name = env.name.clone();
+                        app.detail_visible = true;
                         let _ = tx.send(Event::CommandStarted(format!(
                             "Fetching deployments for {}",
                             env_name
@@ -2473,7 +2474,10 @@ pub async fn handle_active_tab_key(
                                 .await
                                 {
                                     Ok(deployments) => {
-                                        let _ = tx.send(Event::DeploymentsFetched(deployments));
+                                        let _ = tx.send(Event::DeploymentsFetched {
+                                            environment: env_name,
+                                            deployments,
+                                        });
                                     }
                                     Err(e) => {
                                         let _ = tx.send(Event::CommandCompleted(

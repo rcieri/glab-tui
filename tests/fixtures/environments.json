@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "name": "production",
+    "state": "available",
+    "external_url": "https://production.example.com"
+  },
+  {
+    "id": 2,
+    "name": "staging",
+    "state": "available",
+    "external_url": "https://staging.example.com"
+  }
+]

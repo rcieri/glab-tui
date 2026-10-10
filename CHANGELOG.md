@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **Multi-line diff comments** — Continuation lines of diff comments were indented by the prefix's byte length instead of its display width, shifting them two columns right of the first line (#538).
 - **Selector filter borders** — The italic placeholder in selector filter boxes no longer italicises the box borders, which terminals without an italic face (e.g. Fira Mono) drew slanted (#538).
 - **Stacked-PR queries only when shown** — GitHub PR refreshes no longer run the stacked-PR GraphQL queries for data nothing displays. The batch stack query runs once per PR-list fetch only while the `Stack` column is shown (or the list is grouped by it), and a PR's full stack is fetched once per session when the inspector opens on it or `Y` is pressed, instead of once per stacked PR on every refresh (#547).
+- **Environments detail pane follows the selection** — Deployments fetched with `Enter` for one environment stayed in the detail pane after another environment was selected, after a search put a different environment under the cursor, and after leaving the tab. They are now dropped as soon as their environment stops being the highlighted row of the Environments tab, including when the fetch finishes after the selection has moved on, and the pane falls back to the environment's details. `Enter` on an environment now also opens the detail pane, which nothing on the Environments tab could open before, so the fetched deployments were never visible there (#568).
 
 ## [0.9.2] - 2026-09-26
 

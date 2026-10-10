@@ -35,7 +35,9 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/commits.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
-    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
+    elif [[ "$*" == *"/environments"* ]]; then
+        cat "$FIXTURES_DIR/environments.json"
+    elif [[ "$*" == *"/deployments"* ]]; then
         cat "$FIXTURES_DIR/deployments.json"
     elif [[ "$*" == *"/bridges"* ]]; then
         # Must precede /pipelines: a bridges URL contains it.

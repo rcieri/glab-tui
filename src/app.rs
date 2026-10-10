@@ -3505,6 +3505,13 @@ pub struct NavFrame {
     pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
 }
 
+/// Deployments fetched for one environment, shown in the Environments detail
+/// pane only while that environment stays highlighted.
+pub struct EnvironmentDeployments {
+    pub environment: String,
+    pub table: StatefulTable<crate::domain::deployments::Deployment>,
+}
+
 pub struct App {
     pub config: Config,
     /// The first keypress of an in-progress key sequence (e.g. the `g` of
@@ -3686,7 +3693,7 @@ pub struct App {
     pub terminal_scroll: usize,
     pub branches: StatefulTable<crate::domain::branches::Branch>,
     pub environments: StatefulTable<crate::domain::deployments::Environment>,
-    pub deployments: StatefulTable<crate::domain::deployments::Deployment>,
+    pub environment_deployments: Option<EnvironmentDeployments>,
     pub group_by_column: std::collections::HashMap<Tab, Option<String>>,
     pub group_ascending: std::collections::HashMap<Tab, bool>,
     pub group_list_state: ratatui::widgets::ListState,
@@ -3830,7 +3837,7 @@ impl Default for App {
             terminal_scroll: 0,
             branches: StatefulTable::with_items(vec![]),
             environments: StatefulTable::with_items(vec![]),
-            deployments: StatefulTable::with_items(vec![]),
+            environment_deployments: None,
             group_by_column: std::collections::HashMap::new(),
             group_ascending: std::collections::HashMap::new(),
             group_list_state: ratatui::widgets::ListState::default(),
@@ -6486,6 +6493,26 @@ impl App {
             Self::environment_filter_values,
         );
         list
+    }
+
+    /// Drops the fetched deployments once their environment is no longer the
+    /// highlighted row of the Environments tab. Selection moves come from many
+    /// places (keys, mouse, search, column filters, refetches, tab switches),
+    /// so the event loop reconciles here once per frame instead.
+    pub fn discard_stale_deployments(&mut self) {
+        let Some(shown) = &self.environment_deployments else {
+            return;
+        };
+        let is_still_selected = self.active_tab == Tab::Environments
+            && self
+                .environments
+                .state
+                .selected()
+                .and_then(|idx| self.filtered_environments().get(idx).copied())
+                .is_some_and(|env| env.name == shown.environment);
+        if !is_still_selected {
+            self.environment_deployments = None;
+        }
     }
 
     /// Canonicalise a saved filter value to the display string that
@@ -11558,5 +11585,75 @@ index 123456..789012 100644
             .collect();
         assert!(mr_headers.iter().any(|h| h.contains("Closes Issues")));
         assert!(mr_headers.iter().any(|h| h.contains("No Issues")));
+    }
+
+    fn app_showing_deployments_for(environment: &str) -> App {
+        let mut app = App::new();
+        app.active_tab = Tab::Environments;
+        app.search_query.clear();
+        app.column_filters.clear();
+        app.enabled_columns
+            .insert(Tab::Environments, HashSet::from(["Name".to_string()]));
+        app.environments.items = serde_json::from_str(
+            r#"[
+                {"id": 1, "name": "production", "state": "available"},
+                {"id": 2, "name": "staging", "state": "available"}
+            ]"#,
+        )
+        .expect("environment fixture parses");
+        app.environments.state.select(Some(0));
+        let deployments = serde_json::from_str(
+            r#"[{
+                "id": 10, "iid": 1, "ref_name": "main", "tag": false, "sha": "abc123",
+                "status": "success",
+                "created_at": "2026-10-01T00:00:00Z", "updated_at": "2026-10-01T00:00:00Z"
+            }]"#,
+        )
+        .expect("deployment fixture parses");
+        app.environment_deployments = Some(EnvironmentDeployments {
+            environment: environment.to_string(),
+            table: StatefulTable::with_items(deployments),
+        });
+        app
+    }
+
+    fn shown_deployments_environment(app: &App) -> Option<&str> {
+        app.environment_deployments
+            .as_ref()
+            .map(|shown| shown.environment.as_str())
+    }
+
+    #[test]
+    fn deployments_stay_while_their_environment_is_selected() {
+        let mut app = app_showing_deployments_for("production");
+        app.discard_stale_deployments();
+        assert_eq!(shown_deployments_environment(&app), Some("production"));
+    }
+
+    #[test]
+    fn deployments_are_discarded_when_another_environment_is_selected() {
+        let mut app = app_showing_deployments_for("production");
+        app.environments.state.select(Some(1));
+        app.discard_stale_deployments();
+        assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    #[test]
+    fn deployments_are_discarded_when_a_search_puts_another_environment_under_the_cursor() {
+        let mut app = app_showing_deployments_for("production");
+        app.search_query = "staging".to_string();
+        app.discard_stale_deployments();
+        assert_eq!(app.environments.state.selected(), Some(0));
+        assert_eq!(shown_deployments_environment(&app), None);
+    }
+
+    #[test]
+    fn deployments_are_discarded_when_leaving_the_environments_tab() {
+        let mut app = app_showing_deployments_for("production");
+        app.active_tab = Tab::Issues;
+        app.discard_stale_deployments();
+        app.active_tab = Tab::Environments;
+        app.discard_stale_deployments();
+        assert_eq!(shown_deployments_environment(&app), None);
     }
 }

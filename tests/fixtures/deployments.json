@@ -4,6 +4,8 @@
     "iid": 1,
     "status": "success",
     "ref": "main",
+    "tag": false,
+    "sha": "f00dcafe",
     "created_at": "2026-07-06T10:00:00Z",
     "updated_at": "2026-07-06T10:05:00Z",
     "environment": {

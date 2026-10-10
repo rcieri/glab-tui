@@ -3340,7 +3340,7 @@ pub(crate) fn render_tab_environments(
 
         f.render_stateful_widget(table, content_area, &mut app.environments.state);
 
-        // Detail pane - show deployments if available
+        // Detail pane - show deployments fetched for the highlighted environment
         let preview_block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" {} Preview ", icons.label_environment))
@@ -3350,34 +3350,13 @@ pub(crate) fn render_tab_environments(
                     .add_modifier(Modifier::BOLD),
             )
             .border_style(Style::default().fg(theme.border));
-        if app.deployments.items.is_empty() {
-            if let Some(idx) = app.environments.state.selected() {
-                if let Some(env) = filtered.get(idx) {
-                    let doc = crate::entity_editor::build_environment_document(env);
-                    let max_detail_scroll = super::inspector::render_entity_inspector(
-                        f,
-                        &doc,
-                        detail_rect,
-                        super::inspector::InspectorMode::ReadOnly {
-                            scroll: app.detail_scroll,
-                            title_suffix: "",
-                        },
-                        &app.label_colors,
-                    );
-                    settle_detail_scroll(app, max_detail_scroll);
-                }
-            } else {
-                f.render_widget(
-                    Paragraph::new("Select an environment to view details...")
-                        .block(preview_block)
-                        .style(Style::default().fg(theme.text_muted)),
-                    detail_rect,
-                );
-            }
-        } else {
-            // Show fetched deployments in the detail pane
-            let deploy_rows: Vec<Row> = app
-                .deployments
+        let shown_deployments = app
+            .environment_deployments
+            .as_mut()
+            .map(|shown| &mut shown.table)
+            .filter(|table| !table.items.is_empty());
+        if let Some(deployments) = shown_deployments {
+            let deploy_rows: Vec<Row> = deployments
                 .items
                 .iter()
                 .map(|d| {
@@ -3424,7 +3403,29 @@ pub(crate) fn render_tab_environments(
                         .border_style(Style::default().fg(theme.border)),
                 )
                 .row_highlight_style(highlight_style);
-            f.render_stateful_widget(deploy_table, detail_rect, &mut app.deployments.state);
+            f.render_stateful_widget(deploy_table, detail_rect, &mut deployments.state);
+        } else if let Some(idx) = app.environments.state.selected() {
+            if let Some(env) = filtered.get(idx) {
+                let doc = crate::entity_editor::build_environment_document(env);
+                let max_detail_scroll = super::inspector::render_entity_inspector(
+                    f,
+                    &doc,
+                    detail_rect,
+                    super::inspector::InspectorMode::ReadOnly {
+                        scroll: app.detail_scroll,
+                        title_suffix: "",
+                    },
+                    &app.label_colors,
+                );
+                settle_detail_scroll(app, max_detail_scroll);
+            }
+        } else {
+            f.render_widget(
+                Paragraph::new("Select an environment to view details...")
+                    .block(preview_block)
+                    .style(Style::default().fg(theme.text_muted)),
+                detail_rect,
+            );
         }
     }
 }

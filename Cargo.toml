@@ -29,7 +29,7 @@ fuzzy-matcher = "0.3.7"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 async-trait = "0.1.89"
 clap = { version = "4", features = ["derive"] }
-serde_yaml = "0.9"
+serde-saphyr = { version = "1.1", default-features = false, features = ["deserialize"] }
 pulldown-cmark = { version = "0.13.0", default-features = false }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 [target.'cfg(unix)'.dependencies]

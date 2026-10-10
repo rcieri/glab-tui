@@ -807,7 +807,7 @@ Searchable multi-select popups are used for choosing labels, assignees, reviewer
 | [`anyhow`](https://crates.io/crates/anyhow) | 1.0 | Ergonomic error handling |
 | [`async-trait`](https://crates.io/crates/async-trait) | 0.1.92 | Async trait support for Backend trait |
 | [`clap`](https://crates.io/crates/clap) | 4 (derive) | CLI argument parsing for subcommands |
-| [`serde_yaml`](https://crates.io/crates/serde_yaml) | 0.9 | YAML output for `doctor` diagnostics |
+| [`serde-saphyr`](https://crates.io/crates/serde-saphyr) | 1.1 (deserialize) | Parsing `workflow_dispatch` inputs from GitHub workflow files |
 | [`chrono`](https://crates.io/crates/chrono) | 0.4 | Timestamp formatting ("2 hours ago") |
 | [`tempfile`](https://crates.io/crates/tempfile) | 3.10 | Temporary files for editor integration |
 | [`fuzzy-matcher`](https://crates.io/crates/fuzzy-matcher) | 0.3 | Fuzzy search/filter across table columns |
@@ -907,7 +907,7 @@ Prerequisites: `gh` (authenticated), `opencode`, `cargo` (`docker` for the final
 1. Fork the repo and create a feature branch.
 2. Keep commits atomic and follow [Conventional Commits](https://www.conventionalcommits.org/).
 3. Run `cargo fmt` and `cargo clippy -- -D warnings` before opening a PR.
-4. Add or update tests where relevant (run unit tests with `cargo test --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
+4. Add or update tests where relevant (run unit tests with `cargo test --lib --bin glab-tui` and e2e tests with `cargo test --test e2e -- --test-threads=1`).
 
 ### Development & Tasks (`just`)
 
@@ -922,8 +922,10 @@ just check      # runs fmt check, clippy, unit tests, and single-threaded e2e te
 Available recipes:
 - `just fmt` / `just fmt-check` — format code or verify formatting
 - `just lint` — run Clippy with `-Dwarnings`
-- `just test` — run unit tests (`cargo test --bin glab-tui`)
+- `just test` — run unit tests (`cargo test --lib --bin glab-tui`)
 - `just e2e` — run single-threaded e2e mock suite (`cargo test --test e2e -- --test-threads=1`)
+- `just deny` — check advisories, licenses, duplicate versions and sources (requires `cargo-deny`)
+- `just fuzz <target>` — fuzz `diff_parser`, `markdown` or `ansi_trace` for 60 seconds (requires nightly and `cargo-fuzz`)
 - `just check` — run the full CI check matrix locally
 - `just cov` — generate test coverage summary (requires `cargo-llvm-cov`)
 

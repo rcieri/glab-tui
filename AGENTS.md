@@ -17,7 +17,7 @@ Instead of implementing full REST/GraphQL API clients, **`glab-tui` shells out t
 * **Terminal Handling:** `crossterm` (v0.29)
 * **Clipboard:** `arboard` (v3.6)
 * **Config/Themes:** `toml` (v1.1) crate; config at `~/.config/glab-tui/config.toml`
-* **YAML:** `serde_yaml` (v0.9) — diagnostics output
+* **YAML:** `serde-saphyr` (v1.1, `deserialize` only) — parses `workflow_dispatch` inputs from GitHub workflow files. It replaced the deprecated `serde_yaml`. serde-saphyr 1.2+ needs Rust 1.89, so the MSRV-aware resolver holds it at 1.1.
 * **Package:** `glab-tui-crate` (binary: `glab-tui`; current version `v0.9.2`)
 
 ### Dual-Engine Architecture
@@ -33,7 +33,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ## 2. Directory Structure
 
-* [src/main.rs](src/main.rs): Entry point. Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
+* [src/lib.rs](src/lib.rs): Library crate root (`glab_tui_crate`). Declares every module and the crate-root re-exports (`AppTerminal`, `keybinding_matches`, `spawn_refresh_active_tab`, the `git_helpers`/`templates`/`editor`/`entity_editor` globs). The binary and the fuzz targets both link it, so anything `main.rs` calls must be `pub`. Module unit tests run with `cargo test --lib`.
+* [src/main.rs](src/main.rs): Binary entry point (`use glab_tui_crate::*`). Sets up the terminal, initializes the `App`, handles the main `tokio` event loop, routes keypresses (via `keybinding_matches()`), and delegates UI rendering.
 * [src/app.rs](src/app.rs): Contains the global `App` state, data models for UI components (`EditMenu`, `SubmitDialog`, `Selector`, `DiffView`, `DatePicker`), and fuzzy-filtering logic.
 * [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
@@ -87,6 +88,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [diff.rs](src/ui/diff.rs): Diff view render functions.
     * [modal.rs](src/ui/modal.rs): Unified modal component.
 * [src/themes/](src/themes/): 38 bundled theme TOML files (default, clean, tokyo-night, tokyo-night-storm, oled, github-dark-hc, gruvbox, gruvbox-material, nord, nord-light, catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe, catppuccin-latte, dracula, dracula-light, deep-space, solarized-dark, solarized-light, monokai, one-dark, synthwave-84, everforest-dark, rose-pine, rose-pine-moon, rose-pine-dawn, kanagawa, cyberpunk, ayu-dark, ayu-mirage, ayu-light, night-owl, poimandres, vesper, sonokai, pop-dark, adwaita-dark, adwaita-light).
+* [fuzz/](fuzz/): `cargo-fuzz` targets (own workspace, nightly only) for the parsers that take untrusted input: `diff_parser` (`DiffView::new`), `markdown` (`render_markdown`, with a fuzzed width) and `ansi_trace` (`parse_ansi_trace`). `.github/workflows/fuzz.yml` runs each for 60 seconds, seeded from `tests/fixtures/mr_diff.txt`, `README.md`/`CHANGELOG.md` and `fuzz/seeds/ansi_trace.log`. Run one locally with `just fuzz <target>`.
+* [deny.toml](deny.toml) / [.cargo/audit.toml](.cargo/audit.toml): supply-chain policy for `cargo deny check` and `cargo audit` (`.github/workflows/audit.yml`). `cargo audit` only reads `.cargo/audit.toml`, never a root `audit.toml`. Every advisory ignore and duplicate-version skip carries the reason it is allowed. Re-check the syntect-only ignores (`bincode`, `yaml-rust`) whenever syntect is upgraded.
 
 ## 3. Core Architectural Patterns
 
@@ -6339,6 +6342,7 @@ Below is the complete reference of all available `glab` and `gh` subcommands and
 * **Test env isolation:** Unit tests that mutate process-global environment variables (config paths via `GLAB_TUI_CONFIG`/`XDG_CONFIG_HOME`, cache dirs) must acquire `config::TEST_ENV_MUTEX` first — env vars are visible to every test thread, and overlapping mutations caused an intermittent Windows CI failure. Never introduce a second ad-hoc mutex for env mutation; reuse the crate-wide one.
 * **Dependencies:** Do not add large dependencies (like `reqwest` or `hyper`) for HTTP API calls. The architecture strictly dictates delegating HTTP requests to `gh` and `glab` CLI binaries via `tokio::process::Command` in `GitlabClient`.
 * **Format & Lint:** Run `cargo fmt` and `cargo clippy -- -D warnings` before providing code. The CI enforces zero clippy warnings.
+* **Tests:** Unit tests live in the library: run `cargo test --lib --bin glab-tui` (`just test`). Running `--bin glab-tui` alone only covers the tests in `main.rs`.
 * **MSRV:** The Minimum Supported Rust Version is `1.88`. Edition 2024
   requires Rust 1.85+, but current transitive dependencies raise the floor
   to 1.88 (see `.github/workflows/msrv.yml`). Ensure code is compatible.

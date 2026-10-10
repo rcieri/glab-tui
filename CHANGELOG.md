@@ -18,6 +18,11 @@ All notable changes to this project will be documented in this file.
 - **Selector filter borders** — The italic placeholder in selector filter boxes no longer italicises the box borders, which terminals without an italic face (e.g. Fira Mono) drew slanted (#538).
 - **Stacked-PR queries only when shown** — GitHub PR refreshes no longer run the stacked-PR GraphQL queries for data nothing displays. The batch stack query runs once per PR-list fetch only while the `Stack` column is shown (or the list is grouped by it), and a PR's full stack is fetched once per session when the inspector opens on it or `Y` is pressed, instead of once per stacked PR on every refresh (#547).
 
+### Maintenance
+- **Supply-chain policy with cargo-deny** — `deny.toml` and a `Cargo Deny` job in the Security Audit workflow now enforce the license allow list, duplicate-version bans (each existing duplicate is skipped with the reason it is there) and crates.io-only sources, alongside the existing advisory check. The `cargo audit` ignores moved to `.cargo/audit.toml`: `cargo audit` never read the root `audit.toml`. Each ignore names the crate syntect pulls in (`bincode`, `yaml-rust`) and its advisory class, unmaintained rather than vulnerable (#563).
+- **`serde_yaml` replaced by `serde-saphyr`** — Workflow `workflow_dispatch` inputs are parsed with the maintained, pure-Rust `serde-saphyr` instead of the deprecated `serde_yaml` and its `unsafe-libyaml` C port (#563).
+- **Fuzz targets for untrusted-input parsers** — `cargo-fuzz` targets for the diff parser, the markdown renderer and the ANSI/SGR job-trace parser, each run for 60 seconds in a new Fuzz workflow. The crate now ships a library target (`src/lib.rs`) that the binary and the fuzz targets share, so unit tests run with `cargo test --lib --bin glab-tui` (#563).
+
 ## [0.9.2] - 2026-09-26
 
 ### Features

@@ -207,6 +207,115 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
+    fn binding_with_inner_space_matches_nothing() {
+        for code in [KeyCode::Char('g'), KeyCode::Char(' ')] {
+            let event = KeyEvent::new(code, KeyModifiers::NONE);
+            assert!(!keybinding_matches("g g", &event));
+        }
+    }
+
+    #[test]
+    fn lone_space_binding_matches_space_key() {
+        let event = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+        assert!(keybinding_matches(" ", &event));
+    }
+
+    #[test]
+    fn lone_space_binding_does_not_match_shifted_space() {
+        let event = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::SHIFT);
+        assert!(!keybinding_matches(" ", &event));
+    }
+
+    /// Named keys match their key whatever modifiers are held; `Tab` is the
+    /// exception and only matches without modifiers.
+    #[test]
+    fn named_keys_ignore_modifiers_except_tab() {
+        for (binding, code) in [
+            ("Space", KeyCode::Char(' ')),
+            ("Enter", KeyCode::Enter),
+            ("Esc", KeyCode::Esc),
+            ("Backspace", KeyCode::Backspace),
+            ("Up", KeyCode::Up),
+            ("PageDown", KeyCode::PageDown),
+            ("Shift+Tab", KeyCode::BackTab),
+            ("F5", KeyCode::F(5)),
+            ("F12", KeyCode::F(12)),
+        ] {
+            let event = KeyEvent::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+            assert!(keybinding_matches(binding, &event), "{binding:?}");
+        }
+        let ctrl_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL);
+        assert!(!keybinding_matches("Tab", &ctrl_tab));
+    }
+
+    #[test]
+    fn alt_enter_matches_only_alt_modified_enter() {
+        let alt = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
+        assert!(keybinding_matches("Alt+Enter", &alt));
+        assert!(keybinding_matches("Alt+Return", &alt));
+        let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!keybinding_matches("Alt+Enter", &plain));
+    }
+
+    /// A lone `F` is read as a function key without a number, so it matches
+    /// neither a function key nor the `F` character.
+    #[test]
+    fn lone_f_binding_matches_nothing() {
+        let shifted = KeyEvent::new(KeyCode::Char('F'), KeyModifiers::SHIFT);
+        assert!(!keybinding_matches("F", &shifted));
+        let plain = KeyEvent::new(KeyCode::Char('F'), KeyModifiers::NONE);
+        assert!(!keybinding_matches("F", &plain));
+    }
+
+    /// `F` followed by something that is not a number is a plain
+    /// two-character sequence.
+    #[test]
+    fn f_followed_by_a_letter_is_a_sequence() {
+        let event = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(super::matches_with_pending("Fx", Some('F'), &event));
+    }
+
+    #[test]
+    fn single_non_ascii_char_binding_matches_nothing() {
+        let event = KeyEvent::new(KeyCode::Char('é'), KeyModifiers::NONE);
+        assert!(!keybinding_matches("é", &event));
+    }
+
+    #[test]
+    fn named_keys_are_case_sensitive() {
+        let event = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!keybinding_matches("enter", &event));
+    }
+
+    #[test]
+    fn modifier_prefix_spellings_are_case_variants_of_one_word() {
+        let ctrl = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL);
+        for binding in ["Ctrl+g", "ctrl+g", "CTRL+G"] {
+            assert!(keybinding_matches(binding, &ctrl), "{binding:?}");
+        }
+        assert!(!keybinding_matches("cTrl+g", &ctrl));
+        let alt = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
+        for binding in ["Alt+g", "alt+g", "ALT+G"] {
+            assert!(keybinding_matches(binding, &alt), "{binding:?}");
+        }
+    }
+
+    /// A sequence's second key must arrive without modifiers, so an
+    /// uppercase second character (which carries `SHIFT`) never completes it.
+    #[test]
+    fn sequence_with_uppercase_second_char_never_completes() {
+        let event = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
+        assert!(!super::matches_with_pending("gG", Some('g'), &event));
+    }
+
+    #[test]
+    fn three_char_binding_never_matches() {
+        let event = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(!keybinding_matches("ggg", &event));
+        assert!(!super::matches_with_pending("ggg", Some('g'), &event));
+    }
+
+    #[test]
     fn lowercase_single_char_binding_matches_unmodified_key() {
         let event = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
         assert!(keybinding_matches("a", &event));
@@ -380,6 +489,39 @@ mod tests {
                 keybinding_matches(binding, &event),
                 "{binding:?} does not match its own event {event:?}"
             );
+        }
+    }
+
+    /// The event `binding_key_event` builds carries no modifiers for a named
+    /// key, `SHIFT` for an uppercase letter and the modifier of a `+` combo,
+    /// with the combo's character lowercased.
+    #[test]
+    fn binding_key_event_builds_the_canonical_event() {
+        for (binding, code, modifiers) in [
+            ("a", KeyCode::Char('a'), KeyModifiers::NONE),
+            ("A", KeyCode::Char('A'), KeyModifiers::SHIFT),
+            (" ", KeyCode::Char(' '), KeyModifiers::NONE),
+            ("Space", KeyCode::Char(' '), KeyModifiers::NONE),
+            ("Tab", KeyCode::Tab, KeyModifiers::NONE),
+            ("Shift+Tab", KeyCode::BackTab, KeyModifiers::NONE),
+            ("F5", KeyCode::F(5), KeyModifiers::NONE),
+            ("Ctrl+G", KeyCode::Char('g'), KeyModifiers::CONTROL),
+            ("Alt+W", KeyCode::Char('w'), KeyModifiers::ALT),
+            ("Ctrl+Return", KeyCode::Enter, KeyModifiers::CONTROL),
+            ("Alt+Enter", KeyCode::Enter, KeyModifiers::ALT),
+        ] {
+            assert_eq!(
+                super::binding_key_event(binding),
+                Some(KeyEvent::new(code, modifiers)),
+                "{binding:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn binding_key_event_rejects_sequences_and_spaced_bindings() {
+        for binding in ["Fx", "öö", "ggg", "g g", "a+", "+a"] {
+            assert_eq!(super::binding_key_event(binding), None, "{binding:?}");
         }
     }
 

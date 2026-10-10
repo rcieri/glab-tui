@@ -15,8 +15,11 @@
 #   diff:      the mrs arguments + FilePath LineNumber (under the diff cursor)
 #
 # Every argument is also exported as GLAB_TUI_<NAME> (GLAB_TUI_PR_NUMBER,
-# GLAB_TUI_ISSUE_TITLE, ...). A {{.Arg}} whose value holds a shell
-# metacharacter is refused, so quote the variable instead for free text.
+# GLAB_TUI_ISSUE_TITLE, ...). A {{.Arg}} is only spliced in when its value is a
+# single plain word: one that starts with '-', or holds whitespace or a
+# character the shell interprets (` $ ; & | < > ( ) \ " ' ~ * ? [ ] { } # =),
+# is refused. Free text such as titles must go through the quoted variable,
+# after -- when it could start with '-'.
 #
 # With issues or MRs selected (Space, or v select mode), an issues/mrs binding
 # runs once per selected item.
@@ -70,7 +73,8 @@ name = "echo issue (herdr pane)"
 background = true
 command = '''pane=$(herdr pane split --current --direction right --no-focus --env GLAB_TUI_ISSUE_TITLE="$GLAB_TUI_ISSUE_TITLE" | jq -r .result.pane.pane_id) && herdr pane run "$pane" "echo \"Issue #{{.IssueNumber}}: \$GLAB_TUI_ISSUE_TITLE\""'''
 
-# Free text such as titles goes through the environment, which is always safe.
+# Free text such as titles goes through the environment, the only safe way to
+# pass it; {{.IssueTitle}} would be refused for any title with a space.
 [[custom_keybindings.issues]]
 key = "x"
 name = "print issue title"

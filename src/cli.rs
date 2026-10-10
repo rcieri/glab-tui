@@ -579,7 +579,7 @@ pub async fn run_update() {
             }
         }
         Err(e) => {
-            eprintln!("{}", styled(&format!("Update failed: {}", e), C_RED));
+            eprintln!("{}", styled(&format!("Update failed: {e:#}"), C_RED));
             std::process::exit(1);
         }
     }

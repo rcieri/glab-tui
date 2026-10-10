@@ -83,7 +83,7 @@ A terminal user interface (TUI) for GitLab and GitHub, built on top of [`glab`](
 - **Inline editing** — full edit menus with searchable multi-select selectors for labels, assignees, reviewers, and milestones
 - **Interactive Date Picker** — calendar widget for Due Date / Start Date fields in edit menus
 - **External editor** — descriptions and freeform fields open in your `$EDITOR` / `$VISUAL` (also via `Ctrl+E`)
-- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates
+- **Self-update** — press `u` in the TUI (or run `glab-tui --update`) to check for and install updates. Needs `curl` (not `gh`), and the download is checked against the release's published SHA-256 before it replaces the binary
 - **CLI subcommands** — `doctor` (system diagnostics), `clean-cache` (stale cache cleanup), `cache` (list cached data), `open` (open entity in browser), `repos` (list recent repositories), `review` (read threads and post review comments as JSON, for scripts and agents)
 - **Lazy-load tabs** — data for each tab is only fetched the first time you switch to it; refresh with `F5` / `Ctrl+R`
 - **Themes** — 28 built-in color themes (including `oled`, `github-dark-hc`, light variants, Catppuccin, Tokyo Night, Kanagawa, Cyberpunk, etc.); fully customizable via `config.toml` or custom `.toml` files
@@ -191,7 +191,7 @@ Or with `wget`:
 wget -qO- https://raw.githubusercontent.com/rcieri/glab-tui/main/install.sh | sh
 ```
 
-The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environment variable).
+The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environment variable). The script verifies the archive against the release's published `.sha256` before installing and aborts on a mismatch; it needs `sha256sum` or `shasum`.
 
 ### Install script (Windows)
 
@@ -199,7 +199,7 @@ The binary is installed to `~/.local/bin/` (configurable via `PREFIX` environmen
 iwr -useb https://raw.githubusercontent.com/rcieri/glab-tui/main/install.ps1 | iex
 ```
 
-The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter).
+The binary is installed to `$env:USERPROFILE\.local\bin\` (configurable via `-Prefix` parameter). The script verifies the archive against the release's published `.sha256` before installing and aborts on a mismatch.
 
 ### Docker
 
@@ -870,7 +870,7 @@ src/
     ├── format.rs    # Time formatting, tab expansion, text wrapping
     ├── markdown.rs  # CommonMark and GFM Markdown rendering
     ├── ui.rs        # StatefulTable generic helper
-    └── update.rs    # GitHub releases self-updater with multi-target Linux selection
+    └── update.rs    # GitHub releases self-updater (curl, checksum-verified) with multi-target Linux selection
 ```
 
 ---

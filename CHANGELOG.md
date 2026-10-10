@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **Multi-line diff comments** — Continuation lines of diff comments were indented by the prefix's byte length instead of its display width, shifting them two columns right of the first line (#538).
 - **Selector filter borders** — The italic placeholder in selector filter boxes no longer italicises the box borders, which terminals without an italic face (e.g. Fira Mono) drew slanted (#538).
 - **Stacked-PR queries only when shown** — GitHub PR refreshes no longer run the stacked-PR GraphQL queries for data nothing displays. The batch stack query runs once per PR-list fetch only while the `Stack` column is shown (or the list is grouped by it), and a PR's full stack is fetched once per session when the inspector opens on it or `Y` is pressed, instead of once per stacked PR on every refresh (#547).
+- **Checksum-verified installs and self-update** — `install.sh`, `install.ps1` and the self-updater (`u` / `glab-tui --update`) now download the release's `<asset>.sha256` and verify the archive before extracting it. A mismatch or a missing checksum aborts without touching the installed binary. The self-updater talks to GitHub through `curl` instead of the `gh` CLI, so GitLab-only installs no longer need `gh` to update (#564).
 
 ## [0.9.2] - 2026-09-26
 

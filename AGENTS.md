@@ -143,12 +143,12 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * **Diff view** supports inline comments, code suggestions, draft reviews, dynamic gutter sizing, and tab expansion:
   - `DiscussionNote` / `NotePosition` structs in [src/domain/mr.rs](src/domain/mr.rs).
   - `list_mr_notes()` fetches notes for an MR via the API.
-  - Draft comments are stored in `app.draft_comments: Vec<DraftComment>` (`DraftComment` / `ReviewEvent` live in [src/domain/review.rs](src/domain/review.rs)) and submitted atomically.
+  - Draft comments are the open diff's working copy in `app.draft_comments: Vec<DraftComment>` (`DraftComment` / `ReviewEvent` live in [src/domain/review.rs](src/domain/review.rs)) and are submitted atomically. Every add, edit, delete, discard and submit calls `App::persist_draft_comments(mr_iid)`, which mirrors them into `ProjectCache::draft_comments` (`mr_iid → Vec<DraftComment>`) and saves the cache. `DiffFetched` reloads them with `App::draft_comments_for_mr`, so drafts survive closing the diff and restarting.
   - Every review mutation goes through `Backend::submit_review` / `reply_to_thread` / `set_thread_resolved`; the diff view and the `glab-tui review` subcommand share them. A comment posted outside review mode is a one-comment `submit_review`. Do not shell out to `gh api` / `glab api` for reviews from the event loop.
   - Current (already-pushed) comments live in `app.current_comments: Vec<DiscussionNote>`.
   - Diffs load through `fetch::fetch_diff_view`, which builds the `DiffView` on a blocking thread (parsing and highlighting a large diff takes seconds) and sends `DiffFetched { diff_view, comments }`; the "Fetching Diff" overlay stays up until it arrives. `D` is ignored while `app.diff_loading` is set, so a second press cannot start a second fetch.
   - The parser in `DiffView::new` follows each hunk's `@@` line counts: while a hunk still owes lines, every line is content, so a removed `-- comment` (`--- comment`) or added `++ x` is never read as a file header. `\ No newline at end of file` is a `Meta` row with no line numbers. Paths are read with `parse_diff_git_paths` / `parse_patch_header_path`, which keep spaces and decode git's C-style quoting.
-  - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`).
+  - Leaving the diff view with pending drafts opens the `SubmitDialog` (`ConfirmAction::SubmitReview(mr_iid)`) with `Submit`, `Keep drafts`, `Discard` and `Cancel`. `Esc`/`Cancel` only close the dialog and return to the diff with drafts and `in_review_mode` untouched. `Keep drafts` closes the diff and leaves the drafts in the cache. `Discard` deletes them (memory and cache) and closes the diff.
   - Open diff key is `D` (remappable via `keybindings.mrs.view_diff`).
 * **GitHub diffs over 20,000 lines:** GitHub refuses to serve them (`gh pr diff` fails with HTTP 406 `PullRequest.diff too_large`). `GhBackend::get_mr_diff` then builds the diff with git in the clone `cache::find_local_checkout` finds for the PR's repository (`diff_pr_locally` / `diff_pr_in_checkout` in [src/backend/gh.rs](src/backend/gh.rs)). It only fetches (skipped when both commits are already local) and diffs — no checkout, no branch, no index or working-tree change. Without a known clone the error says a local clone is needed; every other `gh pr diff` error is returned unchanged. Review comments and review submission are unaffected: they go through the API with the same path/line anchors. E2E coverage: `tests/e2e/pr_diff_fallback.rs`.
 * **Dynamic line numbers & tab expansion:** Gutter width is dynamically calculated in `DiffView::new` from the widest line number in the diff (floored at 4). Tabs are expanded to spaces at tab stops at diff parse time (`expand_tabs`) so Go/Makefiles maintain indentation without breaking syntax highlighting or search indices.
@@ -172,7 +172,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
-* `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, and `reviewed_files` in addition to API data.
+* `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, `reviewed_files`, and `draft_comments` in addition to API data.
 * Cache is written on every successful data fetch; read on startup.
 
 ### Config & Theme System
@@ -214,8 +214,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### Submit Dialog & Confirmations (`SubmitDialog`)
 * Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review) open a `SubmitDialog` ([src/app.rs](src/app.rs)).
-* Includes title, context-aware description body, optional toggleable options (squash, delete branch, auto-merge), and explicit `[ Submit ]` (left, idx 0) and `[ Cancel ]` (right) buttons.
-* Navigation: `h`/`l` / Left/Right for horizontal button jumping, `j`/`k` / Up/Down for vertical option traversal, `Tab`/`BackTab` for full control cycling, `Space` to toggle options, `Enter` to activate focused button, `Esc` to cancel.
+* Includes title, context-aware description body, optional toggleable options (squash, delete branch, auto-merge), and explicit `[ Submit ]` (left, idx 0) and `[ Cancel ]` (right) buttons. `SubmitDialog::extra_buttons` (`DialogChoice`) adds buttons between them; the submit-review dialog uses it for `Keep drafts` / `Discard`.
+* Navigation: `h`/`l` / Left/Right move to the neighbouring button, `j`/`k` / Up/Down for vertical option traversal, `Tab`/`BackTab` for full control cycling, `Space` to toggle options, `Enter` to activate focused button, `Esc` to cancel. Cancel never has side effects.
 * Destructive actions (close, delete, revoke) default the cursor to Cancel; reversible actions (merge, rebase, review) default to Submit.
 * Mouse clicks on button boxes or option rows are supported.
 

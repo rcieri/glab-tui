@@ -3062,6 +3062,28 @@ impl SubmitOption {
     }
 }
 
+/// A button between Submit and Cancel in a [`SubmitDialog`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogChoice {
+    /// Close the diff view and leave the review drafts saved for later.
+    KeepDrafts,
+    /// Throw the review drafts away and close the diff view.
+    DiscardDrafts,
+}
+
+impl DialogChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::KeepDrafts => "Keep drafts",
+            Self::DiscardDrafts => "Discard",
+        }
+    }
+
+    pub fn is_destructive(self) -> bool {
+        matches!(self, Self::DiscardDrafts)
+    }
+}
+
 /// A modal dialog that gates a mutating API call behind an explicit
 /// Submit button click. Replaces the old two-button YES/NO popup
 /// (issue #315).
@@ -3077,20 +3099,19 @@ impl SubmitOption {
 /// │ [x] <option label>             │
 /// │                                │
 /// ├────────────────────────────────┤
-/// │  [ Submit ]      [ Cancel ]    │
+/// │ [Submit] [<extra>…]  [Cancel]  │
 /// └────────────────────────────────┘
 /// ```
 ///
 /// Cursor layout: index `0` is Submit (leftmost button), `1..=options.len()`
-/// are the options (one per toggle), `options.len() + 1` is Cancel
-/// (rightmost button).
+/// are the options (one per toggle), then one index per extra button, and
+/// `cancel_idx()` is Cancel (rightmost button).
 ///
 /// Keyboard:
 /// - `Tab` / `Shift-Tab` — move vertically through all rows (options + buttons)
 /// - `j` / `Down` / `k` / `Up` — move vertically through options only
-/// - `h` / `Left` (on a button) — jump to the Submit button
-/// - `l` / `Right` (on a button) — jump to the Cancel button
-/// - `Enter` — activate focused (Cancel closes, option toggles, Submit runs the action)
+/// - `h` / `Left` / `l` / `Right` (on a button) — move to the neighbouring button
+/// - `Enter` — activate focused (Cancel closes, option toggles, a button runs its action)
 /// - `Space` — toggle the focused option (no-op on buttons)
 /// - `Esc` — cancel (equivalent to Cancel)
 #[derive(Clone, Debug)]
@@ -3101,7 +3122,10 @@ pub struct SubmitDialog {
     pub body: String,
     pub options: Vec<SubmitOption>,
     pub submit_label: String,
-    /// `0` = Submit, `1..=options.len()` = options, `options.len() + 1` = Cancel.
+    /// Buttons between Submit and Cancel, left to right.
+    pub extra_buttons: Vec<DialogChoice>,
+    /// `0` = Submit, `1..=options.len()` = options, then the extra buttons,
+    /// `cancel_idx()` = Cancel.
     pub cursor_idx: usize,
 }
 
@@ -3115,9 +3139,10 @@ impl SubmitDialog {
     /// `DIALOG_WIDTH` minus the block's borders and horizontal padding.
     pub const BODY_INNER_WIDTH: usize = 56;
 
-    /// Index of the Cancel button (rendered on the right, after the options).
+    /// Index of the Cancel button (rendered on the right, after the options
+    /// and the extra buttons).
     pub fn cancel_idx(&self) -> usize {
-        self.options.len() + 1
+        self.options.len() + self.extra_buttons.len() + 1
     }
 
     pub fn is_on_submit(&self) -> bool {
@@ -3128,6 +3153,10 @@ impl SubmitDialog {
         self.cursor_idx == self.cancel_idx()
     }
 
+    pub fn is_on_button(&self) -> bool {
+        self.option_idx().is_none()
+    }
+
     /// `None` when on a button, `Some(i)` when on the `i`-th option.
     pub fn option_idx(&self) -> Option<usize> {
         if self.cursor_idx >= 1 && self.cursor_idx <= self.options.len() {
@@ -3135,6 +3164,33 @@ impl SubmitDialog {
         } else {
             None
         }
+    }
+
+    /// The extra button under the cursor, if any.
+    pub fn focused_choice(&self) -> Option<DialogChoice> {
+        self.cursor_idx
+            .checked_sub(self.options.len() + 1)
+            .and_then(|i| self.extra_buttons.get(i).copied())
+    }
+
+    /// Cursor positions of the buttons, left to right: Submit, the extra
+    /// buttons, Cancel.
+    pub fn button_cursors(&self) -> impl Iterator<Item = usize> + use<> {
+        std::iter::once(Self::SUBMIT_IDX).chain(self.options.len() + 1..=self.cancel_idx())
+    }
+
+    /// Moves to the button left (`step < 0`) or right (`step > 0`) of the
+    /// focused one, stopping at either end. No-op on an option row.
+    pub fn move_between_buttons(&mut self, step: isize) {
+        if !self.is_on_button() {
+            return;
+        }
+        let buttons: Vec<usize> = self.button_cursors().collect();
+        let Some(pos) = buttons.iter().position(|&c| c == self.cursor_idx) else {
+            return;
+        };
+        let target = pos.saturating_add_signed(step).min(buttons.len() - 1);
+        self.cursor_idx = buttons[target];
     }
 
     /// Construct a SubmitDialog that defaults its cursor to Submit (left).
@@ -3164,6 +3220,7 @@ impl SubmitDialog {
             body: body.into(),
             options,
             submit_label: submit_label.into(),
+            extra_buttons: Vec::new(),
             cursor_idx: Self::SUBMIT_IDX,
         }
     }
@@ -3196,6 +3253,7 @@ impl SubmitDialog {
             body: body.into(),
             options,
             submit_label: submit_label.into(),
+            extra_buttons: Vec::new(),
             cursor_idx: options_len + 1,
         }
     }
@@ -3415,31 +3473,43 @@ impl SubmitDialog {
                     false,
                 )
             }
-            ConfirmAction::SubmitReview(iid) => (
-                "Submit Review".to_string(),
-                format!(
-                    "You have pending draft comments on {mr_short} #{iid}.\nSubmit your review now?"
-                ),
-                "Submit".to_string(),
-                vec![],
-                false,
-            ),
+            ConfirmAction::SubmitReview(iid) => {
+                let count = app.draft_comments.len();
+                let noun = if count == 1 { "comment" } else { "comments" };
+                (
+                    "Submit Review".to_string(),
+                    format!(
+                        "You have {count} draft {noun} on {mr_short} #{iid}.\n\
+                         Submit them as a review, keep them for later or discard them. \
+                         Cancel returns to the diff."
+                    ),
+                    "Submit".to_string(),
+                    vec![],
+                    false,
+                )
+            }
+        };
+        let extra_buttons = match &action {
+            ConfirmAction::SubmitReview(_) => {
+                vec![DialogChoice::KeepDrafts, DialogChoice::DiscardDrafts]
+            }
+            _ => Vec::new(),
         };
 
-        let cursor_idx = if safe {
-            options.len() + 1
-        } else {
-            Self::SUBMIT_IDX
-        };
-        Self {
+        let mut dialog = Self {
             action: action_clone,
             project_path,
             title,
             body,
             options,
             submit_label,
-            cursor_idx,
+            extra_buttons,
+            cursor_idx: Self::SUBMIT_IDX,
+        };
+        if safe {
+            dialog.cursor_idx = dialog.cancel_idx();
         }
+        dialog
     }
 }
 
@@ -4954,6 +5024,28 @@ impl App {
         let mut paths: Vec<String> = reviewed.iter().cloned().collect();
         paths.sort();
         self.project_cache.reviewed_files.insert(mr_iid, paths);
+    }
+
+    /// Draft review comments saved for an MR/PR, restored from the project cache.
+    pub fn draft_comments_for_mr(&self, mr_iid: u64) -> Vec<DraftComment> {
+        self.project_cache
+            .draft_comments
+            .get(&mr_iid)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Saves `draft_comments` as the drafts of an MR/PR and writes the project
+    /// cache to disk, so drafts outlive the diff view and the process.
+    pub fn persist_draft_comments(&mut self, mr_iid: u64) {
+        if self.draft_comments.is_empty() {
+            self.project_cache.draft_comments.remove(&mr_iid);
+        } else {
+            self.project_cache
+                .draft_comments
+                .insert(mr_iid, self.draft_comments.clone());
+        }
+        crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }
 
     pub fn unresolved_threads_count_for_path(&self, path: &str) -> usize {
@@ -8194,6 +8286,44 @@ mod tests {
         let rebase = SubmitDialog::build(ConfirmAction::RebaseMr(12), &app);
         assert!(rebase.is_on_submit());
         assert_eq!(rebase.submit_label, "Rebase");
+    }
+
+    #[test]
+    fn submit_review_dialog_buttons_run_submit_keep_discard_cancel_and_stop_at_the_ends() {
+        let app = App::default();
+        let mut dialog = SubmitDialog::build(ConfirmAction::SubmitReview(3), &app);
+        let focused = |d: &SubmitDialog| {
+            if d.is_on_submit() {
+                "Submit"
+            } else if d.is_on_cancel() {
+                "Cancel"
+            } else {
+                d.focused_choice().map_or("option", DialogChoice::label)
+            }
+        };
+        let mut visited = vec![focused(&dialog)];
+        for _ in 0..4 {
+            dialog.move_between_buttons(1);
+            visited.push(focused(&dialog));
+        }
+        for _ in 0..4 {
+            dialog.move_between_buttons(-1);
+            visited.push(focused(&dialog));
+        }
+        assert_eq!(
+            visited,
+            [
+                "Submit",
+                "Keep drafts",
+                "Discard",
+                "Cancel",
+                "Cancel",
+                "Discard",
+                "Keep drafts",
+                "Submit",
+                "Submit"
+            ]
+        );
     }
 
     #[test]

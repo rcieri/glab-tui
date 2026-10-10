@@ -7,7 +7,7 @@ use crate::config::{ICONS, THEME};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
@@ -1148,75 +1148,66 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             sep,
         );
 
-        let halves = Layout::default()
+        let accent_for_submit = if dialog.action.is_destructive() {
+            theme.red
+        } else {
+            theme.green
+        };
+        let button_style = |selected: bool, accent: Option<Color>| {
+            let (fg, bg) = match (selected, accent) {
+                (true, Some(accent)) => (theme.bg, accent),
+                (false, Some(accent)) => (accent, theme.bg),
+                (true, None) => (theme.bg, theme.border_focused),
+                (false, None) => (theme.text_normal, theme.bg),
+            };
+            let modifier = if selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            };
+            Style::default().fg(fg).bg(bg).add_modifier(modifier)
+        };
+        let buttons_row: Vec<(usize, String, Option<Color>)> = dialog
+            .button_cursors()
+            .map(|cursor| {
+                if cursor == crate::app::SubmitDialog::SUBMIT_IDX {
+                    (
+                        cursor,
+                        format!("{} {}", icons.check_on, dialog.submit_label),
+                        Some(accent_for_submit),
+                    )
+                } else if cursor == dialog.cancel_idx() {
+                    (cursor, format!("{} Cancel", icons.check_off), None)
+                } else {
+                    let choice = dialog.extra_buttons[cursor - dialog.options.len() - 1];
+                    let accent = choice.is_destructive().then_some(theme.red);
+                    (cursor, choice.label().to_string(), accent)
+                }
+            })
+            .collect();
+
+        let button_count = buttons_row.len() as u32;
+        let constraints: Vec<Constraint> = (0..buttons_row.len())
+            .flat_map(|i| {
+                let spacer = (i > 0).then_some(Constraint::Length(1));
+                spacer
+                    .into_iter()
+                    .chain(std::iter::once(Constraint::Ratio(1, button_count)))
+            })
+            .collect();
+        let cells = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Ratio(1, 2),
-                Constraint::Length(1),
-                Constraint::Ratio(1, 2),
-            ])
+            .constraints(constraints)
             .split(buttons);
 
-        let submit_selected = dialog.is_on_submit();
-        let cancel_selected = dialog.is_on_cancel();
-
-        // Cancel button (right half)
-        f.render_widget(
-            Paragraph::new(format!("{} Cancel", icons.check_off))
-                .alignment(Alignment::Center)
-                .style(
-                    Style::default()
-                        .fg(if cancel_selected {
-                            theme.bg
-                        } else {
-                            theme.text_normal
-                        })
-                        .bg(if cancel_selected {
-                            theme.border_focused
-                        } else {
-                            theme.bg
-                        })
-                        .add_modifier(if cancel_selected {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
-            halves[2],
-        );
-
-        // Submit button (left half)
-        f.render_widget(
-            Paragraph::new(format!("{} {}", icons.check_on, dialog.submit_label))
-                .alignment(Alignment::Center)
-                .style(
-                    Style::default()
-                        .fg(if submit_selected {
-                            theme.bg
-                        } else {
-                            if dialog.action.is_destructive() {
-                                theme.red
-                            } else {
-                                theme.green
-                            }
-                        })
-                        .bg(if submit_selected {
-                            if dialog.action.is_destructive() {
-                                theme.red
-                            } else {
-                                theme.green
-                            }
-                        } else {
-                            theme.bg
-                        })
-                        .add_modifier(if submit_selected {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
-            halves[0],
-        );
+        for (i, (cursor, label, accent)) in buttons_row.into_iter().enumerate() {
+            f.render_widget(
+                Paragraph::new(label)
+                    .alignment(Alignment::Center)
+                    .style(button_style(dialog.cursor_idx == cursor, accent)),
+                cells[i * 2],
+            );
+        }
     }
 
     render_help(f, app, size);

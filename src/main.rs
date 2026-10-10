@@ -440,11 +440,13 @@ fn handle_submit_dialog_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u
 
     // Click anywhere in the button band.
     if row >= band_top && row < rect.y + rect.height {
-        let mid = rect.x + rect.width / 2;
-        let cancel_idx = dialog.cancel_idx();
-        let new_cursor = if col < mid { 0 } else { cancel_idx };
+        let buttons: Vec<usize> = dialog.button_cursors().collect();
+        let inner_x = rect.x + 1;
+        let inner_width = usize::from(rect.width.saturating_sub(2).max(1));
+        let offset = usize::from(col.saturating_sub(inner_x));
+        let button = (offset * buttons.len() / inner_width).min(buttons.len() - 1);
         if let Some(d) = app.submit_dialog.as_mut() {
-            d.cursor_idx = new_cursor;
+            d.cursor_idx = buttons[button];
         }
         let key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Enter,
@@ -2046,6 +2048,7 @@ async fn main() -> Result<()> {
                         app.hide_reviewed_files,
                     );
                     app.diff_view = Some(diff_view);
+                    app.draft_comments = app.draft_comments_for_mr(mr_iid);
                     app.current_comments = comments;
                     if let (Some(overview), Some(diff_view)) =
                         (app.review_threads.as_mut(), app.diff_view.as_ref())
@@ -2352,6 +2355,7 @@ async fn main() -> Result<()> {
                                             };
                                             if app.in_review_mode {
                                                 app.draft_comments.push(comment);
+                                                app.persist_draft_comments(mr_iid);
                                                 app.status_message = Some(format!(
                                                     "Added draft comment. ({} pending)",
                                                     app.draft_comments.len()
@@ -2647,6 +2651,7 @@ async fn main() -> Result<()> {
                                         status,
                                     } => {
                                         let comments = std::mem::take(&mut app.draft_comments);
+                                        app.persist_draft_comments(mr_iid);
                                         app.in_review_mode = false;
                                         if let Some(client) = app.gitlab_client.clone() {
                                             let project = app.project_path_for_mr(mr_iid);
@@ -3919,6 +3924,11 @@ async fn main() -> Result<()> {
                                                             app.draft_comments.remove(draft_idx);
                                                         }
                                                         _ => {}
+                                                    }
+                                                    if let Some(mr_iid) =
+                                                        app.diff_view.as_ref().map(|d| d.mr_iid)
+                                                    {
+                                                        app.persist_draft_comments(mr_iid);
                                                     }
                                                 }
                                                 continue;
@@ -7806,6 +7816,7 @@ async fn main() -> Result<()> {
                                             };
                                             if app.in_review_mode {
                                                 app.draft_comments.push(comment);
+                                                app.persist_draft_comments(diff_view.mr_iid);
                                                 app.status_message = Some(format!(
                                                     "Added draft comment. ({} pending)",
                                                     app.draft_comments.len()
@@ -7899,6 +7910,7 @@ async fn main() -> Result<()> {
                                         };
                                         if app.in_review_mode {
                                             app.draft_comments.push(comment);
+                                            app.persist_draft_comments(diff_view.mr_iid);
                                             app.status_message = Some(format!(
                                                 "Added suggestion draft. ({} pending)",
                                                 app.draft_comments.len()

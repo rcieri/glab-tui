@@ -1274,26 +1274,17 @@ async fn main() -> Result<()> {
                         && !app.job_trace_loading
                         && app.job_trace_last_refresh.elapsed() >= std::time::Duration::from_secs(5)
                     {
-                        if let Some(selected) = app.jobs.state.selected() {
-                            if let Some(job) = app.filtered_jobs().get(selected) {
-                                if let Some(client) = app.gitlab_client.clone() {
-                                    let project = app.scope.as_str().to_string();
-                                    let tx = events.sender();
-                                    let job_id = job.id();
-                                    app.job_trace_loading = true;
-                                    app.job_trace_last_refresh = std::time::Instant::now();
-                                    tokio::spawn(async move {
-                                        let result = domain::pipelines::get_job_trace(
-                                            &client, &project, job_id,
-                                        )
-                                        .await;
-                                        let _ = tx.send(Event::JobTraceFetched(
-                                            job_id,
-                                            result.map_err(|e| e.to_string()),
-                                        ));
-                                    });
-                                }
-                            }
+                        let selected_job_id =
+                            app.jobs.state.selected().and_then(|selected| {
+                                app.filtered_jobs().get(selected).map(|j| j.id())
+                            });
+                        if let Some(job_id) = selected_job_id {
+                            app.job_trace_last_refresh = std::time::Instant::now();
+                            crate::handlers::tabs::spawn_job_trace_fetch(
+                                &mut app,
+                                &events.sender(),
+                                job_id,
+                            );
                         }
                     }
                     if app.active_tab != last_active_tab {
@@ -1386,6 +1377,10 @@ async fn main() -> Result<()> {
                 }
                 Event::JobTraceFetched(job_id, result) => {
                     app.job_trace_loading = false;
+                    let opens_editor = app.pending_job_trace_editor == Some(job_id);
+                    if opens_editor {
+                        app.pending_job_trace_editor = None;
+                    }
                     let current_selected_job_id = match app.active_tab {
                         app::Tab::Jobs => {
                             if let Some(idx) = app.jobs.state.selected() {
@@ -1411,6 +1406,13 @@ async fn main() -> Result<()> {
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
+                                if opens_editor {
+                                    crate::handlers::tabs::open_job_trace_in_editor(
+                                        &mut app,
+                                        job_id,
+                                        &mut terminal,
+                                    );
+                                }
                             }
                             Err(e) => {
                                 app.show_error(e);

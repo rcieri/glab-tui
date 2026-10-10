@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **Multi-line diff comments** — Continuation lines of diff comments were indented by the prefix's byte length instead of its display width, shifting them two columns right of the first line (#538).
 - **Selector filter borders** — The italic placeholder in selector filter boxes no longer italicises the box borders, which terminals without an italic face (e.g. Fira Mono) drew slanted (#538).
 - **Stacked-PR queries only when shown** — GitHub PR refreshes no longer run the stacked-PR GraphQL queries for data nothing displays. The batch stack query runs once per PR-list fetch only while the `Stack` column is shown (or the list is grouped by it), and a PR's full stack is fetched once per session when the inspector opens on it or `Y` is pressed, instead of once per stacked PR on every refresh (#547).
+- **Job trace in the editor**: The Jobs tab's open-in-editor key (`e`) ran the whole `EDITOR` value as one program name, so `EDITOR="code --wait"` failed to start. It wrote the placeholder `Trace will be here` when the trace had not been shown yet, and handed over the terminal without the Ctrl+C guard other editor launches have. It now fetches the trace first when needed and opens it through the shared editor handoff (#577).
 
 ## [0.9.2] - 2026-09-26
 

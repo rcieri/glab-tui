@@ -1,4 +1,4 @@
-use crate::TestSession;
+use crate::{Sandbox, TestSession};
 
 /// Enter on a parent pipeline asks GitLab for its bridges and lists the
 /// downstream pipelines they spawned, named after the trigger job that made
@@ -198,6 +198,51 @@ fn test_own_jobs_key_on_a_pipeline_without_jobs_stays_put_and_reports() {
     assert!(
         !text.contains("No jobs loaded"),
         "the empty Jobs tab is never entered — that hint is the original symptom"
+    );
+}
+
+/// The trace editor key hands the real log to an `EDITOR` that carries its
+/// own arguments, fetching the trace first when it was never shown. A
+/// placeholder file or `EDITOR` run as one program name is the original bug.
+#[test]
+fn trace_editor_key_fetches_the_trace_and_opens_it_in_a_multi_word_editor() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new(false).unwrap();
+    let received = sandbox.temp_dir.path().join("editor_received.txt");
+    let editor = sandbox.bin_dir.join("copy-editor");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\n[ \"$1\" = \"--into\" ] || exit 2\ncp \"$3\" \"$2\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let editor_env = format!("copy-editor --into {}", received.display());
+
+    let mut session = TestSession::launch(sandbox, 24, 100, &[("EDITOR", &editor_env)]);
+    session
+        .wait_for_screen_contains("Issues", 5000)
+        .expect("app starts");
+    session.send_input(b"ll");
+    session
+        .wait_for_screen_contains("12345", 5000)
+        .expect("the pipeline is listed");
+    session.send_input(b"\x1bj"); // Alt+j
+    session
+        .wait_for_screen_contains("rspec", 5000)
+        .expect("the pipeline's job is listed");
+
+    session.send_input(b"e");
+    // The terminal handoff probes keyboard-enhancement support on the way out
+    // and back, and this emulator never answers: each probe waits out
+    // crossterm's 2 s timeout.
+    session
+        .wait_for_screen_contains("mock gitlab job trace output", 15_000)
+        .expect("the TUI is back and shows the fetched trace");
+
+    assert_eq!(
+        std::fs::read_to_string(&received).expect("the editor ran"),
+        "mock gitlab job trace output\n"
     );
 }
 

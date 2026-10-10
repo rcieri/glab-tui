@@ -104,7 +104,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 
 ### External Editor Integration
 * The application pauses the UI to open an external `$EDITOR` (or `$VISUAL`, defaulting to `helix`).
-* This is done using `crossterm::terminal::LeaveAlternateScreen` inside `editor::suspend_and_run` ([src/editor.rs](src/editor.rs)), which `edit_in_editor` and custom commands (via `suspend_while`) share. It also holds off SIGINT/SIGQUIT in glab-tui while the child owns the terminal, so Ctrl+C stops the child only. Any other foreground child process must go through it too. Do not reinvent this wheel.
+* This is done using `crossterm::terminal::LeaveAlternateScreen` inside `editor::suspend_and_run` ([src/editor.rs](src/editor.rs)), which `edit_in_editor`, `view_in_editor` (read-only display, e.g. the Jobs tab's job trace) and custom commands (via `suspend_while`) share. It also holds off SIGINT/SIGQUIT in glab-tui while the child owns the terminal, so Ctrl+C stops the child only. Any other foreground child process must go through it too. Do not reinvent this wheel.
+* Always build the editor process with `editor::editor_command`, which runs `$EDITOR` through the shell so values with arguments (`code --wait`) work. The job-trace editor key fetches the trace first when it is not loaded (`App::pending_job_trace_editor`, consumed on `JobTraceFetched`).
 
 ### Syntax Highlighting (`syntect`)
 * Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).

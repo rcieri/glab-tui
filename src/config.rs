@@ -497,7 +497,7 @@ pub enum SaveMenu {
     Cancel,
 }
 
-pub(crate) fn hex_to_color(s: &str) -> Option<Color> {
+pub fn hex_to_color(s: &str) -> Option<Color> {
     let s = s.trim();
     // An empty color string maps to Color::Reset, which lets the terminal's
     // own (possibly transparent) background show through instead of painting

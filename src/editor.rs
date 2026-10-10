@@ -1,7 +1,7 @@
 use crate::AppTerminal;
 use std::io::Write;
 
-pub(crate) fn try_push_keyboard_enhancement_flags<W: Write>(w: &mut W) {
+pub fn try_push_keyboard_enhancement_flags<W: Write>(w: &mut W) {
     if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
         let _ = crossterm::execute!(
             w,
@@ -12,7 +12,7 @@ pub(crate) fn try_push_keyboard_enhancement_flags<W: Write>(w: &mut W) {
     }
 }
 
-pub(crate) fn try_pop_keyboard_enhancement_flags<W: Write>(w: &mut W) {
+pub fn try_pop_keyboard_enhancement_flags<W: Write>(w: &mut W) {
     if crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
         let _ = crossterm::execute!(w, crossterm::event::PopKeyboardEnhancementFlags);
     }

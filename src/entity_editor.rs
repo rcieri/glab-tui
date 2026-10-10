@@ -36,17 +36,17 @@ fn get_entity_project_path(app: &App, entity_type: &str, iid: u64) -> String {
 }
 
 #[inline]
-pub(crate) fn entity_is_mr(entity_type: &str) -> bool {
+pub fn entity_is_mr(entity_type: &str) -> bool {
     entity_type == "mr" || entity_type == "edit_mr"
 }
 
 #[inline]
-pub(crate) fn entity_is_issue(entity_type: &str) -> bool {
+pub fn entity_is_issue(entity_type: &str) -> bool {
     entity_type == "issue" || entity_type == "edit_issue"
 }
 
 #[inline]
-pub(crate) fn entity_is_milestone(entity_type: &str) -> bool {
+pub fn entity_is_milestone(entity_type: &str) -> bool {
     entity_type == "milestone" || entity_type == "edit_milestone"
 }
 

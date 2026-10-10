@@ -2,23 +2,7 @@
 #![allow(unused_variables)]
 #![allow(unused_assignments)]
 
-mod app;
-mod backend;
-mod cli;
-mod config;
-mod custom_commands;
-mod domain;
-mod editor;
-mod entity_editor;
-mod event;
-mod fetch;
-mod git_helpers;
-pub mod handlers;
-mod keybinding;
-pub mod scope;
-mod templates;
-mod ui;
-pub mod utils;
+use glab_tui_crate::*;
 
 use anyhow::Result;
 use app::{App, PendingKey, SaveMenu};
@@ -31,11 +15,6 @@ use domain::review::{DraftComment, ReviewEvent};
 use event::{Event, EventHandler};
 use ratatui::{Terminal, backend::CrosstermBackend, widgets::ListState};
 use std::io;
-
-type AppTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
-
-pub use editor::*;
-pub use entity_editor::*;
 
 fn parse_key_value_pairs(input: &str) -> Vec<(String, String)> {
     let mut pairs = Vec::new();
@@ -714,12 +693,6 @@ fn handle_configure_mouse(app: &mut App, rect: ratatui::layout::Rect, row: u16, 
     }
 }
 
-pub use git_helpers::*;
-pub use keybinding::keybinding_matches;
-pub use templates::*;
-
-pub use fetch::spawn_fetch_repo_attributes;
-pub use fetch::{spawn_refresh_active_tab, spawn_refresh_all_tabs};
 use handlers::overlays::*;
 
 // ---------------------------------------------------------------------------

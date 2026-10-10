@@ -1403,6 +1403,10 @@ async fn main() -> Result<()> {
                 }
                 Event::JobTraceFetched(job_id, result) => {
                     app.job_trace_loading = false;
+                    let opens_editor = app.pending_job_trace_editor == Some(job_id);
+                    if opens_editor {
+                        app.pending_job_trace_editor = None;
+                    }
                     if app.trace_job_id() == Some(job_id) {
                         match result {
                             Ok(trace) => {
@@ -1412,6 +1416,13 @@ async fn main() -> Result<()> {
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
+                                if opens_editor {
+                                    crate::handlers::tabs::open_job_trace_in_editor(
+                                        &mut app,
+                                        job_id,
+                                        &mut terminal,
+                                    );
+                                }
                             }
                             Err(e) => {
                                 app.show_error(e);

@@ -100,6 +100,32 @@ pub fn edit_in_editor_with_suffix(
     }
 }
 
+/// Shows `content` in the editor through a temp file named after `prefix`,
+/// removed once the editor exits. A non-zero exit is reported as an error so
+/// a missing editor binary does not fail silently.
+pub fn view_in_editor(
+    content: &str,
+    prefix: &str,
+    terminal: &mut AppTerminal,
+) -> std::io::Result<()> {
+    let mut tmp = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".txt")
+        .tempfile()?;
+    tmp.write_all(content.as_bytes())?;
+    let file_path = tmp.into_temp_path();
+
+    let status = suspend_and_run(&mut editor_command(&file_path), terminal)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "`{}` exited with {status}",
+            editor_command_string()
+        )))
+    }
+}
+
 /// Hands the terminal to `command` until it exits, with inherited stdio.
 pub fn suspend_and_run(
     command: &mut std::process::Command,

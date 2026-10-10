@@ -1,27 +1,21 @@
 use crate::backend::BackendKind;
 
-/// Safe to run on the UI thread: `git symbolic-ref --short HEAD` and
-/// `git branch --show-current` are pure local object-DB reads and finish
-/// in microseconds. No network roundtrip, no prompt for credentials.
-pub fn get_current_branch() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["symbolic-ref", "--short", "HEAD"])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !branch.is_empty() {
-            return Some(branch);
-        }
-    }
-    let output = std::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !branch.is_empty() {
-            return Some(branch);
+pub async fn get_current_branch() -> Option<String> {
+    let probes: [&[&str]; 2] = [
+        &["symbolic-ref", "--short", "HEAD"],
+        &["branch", "--show-current"],
+    ];
+    for args in probes {
+        let output = tokio::process::Command::new("git")
+            .args(args)
+            .output()
+            .await
+            .ok()?;
+        if output.status.success() {
+            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !branch.is_empty() {
+                return Some(branch);
+            }
         }
     }
     None

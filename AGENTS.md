@@ -101,6 +101,9 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     2. Make the API call using `app.gitlab_client`.
     3. Send an `Event` back to the main thread (e.g., `tx.send(Event::MyDataFetched(data))`). Fetches whose result belongs to the current repo/group send through `app.scoped_sender(events.sender())` (an `event::ScopedSender`): it tags the event with `app.scope_generation`, which `reset_on_scope_change` bumps, and the event loop drops results from an older generation before any handler runs, so a fetch that outlives a scope switch never writes into the new scope's tabs or cache.
     4. Handle the event in the [src/main.rs](src/main.rs) event loop to update `app` state.
+* **Never await a CLI call inside a key handler.** `handle_active_tab_key` runs on the main loop, so an inline `.await` on `glab`/`gh`/`git` freezes rendering and input until it returns. Spawn it and apply the result from an `Event` (e.g. `spawn_open_pipeline` → `Event::PipelineOpened` → `apply_opened_pipeline`, which drops replies for a pipeline no longer listed).
+* **Input runs on a dedicated OS thread** (`EventHandler::new` in [src/event.rs](src/event.rs)): crossterm's `poll`/`read` block and must never occupy a tokio worker.
+* **Scope switches build the client off the loop.** `spawn_client_for_scope` clears `app.gitlab_client` and runs `GitlabClient::new` (`git remote` + `gh`/`glab auth status`) in a task; `Event::ClientReady { scope, result }` installs it via `apply_client_ready` and starts the refresh, ignoring a client for a scope the user already left.
 
 ### External Editor Integration
 * The application pauses the UI to open an external `$EDITOR` (or `$VISUAL`, defaulting to `helix`).

@@ -6,11 +6,15 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".cargo/audit.toml"
+      - "deny.toml"
   pull_request:
     branches: ["main"]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - ".cargo/audit.toml"
+      - "deny.toml"
   schedule:
     # Run every Monday at 08:00 UTC
     - cron: "0 8 * * 1"
@@ -37,3 +41,25 @@ jobs:
 
       - name: Run security audit
         run: cargo audit
+
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo-deny binary
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check advisories, licenses, bans and sources
+        run: cargo deny check

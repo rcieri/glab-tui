@@ -25,7 +25,7 @@ impl ReviewEvent {
 /// Lines are diff line numbers: `line_num` on the new side, `old_line_num` on
 /// the old side. An unchanged line carries both. A range sets the matching
 /// `end_*` field to its last line.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DraftComment {
     pub file_path: String,
     pub line_num: Option<u32>,

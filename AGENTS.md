@@ -109,8 +109,8 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 ### Syntax Highlighting (`syntect`)
 * Line-level syntax highlighting is computed at diff-parse time in `DiffView::new` ([src/app.rs](src/app.rs)).
 * `SYNTAX_SET` and `THEME_SET` are global `LazyLock` statics using `SyntaxSet::load_defaults_newlines()` and `ThemeSet::load_defaults()`.
-* **Theme-safe:** `highlight_line_syntax` builds highlighting tokens dynamically derived from the active `THEME`'s semantic tokens (mapped from syntect scope names) while reusing syntect's resolved font modifiers (bold/italic/underline). Highlighting remains theme-safe (no hardcoded palette) while fuzzy search match highlights (`yellow_bg`) are preserved.
-* The public function `highlight_line_syntax(file_path, line_content, ext)` returns `Option<Vec<(ratatui::style::Style, String)>>`.
+* **Theme-safe:** `highlight_code` builds highlighting tokens dynamically derived from the active `THEME`'s semantic tokens (mapped from syntect scope names) while reusing syntect's resolved font modifiers (bold/italic/underline). Highlighting remains theme-safe (no hardcoded palette) while fuzzy search match highlights (`yellow_bg`) are preserved.
+* `highlight_code(file_path, code, ext)` highlights a line exactly as given and returns `Option<Vec<(ratatui::style::Style, String)>>`. Markdown fenced code blocks and suggestion bodies use it. Only diff hunk lines go through `highlight_diff_line(file_path, line)`, which drops the leading `+`/`-`/space marker with `strip_diff_marker` first. Never pass non-diff text to `highlight_diff_line`: a YAML `- item` or an indented line would lose its first character.
 * `DiffLine` contains an optional `syntax_highlighted: Option<Vec<(Style, String)>>` field populated during parsing.
 
 ### Entity Inspector & Form Architecture (`src/ui/inspector.rs`)

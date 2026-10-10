@@ -103,19 +103,7 @@ pub(crate) fn format_comment_with_suggestions(
                     "│ - ".to_string(),
                 )];
 
-                // Strip leading space/minus/plus if present
-                let clean_content = if orig.content.starts_with(' ')
-                    || orig.content.starts_with('-')
-                    || orig.content.starts_with('+')
-                {
-                    if orig.content.len() > 1 {
-                        orig.content[1..].to_string()
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    orig.content.clone()
-                };
+                let clean_content = crate::app::strip_diff_marker(&orig.content).to_string();
 
                 if let Some(ref highlighted) = orig.syntax_highlighted {
                     for (span_style, text) in highlighted {
@@ -155,8 +143,7 @@ pub(crate) fn format_comment_with_suggestions(
                 "│ + ".to_string(),
             )];
 
-            // Highlight body_line syntax
-            let highlighted = crate::app::highlight_line_syntax(file_path, body_line, None);
+            let highlighted = crate::app::highlight_code(file_path, body_line, None);
 
             if let Some(ref hl) = highlighted {
                 for (span_style, text) in hl {
@@ -437,6 +424,28 @@ mod tests {
         assert_eq!(formatted[3].2[1].1, "new line content");
         assert_eq!(formatted[4].2[0].1, icons.suggestion_end);
         assert_eq!(formatted[5].2[0].1, "outside suggestion");
+    }
+
+    #[test]
+    fn suggestion_body_lines_keep_their_first_character() {
+        let body = "```suggestion\n    let x = 1;\n- item\n+ plus\n```";
+        let formatted = format_comment_with_suggestions(
+            body,
+            "src/app.rs",
+            None,
+            None,
+            None,
+            None,
+            &[],
+            "",
+            Style::default(),
+        );
+
+        let suggested: Vec<String> = formatted[1..4]
+            .iter()
+            .map(|(_, _, spans)| spans[1..].iter().map(|(_, text)| text.as_str()).collect())
+            .collect();
+        assert_eq!(suggested, ["    let x = 1;", "- item", "+ plus"]);
     }
 
     #[test]

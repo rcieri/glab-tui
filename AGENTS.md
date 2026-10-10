@@ -72,6 +72,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
     * [markdown.rs](src/utils/markdown.rs): CommonMark + GFM Markdown rendering via `pulldown-cmark`.
     * [ui.rs](src/utils/ui.rs): Wrappers for `ratatui` stateful lists and tables.
+    * [private_fs.rs](src/utils/private_fs.rs): Owner-only `create_dir_all` (`0700`) and `write` (`0600`, also tightening an existing file) for everything glab-tui persists; plain `std::fs` off Unix.
     * [update.rs](src/utils/update.rs): GitHub releases self-updater with multi-target Linux asset selection.
 * [src/cli.rs](src/cli.rs): CLI subcommands (`doctor`, `clean-cache`, `cache`, `open`, `repos`, `review`), flags (`--config` sets `config::use_config_file`, which `Config::config_path()` honours before `GLAB_TUI_CONFIG`/XDG; `-r/--repo` and `-d/--dir` are global, and `--dir` is applied before any subcommand runs) and ANSI-styled diagnostic output.
     * [cli/review.rs](src/cli/review.rs): `glab-tui review threads|comment|submit|reply|resolve` — non-interactive review for scripts and agents. JSON on stdout, errors on stderr with a non-zero exit. `--input` is a JSON array of `{ file, line, end_line?, side?: "old"|"new", body }`; anchors are checked against the diff (`DiffView::new` + `DiffView::contains_anchor`, same classification as the review threads overlay) before anything is posted. E2E coverage in `tests/e2e/review_cli.rs`; the `gh`/`glab` mocks append `--input -` request bodies to `<TEST_LOG_PATH>.stdin` and fail any call matching `TEST_GH_FAIL_MATCH` / `TEST_GLAB_FAIL_MATCH`.
@@ -175,6 +176,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
 * `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, and `reviewed_files` in addition to API data.
 * Cache is written on every successful data fetch; read on startup.
+* **Rule:** cache and config files carry private repository data and custom shell-command bindings, so every write under the cache or config directories (cache JSON, `recent_repos.json`, `recent_groups.json`, `config.toml`, themes, repo-local `.glab-tui/`) goes through `utils::private_fs::create_dir_all` / `private_fs::write`, never plain `std::fs::write` / `create_dir_all`, which would inherit the umask (`0644`/`0755` under `022`). Directories that already exist keep their mode, since the parent of a `GLAB_TUI_CONFIG` file may be user-chosen.
 
 ### Config & Theme System
 * Config is loaded via `Config::load()` in [src/config.rs](src/config.rs) at startup and stored on `App` as `app.config`.

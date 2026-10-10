@@ -1665,8 +1665,10 @@ async fn main() -> Result<()> {
                 Event::MilestoneDeleted => {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
                     app.status_message = None;
-                    if let Some(iid) = app.pending_delete_milestone_iid.take() {
-                        app.milestones.items.retain(|m| m.iid != iid);
+                    if let Some((project_path, iid)) = app.pending_delete_milestone.take() {
+                        if let Some(pos) = app.milestone_index(&project_path, iid) {
+                            app.milestones.items.remove(pos);
+                        }
                     }
                     app.project_cache.milestones = app.milestones.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
@@ -2649,7 +2651,12 @@ async fn main() -> Result<()> {
                                         let comments = std::mem::take(&mut app.draft_comments);
                                         app.in_review_mode = false;
                                         if let Some(client) = app.gitlab_client.clone() {
-                                            let project = app.project_path_for_mr(mr_iid);
+                                            let project = app
+                                                .diff_view
+                                                .as_ref()
+                                                .filter(|diff| diff.mr_iid == mr_iid)
+                                                .map(|diff| diff.project_path.clone())
+                                                .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
                                             let event = ReviewEvent::from_label(&status);
                                             let body = value.clone();
                                             let tx = events.sender();
@@ -7226,12 +7233,14 @@ async fn main() -> Result<()> {
                                     diff_view.file_tree_visible = true;
                                 } else {
                                     if !app.draft_comments.is_empty() {
-                                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                            crate::app::ConfirmAction::SubmitReview(
-                                                diff_view.mr_iid,
-                                            ),
-                                            &app,
-                                        ));
+                                        app.submit_dialog =
+                                            Some(crate::app::SubmitDialog::build_with_project(
+                                                crate::app::ConfirmAction::SubmitReview(
+                                                    diff_view.mr_iid,
+                                                ),
+                                                diff_view.project_path.clone(),
+                                                &app,
+                                            ));
                                     } else {
                                         app.diff_view = None;
                                         continue;
@@ -7292,12 +7301,14 @@ async fn main() -> Result<()> {
                                         diff_view.search_active = false;
                                     }
                                     if !app.draft_comments.is_empty() {
-                                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                            crate::app::ConfirmAction::SubmitReview(
-                                                diff_view.mr_iid,
-                                            ),
-                                            &app,
-                                        ));
+                                        app.submit_dialog =
+                                            Some(crate::app::SubmitDialog::build_with_project(
+                                                crate::app::ConfirmAction::SubmitReview(
+                                                    diff_view.mr_iid,
+                                                ),
+                                                diff_view.project_path.clone(),
+                                                &app,
+                                            ));
                                     } else {
                                         app.diff_view = None;
                                         continue;

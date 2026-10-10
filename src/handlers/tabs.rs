@@ -475,8 +475,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        let project_path = app.scope.project_of(&issue.project_path).to_string();
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::CloseIssue(issue_iid),
+                            project_path,
                             app,
                         ));
                     }
@@ -487,8 +489,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        let project_path = app.scope.project_of(&issue.project_path).to_string();
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::DeleteIssue(issue_iid),
+                            project_path,
                             app,
                         ));
                     }
@@ -529,8 +533,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_issues();
                     if let Some(issue) = filtered.get(selected_idx) {
                         let issue_iid = issue.iid;
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        let project_path = app.scope.project_of(&issue.project_path).to_string();
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::ReopenIssue(issue_iid),
+                            project_path,
                             app,
                         ));
                     }
@@ -876,10 +882,12 @@ pub async fn handle_active_tab_key(
                                     Some("Revoking approval isn't supported on GitHub".to_string());
                                 app.error_message_at = Some(std::time::Instant::now());
                             } else {
-                                app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                    crate::app::ConfirmAction::RevokeMr(mr_iid),
-                                    app,
-                                ));
+                                app.submit_dialog =
+                                    Some(crate::app::SubmitDialog::build_with_project(
+                                        crate::app::ConfirmAction::RevokeMr(mr_iid),
+                                        app.scope.project_of(&mr.project_path).to_string(),
+                                        app,
+                                    ));
                             }
                         }
                         _ if (key_event.code == KeyCode::Char('R')
@@ -891,10 +899,12 @@ pub async fn handle_active_tab_key(
                             use crate::domain::mr_state::{RebaseGate, rebase_gate};
                             match rebase_gate(mr.mergeability.as_ref()) {
                                 RebaseGate::Allowed => {
-                                    app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                        crate::app::ConfirmAction::RebaseMr(mr_iid),
-                                        app,
-                                    ));
+                                    app.submit_dialog =
+                                        Some(crate::app::SubmitDialog::build_with_project(
+                                            crate::app::ConfirmAction::RebaseMr(mr_iid),
+                                            app.scope.project_of(&mr.project_path).to_string(),
+                                            app,
+                                        ));
                                 }
                                 RebaseGate::ResolveLocally => {
                                     app.show_error(
@@ -912,8 +922,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                                 crate::app::ConfirmAction::MergeMr(mr_iid),
+                                app.scope.project_of(&mr.project_path).to_string(),
                                 app,
                             ));
                         }
@@ -1024,8 +1035,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                                 crate::app::ConfirmAction::CloseMr(mr_iid),
+                                app.scope.project_of(&mr.project_path).to_string(),
                                 app,
                             ));
                         }
@@ -1040,10 +1052,12 @@ pub async fn handle_active_tab_key(
                                 .map(|c| c.is_github)
                                 .unwrap_or(false)
                             {
-                                app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                    crate::app::ConfirmAction::DeleteMr(mr_iid),
-                                    app,
-                                ));
+                                app.submit_dialog =
+                                    Some(crate::app::SubmitDialog::build_with_project(
+                                        crate::app::ConfirmAction::DeleteMr(mr_iid),
+                                        app.scope.project_of(&mr.project_path).to_string(),
+                                        app,
+                                    ));
                             } else {
                                 app.show_error(
                                     "GitHub does not support deleting pull requests".to_string(),
@@ -1055,8 +1069,9 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                                 crate::app::ConfirmAction::ReopenMr(mr_iid),
+                                app.scope.project_of(&mr.project_path).to_string(),
                                 app,
                             ));
                         }
@@ -2270,8 +2285,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::CloseMilestone(milestone.iid),
+                            app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
                     }
@@ -2285,8 +2301,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::ReopenMilestone(milestone.iid),
+                            app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
                     }
@@ -2300,8 +2317,9 @@ pub async fn handle_active_tab_key(
                 if let Some(selected_idx) = app.milestones.state.selected() {
                     let filtered = app.filtered_milestones();
                     if let Some(milestone) = filtered.get(selected_idx) {
-                        app.submit_dialog = Some(crate::app::SubmitDialog::build(
+                        app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
                             crate::app::ConfirmAction::DeleteMilestone(milestone.iid),
+                            app.scope.project_of(&milestone.project_path).to_string(),
                             app,
                         ));
                     }
@@ -3974,5 +3992,35 @@ mod tests {
         )
         .await;
         assert_eq!(app.error_message, None);
+    }
+
+    #[tokio::test]
+    async fn milestone_close_in_group_scope_targets_the_selected_rows_project() {
+        use crate::domain::milestones::Milestone;
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        app.active_tab = crate::app::Tab::Milestones;
+        let milestone = |project: &str| Milestone {
+            iid: 3,
+            title: format!("{project} v1"),
+            state: "active".to_string(),
+            project_path: project.to_string(),
+            ..Milestone::default()
+        };
+        app.milestones.items = vec![milestone("acme/alpha"), milestone("acme/beta")];
+        app.milestones.state.select(Some(1));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let dialog = app.submit_dialog.expect("close opens a confirm dialog");
+        assert!(matches!(
+            dialog.action,
+            crate::app::ConfirmAction::CloseMilestone(3)
+        ));
+        assert_eq!(dialog.project_path, "acme/beta");
     }
 }

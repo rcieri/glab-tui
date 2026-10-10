@@ -3231,34 +3231,22 @@ impl SubmitDialog {
         }
     }
 
-    /// Build the default SubmitDialog for a [`ConfirmAction`], pulling
-    /// any context-aware body text from the live `App` (e.g. the merge
-    /// target branch, the release tag, the issue/MR iid).
+    /// Build the dialog for an action whose target carries no project of
+    /// its own (a release, a branch, a bulk merge whose items each name
+    /// theirs): it acts on the current scope. Actions on a listed issue, MR
+    /// or milestone go through [`Self::build_with_project`] instead.
+    pub fn build(action: ConfirmAction, app: &App) -> Self {
+        Self::build_with_project(action, app.scope.as_str().to_string(), app)
+    }
+
+    /// Build the default SubmitDialog for a [`ConfirmAction`] on
+    /// `project_path`, the project of the row the user selected: in group
+    /// scope the same iid recurs across projects, so the iid alone does not
+    /// identify the target. Body text comes from the live `App` (e.g. the
+    /// merge target branch, the release tag, the issue/MR iid).
     ///
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
-    pub fn build(action: ConfirmAction, app: &App) -> Self {
-        let project_path = match &action {
-            ConfirmAction::DeleteMilestone(iid)
-            | ConfirmAction::CloseMilestone(iid)
-            | ConfirmAction::ReopenMilestone(iid) => app.project_path_for_milestone(*iid),
-            ConfirmAction::DeleteRelease(tag) => app.project_path_for_release(tag),
-            ConfirmAction::DeleteBranch(_) => app.scope.as_str().to_string(),
-            ConfirmAction::CloseIssue(iid)
-            | ConfirmAction::DeleteIssue(iid)
-            | ConfirmAction::ReopenIssue(iid) => app.project_path_for_issue(*iid),
-            ConfirmAction::CloseMr(iid)
-            | ConfirmAction::ReopenMr(iid)
-            | ConfirmAction::DeleteMr(iid)
-            | ConfirmAction::MergeMr(iid)
-            | ConfirmAction::RevokeMr(iid)
-            | ConfirmAction::RebaseMr(iid)
-            | ConfirmAction::SubmitReview(iid) => app.project_path_for_mr(*iid),
-            ConfirmAction::BulkMergeMrs(_) => app.scope.as_str().to_string(),
-        };
-        Self::build_with_project(action, project_path, app)
-    }
-
     pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
@@ -3348,11 +3336,11 @@ impl SubmitDialog {
             ),
             ConfirmAction::MergeMr(iid) => {
                 let (source, target) = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == *iid)
-                    .map(|m| (m.source_branch.clone(), m.target_branch.clone()))
+                    .mr_index(&project_path, *iid)
+                    .map(|i| {
+                        let m = &app.mrs.items[i];
+                        (m.source_branch.clone(), m.target_branch.clone())
+                    })
                     .unwrap_or_default();
                 let body = if source.is_empty() && target.is_empty() {
                     String::new()
@@ -3399,11 +3387,8 @@ impl SubmitDialog {
             ),
             ConfirmAction::RebaseMr(iid) => {
                 let target = app
-                    .mrs
-                    .items
-                    .iter()
-                    .find(|m| m.iid == *iid)
-                    .map(|m| m.target_branch.clone())
+                    .mr_index(&project_path, *iid)
+                    .map(|i| app.mrs.items[i].target_branch.clone())
                     .unwrap_or_else(|| "target".to_string());
                 (
                     format!("Rebase {mr_short} {marker}{iid}"),
@@ -3705,7 +3690,8 @@ pub struct App {
     pub label_colors: std::collections::HashMap<String, ratatui::style::Color>,
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
-    pub pending_delete_milestone_iid: Option<u64>,
+    /// (project path, iid) of the milestone whose deletion is in flight.
+    pub pending_delete_milestone: Option<(String, u64)>,
     pub pending_delete_release_tag: Option<String>,
 }
 
@@ -3845,7 +3831,7 @@ impl Default for App {
             label_colors: std::collections::HashMap::new(),
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
-            pending_delete_milestone_iid: None,
+            pending_delete_milestone: None,
             pending_delete_release_tag: None,
         }
     }
@@ -4060,23 +4046,35 @@ impl App {
             .unwrap_or_else(|| self.scope.as_str().to_string())
     }
 
-    /// The project a listed MR/PR belongs to: its own path, or the repository
-    /// in scope when the list left it empty.
-    fn mr_project<'a>(
-        scope: &'a crate::scope::Scope,
-        mr: &'a crate::domain::mr::MergeRequest,
-    ) -> &'a str {
-        if mr.project_path.is_empty() {
-            scope.as_str()
-        } else {
-            &mr.project_path
-        }
+    /// Position of issue `iid` of `project_path` in `issues.items`. Matching
+    /// on the iid alone would hit another project's issue in group scope.
+    pub fn issue_index(&self, project_path: &str, iid: u64) -> Option<usize> {
+        self.issues
+            .items
+            .iter()
+            .position(|i| i.iid == iid && self.scope.project_of(&i.project_path) == project_path)
+    }
+
+    /// Position of MR/PR `iid` of `project_path` in `mrs.items`.
+    pub fn mr_index(&self, project_path: &str, iid: u64) -> Option<usize> {
+        self.mrs
+            .items
+            .iter()
+            .position(|m| m.iid == iid && self.scope.project_of(&m.project_path) == project_path)
+    }
+
+    /// Position of milestone `iid` of `project_path` in `milestones.items`.
+    pub fn milestone_index(&self, project_path: &str, iid: u64) -> Option<usize> {
+        self.milestones
+            .items
+            .iter()
+            .position(|m| m.iid == iid && self.scope.project_of(&m.project_path) == project_path)
     }
 
     /// An MR/PR as (project path, number), the key of the session's stack
     /// knowledge.
     pub fn mr_ref(&self, mr: &crate::domain::mr::MergeRequest) -> (String, u64) {
-        (Self::mr_project(&self.scope, mr).to_string(), mr.iid)
+        (self.scope.project_of(&mr.project_path).to_string(), mr.iid)
     }
 
     /// The highlighted MR/PR as (project path, number).
@@ -4157,7 +4155,7 @@ impl App {
         for mr in self.mrs.items.iter_mut() {
             let Some(lookup) = self
                 .pr_stacks
-                .get(Self::mr_project(&self.scope, mr))
+                .get(self.scope.project_of(&mr.project_path))
                 .and_then(|prs| prs.get(&mr.iid))
             else {
                 continue;

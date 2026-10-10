@@ -27,6 +27,19 @@ if [[ "$*" == *"api"* ]]; then
         echo ""
     elif [[ "$*" == *"/draft_notes"* ]]; then
         echo '{"id": 1}'
+    elif [[ "$*" == *"groups/test-group/issues"* ]]; then
+        # Pages are requested concurrently; only the first carries the fixture.
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_issues.json"
+        else
+            echo "[]"
+        fi
+    elif [[ "$*" == *"groups/test-group/merge_requests"* ]]; then
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_mrs.json"
+        else
+            echo "[]"
+        fi
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then

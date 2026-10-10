@@ -1,0 +1,10 @@
+[
+  {"iid": 5, "title": "Alpha feature", "state": "opened", "updated_at": "2026-07-06T12:00:00Z",
+   "author": {"username": "test-user"}, "labels": [], "assignees": [], "reviewers": [],
+   "target_branch": "main", "source_branch": "alpha-feature", "draft": false,
+   "web_url": "https://gitlab.com/test-group/alpha/-/merge_requests/5"},
+  {"iid": 5, "title": "Beta feature", "state": "opened", "updated_at": "2026-07-05T12:00:00Z",
+   "author": {"username": "test-user"}, "labels": [], "assignees": [], "reviewers": [],
+   "target_branch": "main", "source_branch": "beta-feature", "draft": false,
+   "web_url": "https://gitlab.com/test-group/beta/-/merge_requests/5"}
+]

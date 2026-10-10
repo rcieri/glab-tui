@@ -80,14 +80,11 @@ pub fn validate_project_path(path: &str) -> anyhow::Result<()> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'));
     if !ok {
-        anyhow::bail!("project path contains unsupported characters: {}", path);
+        anyhow::bail!("project path contains unsupported characters: {path}");
     }
     let segments: Vec<&str> = path.split('/').collect();
     if segments.len() < 2 || segments.iter().any(|s| s.is_empty()) {
-        anyhow::bail!(
-            "expected a project path of the form owner/project: {}",
-            path
-        );
+        anyhow::bail!("expected a project path of the form owner/project: {path}");
     }
     Ok(())
 }
@@ -123,7 +120,7 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
             .and_then(|e| e.get("message"))
             .and_then(|m| m.as_str())
             .unwrap_or("unknown GraphQL error");
-        anyhow::bail!("GraphQL error: {}", first);
+        anyhow::bail!("GraphQL error: {first}");
     }
 
     let data = root
@@ -194,13 +191,12 @@ pub fn parse_mr_state_response(json: &str) -> anyhow::Result<MrStateMap> {
             })
             .unwrap_or(false);
 
-        let you_approved =
-            !current_user.is_empty() && approved_by.iter().any(|u| *u == current_user);
+        let you_approved = !current_user.is_empty() && approved_by.contains(&current_user);
 
         // Your own review state, matched by username. Someone else having
         // reviewed must not set this.
         let you_reviewed = !current_user.is_empty()
-            && (approved_by.iter().any(|u| *u == current_user)
+            && (approved_by.contains(&current_user)
                 || node
                     .get("reviewers")
                     .and_then(|r| r.get("nodes"))
@@ -305,7 +301,7 @@ async fn run_glab_command_inner(
         if let Some(ref tx) = tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp,
-                command: format!("{}: {}", label, cmd_str),
+                command: format!("{label}: {cmd_str}"),
                 status: "Success".to_string(),
             });
         }
@@ -315,11 +311,11 @@ async fn run_glab_command_inner(
         if let Some(ref tx) = tx {
             let _ = tx.send(Event::TerminalCommandLogged {
                 timestamp,
-                command: format!("{}: {}", label, cmd_str),
-                status: format!("Failed: {}", err_msg),
+                command: format!("{label}: {cmd_str}"),
+                status: format!("Failed: {err_msg}"),
             });
         }
-        anyhow::bail!("glab command failed: {}", err_msg)
+        anyhow::bail!("glab command failed: {err_msg}")
     }
 }
 
@@ -450,7 +446,7 @@ impl GlabBackend {
         // Query the exact iids the list returned, so there is no pagination drift.
         let iid_list = iids
             .iter()
-            .map(|i| format!("\"{}\"", i))
+            .map(|i| format!("\"{i}\""))
             .collect::<Vec<_>>()
             .join(", ");
 
@@ -458,15 +454,14 @@ impl GlabBackend {
         // all-or-nothing: one unknown field blanks both axes.
         let query = format!(
             "query {{ currentUser {{ username }} \
-             project(fullPath: \"{}\") {{ \
-             mergeRequests(iids: [{}]) {{ nodes {{ \
+             project(fullPath: \"{project}\") {{ \
+             mergeRequests(iids: [{iid_list}]) {{ nodes {{ \
              iid approved approvalsLeft approvalsRequired \
              userPermissions {{ canApprove }} \
              approvedBy {{ nodes {{ username }} }} \
              reviewers {{ nodes {{ username mergeRequestInteraction {{ reviewState }} }} }} \
              conflicts shouldBeRebased detailedMergeStatus \
-             }} }} }} }}",
-            project, iid_list
+             }} }} }} }}"
         );
 
         vec![
@@ -551,7 +546,7 @@ impl GlabBackend {
         serde_json::from_str::<GiMr>(&raw)
             .context("Failed to parse glab mr view output")?
             .diff_refs
-            .with_context(|| format!("!{} has no diff refs to anchor comments on", iid))
+            .with_context(|| format!("!{iid} has no diff refs to anchor comments on"))
     }
 }
 
@@ -756,10 +751,8 @@ impl Backend for GlabBackend {
         page_size: usize,
     ) -> Result<Vec<RelatedMrRef>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/issues/{}/closed_by?per_page={}",
-            encoded, issue_iid, page_size
-        );
+        let endpoint =
+            format!("/projects/{encoded}/issues/{issue_iid}/closed_by?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Related MRs")
             .await?;
@@ -775,17 +768,16 @@ impl Backend for GlabBackend {
             .collect())
     }
 
-    async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()> {
+    async fn create_issue(&self, project: &str, issue: &super::NewIssue<'_>) -> Result<()> {
+        let super::NewIssue {
+            title,
+            description,
+            labels,
+            assignees,
+            milestone,
+            due_date,
+            weight,
+        } = *issue;
         let mut args: Vec<String> = vec!["issue".into(), "create".into(), "-y".into()];
         if !project.is_empty() {
             args.push("-R".into());
@@ -798,11 +790,11 @@ impl Backend for GlabBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -1355,8 +1347,7 @@ impl Backend for GlabBackend {
     ) -> Result<Vec<crate::domain::mr::RelatedIssueRef>> {
         let encoded = Self::encode_path(project);
         let endpoint = format!(
-            "/projects/{}/merge_requests/{}/closes_issues?per_page={}",
-            encoded, mr_iid, page_size
+            "/projects/{encoded}/merge_requests/{mr_iid}/closes_issues?per_page={page_size}"
         );
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Related Issues")
@@ -1415,12 +1406,15 @@ impl Backend for GlabBackend {
         &self,
         project: &str,
         iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
-        sha: Option<&str>,
+        options: &super::MergeOptions<'_>,
     ) -> Result<()> {
+        let super::MergeOptions {
+            squash,
+            delete_branch,
+            strategy,
+            auto_merge,
+            sha,
+        } = *options;
         let args = Self::merge_args(
             project,
             iid,
@@ -1452,19 +1446,18 @@ impl Backend for GlabBackend {
         Ok(())
     }
 
-    async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()> {
+    async fn create_mr(&self, project: &str, mr: &super::NewMr<'_>) -> Result<()> {
+        let super::NewMr {
+            title,
+            description,
+            source_branch,
+            target_branch,
+            labels,
+            assignees,
+            reviewers,
+            milestone,
+            issue_iid,
+        } = *mr;
         let mut args: Vec<String> = vec!["mr".into(), "create".into(), "-y".into()];
         if !project.is_empty() {
             args.push("-R".into());
@@ -1485,15 +1478,15 @@ impl Backend for GlabBackend {
         }
         if !labels.is_empty() {
             args.push("--label".into());
-            args.push(normalize_labels(labels).into());
+            args.push(normalize_labels(labels));
         }
         if !assignees.is_empty() {
             args.push("--assignee".into());
-            args.push(strip_ats(assignees).into());
+            args.push(strip_ats(assignees));
         }
         if !reviewers.is_empty() {
             args.push("--reviewer".into());
-            args.push(strip_ats(reviewers).into());
+            args.push(strip_ats(reviewers));
         }
         if !milestone.is_empty() {
             args.push("--milestone".into());
@@ -1535,7 +1528,7 @@ impl Backend for GlabBackend {
                     })?;
             }
             self.raw_api(
-                &format!("{}/bulk_publish", endpoint),
+                &format!("{endpoint}/bulk_publish"),
                 "POST",
                 None,
                 "PUBLISHING DRAFT NOTES",
@@ -1795,10 +1788,8 @@ impl Backend for GlabBackend {
         page_size: usize,
     ) -> Result<Vec<Job>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/pipelines/{}/jobs?per_page={}",
-            encoded, pipeline_id, page_size
-        );
+        let endpoint =
+            format!("/projects/{encoded}/pipelines/{pipeline_id}/jobs?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Jobs")
             .await?;
@@ -1833,10 +1824,8 @@ impl Backend for GlabBackend {
         page_size: usize,
     ) -> Result<Vec<crate::domain::pipelines::Bridge>> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/pipelines/{}/bridges?per_page={}",
-            encoded, pipeline_id, page_size
-        );
+        let endpoint =
+            format!("/projects/{encoded}/pipelines/{pipeline_id}/bridges?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Bridges")
             .await?;
@@ -1845,14 +1834,14 @@ impl Backend for GlabBackend {
 
     async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/jobs/{}/trace", encoded, job_id);
+        let endpoint = format!("/projects/{encoded}/jobs/{job_id}/trace");
         self.raw_api(&endpoint, "GET", None, "Fetching Job Log")
             .await
     }
 
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/pipelines/{}/retry", encoded, pipeline_id);
+        let endpoint = format!("/projects/{encoded}/pipelines/{pipeline_id}/retry");
         self.raw_api(&endpoint, "POST", None, "Retrying Pipeline")
             .await?;
         Ok(())
@@ -1894,7 +1883,7 @@ impl Backend for GlabBackend {
 
     async fn start_job(&self, project: &str, job_id: u64) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/jobs/{}/play", encoded, job_id);
+        let endpoint = format!("/projects/{encoded}/jobs/{job_id}/play");
         self.raw_api(&endpoint, "POST", None, "Starting Job")
             .await?;
         Ok(())
@@ -1923,11 +1912,11 @@ impl Backend for GlabBackend {
         }
         for (k, v) in variables {
             args.push("--variables".into());
-            args.push(format!("{}:{}", k, v));
+            args.push(format!("{k}:{v}"));
         }
         for (k, v) in inputs {
             args.push("--input".into());
-            args.push(format!("{}:{}", k, v));
+            args.push(format!("{k}:{v}"));
         }
         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         self.run_glab(&args_refs, "RUNNING PIPELINE").await?;
@@ -2025,7 +2014,7 @@ impl Backend for GlabBackend {
         runner_id: u64,
         description: &str,
     ) -> Result<()> {
-        let endpoint = format!("runners/{}", runner_id);
+        let endpoint = format!("runners/{runner_id}");
         let body = serde_json::json!({ "description": description }).to_string();
         self.raw_api(&endpoint, "PUT", Some(&body), "UPDATING RUNNER DESCRIPTION")
             .await?;
@@ -2183,7 +2172,7 @@ impl Backend for GlabBackend {
                 self.run_glab(
                     &[
                         "api",
-                        &format!("groups/{}/milestones?per_page={}", encoded_group, page_size),
+                        &format!("groups/{encoded_group}/milestones?per_page={page_size}"),
                     ],
                     "Fetching Group Milestones",
                 )
@@ -2230,7 +2219,7 @@ impl Backend for GlabBackend {
     async fn list_milestone_issues(
         &self,
         project: &str,
-        milestone_iid: u64,
+        _milestone_iid: u64,
         milestone_title: &str,
         page_size: usize,
     ) -> Result<Vec<Issue>> {
@@ -2268,7 +2257,7 @@ impl Backend for GlabBackend {
         due_date: Option<&str>,
     ) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("projects/{}/milestones", encoded);
+        let endpoint = format!("projects/{encoded}/milestones");
         let mut body_val = serde_json::json!({
             "title": title,
         });
@@ -2455,10 +2444,7 @@ impl Backend for GlabBackend {
             Scope::Group(_) => return Err(anyhow::anyhow!("Group-level branches not supported")),
         };
         let encoded = Self::encode_path(project);
-        let endpoint = format!(
-            "/projects/{}/repository/branches?per_page={}",
-            encoded, page_size
-        );
+        let endpoint = format!("/projects/{encoded}/repository/branches?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Branches")
             .await?;
@@ -2501,8 +2487,7 @@ impl Backend for GlabBackend {
     ) -> Result<()> {
         let encoded = Self::encode_path(project);
         let endpoint = format!(
-            "/projects/{}/repository/branches?branch={}&ref={}",
-            encoded, branch_name, ref_branch
+            "/projects/{encoded}/repository/branches?branch={branch_name}&ref={ref_branch}"
         );
         self.raw_api(&endpoint, "POST", None, "Creating Branch")
             .await?;
@@ -2511,7 +2496,7 @@ impl Backend for GlabBackend {
 
     async fn delete_branch(&self, project: &str, branch_name: &str) -> Result<()> {
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/repository/branches/{}", encoded, branch_name);
+        let endpoint = format!("/projects/{encoded}/repository/branches/{branch_name}");
         self.raw_api(&endpoint, "DELETE", None, "Deleting Branch")
             .await?;
         Ok(())
@@ -2527,7 +2512,7 @@ impl Backend for GlabBackend {
             }
         };
         let encoded = Self::encode_path(project);
-        let endpoint = format!("/projects/{}/environments?per_page={}", encoded, page_size);
+        let endpoint = format!("/projects/{encoded}/environments?per_page={page_size}");
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Environments")
             .await?;
@@ -2600,9 +2585,9 @@ impl Backend for GlabBackend {
             }
         };
         let encoded = Self::encode_path(project);
-        let mut endpoint = format!("/projects/{}/deployments?per_page={}", encoded, page_size);
+        let mut endpoint = format!("/projects/{encoded}/deployments?per_page={page_size}");
         if let Some(env) = environment {
-            endpoint.push_str(&format!("&environment={}", env));
+            endpoint.push_str(&format!("&environment={env}"));
         }
         let raw = self
             .raw_api(&endpoint, "GET", None, "Fetching Deployments")
@@ -2672,7 +2657,7 @@ impl Backend for GlabBackend {
                 self.run_glab(
                     &[
                         "api",
-                        &format!("groups/{}/labels?per_page={}", encoded, per_request),
+                        &format!("groups/{encoded}/labels?per_page={per_request}"),
                     ],
                     "Fetching Group Labels",
                 )
@@ -2698,11 +2683,11 @@ impl Backend for GlabBackend {
         let endpoint = match scope {
             Scope::Repository(project) => {
                 let encoded = Self::encode_path(project);
-                format!("/projects/{}/members/all?per_page=100", encoded)
+                format!("/projects/{encoded}/members/all?per_page=100")
             }
             Scope::Group(group) => {
                 let encoded = Self::encode_path(group);
-                format!("/groups/{}/members/all?per_page=100", encoded)
+                format!("/groups/{encoded}/members/all?per_page=100")
             }
         };
         let raw = self
@@ -2731,8 +2716,7 @@ impl Backend for GlabBackend {
         let mut out = Vec::new();
         for page in 1..=pages {
             let endpoint = format!(
-                "groups/{}/projects?include_subgroups=true&per_page={per}&page={page}&archived=false",
-                encoded
+                "groups/{encoded}/projects?include_subgroups=true&per_page={per}&page={page}&archived=false"
             );
             let raw = self
                 .raw_api(&endpoint, "GET", None, "Fetching Group Projects")
@@ -2814,7 +2798,7 @@ impl Backend for GlabBackend {
             Scope::Repository(p) => p.replace('/', "%2F"),
             Scope::Group(p) => format!("groups/{}", p.replace('/', "%2F")),
         };
-        let url = format!("https://{}/{}/-/runners/{}", host, path, runner_id);
+        let url = format!("https://{host}/{path}/-/runners/{runner_id}");
         open_in_web_browser(&url, self.tx.clone(), "OPENING RUNNER IN BROWSER").await
     }
 
@@ -2931,7 +2915,7 @@ async fn run_glab_raw_api(
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{}: {}", label, cmd_str),
+                        command: format!("{label}: {cmd_str}"),
                         status: "Success".to_string(),
                     });
                 }
@@ -2941,20 +2925,20 @@ async fn run_glab_raw_api(
                 if let Some(ref tx) = tx {
                     let _ = tx.send(Event::TerminalCommandLogged {
                         timestamp,
-                        command: format!("{}: {}", label, cmd_str),
-                        status: format!("Failed: {}", err_msg),
+                        command: format!("{label}: {cmd_str}"),
+                        status: format!("Failed: {err_msg}"),
                     });
                 }
-                anyhow::bail!("glab api failed: {}", err_msg)
+                anyhow::bail!("glab api failed: {err_msg}")
             }
         }
         Err(e) => {
-            let err_msg = format!("{}", e);
+            let err_msg = format!("{e}");
             if let Some(ref tx) = tx {
                 let _ = tx.send(Event::TerminalCommandLogged {
                     timestamp,
-                    command: format!("{}: {}", label, cmd_str),
-                    status: format!("Failed: {}", err_msg),
+                    command: format!("{label}: {cmd_str}"),
+                    status: format!("Failed: {err_msg}"),
                 });
             }
             Err(e.into())
@@ -3010,7 +2994,7 @@ async fn open_in_web_browser(
     if let Some(ref tx) = tx {
         let _ = tx.send(crate::event::Event::TerminalCommandLogged {
             timestamp,
-            command: format!("{}: git web--browse {}", label, url),
+            command: format!("{label}: git web--browse {url}"),
             status,
         });
     }

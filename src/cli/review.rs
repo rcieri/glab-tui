@@ -339,7 +339,7 @@ fn read_input(source: &str) -> Result<Vec<InputComment>> {
     let raw = if source == "-" {
         std::io::read_to_string(std::io::stdin()).context("reading comments from stdin")?
     } else {
-        std::fs::read_to_string(source).with_context(|| format!("reading {}", source))?
+        std::fs::read_to_string(source).with_context(|| format!("reading {source}"))?
     };
     serde_json::from_str(&raw)
         .context("--input must be a JSON array of {file, line, end_line?, side?, body}")

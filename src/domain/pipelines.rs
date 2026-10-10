@@ -316,8 +316,6 @@ mod tests {
             }
         } else if status == "in_progress" {
             "running"
-        } else if status == "queued" || status == "waiting" {
-            "pending"
         } else {
             "pending"
         }

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::backend::BackendKind;
 use crate::config::{Config, KeybindingConfig, THEME, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
@@ -51,7 +49,7 @@ impl ClipboardWriter for SystemClipboard {
 }
 
 fn file_extension(file_path: &str) -> Option<&str> {
-    let file_name = file_path.rsplit(|c| c == '/' || c == '\\').next()?;
+    let file_name = file_path.rsplit(['/', '\\']).next()?;
     let ext = file_name.rsplit('.').next()?;
     if ext.is_empty() || ext == file_name {
         None
@@ -77,7 +75,7 @@ pub fn highlight_line_syntax(
         .or_else(|| SYNTAX_SET.find_syntax_by_extension("txt"))?;
 
     let theme = THEME.read().unwrap();
-    let theme = theme.clone();
+    let theme = *theme;
 
     // Remove the leading +/-/space for syntax highlighting, but keep the actual code.
     let code = if line_content.starts_with('+')
@@ -120,7 +118,7 @@ pub fn highlight_line_syntax(
             let top = scope_stack.as_slice().last().copied();
             let style = highlighter.style_for_stack(scope_stack.as_slice());
             let color = top
-                .map(|s| scope_color(&format!("{}", s), &theme))
+                .map(|s| scope_color(&format!("{s}"), &theme))
                 .unwrap_or(theme.text_normal);
             let mut span_style = Style::default().fg(color);
             if style
@@ -150,7 +148,7 @@ pub fn highlight_line_syntax(
         let text = &code[pos..];
         let top = scope_stack.as_slice().last().copied();
         let color = top
-            .map(|s| scope_color(&format!("{}", s), &theme))
+            .map(|s| scope_color(&format!("{s}"), &theme))
             .unwrap_or(theme.text_normal);
         result.push((Style::default().fg(color), text.to_string()));
     }
@@ -260,7 +258,7 @@ impl Tab {
         Tab::Terminal,
     ];
 
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             Tab::Issues => "issues",
             Tab::MergeRequests => "mrs",
@@ -803,7 +801,7 @@ impl Selector {
                         let parsed = item
                             .split(':')
                             .next()
-                            .and_then(|p| parse_jump_input(p));
+                            .and_then(parse_jump_input);
                         matches!(parsed, Some((k, iid)) if iid == id && (kind.is_none() || k == kind))
                     });
                     if !loaded {
@@ -816,7 +814,7 @@ impl Selector {
                     }
                 }
             } else {
-                items.push((format!("+ Create \"{}\"", query), None));
+                items.push((format!("+ Create \"{query}\""), None));
             }
         }
         items
@@ -1063,81 +1061,56 @@ pub enum DiffTreeNode {
     },
 }
 
+/// One changed file placed into the diff tree by `DiffTreeNode::insert`.
+pub struct DiffFileEntry<'a> {
+    pub full_path: &'a str,
+    pub old_path: Option<&'a str>,
+    pub is_new_file: bool,
+    pub is_deleted_file: bool,
+    pub additions: u32,
+    pub deletions: u32,
+    pub line_idx: usize,
+}
+
 impl DiffTreeNode {
-    pub fn insert(
-        &mut self,
-        path_parts: &[&str],
-        full_path: &str,
-        old_path: Option<&str>,
-        is_new_file: bool,
-        is_deleted_file: bool,
-        additions: u32,
-        deletions: u32,
-        line_idx: usize,
-    ) {
+    pub fn insert(&mut self, path_parts: &[&str], entry: &DiffFileEntry) {
         if path_parts.is_empty() {
             return;
         }
         let name = path_parts[0].to_string();
         if path_parts.len() == 1 {
-            match self {
-                DiffTreeNode::Directory { children, .. } => {
-                    let file_exists = children.iter().any(|child| match child {
-                        DiffTreeNode::File { file_path: p, .. } => p == full_path,
-                        _ => false,
+            if let DiffTreeNode::Directory { children, .. } = self {
+                let file_exists = children.iter().any(|child| match child {
+                    DiffTreeNode::File { file_path: p, .. } => p == entry.full_path,
+                    _ => false,
+                });
+                if !file_exists {
+                    children.push(DiffTreeNode::File {
+                        name,
+                        file_path: entry.full_path.to_string(),
+                        old_file_path: entry.old_path.map(|s| s.to_string()),
+                        is_new_file: entry.is_new_file,
+                        is_deleted_file: entry.is_deleted_file,
+                        line_idx: entry.line_idx,
+                        additions: entry.additions,
+                        deletions: entry.deletions,
                     });
-                    if !file_exists {
-                        children.push(DiffTreeNode::File {
-                            name,
-                            file_path: full_path.to_string(),
-                            old_file_path: old_path.map(|s| s.to_string()),
-                            is_new_file,
-                            is_deleted_file,
-                            line_idx,
-                            additions,
-                            deletions,
-                        });
-                    }
                 }
-                _ => {}
             }
-        } else {
-            match self {
-                DiffTreeNode::Directory { children, .. } => {
-                    if let Some(pos) = children.iter().position(|child| match child {
-                        DiffTreeNode::Directory { name: n, .. } => n == &name,
-                        _ => false,
-                    }) {
-                        children[pos].insert(
-                            &path_parts[1..],
-                            full_path,
-                            old_path,
-                            is_new_file,
-                            is_deleted_file,
-                            additions,
-                            deletions,
-                            line_idx,
-                        );
-                    } else {
-                        let mut new_dir = DiffTreeNode::Directory {
-                            name,
-                            is_expanded: true,
-                            children: Vec::new(),
-                        };
-                        new_dir.insert(
-                            &path_parts[1..],
-                            full_path,
-                            old_path,
-                            is_new_file,
-                            is_deleted_file,
-                            additions,
-                            deletions,
-                            line_idx,
-                        );
-                        children.push(new_dir);
-                    }
-                }
-                _ => {}
+        } else if let DiffTreeNode::Directory { children, .. } = self {
+            if let Some(pos) = children.iter().position(|child| match child {
+                DiffTreeNode::Directory { name: n, .. } => n == &name,
+                _ => false,
+            }) {
+                children[pos].insert(&path_parts[1..], entry);
+            } else {
+                let mut new_dir = DiffTreeNode::Directory {
+                    name,
+                    is_expanded: true,
+                    children: Vec::new(),
+                };
+                new_dir.insert(&path_parts[1..], entry);
+                children.push(new_dir);
             }
         }
     }
@@ -1167,7 +1140,7 @@ impl DiffTreeNode {
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}/{}", prefix, name)
+                    format!("{prefix}/{name}")
                 };
                 if hide_reviewed && !self.has_unreviewed_file(reviewed) {
                     return;
@@ -1192,14 +1165,8 @@ impl DiffTreeNode {
                 if name == "root" || *is_expanded {
                     let mut sorted_children = children.clone();
                     sorted_children.sort_by(|a, b| {
-                        let a_is_dir = match a {
-                            DiffTreeNode::Directory { .. } => true,
-                            _ => false,
-                        };
-                        let b_is_dir = match b {
-                            DiffTreeNode::Directory { .. } => true,
-                            _ => false,
-                        };
+                        let a_is_dir = matches!(a, DiffTreeNode::Directory { .. });
+                        let b_is_dir = matches!(b, DiffTreeNode::Directory { .. });
                         b_is_dir.cmp(&a_is_dir).then_with(|| a.name().cmp(b.name()))
                     });
                     for child in sorted_children {
@@ -1230,7 +1197,7 @@ impl DiffTreeNode {
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}/{}", prefix, name)
+                    format!("{prefix}/{name}")
                 };
                 out.push(FlatDiffTreeNode {
                     name: name.clone(),
@@ -1340,28 +1307,26 @@ impl DiffTreeNode {
     }
 
     pub fn toggle_expanded(&mut self, target_path_id: &str, current_prefix: &str) -> bool {
-        match self {
-            DiffTreeNode::Directory {
-                name,
-                is_expanded,
-                children,
-            } => {
-                let path_id = if current_prefix.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}/{}", current_prefix, name)
-                };
-                if path_id == target_path_id {
-                    *is_expanded = !*is_expanded;
+        if let DiffTreeNode::Directory {
+            name,
+            is_expanded,
+            children,
+        } = self
+        {
+            let path_id = if current_prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{current_prefix}/{name}")
+            };
+            if path_id == target_path_id {
+                *is_expanded = !*is_expanded;
+                return true;
+            }
+            for child in children {
+                if child.toggle_expanded(target_path_id, &path_id) {
                     return true;
                 }
-                for child in children {
-                    if child.toggle_expanded(target_path_id, &path_id) {
-                        return true;
-                    }
-                }
             }
-            _ => {}
         }
         false
     }
@@ -1539,7 +1504,6 @@ impl DiffView {
 
         struct DiffChunkMeta {
             new_path: Option<String>,
-            old_path: Option<String>,
             is_new_file: bool,
             is_deleted_file: bool,
         }
@@ -1601,38 +1565,39 @@ impl DiffView {
                         .as_ref()
                         .and_then(|m| m.new_path.clone())
                         .or_else(|| rename_to.clone()),
-                    old_path: rename_from.clone(),
                     is_new_file: false,
                     is_deleted_file: false,
                 });
             } else if let Some(rest) = line.strip_prefix("rename to ") {
                 rename_to = Some(unquote_git_path(rest));
                 let new_path = rename_to.clone();
-                let old_path = rename_from.clone();
                 if let Some(new) = &new_path {
                     current_file = new.clone();
                     let already_exists = files.iter().any(|(f, _, _, _, _)| f == new);
                     if !already_exists {
-                        files.push((new.clone(), old_path.clone(), false, false, all_lines.len()));
+                        files.push((
+                            new.clone(),
+                            rename_from.clone(),
+                            false,
+                            false,
+                            all_lines.len(),
+                        ));
                     }
                 }
                 chunk_meta = Some(DiffChunkMeta {
                     new_path,
-                    old_path,
                     is_new_file: false,
                     is_deleted_file: false,
                 });
             } else if line.starts_with("new file mode ") {
                 chunk_meta = Some(DiffChunkMeta {
                     new_path: rename_to.clone(),
-                    old_path: None,
                     is_new_file: true,
                     is_deleted_file: false,
                 });
             } else if line.starts_with("deleted file mode ") {
                 chunk_meta = Some(DiffChunkMeta {
                     new_path: None,
-                    old_path: rename_from.clone(),
                     is_new_file: false,
                     is_deleted_file: true,
                 });
@@ -1650,7 +1615,6 @@ impl DiffView {
                     if chunk_meta.as_ref().is_none_or(|m| m.new_path.is_none()) {
                         chunk_meta = Some(DiffChunkMeta {
                             new_path: Some(cleaned_path),
-                            old_path: rename_from.clone(),
                             is_new_file: chunk_meta.as_ref().is_some_and(|m| m.is_new_file),
                             is_deleted_file: chunk_meta.as_ref().is_some_and(|m| m.is_deleted_file),
                         });
@@ -1758,17 +1722,19 @@ impl DiffView {
         };
 
         for (file_path, old_path, is_new, is_del, line_idx) in &files {
-            let parts: Vec<&str> = file_path.split(|c| c == '/' || c == '\\').collect();
+            let parts: Vec<&str> = file_path.split(['/', '\\']).collect();
             let counts = change_counts.get(file_path).copied().unwrap_or((0, 0));
             root_node.insert(
                 &parts,
-                file_path,
-                old_path.as_deref(),
-                *is_new,
-                *is_del,
-                counts.1,
-                counts.0,
-                *line_idx,
+                &DiffFileEntry {
+                    full_path: file_path,
+                    old_path: old_path.as_deref(),
+                    is_new_file: *is_new,
+                    is_deleted_file: *is_del,
+                    additions: counts.1,
+                    deletions: counts.0,
+                    line_idx: *line_idx,
+                },
             );
         }
 
@@ -1842,8 +1808,8 @@ impl DiffView {
             return node.file_path.clone().into_iter().collect();
         }
         let rel_path = node.path_id.strip_prefix("root/").unwrap_or(&node.path_id);
-        let prefix1 = format!("{}/", rel_path);
-        let prefix2 = format!("{}\\", rel_path);
+        let prefix1 = format!("{rel_path}/");
+        let prefix2 = format!("{rel_path}\\");
         let mut paths = Vec::new();
         self.root_node.collect_file_paths(&mut paths);
         paths.retain(|p| p.starts_with(&prefix1) || p.starts_with(&prefix2));
@@ -2041,28 +2007,26 @@ impl DiffView {
                 if rel_path.is_empty() {
                     self.all_lines.clone()
                 } else {
-                    let prefix1 = format!("{}/", rel_path);
-                    let prefix2 = format!("{}\\", rel_path);
+                    let prefix1 = format!("{rel_path}/");
+                    let prefix2 = format!("{rel_path}\\");
                     self.all_lines
                         .iter()
                         .filter(|line| {
                             line.file_path.starts_with(&prefix1)
                                 || line.file_path.starts_with(&prefix2)
-                                || &line.file_path == rel_path
+                                || line.file_path == rel_path
                         })
                         .cloned()
                         .collect()
                 }
+            } else if !rel_path.is_empty() {
+                self.all_lines
+                    .iter()
+                    .filter(|line| line.file_path == rel_path)
+                    .cloned()
+                    .collect()
             } else {
-                if !rel_path.is_empty() {
-                    self.all_lines
-                        .iter()
-                        .filter(|line| &line.file_path == rel_path)
-                        .cloned()
-                        .collect()
-                } else {
-                    self.all_lines.clone()
-                }
+                self.all_lines.clone()
             }
         };
 
@@ -2175,7 +2139,7 @@ impl DiffView {
                 let path_id = if prefix.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}/{}", prefix, name)
+                    format!("{prefix}/{name}")
                 };
                 let (adds, dels) = Self::compute_dir_counts_raw(node);
                 if let Some(fnode) = flat.iter_mut().find(|n| n.is_dir && n.path_id == path_id) {
@@ -2347,7 +2311,7 @@ impl DiffView {
                                 sline
                                     .right
                                     .as_ref()
-                                    .map_or(false, |r| r.new_line_num.is_some())
+                                    .is_some_and(|r| r.new_line_num.is_some())
                             });
 
                     if has_any_right {
@@ -3851,13 +3815,6 @@ impl Default for App {
     }
 }
 
-/// Build the zero-padded percent string used as the sort/group key for the
-/// Milestones "Progress" column. Prefers the cheap aggregate derived from
-/// `Issue.milestone` (see `App::rebuild_milestone_progress_cache`) and
-/// falls back to the per-milestone issue list when that has been fetched
-/// on demand (e.g. the user drilled in). Anything missing either way is
-/// "000%".
-
 /// Map a milestone's raw `state` field to the uppercase display text shown
 /// in the table cell. Used by both `milestone_filter_values` (the column
 /// filter picker) and `render_tab_milestones` so they cannot drift.
@@ -3865,10 +3822,9 @@ pub(crate) fn milestone_state_display(raw: &str) -> &'static str {
     match raw {
         "active" => "ACTIVE",
         "closed" => "CLOSED",
-        // Unknown states fall back to the raw value uppercased. Empty
-        // string for unset (the API defaults to "active" but the field
-        // may be missing for very old cached data).
-        other => "",
+        // Unknown or missing states (very old cached data may lack the
+        // field) render as an empty cell.
+        _ => "",
     }
 }
 
@@ -3880,7 +3836,7 @@ pub(crate) fn runner_status_display(raw: &str) -> &'static str {
         "online" => "ONLINE",
         "paused" => "PAUSED",
         "offline" => "OFFLINE",
-        other => "UNKNOWN",
+        _ => "UNKNOWN",
     }
 }
 
@@ -4566,7 +4522,7 @@ impl App {
     /// bulk/submit operation takes precedence, falling back to the most
     /// recent running command.
     pub fn show_error(&mut self, msg: String) {
-        let failed_status = format!("Failed: {}", msg);
+        let failed_status = format!("Failed: {msg}");
         self.raise_error_toast(msg);
         let pos = self
             .terminal_commands
@@ -4756,7 +4712,7 @@ impl App {
 
     pub fn has_column_filter(&self, tab: Tab, col: &str) -> bool {
         self.get_column_filter(tab, col)
-            .map_or(false, |v| !v.is_empty())
+            .is_some_and(|v| !v.is_empty())
     }
 
     pub fn set_column_filter(
@@ -4968,12 +4924,12 @@ impl App {
                 if let Some(ref pos) = c.position {
                     let matches_path = |file_path: &str| {
                         file_path == path
-                            || file_path.starts_with(&format!("{}/", path))
+                            || file_path.starts_with(&format!("{path}/"))
                             || path == "root"
                             || path.is_empty()
                     };
-                    let path_matches = pos.old_path.as_deref().map_or(false, matches_path)
-                        || pos.new_path.as_deref().map_or(false, matches_path);
+                    let path_matches = pos.old_path.as_deref().is_some_and(matches_path)
+                        || pos.new_path.as_deref().is_some_and(matches_path);
                     if path_matches {
                         if let Some(ref disc_id) = c.discussion_id {
                             let is_resolved = c.resolved.unwrap_or(false);
@@ -5558,7 +5514,7 @@ impl App {
             &mut list,
             &self.column_filters,
             Tab::MergeRequests,
-            |item, col| Self::mr_filter_values(item, col),
+            Self::mr_filter_values,
         );
         list
     }
@@ -5675,7 +5631,7 @@ impl App {
                     "Actor" => a.actor_login().to_string(),
                     "Created" => a
                         .created_at()
-                        .map(|c| crate::utils::format::time_ago(c))
+                        .map(crate::utils::format::time_ago)
                         .unwrap_or_default(),
                     "Source" => a.source().unwrap_or_default().to_string(),
                     "Duration" => a
@@ -5694,7 +5650,7 @@ impl App {
                     "Actor" => b.actor_login().to_string(),
                     "Created" => b
                         .created_at()
-                        .map(|c| crate::utils::format::time_ago(c))
+                        .map(crate::utils::format::time_ago)
                         .unwrap_or_default(),
                     "Source" => b.source().unwrap_or_default().to_string(),
                     "Duration" => b
@@ -6607,8 +6563,8 @@ impl App {
         }
     }
 
-    pub fn apply_column_filters<'a, T>(
-        list: &mut Vec<&'a T>,
+    pub fn apply_column_filters<T>(
+        list: &mut Vec<&T>,
         column_filters: &std::collections::HashMap<
             Tab,
             std::collections::HashMap<String, std::collections::HashSet<String>>,
@@ -6682,10 +6638,10 @@ impl App {
             Tab::MergeRequests => {
                 for item in &self.mrs.items {
                     for v in Self::mr_filter_values(item, col) {
-                        if matches!(col, "Closes" | "Linked Issues") {
-                            if v == "Has Issues" || v == "—" {
-                                continue;
-                            }
+                        if matches!(col, "Closes" | "Linked Issues")
+                            && (v == "Has Issues" || v == "—")
+                        {
+                            continue;
                         }
                         values.insert(v);
                     }
@@ -6938,7 +6894,7 @@ impl App {
                         "Actor" => p.actor_login().to_string(),
                         "Created" => p
                             .created_at()
-                            .map(|c| crate::utils::format::time_ago(c))
+                            .map(crate::utils::format::time_ago)
                             .unwrap_or_default(),
                         _ => "Unknown".to_string(),
                     };
@@ -7013,7 +6969,7 @@ impl App {
         };
         for (name, indices) in &groups {
             self.group_items
-                .push(GroupItem::Header(format!("{}: {}", column_label, name)));
+                .push(GroupItem::Header(format!("{column_label}: {name}")));
             for &i in indices {
                 self.group_items.push(GroupItem::Item(i));
             }
@@ -7333,7 +7289,7 @@ impl App {
         );
 
         if let Err(e) = cfg.save_layout(target) {
-            eprintln!("Failed to save layout: {}", e);
+            eprintln!("Failed to save layout: {e}");
         }
     }
 }
@@ -7414,7 +7370,7 @@ mod tests {
     fn issue_with_milestone(iid: u64, state: &str, milestone_iid: u64) -> Issue {
         Issue {
             iid,
-            title: format!("Issue {}", iid),
+            title: format!("Issue {iid}"),
             state: state.to_string(),
             labels: vec![],
             updated_at: String::new(),
@@ -7424,7 +7380,7 @@ mod tests {
                 username: "u".to_string(),
             },
             milestone: Some(crate::domain::issues::Milestone {
-                title: format!("M{}", milestone_iid),
+                title: format!("M{milestone_iid}"),
                 iid: milestone_iid,
                 id: 0,
                 state: "active".to_string(),
@@ -7541,8 +7497,10 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
         app.issues.items = vec![
             serde_json::from_str(
                 r#"{
@@ -7605,8 +7563,10 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
         app.mrs.items = vec![
             serde_json::from_str(
                 r#"{
@@ -7645,8 +7605,10 @@ mod tests {
 
     #[test]
     fn selected_mr_reference_falls_back_to_scope_when_url_missing() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("owner/repo".to_string()),
+            ..App::default()
+        };
         app.mrs.items = vec![
             serde_json::from_str(
                 r#"{
@@ -7681,8 +7643,10 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
 
         app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
             id: 555,
@@ -7729,8 +7693,10 @@ mod tests {
         }
 
         let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
-        let mut app = App::default();
-        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        let mut app = App {
+            clipboard: Box::new(RecordingClipboard(copied.clone())),
+            ..App::default()
+        };
 
         app.branches.items = vec![crate::domain::branches::Branch {
             name: "feature/new-api".to_string(),
@@ -7832,24 +7798,30 @@ mod tests {
 
     #[test]
     fn pop_search_word_drops_trailing_word_and_whitespace() {
-        let mut app = App::default();
-        app.search_query = "foo bar  baz ".to_string();
+        let mut app = App {
+            search_query: "foo bar  baz ".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "foo bar  ");
     }
 
     #[test]
     fn pop_search_word_removes_unicode_word() {
-        let mut app = App::default();
-        app.search_query = "héllo wörld".to_string();
+        let mut app = App {
+            search_query: "héllo wörld".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "héllo ");
     }
 
     #[test]
     fn pop_search_word_on_only_whitespace_is_noop() {
-        let mut app = App::default();
-        app.search_query = "   ".to_string();
+        let mut app = App {
+            search_query: "   ".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "");
     }
@@ -7863,16 +7835,20 @@ mod tests {
 
     #[test]
     fn pop_search_word_handles_tab_separated_words() {
-        let mut app = App::default();
-        app.search_query = "one\ttwo\tthree".to_string();
+        let mut app = App {
+            search_query: "one\ttwo\tthree".to_string(),
+            ..App::default()
+        };
         app.pop_search_word();
         assert_eq!(app.search_query, "one\ttwo\t");
     }
 
     #[test]
     fn clear_search_query_wipes_query_and_refreshes_filter() {
-        let mut app = App::default();
-        app.search_query = "anything".to_string();
+        let mut app = App {
+            search_query: "anything".to_string(),
+            ..App::default()
+        };
         app.clear_search_query();
         assert_eq!(app.search_query, "");
     }
@@ -8052,8 +8028,10 @@ mod tests {
 
     #[test]
     fn select_all_filtered_is_a_noop_outside_supported_tabs() {
-        let mut app = App::default();
-        app.active_tab = Tab::Runners;
+        let mut app = App {
+            active_tab: Tab::Runners,
+            ..App::default()
+        };
 
         let added = app.select_all_filtered();
         assert_eq!(added, 0);
@@ -9138,7 +9116,7 @@ diff --git a/foo.txt b/foo.txt
         // Save layout
         app.save_layout(SaveMenu::Global);
         let contents = std::fs::read_to_string(&config_path).unwrap();
-        println!("Saved config contents:\n{}", contents);
+        println!("Saved config contents:\n{contents}");
 
         // Load new App and verify
         let app2 = App::new();
@@ -9307,7 +9285,7 @@ help = "h"
 
         // Verify the saved file has both the new page_size and the old keybindings!
         let contents = std::fs::read_to_string(&config_path).unwrap();
-        println!("Saved config contents:\n{}", contents);
+        println!("Saved config contents:\n{contents}");
 
         let val: toml::Value = toml::from_str(&contents).unwrap();
         let table = val.as_table().unwrap();
@@ -9563,8 +9541,7 @@ new mode 100755
     /// produces have a chosen number of digits.
     fn diff_starting_at(start_line: u32) -> String {
         format!(
-            "diff --git a/spec.yml b/spec.yml\n--- a/spec.yml\n+++ b/spec.yml\n@@ -{s},3 +{s},4 @@\n context\n+added\n-removed\n",
-            s = start_line
+            "diff --git a/spec.yml b/spec.yml\n--- a/spec.yml\n+++ b/spec.yml\n@@ -{start_line},3 +{start_line},4 @@\n context\n+added\n-removed\n"
         )
     }
 
@@ -10628,8 +10605,10 @@ index 123456..789012 100644
                 .contains(&"Project")
         );
 
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Repository("group/repo".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("group/repo".to_string()),
+            ..App::default()
+        };
         assert!(!app.is_column_visible(Tab::Issues, "Project"));
         assert!(!app.is_column_visible(Tab::MergeRequests, "Project"));
 
@@ -10658,8 +10637,10 @@ index 123456..789012 100644
 
     #[test]
     fn project_column_value_filtering_works() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
@@ -10690,8 +10671,10 @@ index 123456..789012 100644
 
     #[test]
     fn project_column_issue_value_filtering_works() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let issue1 = crate::domain::issues::Issue {
@@ -10763,8 +10746,10 @@ index 123456..789012 100644
 
     #[test]
     fn picker_empty_selection_clears_existing_filter() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
@@ -10810,8 +10795,10 @@ index 123456..789012 100644
 
     #[test]
     fn picker_non_empty_selection_preserves_set_behavior() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Group("group".to_string()),
+            ..App::default()
+        };
         app.reset_on_scope_change();
 
         let mut issue1 = mr_fixture(1, "opened", "a", false, "Issue 1");
@@ -10884,8 +10871,10 @@ index 123456..789012 100644
 
     #[test]
     fn visual_select_mode_range_and_shrink() {
-        let mut app = App::default();
-        app.active_tab = Tab::Issues;
+        let mut app = App {
+            active_tab: Tab::Issues,
+            ..App::default()
+        };
         app.issues.items = (1..=20)
             .map(|i| crate::domain::issues::Issue {
                 iid: i,
@@ -10957,8 +10946,10 @@ index 123456..789012 100644
 
     #[test]
     fn visual_select_mode_pipelines_and_jobs() {
-        let mut app = App::default();
-        app.active_tab = Tab::Pipelines;
+        let mut app = App {
+            active_tab: Tab::Pipelines,
+            ..App::default()
+        };
         app.pipelines.items = (100..110)
             .map(|id| crate::domain::pipelines::Pipeline {
                 id,
@@ -11281,8 +11272,10 @@ index 123456..789012 100644
     }
 
     fn app_listing_prs(iids: &[u64]) -> App {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
+        let mut app = App {
+            scope: crate::scope::Scope::Repository("owner/repo".to_string()),
+            ..App::default()
+        };
         app.mrs.items = iids
             .iter()
             .map(|&iid| mr_fixture(iid, "opened", "user1", false, "PR"))

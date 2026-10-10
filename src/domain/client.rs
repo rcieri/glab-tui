@@ -1,4 +1,4 @@
-use crate::backend::{Backend, BackendKind, IssueUpdate, MrUpdate};
+use crate::backend::{Backend, BackendKind, IssueUpdate, MergeOptions, MrUpdate, NewIssue, NewMr};
 use crate::config::Config;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::scope::Scope;
@@ -129,29 +129,8 @@ impl GitlabClient {
         self.backend.delete_issue(project, iid).await
     }
 
-    pub async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()> {
-        self.backend
-            .create_issue(
-                project,
-                title,
-                description,
-                labels,
-                assignees,
-                milestone,
-                due_date,
-                weight,
-            )
-            .await
+    pub async fn create_issue(&self, project: &str, issue: &NewIssue<'_>) -> Result<()> {
+        self.backend.create_issue(project, issue).await
     }
 
     // ── MR mutations ──
@@ -231,56 +210,17 @@ impl GitlabClient {
         &self,
         project: &str,
         iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
-        sha: Option<&str>,
+        options: &MergeOptions<'_>,
     ) -> Result<()> {
-        self.backend
-            .merge_mr(
-                project,
-                iid,
-                squash,
-                delete_branch,
-                strategy,
-                auto_merge,
-                sha,
-            )
-            .await
+        self.backend.merge_mr(project, iid, options).await
     }
 
     pub async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()> {
         self.backend.toggle_mr_draft(project, iid, is_draft).await
     }
 
-    pub async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()> {
-        self.backend
-            .create_mr(
-                project,
-                title,
-                description,
-                source_branch,
-                target_branch,
-                labels,
-                assignees,
-                reviewers,
-                milestone,
-                issue_iid,
-            )
-            .await
+    pub async fn create_mr(&self, project: &str, mr: &NewMr<'_>) -> Result<()> {
+        self.backend.create_mr(project, mr).await
     }
 
     pub async fn submit_review(

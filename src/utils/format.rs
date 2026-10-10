@@ -85,7 +85,7 @@ pub fn time_ago(date_str: &str) -> String {
             if days == 1 {
                 return "1 day ago".to_string();
             }
-            return format!("{} days ago", days);
+            return format!("{days} days ago");
         }
 
         let hours = duration.num_hours();
@@ -93,7 +93,7 @@ pub fn time_ago(date_str: &str) -> String {
             if hours == 1 {
                 return "1 hr ago".to_string();
             }
-            return format!("{} hrs ago", hours);
+            return format!("{hours} hrs ago");
         }
 
         let minutes = duration.num_minutes();
@@ -101,7 +101,7 @@ pub fn time_ago(date_str: &str) -> String {
             if minutes == 1 {
                 return "1 min ago".to_string();
             }
-            return format!("{} mins ago", minutes);
+            return format!("{minutes} mins ago");
         }
 
         "just now".to_string()
@@ -115,27 +115,27 @@ pub fn format_ref(r#ref: &str) -> String {
         .strip_prefix("refs/pull/")
         .and_then(|s| s.strip_suffix("/merge"))
     {
-        format!("PR #{}", pr_id)
+        format!("PR #{pr_id}")
     } else if let Some(pr_id) = r#ref
         .strip_prefix("refs/pull/")
         .and_then(|s| s.strip_suffix("/head"))
     {
-        format!("PR #{}", pr_id)
+        format!("PR #{pr_id}")
     } else if let Some(pr_id) = r#ref
         .strip_prefix("refs/pull/")
         .and_then(|s| s.split('/').next())
     {
-        format!("PR #{}", pr_id)
+        format!("PR #{pr_id}")
     } else if let Some(mr_id) = r#ref
         .strip_prefix("refs/merge-requests/")
         .and_then(|s| s.strip_suffix("/merge"))
     {
-        format!("MR !{}", mr_id)
+        format!("MR !{mr_id}")
     } else if let Some(mr_id) = r#ref
         .strip_prefix("refs/merge-requests/")
         .and_then(|s| s.split('/').next())
     {
-        format!("MR !{}", mr_id)
+        format!("MR !{mr_id}")
     } else if let Some(branch) = r#ref.strip_prefix("refs/heads/") {
         branch.to_string()
     } else if let Some(tag) = r#ref.strip_prefix("refs/tags/") {
@@ -284,7 +284,7 @@ pub fn parse_ansi_trace(trace: &str, theme: &crate::config::Theme) -> Vec<Line<'
             let mut spans: Vec<Span<'static>> = Vec::new();
             if let Some(ts) = gl_ts {
                 spans.push(Span::styled(
-                    format!("{} ", ts),
+                    format!("{ts} "),
                     Style::default()
                         .fg(theme.text_muted)
                         .add_modifier(Modifier::ITALIC),

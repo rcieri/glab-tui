@@ -56,6 +56,49 @@ impl BackendKind {
     }
 }
 
+/// Fields of a new issue. Empty strings leave the field unset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NewIssue<'a> {
+    pub title: &'a str,
+    pub description: &'a str,
+    pub labels: &'a str,
+    pub assignees: &'a str,
+    pub milestone: &'a str,
+    pub due_date: &'a str,
+    pub weight: &'a str,
+}
+
+/// Fields of a new MR/PR. Empty strings leave the field unset; `issue_iid`
+/// links the issue it closes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NewMr<'a> {
+    pub title: &'a str,
+    pub description: &'a str,
+    pub source_branch: &'a str,
+    pub target_branch: &'a str,
+    pub labels: &'a str,
+    pub assignees: &'a str,
+    pub reviewers: &'a str,
+    pub milestone: &'a str,
+    pub issue_iid: Option<u64>,
+}
+
+/// How to merge an MR/PR.
+///
+/// `sha` is the head commit SHA of the source branch. Forwarded to GitLab as
+/// `glab mr merge --sha=<sha>` to satisfy GitLab 19.2+ instances and repos
+/// that require it for the merge API. GitLab-only: `GhBackend` ignores it.
+/// `None` skips the flag and lets `glab` fall back to its own heuristic on
+/// legacy installs (older GitLab returns 400 otherwise).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MergeOptions<'a> {
+    pub squash: bool,
+    pub delete_branch: bool,
+    pub strategy: Option<&'a str>,
+    pub auto_merge: bool,
+    pub sha: Option<&'a str>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IssueUpdate {
     pub title: Option<String>,
@@ -148,17 +191,7 @@ pub trait Backend: Send + Sync {
         issue_iid: u64,
         page_size: usize,
     ) -> Result<Vec<RelatedMrRef>>;
-    async fn create_issue(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        labels: &str,
-        assignees: &str,
-        milestone: &str,
-        due_date: &str,
-        weight: &str,
-    ) -> Result<()>;
+    async fn create_issue(&self, project: &str, issue: &NewIssue<'_>) -> Result<()>;
     async fn update_issue(&self, project: &str, iid: u64, update: &IssueUpdate) -> Result<()>;
     async fn update_issue_title(&self, project: &str, iid: u64, title: &str) -> Result<()> {
         self.update_issue(
@@ -309,36 +342,9 @@ pub trait Backend: Send + Sync {
     /// Rebase the source branch onto the target. Supported on both hosts.
     async fn rebase_mr(&self, project: &str, iid: u64) -> Result<()>;
     /// Merge the MR/PR.
-    ///
-    /// `sha` is the head commit SHA of the source branch. Forwarded to GitLab
-    /// as `glab mr merge --sha=<sha>` to satisfy GitLab 19.2+ instances and
-    /// repos that require it for the merge API. GitLab-only — `GhBackend`
-    /// ignores it. `None` skips the flag and lets `glab` fall back to its
-    /// own heuristic on legacy installs (older GitLab returns 400 otherwise).
-    async fn merge_mr(
-        &self,
-        project: &str,
-        iid: u64,
-        squash: bool,
-        delete_branch: bool,
-        strategy: Option<&str>,
-        auto_merge: bool,
-        sha: Option<&str>,
-    ) -> Result<()>;
+    async fn merge_mr(&self, project: &str, iid: u64, options: &MergeOptions<'_>) -> Result<()>;
     async fn toggle_mr_draft(&self, project: &str, iid: u64, is_draft: bool) -> Result<()>;
-    async fn create_mr(
-        &self,
-        project: &str,
-        title: &str,
-        description: &str,
-        source_branch: &str,
-        target_branch: &str,
-        labels: &str,
-        assignees: &str,
-        reviewers: &str,
-        milestone: &str,
-        issue_iid: Option<u64>,
-    ) -> Result<()>;
+    async fn create_mr(&self, project: &str, mr: &NewMr<'_>) -> Result<()>;
     /// Posts `comments` and `body` as one review carrying `event`.
     async fn submit_review(
         &self,

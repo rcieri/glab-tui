@@ -432,10 +432,7 @@ fn targets(app: &App, pane: CommandPane) -> Result<Selection, String> {
     })
 }
 
-fn sorted_by_project_and_number<'a, T>(
-    mut rows: Vec<&'a T>,
-    key: impl Fn(&T) -> (&str, u64),
-) -> Vec<&'a T> {
+fn sorted_by_project_and_number<T>(mut rows: Vec<&T>, key: impl Fn(&T) -> (&str, u64)) -> Vec<&T> {
     rows.sort_by(|a, b| key(a).cmp(&key(b)));
     rows
 }

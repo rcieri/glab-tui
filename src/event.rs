@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -80,8 +78,8 @@ pub enum Event {
     },
     /// Single item fetched by the "go to issue/MR by ID" prompt. `Ok` carries
     /// the item so the handler can insert it into the loaded set if absent.
-    IssueFetched(u64, Result<crate::domain::issues::Issue, String>),
-    MrFetched(u64, Result<crate::domain::mr::MergeRequest, String>),
+    IssueFetched(u64, Result<Box<crate::domain::issues::Issue>, String>),
+    MrFetched(u64, Result<Box<crate::domain::mr::MergeRequest>, String>),
     /// On-demand stack fetch for one GitHub PR. `Ok(None)` means the PR is not
     /// in a stack, `Err` is the API failure.
     PrStackFetched {

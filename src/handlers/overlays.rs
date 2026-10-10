@@ -1,4 +1,3 @@
-use crate::AppTerminal;
 use crate::app::App;
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
@@ -248,7 +247,7 @@ fn run_submit_action(
                     Err(e) => {
                         let _ = tx.send(Event::CommandCompleted(
                             crate::app::Tab::Branches,
-                            Err(format!("Failed to delete branch: {}", e)),
+                            Err(format!("Failed to delete branch: {e}")),
                         ));
                     }
                 }
@@ -285,7 +284,7 @@ fn run_submit_action(
                     Err(e) => {
                         let _ = tx.send(Event::CommandCompleted(
                             crate::app::Tab::Issues,
-                            Err(format!("Failed to delete issue: {}", e)),
+                            Err(format!("Failed to delete issue: {e}")),
                         ));
                     }
                 }
@@ -342,7 +341,7 @@ fn run_submit_action(
                     Err(e) => {
                         let _ = tx.send(Event::CommandCompleted(
                             crate::app::Tab::MergeRequests,
-                            Err(format!("Failed to delete merge request: {}", e)),
+                            Err(format!("Failed to delete merge request: {e}")),
                         ));
                     }
                 }
@@ -391,11 +390,13 @@ fn run_submit_action(
                     .merge_mr(
                         &project_path,
                         iid,
-                        squash,
-                        delete_branch,
-                        merge_strategy,
-                        auto_merge,
-                        mr_sha.as_deref(),
+                        &crate::backend::MergeOptions {
+                            squash,
+                            delete_branch,
+                            strategy: merge_strategy,
+                            auto_merge,
+                            sha: mr_sha.as_deref(),
+                        },
                     )
                     .await;
                 let _ = tx2.send(Event::CommandCompleted(
@@ -457,11 +458,13 @@ fn run_submit_action(
                         .merge_mr(
                             &proj,
                             mr_iid,
-                            squash,
-                            delete_branch,
-                            merge_strategy,
-                            auto_merge,
-                            sha.as_deref(),
+                            &crate::backend::MergeOptions {
+                                squash,
+                                delete_branch,
+                                strategy: merge_strategy,
+                                auto_merge,
+                                sha: sha.as_deref(),
+                            },
                         )
                         .await
                     {
@@ -566,9 +569,9 @@ pub fn handle_help_keybinding(app: &mut App, key_event: &KeyEvent) -> bool {
     let is_typing_text = app.text_input.is_some()
         || app.is_typing_search
         || app.job_trace_searching
-        || app.edit_menu.as_ref().map_or(false, |m| m.editing)
-        || app.diff_view.as_ref().map_or(false, |d| d.search_active)
-        || app.selector.as_ref().map_or(false, |s| s.is_filtering);
+        || app.edit_menu.as_ref().is_some_and(|m| m.editing)
+        || app.diff_view.as_ref().is_some_and(|d| d.search_active)
+        || app.selector.as_ref().is_some_and(|s| s.is_filtering);
 
     if is_typing_text && !is_f1 {
         return false;
@@ -792,12 +795,7 @@ pub fn handle_refresh(
     false
 }
 
-pub fn handle_date_picker(
-    app: &mut App,
-    key_event: &KeyEvent,
-    terminal: &mut AppTerminal,
-    tx: UnboundedSender<Event>,
-) -> bool {
+pub fn handle_date_picker(app: &mut App, key_event: &KeyEvent, tx: UnboundedSender<Event>) -> bool {
     if let Some(mut date_picker) = app.date_picker.take() {
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => {}
@@ -840,7 +838,6 @@ pub fn handle_date_picker(
                             entity_iid,
                             &field_type,
                             selected_val,
-                            terminal,
                             tx,
                             active_tab,
                         );

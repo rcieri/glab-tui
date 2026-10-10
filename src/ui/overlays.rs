@@ -45,7 +45,6 @@ fn wrap_cell_text(s: &str, width: u16) -> (Text<'static>, u16) {
 pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     app.overlay_stack.clear();
     let icons = ICONS.read().unwrap();
-    let label_colors = app.label_colors.clone();
     // EditMenu is rendered as a full-zoom interactive inspector in the detail
     // pane (ui/mod.rs::render_edit_menu_if_active); register its area for mouse
     // scroll/click handling so it participates in overlay z-ordering.
@@ -67,7 +66,6 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
             let has_filter = selector.field_type != "comment_action_select"
                 && selector.field_type != "review_submit_status"
-                && selector.field_type != "merge_options"
                 && selector.field_type != "related_mrs";
 
             let constraints = if has_filter {
@@ -250,7 +248,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                                 if let Some(abs_path) = app.switch_repo_paths.get(item) {
                                     if !abs_path.is_empty() && abs_path != item {
                                         line_spans.push(Span::styled(
-                                            format!(" {}", abs_path),
+                                            format!(" {abs_path}"),
                                             Style::default()
                                                 .fg(THEME.read().unwrap().text_muted)
                                                 .bg(item_bg),
@@ -266,7 +264,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
 
                     let list =
                         List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-                    let mut state = selector.state.clone();
+                    let mut state = selector.state;
                     f.render_stateful_widget(list, list_chunk, &mut state);
                     selector.state = state;
                 }
@@ -398,7 +396,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             let mut row_cells = Vec::new();
             for c in 0..7 {
                 let cell_idx = r * 7 + c;
-                let day_num = (cell_idx as i32) - (start_weekday as i32) + 1;
+                let day_num = cell_idx - (start_weekday as i32) + 1;
                 if day_num >= 1 && day_num <= total_days as i32 {
                     let is_selected = day_num as u32 == date_picker.day;
                     let style = if is_selected {
@@ -444,11 +442,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
     if app.focus_column_checklist && app.selector.is_none() {
         let tab = app.active_tab;
         let kind = app.kind();
-        let is_github = kind.is_github();
         let cols = tab.columns(kind, app.scope.is_group());
         let active_idx = app.column_checklist_idx;
 
-        let group_cols: Vec<&str> = cols.iter().copied().collect();
+        let group_cols: Vec<&str> = cols.to_vec();
 
         let cols_end = cols.len();
         let group_end = cols_end + group_cols.len();
@@ -679,7 +676,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         // Theme — inline row (icon + label in purple, value aligned with Page Size & Prefetch Tabs)
         let current_theme_name = app.config.theme_preset.as_deref().unwrap_or("default");
         let is_theme_active = active_idx == theme_idx;
-        let theme_value = format!("[ {} ]", current_theme_name);
+        let theme_value = format!("[ {current_theme_name} ]");
         let theme_style = if is_theme_active {
             Style::default()
                 .fg(t.highlight_bg)
@@ -966,7 +963,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     .collect();
 
                 let list = List::new(items).style(Style::default().bg(THEME.read().unwrap().bg));
-                let mut state = selector.state.clone();
+                let mut state = selector.state;
                 f.render_stateful_widget(list, list_chunk, &mut state);
                 selector.state = state;
             }
@@ -1099,14 +1096,12 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                         } else {
                             "( ) ".to_string()
                         }
+                    } else if o.checked {
+                        "[x] ".to_string()
                     } else {
-                        if o.checked {
-                            "[x] ".to_string()
-                        } else {
-                            "[ ] ".to_string()
-                        }
+                        "[ ] ".to_string()
                     };
-                    Line::from(format!("{mark}{}", display_label))
+                    Line::from(format!("{mark}{display_label}"))
                 })
                 .collect();
             let list = List::new(items)
@@ -1193,12 +1188,10 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                     Style::default()
                         .fg(if submit_selected {
                             theme.bg
+                        } else if dialog.action.is_destructive() {
+                            theme.red
                         } else {
-                            if dialog.action.is_destructive() {
-                                theme.red
-                            } else {
-                                theme.green
-                            }
+                            theme.green
                         })
                         .bg(if submit_selected {
                             if dialog.action.is_destructive() {
@@ -1269,7 +1262,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.configure)),
+            key: d(app.config.keybindings.global.configure.to_string()),
             action: "Toggle columns config popup (filter / group / sort)",
         },
         Shortcut {
@@ -1305,12 +1298,12 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.scroll_to_end)),
+            key: d(app.config.keybindings.global.scroll_to_end.to_string()),
             action: "Jump to the last line of the description pane",
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.scroll_top)),
+            key: d(app.config.keybindings.global.scroll_top.to_string()),
             action: "Jump to the top of the description pane",
         },
         Shortcut {
@@ -1330,7 +1323,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         },
         Shortcut {
             category: "Global & Nav",
-            key: d(format!("{}", app.config.keybindings.global.jump_to_id)),
+            key: d(app.config.keybindings.global.jump_to_id.to_string()),
             action: "Jump to issue/MR by ID; fetch if not cached",
         },
         Shortcut {

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use ratatui::{
     layout::Alignment,
     style::{Color, Modifier, Style},
@@ -426,7 +424,7 @@ pub(crate) fn append_job_summaries(
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  {}{}", duration, needs),
+                format!("  {duration}{needs}"),
                 Style::default().fg(THEME.read().unwrap().text_muted),
             ),
         ]));
@@ -435,7 +433,7 @@ pub(crate) fn append_job_summaries(
 
 #[allow(dead_code)]
 fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
-    let padded_key = format!(" {:^3} ", key);
+    let padded_key = format!(" {key:^3} ");
     text.push(Line::from(vec![
         Span::styled(
             padded_key,
@@ -445,7 +443,7 @@ fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" {}", desc),
+            format!(" {desc}"),
             Style::default().fg(THEME.read().unwrap().text_normal),
         ),
     ]));
@@ -518,12 +516,12 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
 
     let truncated_api = truncate(cmd_to_run, max_api_width);
 
-    let (cmd_bin, cmd_args) = if truncated_api.starts_with("glab") {
-        ("glab", truncated_api[4..].to_string())
-    } else if truncated_api.starts_with("gh") {
-        ("gh", truncated_api[2..].to_string())
-    } else if truncated_api.starts_with("git") {
-        ("git", truncated_api[3..].to_string())
+    let (cmd_bin, cmd_args) = if let Some(rest) = truncated_api.strip_prefix("glab") {
+        ("glab", rest.to_string())
+    } else if let Some(rest) = truncated_api.strip_prefix("gh") {
+        ("gh", rest.to_string())
+    } else if let Some(rest) = truncated_api.strip_prefix("git") {
+        ("git", rest.to_string())
     } else {
         ("", truncated_api.clone())
     };
@@ -531,12 +529,12 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
     let mut spans = vec![
         // 1. Time
         Span::styled(
-            format!("[{}] ", time_str),
+            format!("[{time_str}] "),
             Style::default().fg(THEME.read().unwrap().text_muted),
         ),
         // 2. Status
         Span::styled(
-            format!("{: <7}", status_text),
+            format!("{status_text: <7}"),
             Style::default()
                 .fg(status_color)
                 .add_modifier(Modifier::BOLD),
@@ -545,7 +543,7 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
         Span::styled(" • ", Style::default().fg(THEME.read().unwrap().text_muted)),
         // 4. Action
         Span::styled(
-            format!("{: <25}", desc_str),
+            format!("{desc_str: <25}"),
             Style::default()
                 .fg(THEME.read().unwrap().blue)
                 .add_modifier(Modifier::BOLD),
@@ -571,7 +569,7 @@ pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) ->
     // 7. Error Detail
     if let Some(detail) = err_detail {
         spans.push(Span::styled(
-            format!(" ({})", detail),
+            format!(" ({detail})"),
             Style::default().fg(THEME.read().unwrap().red),
         ));
     }
@@ -621,58 +619,6 @@ pub(crate) fn render_fuzzy_cell(
 }
 
 // ── Shared rendering helpers (used by detail panes AND edit menus) ──
-
-/// Return a styled span for a CI/Job status string.
-pub(crate) fn status_span(status: &str) -> Span<'static> {
-    let theme = THEME.read().unwrap();
-    let icons = crate::config::ICONS.read().unwrap();
-    match status {
-        "success" => Span::styled(
-            format!("{} SUCCESS", icons.status_success),
-            Style::default()
-                .fg(theme.green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        "failed" => Span::styled(
-            format!("{} FAILED", icons.status_failed),
-            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
-        ),
-        "running" => Span::styled(
-            format!("{} RUNNING", icons.status_running),
-            Style::default().fg(theme.blue).add_modifier(Modifier::BOLD),
-        ),
-        "canceled" => Span::styled(
-            format!("{} CANCEL", icons.status_canceled),
-            Style::default()
-                .fg(theme.text_muted)
-                .add_modifier(Modifier::BOLD),
-        ),
-        "pending" | "preparing" => Span::styled(
-            format!("{} PENDING", icons.status_pending),
-            Style::default()
-                .fg(theme.yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        "skipped" => Span::styled(
-            format!("{} SKIP", icons.status_skipped),
-            Style::default()
-                .fg(theme.text_muted)
-                .add_modifier(Modifier::BOLD),
-        ),
-        "manual" => Span::styled(
-            format!("{} MANUAL", icons.status_manual),
-            Style::default()
-                .fg(theme.text_muted)
-                .add_modifier(Modifier::BOLD),
-        ),
-        _ => Span::styled(
-            format!("{} UNKNOWN", icons.status_unknown),
-            Style::default()
-                .fg(theme.text_muted)
-                .add_modifier(Modifier::BOLD),
-        ),
-    }
-}
 
 /// Single source of truth for badge styling shared by the inspector preview and
 /// the table column renderers. Maps a field `label`/`val` pair to its
@@ -865,48 +811,6 @@ pub(crate) fn badge_style_for(
     }
 }
 
-/// Return a styled yellow span for a relative timestamp.
-pub(crate) fn time_ago_span(date: &str) -> Span<'static> {
-    Span::styled(
-        crate::utils::format::time_ago(date),
-        Style::default().fg(THEME.read().unwrap().yellow),
-    )
-}
-
-/// Split comma-separated values and render each with the given color.
-pub(crate) fn comma_spans(text: &str, color: Color) -> Vec<Span<'static>> {
-    let parts: Vec<String> = text.split(',').map(|s| s.trim().to_string()).collect();
-    let mut spans = Vec::new();
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw(", "));
-        }
-        spans.push(Span::styled(
-            part.clone(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ));
-    }
-    spans
-}
-
-/// Split comma-separated labels and render each with its hash-based color.
-pub(crate) fn label_spans(text: &str) -> Vec<Span<'static>> {
-    let parts: Vec<String> = text.split(',').map(|s| s.trim().to_string()).collect();
-    let mut spans = Vec::new();
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw(", "));
-        }
-        spans.push(Span::styled(
-            part.clone(),
-            Style::default()
-                .fg(get_label_color(part, &HashMap::new()))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    spans
-}
-
 /// Lays out one row of the diff file tree: truncates `name` to what is left
 /// after the prefix and the trailing stats, and returns it with the padding
 /// that pushes those stats flush against the panel's right edge.
@@ -997,7 +901,7 @@ mod tests {
     use super::*;
     use crate::domain::pipelines::Job;
     use crate::ui::diff::count_wrapped_lines;
-    use crate::ui::diff::format_comment_with_suggestions;
+    use crate::ui::diff::{CommentAnchor, format_comment_with_suggestions};
 
     fn make_job(id: u64, stage: &str, name: &str, status: &str) -> Job {
         Job {
@@ -1089,11 +993,11 @@ mod tests {
         let labels = vec!["bug".to_string(), "backend".to_string()];
         let colors = HashMap::new();
         let cell_empty = render_labels_cell(&[], &colors, "", false, false, 24);
-        let cell_str_empty = format!("{:?}", cell_empty);
+        let cell_str_empty = format!("{cell_empty:?}");
         assert!(cell_str_empty.contains("—"));
 
         let cell_normal = render_labels_cell(&labels, &colors, "", false, false, 24);
-        let cell_str = format!("{:?}", cell_normal);
+        let cell_str = format!("{cell_normal:?}");
         assert!(cell_str.contains("bug"));
         assert!(cell_str.contains("backend"));
     }
@@ -1103,13 +1007,10 @@ mod tests {
         let badge_bg = Color::Rgb(10, 50, 10);
         let base = Style::default().fg(Color::Green).bg(badge_bg);
         let cell = render_fuzzy_cell("OPEN", "", true, false, base, Alignment::Center);
-        let cell_str = format!("{:?}", cell);
+        let cell_str = format!("{cell:?}");
         let highlight_bg = THEME.read().unwrap().highlight_bg;
-        match highlight_bg {
-            Color::Rgb(r, g, b) => {
-                assert!(cell_str.contains(&format!("{r}, {g}, {b}")));
-            }
-            _ => {}
+        if let Color::Rgb(r, g, b) = highlight_bg {
+            assert!(cell_str.contains(&format!("{r}, {g}, {b}")));
         }
     }
 
@@ -1117,13 +1018,10 @@ mod tests {
     fn test_render_fuzzy_cell_applies_highlight_bg_when_no_badge_bg() {
         let base = Style::default().fg(Color::White);
         let cell = render_fuzzy_cell("Some title", "", true, false, base, Alignment::Left);
-        let cell_str = format!("{:?}", cell);
+        let cell_str = format!("{cell:?}");
         let highlight_bg = THEME.read().unwrap().highlight_bg;
-        match highlight_bg {
-            Color::Rgb(r, g, b) => {
-                assert!(cell_str.contains(&format!("{r}, {g}, {b}")));
-            }
-            _ => {}
+        if let Color::Rgb(r, g, b) = highlight_bg {
+            assert!(cell_str.contains(&format!("{r}, {g}, {b}")));
         }
     }
 
@@ -1145,11 +1043,13 @@ mod tests {
 
         let formatted = format_comment_with_suggestions(
             body,
-            file_path,
-            None,
-            None,
-            Some(1),
-            Some(1),
+            &CommentAnchor {
+                file_path,
+                start_new: None,
+                end_new: None,
+                start_old: Some(1),
+                end_old: Some(1),
+            },
             &all_lines,
             prefix,
             prefix_style,

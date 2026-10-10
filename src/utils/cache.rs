@@ -215,8 +215,8 @@ pub fn get_cache_dir() -> PathBuf {
 }
 
 pub fn cache_file_name(project_context: &str) -> String {
-    let safe_name = project_context.replace('/', "_").replace('\\', "_");
-    format!("{}.json", safe_name)
+    let safe_name = project_context.replace(['/', '\\'], "_");
+    format!("{safe_name}.json")
 }
 
 pub fn get_cache_dir_size() -> u64 {
@@ -444,8 +444,8 @@ mod tests {
         let repo2 = parent.path().join("repo2");
         let non_repo = parent.path().join("non_repo");
 
-        fs::create_dir_all(&repo1.join(".git")).unwrap();
-        fs::create_dir_all(&repo2.join(".git")).unwrap();
+        fs::create_dir_all(repo1.join(".git")).unwrap();
+        fs::create_dir_all(repo2.join(".git")).unwrap();
         fs::create_dir_all(&non_repo).unwrap();
 
         let repo1_str = repo1.to_str().unwrap();
@@ -476,9 +476,11 @@ mod tests {
 
     #[test]
     fn test_project_cache_roundtrip() {
-        let mut cache = ProjectCache::default();
-        cache.labels = vec!["bug".to_string(), "enhancement".to_string()];
-        cache.members = vec!["@user1".to_string(), "@user2".to_string()];
+        let cache = ProjectCache {
+            labels: vec!["bug".to_string(), "enhancement".to_string()],
+            members: vec!["@user1".to_string(), "@user2".to_string()],
+            ..ProjectCache::default()
+        };
 
         let serialized = serde_json::to_string(&cache).unwrap();
         let deserialized: ProjectCache = serde_json::from_str(&serialized).unwrap();
@@ -539,7 +541,7 @@ mod tests {
         // Inject the entry directly via the cache file.
         let cache_path = get_recent_repos_file_path();
         let _ = std::fs::create_dir_all(cache_path.parent().unwrap());
-        std::fs::write(&cache_path, format!("[\"{}\"]", fake_str)).unwrap();
+        std::fs::write(&cache_path, format!("[\"{fake_str}\"]")).unwrap();
 
         let entries = get_switchable_repos();
         assert!(

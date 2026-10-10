@@ -14,7 +14,7 @@ const C_BLUE: &str = "\x1b[34m";
 const C_CYAN: &str = "\x1b[36m";
 
 fn styled(text: &str, code: &str) -> String {
-    format!("{}{}{}", code, text, C_RESET)
+    format!("{code}{text}{C_RESET}")
 }
 
 fn pass(label: &str, detail: &str) {
@@ -34,7 +34,7 @@ fn info(label: &str, detail: &str) {
 }
 
 fn header(text: &str) {
-    println!("{}", styled(text, &format!("{}{}", C_BOLD, C_CYAN)));
+    println!("{}", styled(text, &format!("{C_BOLD}{C_CYAN}")));
 }
 
 fn subheader(text: &str) {
@@ -133,7 +133,7 @@ pub async fn run_doctor() {
     match Command::new("glab").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            pass("[PASS]", &format!("glab: {}", v));
+            pass("[PASS]", &format!("glab: {v}"));
             has_backend = true;
         }
         _ => {
@@ -148,7 +148,7 @@ pub async fn run_doctor() {
     match Command::new("gh").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            pass("[PASS]", &format!("gh:   {}", v));
+            pass("[PASS]", &format!("gh:   {v}"));
             has_backend = true;
         }
         _ => {
@@ -163,7 +163,7 @@ pub async fn run_doctor() {
     match Command::new("git").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            pass("[PASS]", &format!("git:  {}", v));
+            pass("[PASS]", &format!("git:  {v}"));
         }
         _ => {
             fail("[FAIL]", "git not found");
@@ -261,7 +261,7 @@ pub async fn run_doctor() {
             } else {
                 styled("GitLab", C_YELLOW)
             };
-            println!("  Backend: {}", backend);
+            println!("  Backend: {backend}");
         }
         Err(_) => {
             println!(
@@ -579,7 +579,7 @@ pub async fn run_update() {
             }
         }
         Err(e) => {
-            eprintln!("{}", styled(&format!("Update failed: {}", e), C_RED));
+            eprintln!("{}", styled(&format!("Update failed: {e}"), C_RED));
             std::process::exit(1);
         }
     }

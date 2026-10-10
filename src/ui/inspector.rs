@@ -152,6 +152,15 @@ pub(crate) fn render_entity_inspector(
     };
 
     let has_fields = !doc.fields.is_empty();
+    let field_list = FieldList {
+        fields: &doc.fields,
+        selected_idx,
+        editing,
+        cursor_pos,
+        label_colors,
+        skip_description,
+        interactive: is_interactive,
+    };
 
     let max_scroll = if has_content && has_fields {
         // Single column: metadata fields on top, full-width markdown below.
@@ -176,38 +185,14 @@ pub(crate) fn render_entity_inspector(
             .constraints([Constraint::Length(field_height), Constraint::Min(3)])
             .split(main_area);
 
-        render_fields_list(
-            f,
-            &mut mode,
-            &doc.fields,
-            selected_idx,
-            editing,
-            cursor_pos,
-            chunks[0],
-            label_colors,
-            skip_description,
-            is_interactive,
-            &theme,
-        );
+        render_fields_list(f, &mut mode, &field_list, chunks[0], &theme);
         render_content_pane(f, &mut mode, doc, chunks[1], Borders::TOP)
     } else if has_content {
         // Only content.
         render_content_pane(f, &mut mode, doc, main_area, Borders::NONE)
     } else {
         // Only fields.
-        render_fields_list(
-            f,
-            &mut mode,
-            &doc.fields,
-            selected_idx,
-            editing,
-            cursor_pos,
-            main_area,
-            label_colors,
-            skip_description,
-            is_interactive,
-            &theme,
-        );
+        render_fields_list(f, &mut mode, &field_list, main_area, &theme);
         0
     };
 
@@ -224,30 +209,15 @@ pub(crate) fn render_entity_inspector(
 fn render_fields_list(
     f: &mut Frame,
     mode: &mut InspectorMode<'_>,
-    fields: &[Field],
-    selected_idx: Option<usize>,
-    editing: bool,
-    cursor_pos: usize,
+    field_list: &FieldList,
     area: Rect,
-    label_colors: &HashMap<String, Color>,
-    skip_description: bool,
-    interactive: bool,
     theme: &crate::config::Theme,
 ) {
-    let field_items = build_field_list_items(
-        fields,
-        selected_idx,
-        editing,
-        cursor_pos,
-        area.width,
-        label_colors,
-        skip_description,
-        interactive,
-    );
+    let field_items = build_field_list_items(field_list, area.width);
     let list = List::new(field_items).style(Style::default().bg(theme.bg));
 
     let mut state = match mode {
-        InspectorMode::Interactive { menu } => menu.state.clone(),
+        InspectorMode::Interactive { menu } => menu.state,
         InspectorMode::ReadOnly { .. } => ListState::default(),
     };
     f.render_stateful_widget(list, area, &mut state);
@@ -269,7 +239,6 @@ fn render_content_pane(
     area: Rect,
     borders: ratatui::widgets::Borders,
 ) -> u16 {
-    let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
 
     match mode {
@@ -417,7 +386,6 @@ fn render_submit_footer(
         _ => return,
     };
 
-    let is_new_entity = menu.is_new();
     let submit_idx = menu.fields.len() + 1;
     let btn_text = format!(" {} Submit (Ctrl+x) ", icons.check_on);
     let is_submit_selected = menu.selected_idx == submit_idx;
@@ -449,16 +417,31 @@ fn render_submit_footer(
     );
 }
 
+/// The field rows of one inspector and how they are being interacted with.
+#[derive(Clone, Copy)]
+pub(crate) struct FieldList<'a> {
+    pub fields: &'a [Field],
+    pub selected_idx: Option<usize>,
+    pub editing: bool,
+    pub cursor_pos: usize,
+    pub label_colors: &'a HashMap<String, Color>,
+    pub skip_description: bool,
+    pub interactive: bool,
+}
+
 pub(crate) fn build_field_list_items(
-    fields: &[Field],
-    selected_idx: Option<usize>,
-    editing: bool,
-    cursor_pos: usize,
+    field_list: &FieldList,
     pane_width: u16,
-    label_colors: &HashMap<String, Color>,
-    skip_description: bool,
-    interactive: bool,
 ) -> Vec<ListItem<'static>> {
+    let FieldList {
+        fields,
+        selected_idx,
+        editing,
+        cursor_pos,
+        label_colors,
+        skip_description,
+        interactive,
+    } = *field_list;
     let icons = ICONS.read().unwrap();
     let theme = THEME.read().unwrap();
 
@@ -627,11 +610,13 @@ pub(crate) fn build_field_list_items(
                     is_selected && editing,
                     cursor_pos,
                     available_width,
-                    icon,
-                    label,
-                    label_width,
-                    icon_style,
-                    label_style,
+                    &FieldLabel {
+                        icon,
+                        label,
+                        width: label_width,
+                        icon_style,
+                        label_style,
+                    },
                     val_style,
                     cursor_style,
                 );
@@ -724,7 +709,7 @@ pub(crate) fn build_field_list_items(
                                     theme.green_bg
                                 },
                             ),
-                            _ => (format!(" {} ", val), theme.text_muted, item_bg),
+                            _ => (format!(" {val} "), theme.text_muted, item_bg),
                         };
                         val_spans.push(Span::styled(
                             display,
@@ -738,7 +723,7 @@ pub(crate) fn build_field_list_items(
                             val.clone()
                         };
                         val_spans.push(Span::styled(
-                            format!(" {}", display),
+                            format!(" {display}"),
                             Style::default()
                                 .fg(theme.yellow)
                                 .bg(item_bg)
@@ -747,7 +732,7 @@ pub(crate) fn build_field_list_items(
                     }
                     FieldType::Ref => {
                         val_spans.push(Span::styled(
-                            format!(" {}", truncated),
+                            format!(" {truncated}"),
                             Style::default()
                                 .fg(theme.purple)
                                 .bg(item_bg)
@@ -765,7 +750,7 @@ pub(crate) fn build_field_list_items(
                                     // showing the raw value, the same as the
                                     // non-bracket case below.
                                     val_spans.push(Span::styled(
-                                        format!(" {}", truncated),
+                                        format!(" {truncated}"),
                                         Style::default().fg(theme.text_normal).bg(item_bg),
                                     ));
                                 } else {
@@ -792,7 +777,7 @@ pub(crate) fn build_field_list_items(
                                     let mut spans = Vec::new();
                                     if !before_b.is_empty() {
                                         spans.push(Span::styled(
-                                            format!(" {}", before_b),
+                                            format!(" {before_b}"),
                                             Style::default().fg(theme.text_normal).bg(item_bg),
                                         ));
                                     }
@@ -853,9 +838,7 @@ pub(crate) fn build_field_list_items(
                                     && close > open
                                 {
                                     let before_bracket = &item[..open];
-                                    let num = before_bracket
-                                        .trim()
-                                        .trim_start_matches(|c| c == '!' || c == '#');
+                                    let num = before_bracket.trim().trim_start_matches(['!', '#']);
                                     let state = &item[open + 1..close];
                                     let title = &item[close + 1..];
                                     let (state_fg, state_bg, state_icon) =
@@ -890,14 +873,14 @@ pub(crate) fn build_field_list_items(
                                             _ => (theme.text_muted, item_bg, ""),
                                         };
                                     val_spans.push(Span::styled(
-                                        format!("!{} ", num),
+                                        format!("!{num} "),
                                         Style::default()
                                             .fg(theme.text_normal)
                                             .bg(item_bg)
                                             .add_modifier(Modifier::BOLD),
                                     ));
                                     val_spans.push(Span::styled(
-                                        format!(" {} {} ", state_icon, state),
+                                        format!(" {state_icon} {state} "),
                                         Style::default()
                                             .fg(state_fg)
                                             .bg(state_bg)
@@ -909,7 +892,7 @@ pub(crate) fn build_field_list_items(
                                             if title.chars().count() > 40 {
                                                 let truncated: String =
                                                     title.chars().take(39).collect();
-                                                format!("{}…", truncated)
+                                                format!("{truncated}…")
                                             } else {
                                                 title.to_string()
                                             }
@@ -918,10 +901,10 @@ pub(crate) fn build_field_list_items(
                                     ));
                                 } else {
                                     let trimmed = item.trim();
-                                    let num = trimmed.trim_start_matches(|c| c == '!' || c == '#');
+                                    let num = trimmed.trim_start_matches(['!', '#']);
                                     if num.chars().all(|c| c.is_ascii_digit()) && !num.is_empty() {
                                         val_spans.push(Span::styled(
-                                            format!("!{}", num),
+                                            format!("!{num}"),
                                             Style::default().fg(theme.text_normal).bg(item_bg),
                                         ));
                                     } else {
@@ -959,7 +942,7 @@ pub(crate) fn build_field_list_items(
                             }
 
                             let display_text =
-                                formatted_val.unwrap_or_else(|| format!(" {}", truncated));
+                                formatted_val.unwrap_or_else(|| format!(" {truncated}"));
                             val_spans.push(Span::styled(display_text, style));
                         }
                     }
@@ -967,11 +950,8 @@ pub(crate) fn build_field_list_items(
             }
 
             let mut line_spans = vec![
-                Span::styled(format!(" {} ", icon), icon_style),
-                Span::styled(
-                    format!("{:<label_width$.label_width$} ", label),
-                    label_style,
-                ),
+                Span::styled(format!(" {icon} "), icon_style),
+                Span::styled(format!("{label:<label_width$.label_width$} "), label_style),
             ];
             // Mute ReadOnly field values in interactive mode so they recede.
             if interactive && f.kind == crate::app::FieldType::ReadOnly {
@@ -985,25 +965,38 @@ pub(crate) fn build_field_list_items(
         .collect()
 }
 
+/// The icon and padded label that lead the first line of a wrapped field.
+#[derive(Clone, Copy)]
+struct FieldLabel<'a> {
+    icon: &'a str,
+    label: &'a str,
+    width: usize,
+    icon_style: Style,
+    label_style: Style,
+}
+
 fn build_wrapped_text_lines(
     text: &str,
     is_editing: bool,
     cursor_pos: usize,
     max_width: usize,
-    icon: &str,
-    label: &str,
-    label_width: usize,
-    icon_style: Style,
-    label_style: Style,
+    field_label: &FieldLabel,
     val_style: Style,
     cursor_style: Style,
 ) -> Vec<Line<'static>> {
+    let FieldLabel {
+        icon,
+        label,
+        width: label_width,
+        icon_style,
+        label_style,
+    } = *field_label;
     let chunks = wrap_text_with_offsets(text, max_width);
     let block_cursor_style = val_style.add_modifier(Modifier::SLOW_BLINK);
 
     if chunks.is_empty() {
         let mut spans = vec![Span::styled(
-            format!(" {} {:<label_width$}  ", icon, label),
+            format!(" {icon} {label:<label_width$}  "),
             label_style,
         )];
         if is_editing {
@@ -1035,9 +1028,9 @@ fn build_wrapped_text_lines(
         let mut line_spans = Vec::new();
 
         if idx == 0 {
-            line_spans.push(Span::styled(format!(" {} ", icon), icon_style));
+            line_spans.push(Span::styled(format!(" {icon} "), icon_style));
             line_spans.push(Span::styled(
-                format!("{:<label_width$}  ", label),
+                format!("{label:<label_width$}  "),
                 label_style,
             ));
         } else {
@@ -1158,13 +1151,6 @@ fn wrap_text_with_offsets(text: &str, max_width: usize) -> Vec<(usize, String)> 
     }
 
     lines
-}
-
-pub(crate) fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
-    wrap_text_with_offsets(text, max_width)
-        .into_iter()
-        .map(|(_, s)| s)
-        .collect()
 }
 
 /// One styled line per related milestone issue: `[STATE] #iid Title`. Mirrors
@@ -1425,6 +1411,37 @@ mod tests {
     use ratatui::backend::TestBackend;
     use std::collections::HashMap;
 
+    fn unselected_field_list<'a>(
+        fields: &'a [Field],
+        label_colors: &'a HashMap<String, Color>,
+    ) -> FieldList<'a> {
+        FieldList {
+            fields,
+            selected_idx: None,
+            editing: false,
+            cursor_pos: 0,
+            label_colors,
+            skip_description: true,
+            interactive: true,
+        }
+    }
+
+    fn editing_first_field<'a>(
+        fields: &'a [Field],
+        cursor_pos: usize,
+        label_colors: &'a HashMap<String, Color>,
+    ) -> FieldList<'a> {
+        FieldList {
+            fields,
+            selected_idx: Some(0),
+            editing: true,
+            cursor_pos,
+            label_colors,
+            skip_description: true,
+            interactive: true,
+        }
+    }
+
     #[test]
     fn interactive_content_pane_renders_custom_lines() {
         let backend = TestBackend::new(100, 30);
@@ -1488,7 +1505,7 @@ mod tests {
             Field::multi_select("Labels", "bug, urgent".to_string()),
         ];
         let label_colors = HashMap::new();
-        let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true, true);
+        let items = build_field_list_items(&unselected_field_list(&fields, &label_colors), 80);
         assert_eq!(items.len(), 4);
     }
 
@@ -1647,11 +1664,11 @@ mod tests {
     }
 
     #[test]
-    fn test_wrap_text() {
+    fn test_wrap_text_with_offsets() {
         let text = "This is a very long title that should wrap across several lines when rendered";
-        let wrapped = wrap_text(text, 20);
+        let wrapped = wrap_text_with_offsets(text, 20);
         assert!(wrapped.len() >= 4);
-        assert!(wrapped.iter().all(|l| l.len() <= 20));
+        assert!(wrapped.iter().all(|(_, l)| l.len() <= 20));
     }
 
     #[test]
@@ -1666,7 +1683,7 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // pane_width 40 will force wrapping of the long title
-        let items = build_field_list_items(&fields, None, false, 0, 40, &label_colors, true, true);
+        let items = build_field_list_items(&unselected_field_list(&fields, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1682,8 +1699,7 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Active editing at cursor position 10
-        let items =
-            build_field_list_items(&fields, Some(0), true, 10, 40, &label_colors, true, true);
+        let items = build_field_list_items(&editing_first_field(&fields, 10, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1695,8 +1711,7 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Editing empty Title at cursor position 0
-        let items =
-            build_field_list_items(&fields, Some(0), true, 0, 40, &label_colors, true, true);
+        let items = build_field_list_items(&editing_first_field(&fields, 0, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1708,8 +1723,7 @@ mod tests {
         ];
         let label_colors = HashMap::new();
         // Editing spaces Title at cursor position 2
-        let items =
-            build_field_list_items(&fields, Some(0), true, 2, 40, &label_colors, true, true);
+        let items = build_field_list_items(&editing_first_field(&fields, 2, &label_colors), 40);
         assert_eq!(items.len(), 2);
     }
 
@@ -1720,7 +1734,7 @@ mod tests {
             Field::read_only("State", "OPEN".to_string()),
         ];
         let label_colors = HashMap::new();
-        let items = build_field_list_items(&fields, None, false, 0, 80, &label_colors, true, true);
+        let items = build_field_list_items(&unselected_field_list(&fields, &label_colors), 80);
         assert_eq!(items.len(), 2);
     }
 

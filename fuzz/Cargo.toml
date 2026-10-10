@@ -1,0 +1,36 @@
+[package]
+name = "glab-tui-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+glab-tui-crate = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "diff_parser"
+path = "fuzz_targets/diff_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "markdown"
+path = "fuzz_targets/markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ansi_trace"
+path = "fuzz_targets/ansi_trace.rs"
+test = false
+doc = false
+bench = false

@@ -13,7 +13,7 @@ use crate::app::{EditMenu, EntityDocument, Field, FieldTone, FieldType, Inspecto
 use crate::config::{ICONS, THEME, Theme};
 use crate::domain::issues::Issue;
 use crate::ui::helpers::{get_label_color, rendered_line_count};
-use crate::utils::format::{parse_ansi_trace, sanitize_untrusted};
+use crate::utils::format::sanitize_untrusted;
 use crate::utils::markdown::render_markdown;
 
 /// Map a `FieldTone` to the same `(fg, badge_bg, bold)` triple the table uses
@@ -140,7 +140,6 @@ pub(crate) fn render_entity_inspector(
                 InspectorContent::MilestoneRelated { description, .. } => {
                     !description.trim().is_empty()
                 }
-                InspectorContent::AnsiTrace { trace, .. } => !trace.trim().is_empty(),
                 InspectorContent::PipelineStages(jobs) => !jobs.is_empty(),
                 InspectorContent::Custom(lines) => !lines.is_empty(),
             },
@@ -1312,18 +1311,6 @@ pub(crate) fn render_inspector_content(
                     .wrap(ratatui::widgets::Wrap { trim: true }),
                 area,
             );
-            max_scroll
-        }
-        InspectorContent::AnsiTrace { trace, wrap } => {
-            let formatted_lines = parse_ansi_trace(trace, &theme);
-            let total_lines = rendered_line_count(&formatted_lines, area.width as usize, *wrap);
-            let max_scroll =
-                u16::try_from(total_lines.saturating_sub(area.height as usize)).unwrap_or(u16::MAX);
-            let mut paragraph = Paragraph::new(formatted_lines).scroll((scroll, 0));
-            if *wrap {
-                paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
-            }
-            f.render_widget(paragraph, area);
             max_scroll
         }
         InspectorContent::PipelineStages(jobs) => {

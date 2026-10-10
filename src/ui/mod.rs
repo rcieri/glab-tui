@@ -3,6 +3,7 @@
 mod diff;
 mod helpers;
 pub(crate) mod inspector;
+pub(crate) mod job_trace;
 pub(crate) mod modal;
 mod overlays;
 mod review_threads;

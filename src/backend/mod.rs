@@ -1,3 +1,4 @@
+mod bounded_output;
 pub mod gh;
 pub mod glab;
 pub mod rate_limit;
@@ -5,6 +6,7 @@ pub mod rate_limit;
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
+use crate::domain::job_trace::{JobTrace, TraceCursor, TraceUpdate};
 use crate::domain::milestones::Milestone;
 use crate::domain::mr::{DiscussionNote, MergeRequest};
 use crate::domain::notifications::Notification;
@@ -508,7 +510,15 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<crate::domain::pipelines::Bridge>> {
         Ok(Vec::new())
     }
-    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String>;
+    /// The job's log from its start, read up to `JOB_TRACE_MAX_BYTES`.
+    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<JobTrace>;
+    /// What the job's log gained since `cursor` was read.
+    async fn get_job_trace_since(
+        &self,
+        project: &str,
+        job_id: u64,
+        cursor: &TraceCursor,
+    ) -> Result<TraceUpdate>;
 
     /// For GitHub stacked PRs (`gh stack`), fetch one PR's stack: its own
     /// position plus every entry. `Ok(None)` means the PR is not in a stack;

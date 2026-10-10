@@ -1270,30 +1270,32 @@ async fn main() -> Result<()> {
                     }
                     if app.active_tab == app::Tab::Jobs
                         && app.job_trace_follow
-                        && app.job_trace.is_some()
                         && !app.job_trace_loading
+                        && !app.job_trace_poll_in_flight
                         && app.job_trace_last_refresh.elapsed() >= std::time::Duration::from_secs(5)
                     {
-                        if let Some(selected) = app.jobs.state.selected() {
-                            if let Some(job) = app.filtered_jobs().get(selected) {
-                                if let Some(client) = app.gitlab_client.clone() {
-                                    let project = app.scope.as_str().to_string();
-                                    let tx = events.sender();
-                                    let job_id = job.id();
-                                    app.job_trace_loading = true;
-                                    app.job_trace_last_refresh = std::time::Instant::now();
-                                    tokio::spawn(async move {
-                                        let result = domain::pipelines::get_job_trace(
-                                            &client, &project, job_id,
-                                        )
-                                        .await;
-                                        let _ = tx.send(Event::JobTraceFetched(
-                                            job_id,
-                                            result.map_err(|e| e.to_string()),
-                                        ));
-                                    });
-                                }
-                            }
+                        let cursor = app
+                            .job_trace
+                            .as_ref()
+                            .filter(|view| !view.trace().is_truncated())
+                            .map(|view| view.trace().cursor().clone());
+                        if let (Some(cursor), Some(job_id), Some(client)) =
+                            (cursor, app.trace_job_id(), app.gitlab_client.clone())
+                        {
+                            let project = app.scope.as_str().to_string();
+                            let tx = events.sender();
+                            app.job_trace_poll_in_flight = true;
+                            app.job_trace_last_refresh = std::time::Instant::now();
+                            tokio::spawn(async move {
+                                let result = domain::pipelines::get_job_trace_since(
+                                    &client, &project, job_id, &cursor,
+                                )
+                                .await;
+                                let _ = tx.send(Event::JobTraceFollowed(
+                                    job_id,
+                                    result.map_err(|e| e.to_string()),
+                                ));
+                            });
                         }
                     }
                     if app.active_tab != last_active_tab {
@@ -1386,31 +1388,36 @@ async fn main() -> Result<()> {
                 }
                 Event::JobTraceFetched(job_id, result) => {
                     app.job_trace_loading = false;
-                    let current_selected_job_id = match app.active_tab {
-                        app::Tab::Jobs => {
-                            if let Some(idx) = app.jobs.state.selected() {
-                                app.filtered_jobs().get(idx).map(|j| j.id())
-                            } else {
-                                None
-                            }
-                        }
-                        app::Tab::Pipelines => {
-                            if let Some(idx) = app.jobs.state.selected() {
-                                app.jobs.items.get(idx).map(|j| j.id())
-                            } else {
-                                None
-                            }
-                        }
-                        _ => None,
-                    };
-                    if current_selected_job_id == Some(job_id) {
+                    if app.trace_job_id() == Some(job_id) {
                         match result {
                             Ok(trace) => {
-                                app.job_trace = Some(trace);
+                                app.job_trace =
+                                    Some(crate::ui::job_trace::JobTraceView::new(trace));
                                 app.detail_scroll_to_bottom = app.job_trace_follow;
                                 app.job_trace_last_refresh = std::time::Instant::now();
                                 app.details_zoomed = true;
                                 app.detail_visible = true;
+                            }
+                            Err(e) => {
+                                app.show_error(e);
+                                app.error_has_cli_detail = true;
+                            }
+                        }
+                    }
+                }
+                Event::JobTraceFollowed(job_id, result) => {
+                    app.job_trace_poll_in_flight = false;
+                    app.job_trace_last_refresh = std::time::Instant::now();
+                    if app.trace_job_id() == Some(job_id) {
+                        match result {
+                            Ok(update) => {
+                                let is_applied = app
+                                    .job_trace
+                                    .as_mut()
+                                    .is_some_and(|view| view.apply(update));
+                                if is_applied && app.job_trace_follow {
+                                    app.detail_scroll_to_bottom = true;
+                                }
                             }
                             Err(e) => {
                                 app.show_error(e);
@@ -8265,8 +8272,10 @@ async fn main() -> Result<()> {
                         }
                         if !app.job_trace_search_query.is_empty() {
                             let query = app.job_trace_search_query.to_lowercase();
-                            if let Some(trace) = &app.job_trace {
-                                if let Some(line) = trace
+                            if let Some(view) = &app.job_trace {
+                                if let Some(line) = view
+                                    .trace()
+                                    .text()
                                     .lines()
                                     .position(|line| line.to_lowercase().contains(&query))
                                 {

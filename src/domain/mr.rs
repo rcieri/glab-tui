@@ -239,6 +239,21 @@ pub async fn get_mr_diff(client: &GitlabClient, project_path: &str, mr_iid: u64)
     client.backend.get_mr_diff(project_path, mr_iid).await
 }
 
+/// Most bytes of one diff glab-tui reads.
+pub const MR_DIFF_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// Refuses a diff read that stopped at `MR_DIFF_MAX_BYTES`: a diff cut short
+/// would let a review look complete when files are missing from it.
+pub fn ensure_complete_diff(is_truncated: bool, subject: &str) -> Result<()> {
+    if is_truncated {
+        anyhow::bail!(
+            "the diff of {subject} is larger than {} MiB, the most glab-tui reads of a diff",
+            MR_DIFF_MAX_BYTES / (1024 * 1024)
+        );
+    }
+    Ok(())
+}
+
 pub async fn list_mr_notes(
     client: &GitlabClient,
     project_path: &str,

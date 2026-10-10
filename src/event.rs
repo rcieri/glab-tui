@@ -55,7 +55,9 @@ pub enum Event {
     },
     MilestonesFetched(Vec<crate::domain::milestones::Milestone>),
     MilestoneIssuesFetched(u64, Vec<crate::domain::issues::Issue>),
-    JobTraceFetched(u64, Result<String, String>),
+    JobTraceFetched(u64, Result<crate::domain::job_trace::JobTrace, String>),
+    /// What a followed job log gained since it was last read.
+    JobTraceFollowed(u64, Result<crate::domain::job_trace::TraceUpdate, String>),
     MilestoneUpdated,
     MilestoneClosed,
     MilestoneReopened,

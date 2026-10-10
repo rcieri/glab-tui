@@ -1842,17 +1842,21 @@ pub(crate) fn render_tab_jobs(
                     .style(Style::default().fg(theme.text_muted)),
                 detail_rect,
             );
-        } else if let Some(trace) = &app.job_trace {
+        } else if app.job_trace.is_some() {
             let width = detail_rect.width.saturating_sub(2) as usize;
             let height = detail_rect.height.saturating_sub(2) as usize;
+            let wrap_width = app.job_trace_wrap.then_some(width);
 
-            let formatted_lines = crate::utils::format::parse_ansi_trace(trace, &theme);
-
-            let total_lines = if app.job_trace_wrap {
-                let stripped = crate::utils::format::strip_ansi_escapes(trace);
-                super::diff::count_wrapped_lines(&stripped, width)
+            let (total_lines, is_truncated) = app.job_trace.as_mut().map_or((0, false), |view| {
+                (view.rows(&theme, wrap_width), view.trace().is_truncated())
+            });
+            let truncated_suffix = if is_truncated {
+                format!(
+                    " [TRUNCATED: first {} MiB]",
+                    crate::domain::job_trace::JOB_TRACE_MAX_BYTES / (1024 * 1024)
+                )
             } else {
-                formatted_lines.len()
+                String::new()
             };
 
             let max_scroll = total_lines.saturating_sub(height) as u16;
@@ -1880,8 +1884,8 @@ pub(crate) fn render_tab_jobs(
             let preview_block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!(
-                    " Preview{}{}{} ",
-                    title_suffix, search_suffix, follow_suffix
+                    " Preview{}{}{}{} ",
+                    title_suffix, truncated_suffix, search_suffix, follow_suffix
                 ))
                 .title_style(
                     Style::default()
@@ -1890,9 +1894,15 @@ pub(crate) fn render_tab_jobs(
                 )
                 .border_style(Style::default().fg(theme.border));
 
-            let mut paragraph = Paragraph::new(formatted_lines)
+            let scroll = usize::from(app.detail_scroll);
+            let (visible_lines, rows_above) = app
+                .job_trace
+                .as_mut()
+                .map(|view| view.visible_lines(&theme, wrap_width, scroll, height))
+                .unwrap_or_default();
+            let mut paragraph = Paragraph::new(visible_lines)
                 .block(preview_block)
-                .scroll((app.detail_scroll, 0));
+                .scroll((u16::try_from(rows_above).unwrap_or(u16::MAX), 0));
 
             if app.job_trace_wrap {
                 paragraph = paragraph.wrap(ratatui::widgets::Wrap { trim: false });
@@ -3859,10 +3869,7 @@ mod tests {
         assert_eq!(buffer[(5, 1)].bg, theme.highlight_bg);
     }
 
-    #[test]
-    fn render_tab_jobs_clamps_page_scroll_past_trace_end() {
-        let backend = TestBackend::new(100, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
+    fn jobs_app_showing_trace(trace: crate::domain::job_trace::JobTrace) -> App {
         let mut app = App::default();
         app.jobs.items = vec![crate::domain::pipelines::Job {
             id: 1,
@@ -3874,9 +3881,13 @@ mod tests {
             runner: None,
             needs: vec![],
         }];
-        app.job_trace = Some("line\n".repeat(200));
-        app.detail_scroll = 999;
+        app.job_trace = Some(crate::ui::job_trace::JobTraceView::new(trace));
+        app
+    }
 
+    /// Renders the Jobs tab with the trace pane on rows 10-19.
+    fn render_jobs_with_trace_pane(app: &mut App) -> Terminal<TestBackend> {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -3884,7 +3895,7 @@ mod tests {
                 let detail_rect = Rect::new(0, 10, area.width, 10);
                 render_tab_jobs(
                     f,
-                    &mut app,
+                    app,
                     content_area,
                     detail_rect,
                     Block::default(),
@@ -3893,10 +3904,44 @@ mod tests {
                 );
             })
             .unwrap();
+        terminal
+    }
+
+    fn buffer_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn render_tab_jobs_clamps_page_scroll_past_trace_end() {
+        let trace =
+            crate::domain::job_trace::JobTrace::from_read("line\n".repeat(200).as_bytes(), false);
+        let mut app = jobs_app_showing_trace(trace);
+        app.detail_scroll = 999;
+
+        let terminal = render_jobs_with_trace_pane(&mut app);
 
         assert_eq!(
             app.detail_scroll, 192,
             "detail_scroll should clamp to the trace's max_scroll, not keep counting past it"
         );
+        assert_eq!(buffer_row(&terminal, 18), format!("│{:<98}│", "line"));
+    }
+
+    #[test]
+    fn render_tab_jobs_marks_a_truncated_trace_in_the_pane_title() {
+        let trace = crate::domain::job_trace::JobTrace::from_read(b"first part\n", true);
+        let mut app = jobs_app_showing_trace(trace);
+
+        let terminal = render_jobs_with_trace_pane(&mut app);
+
+        let title = " Preview [TRUNCATED: first 16 MiB] ";
+        assert_eq!(
+            buffer_row(&terminal, 10),
+            format!("┌{title}{}┐", "─".repeat(98 - title.len()))
+        );
+        assert_eq!(buffer_row(&terminal, 11), format!("│{:<98}│", "first part"));
     }
 }

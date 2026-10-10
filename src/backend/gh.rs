@@ -1,10 +1,14 @@
 use super::Backend;
+use super::bounded_output::{CapturedStdout, output_bounded};
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};
 use crate::domain::issues::{Issue, RelatedMrRef};
+use crate::domain::job_trace::{JOB_TRACE_MAX_BYTES, JobTrace, TraceCursor, TraceUpdate};
 use crate::domain::labels::Label;
 use crate::domain::milestones::Milestone;
-use crate::domain::mr::{DiscussionNote, MergeRequest, NotePosition};
+use crate::domain::mr::{
+    DiscussionNote, MR_DIFF_MAX_BYTES, MergeRequest, NotePosition, ensure_complete_diff,
+};
 use crate::domain::notifications::Notification;
 use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
@@ -402,6 +406,17 @@ impl GhBackend {
     }
 
     async fn run_gh(&self, args: &[&str], desc: &str) -> Result<String> {
+        let stdout = self.run_gh_bounded(args, desc, None).await?;
+        Ok(String::from_utf8(stdout.bytes)?)
+    }
+
+    /// `run_gh` keeping at most `max_stdout_bytes` of its output.
+    async fn run_gh_bounded(
+        &self,
+        args: &[&str],
+        desc: &str,
+        max_stdout_bytes: Option<usize>,
+    ) -> Result<CapturedStdout> {
         let tx = self.tx.clone();
         let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let desc = desc.to_string();
@@ -411,7 +426,7 @@ impl GhBackend {
             let desc = desc.clone();
             async move {
                 let args_refs: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
-                run_gh_command(tx, &args_refs, &desc).await
+                run_gh_command(tx, &args_refs, &desc, max_stdout_bytes).await
             }
         })
         .await
@@ -456,19 +471,17 @@ async fn run_gh_command(
     tx: Option<UnboundedSender<Event>>,
     args: &[&str],
     desc: &str,
-) -> Result<String> {
+    max_stdout_bytes: Option<usize>,
+) -> Result<CapturedStdout> {
     let cmd_str = format!("gh {}", args.join(" "));
 
-    let output = Command::new("gh")
-        .args(args)
-        .output()
+    let output = output_bounded(Command::new("gh").args(args), max_stdout_bytes)
         .await
         .with_context(|| format!("Failed to execute: gh {}", args.join(" ")))?;
 
-    if output.status.success() {
-        let s = String::from_utf8(output.stdout)?;
+    if output.succeeded() {
         log_terminal_command(tx.as_ref(), desc, &cmd_str, "Success".to_string());
-        Ok(s)
+        Ok(output.stdout)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
         log_terminal_command(tx.as_ref(), desc, &cmd_str, format!("Failed: {}", err_msg));
@@ -537,17 +550,15 @@ async fn run_git_command(
     checkout: &str,
     args: &[&str],
     desc: &str,
-) -> Result<String> {
+    max_stdout_bytes: Option<usize>,
+) -> Result<CapturedStdout> {
     let cmd_str = format!("git -C {checkout} {}", args.join(" "));
-    let output = git_in(checkout)
-        .args(args)
-        .output()
+    let output = output_bounded(git_in(checkout).args(args), max_stdout_bytes)
         .await
         .with_context(|| format!("Failed to execute: {cmd_str}"))?;
-    if output.status.success() {
+    if output.succeeded() {
         log_terminal_command(tx, desc, &cmd_str, "Success".to_string());
-        // Local files can be in any encoding; the diff view only needs text.
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(output.stdout)
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
         log_terminal_command(tx, desc, &cmd_str, format!("Failed: {}", err_msg));
@@ -577,13 +588,14 @@ async fn diff_pr_in_checkout(
             checkout,
             &["fetch", "--no-tags", "origin", &commits.base, &pr_head],
             "Fetching PR Commits",
+            None,
         )
         .await?;
     }
     // Pinned flags keep user diff config (colour, external drivers, textconv,
     // prefixes, octal-quoted paths) out of the text the diff view parses.
     let range = format!("{}...{}", commits.base, commits.head);
-    run_git_command(
+    let diff = run_git_command(
         tx,
         checkout,
         &[
@@ -598,8 +610,12 @@ async fn diff_pr_in_checkout(
             &range,
         ],
         "Diffing PR Locally",
+        Some(MR_DIFF_MAX_BYTES),
     )
-    .await
+    .await?;
+    ensure_complete_diff(diff.is_truncated, &format!("PR #{pr_number}"))?;
+    // Local files can be in any encoding; the diff view only needs text.
+    Ok(String::from_utf8_lossy(&diff.bytes).into_owned())
 }
 
 /// Build the GraphQL query that finds the PRs which close (or closed) an issue.
@@ -1866,14 +1882,19 @@ impl Backend for GhBackend {
 
     async fn get_mr_diff(&self, project: &str, iid: u64) -> Result<String> {
         match self
-            .run_gh(
+            .run_gh_bounded(
                 &["pr", "diff", &iid.to_string(), "-R", project],
                 "Fetching PR Diff",
+                Some(MR_DIFF_MAX_BYTES),
             )
             .await
         {
             Err(err) if is_pr_diff_too_large(&err) => self.diff_pr_locally(project, iid).await,
-            result => result,
+            Err(err) => Err(err),
+            Ok(diff) => {
+                ensure_complete_diff(diff.is_truncated, &format!("PR #{iid}"))?;
+                Ok(String::from_utf8(diff.bytes)?)
+            }
         }
     }
 
@@ -2460,20 +2481,34 @@ impl Backend for GhBackend {
         Ok(crate::domain::pipelines::process_pipeline_jobs(all_jobs))
     }
 
-    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<String> {
-        self.run_gh(
-            &[
-                "run",
-                "view",
-                "--job",
-                &job_id.to_string(),
-                "--log",
-                "-R",
-                project,
-            ],
-            "Fetching Job Log",
-        )
-        .await
+    async fn get_job_trace(&self, project: &str, job_id: u64) -> Result<JobTrace> {
+        let log = self
+            .run_gh_bounded(
+                &[
+                    "run",
+                    "view",
+                    "--job",
+                    &job_id.to_string(),
+                    "--log",
+                    "-R",
+                    project,
+                ],
+                "Fetching Job Log",
+                Some(JOB_TRACE_MAX_BYTES),
+            )
+            .await?;
+        Ok(JobTrace::from_read(&log.bytes, log.is_truncated))
+    }
+
+    /// `gh run view --log` only serves the log of a completed job, and a
+    /// re-run gets a new job id, so a log read once never gains anything.
+    async fn get_job_trace_since(
+        &self,
+        _project: &str,
+        _job_id: u64,
+        cursor: &TraceCursor,
+    ) -> Result<TraceUpdate> {
+        Ok(cursor.append_update(Vec::new(), false))
     }
 
     async fn retry_pipeline(&self, project: &str, pipeline_id: u64) -> Result<()> {

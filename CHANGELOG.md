@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Group-scope confirm actions hit the selected project** — Closing, deleting, reopening, merging, rebasing or revoking an issue/MR, closing, reopening or deleting a milestone, and submitting a review resolved the project from the first listed row sharing the iid. In group scope, issue `#5` of project B could close issue `#5` of project A. The confirm dialog now carries the selected row's project through to the CLI call and the local list update (#567).
+
 ## [0.9.3] - 2026-10-08
 
 ### Features

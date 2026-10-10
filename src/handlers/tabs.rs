@@ -51,7 +51,7 @@ fn spawn_open_diff(
 /// The `tx` parameter is accepted (not consumed) so existing keypress handler
 /// call sites keep passing their sender without churn; the dispatcher is what
 /// ultimately drives `spawn_fetch_related_mrs`.
-pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event>) {
+pub fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .issues
         .state
@@ -77,7 +77,7 @@ pub(crate) fn maybe_fetch_related_mrs(app: &mut App, _tx: &UnboundedSender<Event
 }
 
 /// Record a request to fetch linked issues for the currently selected MR/PR.
-pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender<Event>) {
+pub fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender<Event>) {
     let Some(iid) = app
         .mrs
         .state
@@ -128,7 +128,7 @@ fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &Unbounde
 
 /// Open the selector over a PR's stack the session already knows, so the
 /// user can jump to another PR in it, or say why there is nothing to open.
-pub(crate) fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
+pub fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
     use crate::domain::mr::StackLookup;
     let Some(StackLookup::Full(stack)) = app.pr_stack(project, pr_number) else {
         app.show_error("This PR is not part of a stack.".to_string());
@@ -3217,7 +3217,7 @@ pub(crate) fn jump_to_mr_tab(
 }
 
 /// Public entry point used by the related-MRs selector.
-pub(crate) fn jump_to_mr_tab_from_selector(
+pub fn jump_to_mr_tab_from_selector(
     app: &mut crate::app::App,
     mr_iid: u64,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
@@ -3289,7 +3289,7 @@ pub(crate) fn jump_to_issue_tab(
 }
 
 /// Public entry point used by the linked-issues selector.
-pub(crate) fn jump_to_issue_tab_from_selector(
+pub fn jump_to_issue_tab_from_selector(
     app: &mut crate::app::App,
     issue_iid: u64,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,

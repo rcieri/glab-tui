@@ -103,8 +103,6 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
-    elif [[ "$*" == *"/commits"* ]]; then
-        cat "$FIXTURES_DIR/commits.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
     elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then

@@ -31,11 +31,11 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
         cat "$FIXTURES_DIR/mrs.json"
-    elif [[ "$*" == *"/commits"* ]]; then
-        cat "$FIXTURES_DIR/commits.json"
     elif [[ "$*" == *"/branches"* ]]; then
         cat "$FIXTURES_DIR/branches.json"
-    elif [[ "$*" == *"/environments"* ]] || [[ "$*" == *"/deployments"* ]]; then
+    elif [[ "$*" == *"/environments"* ]]; then
+        cat "$FIXTURES_DIR/environments.json"
+    elif [[ "$*" == *"/deployments"* ]]; then
         cat "$FIXTURES_DIR/deployments.json"
     elif [[ "$*" == *"/bridges"* ]]; then
         # Must precede /pipelines: a bridges URL contains it.
@@ -81,6 +81,14 @@ elif [[ "$*" == *"mr view"* ]]; then
     cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then
     cat "$FIXTURES_DIR/mr_notes.json"
+elif [[ "$*" == *"runner list"* ]]; then
+    cat "$FIXTURES_DIR/runners.json"
+elif [[ "$*" == *"release list"* ]]; then
+    cat "$FIXTURES_DIR/releases.json"
+elif [[ "$*" == *"todo list"* ]]; then
+    cat "$FIXTURES_DIR/todos.json"
+elif [[ "$*" == *"milestone list"* ]]; then
+    cat "$FIXTURES_DIR/milestones.json"
 else
     echo "[]"
 fi

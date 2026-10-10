@@ -156,7 +156,6 @@ async fn stacked_prs(
     }
     stacked
 }
-
 /// Runs `confirm_action` against `project_path`, the project the dialog was
 /// opened for, never one re-resolved from the iid.
 fn run_submit_action(

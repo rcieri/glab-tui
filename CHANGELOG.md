@@ -44,13 +44,6 @@ All notable changes to this project will be documented in this file.
 - **Dependency updates** — Updated `dtolnay/rust-toolchain` (#543) and added `libc` (0.2.186) for Unix process management and terminal session isolation.
 - **Release tooling** — Hardened `scripts/release.sh` asset verification, phase resumption, and multi-model AI release notes generation.
 
----
-
-### Maintenance
-- **Supply-chain policy with cargo-deny** — `deny.toml` and a `Cargo Deny` job in the Security Audit workflow now enforce the license allow list, duplicate-version bans (each existing duplicate is skipped with the reason it is there) and crates.io-only sources, alongside the existing advisory check. The `cargo audit` ignores moved to `.cargo/audit.toml`: `cargo audit` never read the root `audit.toml`. Each ignore names the crate syntect pulls in (`bincode`, `yaml-rust`) and its advisory class, unmaintained rather than vulnerable (#563).
-- **`serde_yaml` replaced by `serde-saphyr`** — Workflow `workflow_dispatch` inputs are parsed with the maintained, pure-Rust `serde-saphyr` instead of the deprecated `serde_yaml` and its `unsafe-libyaml` C port (#563).
-- **Fuzz targets for untrusted-input parsers** — `cargo-fuzz` targets for the diff parser, the markdown renderer and the ANSI/SGR job-trace parser, each run for 60 seconds in a new Fuzz workflow. The crate now ships a library target (`src/lib.rs`) that the binary and the fuzz targets share, so unit tests run with `cargo test --lib --bin glab-tui` (#563).
-
 ## [0.9.2] - 2026-09-26
 
 ### Features

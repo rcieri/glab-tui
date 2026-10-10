@@ -42,7 +42,21 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/bridges.json"
     elif [[ "$*" == *"/trace"* ]]; then
         # Must precede /jobs: a trace URL contains it.
-        echo "mock gitlab job trace output"
+        if [[ -n "$TEST_GLAB_TRACE_FILE" ]]; then
+            # A running job: serve the log, honouring byte_offset/byte_limit,
+            # then write one more line so the next read has something new.
+            offset=$(sed -n 's/.*[?&]byte_offset=\([0-9]*\).*/\1/p' <<< "$*")
+            limit=$(sed -n 's/.*[?&]byte_limit=\([0-9]*\).*/\1/p' <<< "$*")
+            if [[ -n "$offset" ]]; then
+                tail -c "+$((offset + 1))" "$TEST_GLAB_TRACE_FILE" | head -c "$limit"
+            else
+                cat "$TEST_GLAB_TRACE_FILE"
+            fi
+            reads=$(grep -c "/trace" "$LOG_FILE")
+            echo "follow line $reads" >> "$TEST_GLAB_TRACE_FILE"
+        else
+            echo "mock gitlab job trace output"
+        fi
     elif [[ "$*" == *"/jobs"* ]]; then
         # Must precede /pipelines: /pipelines/:id/jobs contains it.
         if [[ -n "$TEST_GLAB_EMPTY_JOBS" ]]; then

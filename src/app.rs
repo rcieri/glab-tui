@@ -639,10 +639,6 @@ pub enum InspectorContent {
         description: String,
         issues: Option<Vec<crate::domain::issues::Issue>>,
     },
-    AnsiTrace {
-        trace: String,
-        wrap: bool,
-    },
     PipelineStages(Vec<crate::domain::pipelines::Job>),
     Custom(Vec<ratatui::text::Line<'static>>),
     Empty(&'static str),
@@ -3544,7 +3540,7 @@ pub struct App {
     pub pending_pipeline_select: Option<u64>,
     pub pending_mr_select: Option<u64>,
     pub pending_issue_select: Option<u64>,
-    pub job_trace: Option<String>,
+    pub job_trace: Option<crate::ui::job_trace::JobTraceView>,
     pub error_message: Option<String>,
     pub error_message_at: Option<std::time::Instant>,
     /// True when the current error toast originated from a real glab/gh CLI
@@ -3643,6 +3639,9 @@ pub struct App {
     pub job_trace_search_query: String,
     pub job_trace_searching: bool,
     pub job_trace_follow: bool,
+    /// A follow-mode read of the shown job log is in flight. Unlike
+    /// `job_trace_loading` it keeps the log on screen.
+    pub job_trace_poll_in_flight: bool,
     pub job_trace_last_refresh: std::time::Instant,
 
     pub show_help: bool,
@@ -3785,6 +3784,7 @@ impl Default for App {
             job_trace_search_query: String::new(),
             job_trace_searching: false,
             job_trace_follow: false,
+            job_trace_poll_in_flight: false,
             job_trace_last_refresh: std::time::Instant::now(),
 
             show_help: false,
@@ -4495,6 +4495,17 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("Commit SHA unavailable; refresh the Pipelines tab"))?;
         self.clipboard.set_text(sha)?;
         Ok(())
+    }
+
+    /// The job a fetched log is shown for: the selected job of the Jobs tab,
+    /// or of the job list behind the Pipelines tab.
+    pub fn trace_job_id(&self) -> Option<u64> {
+        let idx = self.jobs.state.selected()?;
+        match self.active_tab {
+            Tab::Jobs => self.filtered_jobs().get(idx).map(|job| job.id()),
+            Tab::Pipelines => self.jobs.items.get(idx).map(|job| job.id()),
+            _ => None,
+        }
     }
 
     pub fn selected_job_sha(&self) -> Option<String> {

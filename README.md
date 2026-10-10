@@ -675,11 +675,14 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 | `p` | Switch to pipeline selector | `enter_pipeline` |
 | `s` | Select all jobs in the current stage | `select_stage` |
 | `w` | Toggle trace word wrap | `toggle_trace_wrap` |
+| `f` | Follow the trace of a running job: every 5 seconds, append what the log gained (GitLab asks only for the new bytes) | `toggle_trace_follow` |
 | `m` | Collapse / expand matrix jobs | — |
 | `Space` | Check/uncheck job for bulk retry/cancel | `select_job` |
 | `Esc` / `Backspace` | Go back (trace → jobs → pipelines) | — |
 | `j` / `↓` | (in trace view) scroll down | — |
 | `k` / `↑` | (in trace view) scroll up | — |
+
+glab-tui reads at most the first 16 MiB of a job log. A longer one is marked `[TRUNCATED: first 16 MiB]` in the pane title (press `o` to open the full log in the browser). A diff larger than 32 MiB is refused with an error rather than shown in part.
 
 ---
 

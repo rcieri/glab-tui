@@ -38,6 +38,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/config.rs](src/config.rs): Config, theme, and icons system. Defines `Config`, `Theme`, `ThemeOverrides`, `Icons`, and all `KeybindingXxx` structs.
 * [src/event.rs](src/event.rs): Defines the `Event` enum and the async `EventHandler` using `tokio::sync::mpsc`.
 * [src/backend/](src/backend/): CLI backend layer.
+    * [bounded_output.rs](src/backend/bounded_output.rs): `output_bounded`, the subprocess reader behind the command runners. Keeps at most a given number of stdout bytes and kills a child that writes more.
     * [rate_limit.rs](src/backend/rate_limit.rs): `ApiRateLimiter` — automatic 429/graphql rate-limit detection and retry with exponential backoff plus bulk-operation pacing (`pace_bulk_operation`).
     * [mod.rs](src/backend/mod.rs): `Backend` trait with ~40 methods covering all API interactions plus `IssueUpdate`/`MrUpdate` field structs for batched entity edits.
     * [glab.rs](src/backend/glab.rs): `GlabBackend` — shells out to `glab` CLI.
@@ -45,6 +46,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/domain/](src/domain/): Domain models and top-level API functions.
     * [client.rs](src/domain/client.rs): `GitlabClient` wrapper holding the backend, page_size, api_per_page, and event tx.
     * [issues.rs](src/domain/issues.rs): Issue structures and `list_issues`/`get_issue`.
+    * [job_trace.rs](src/domain/job_trace.rs): `JobTrace` / `TraceCursor` / `TraceUpdate` and `JOB_TRACE_MAX_BYTES`: a job log read in bounded pieces, appended to by follow mode.
     * [labels.rs](src/domain/labels.rs): `Label` structure carrying the API-provided color used for the Labels column.
     * [mr.rs](src/domain/mr.rs): MergeRequest, DiscussionNote, NotePosition structures.
     * [mr_state.rs](src/domain/mr_state.rs): MR review-state helpers — `ApprovalState`, `MergeabilityState`, `WorkflowStatus`, `derive_awaiting_you`, `rebase_gate`, and the cell/sort/filter display helpers for the Approval/Mergeable/Workflow columns.
@@ -80,6 +82,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * [src/ui/](src/ui/): Ratatui render functions.
     * [mod.rs](src/ui/mod.rs): Re-exports and shared render helpers.
     * [inspector.rs](src/ui/inspector.rs): Unified entity inspector component (`render_entity_inspector`, `EntityDocument`, `InspectorMode`). Drives both read-only detail previews and interactive edit/create forms in a single-column layout.
+    * [job_trace.rs](src/ui/job_trace.rs): `JobTraceView`, the Jobs pane's job log with its lines parsed incrementally and only the visible ones handed to the renderer.
     * [tabs.rs](src/ui/tabs.rs): Tab-specific render functions.
     * [overlays.rs](src/ui/overlays.rs): Overlay render functions (`SubmitDialog`, selectors, date picker, help).
     * [review_threads.rs](src/ui/review_threads.rs): Review threads overlay (thread list + full-thread preview) opened with `T` from the diff view.
@@ -138,6 +141,13 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
   - retries failures that `is_rate_limit_error()` recognizes (429, `rate_limit`, abuse-detection, `retry-after`) with exponential backoff plus per-thread jitter up to `MAX_RATE_LIMIT_RETRIES`,
   - bubbles up immediately on non-rate-limit errors so the UI shows the real failure.
 * Bulk operations (merging, editing many MRs/issues, etc.) call `pace_bulk_operation()` before each item to avoid tripping secondary rate limits during batch loops.
+
+### Bounded CLI Output, Job Logs & Follow Mode
+* The command runners (`run_glab_command`, `run_gh`, `run_git_command`) read output through `bounded_output::output_bounded` ([src/backend/bounded_output.rs](src/backend/bounded_output.rs)). With `Some(limit)` it keeps the first `limit` bytes of stdout and kills the child once it writes more (`CapturedStdout::is_truncated`). Stderr is capped at 64 KiB and drained past that. Plain `run_glab_command` / `run_gh` pass `None` (read everything). Output whose size a third party controls (job logs, diffs) goes through `run_glab_capped` / `run_gh_bounded` with a limit.
+* Job logs are read up to `JOB_TRACE_MAX_BYTES` (16 MiB) into a `JobTrace` ([src/domain/job_trace.rs](src/domain/job_trace.rs)). It tracks the bytes read (`TraceCursor`), holds a UTF-8 character split across reads until it completes, and records truncation. A truncated log shows `[TRUNCATED: first 16 MiB]` in the Jobs pane title, and follow mode stops polling it.
+* Follow mode (`f`) polls `Backend::get_job_trace_since(cursor)` every 5 seconds (`Event::JobTraceFollowed`). `app.job_trace_poll_in_flight` keeps the log on screen meanwhile. GitLab reads `?byte_offset=&byte_limit=` starting 1 KiB before the end of what was read, checks that the reply starts with those bytes, and loops in chunks of at most 500 KiB (GitLab's `byte_limit` maximum). A server that ignores the parameters (it predates them) is detected from the reply, remembered per project in `PROJECTS_IGNORING_TRACE_RANGES` (process-wide, since every `GitlabClient` clone builds a fresh backend), and polled with full bounded reads. A log that no longer starts with what was read is replaced (`TraceUpdate::Restart`). GitHub returns nothing new without a CLI call: `gh run view --log` serves only completed jobs, whose logs never change.
+* `app.job_trace` is a `JobTraceView` ([src/ui/job_trace.rs](src/ui/job_trace.rs)). It parses only text added since the last frame (plus the still incomplete last line), keeps the wrapped row offset of every line per width, re-parses everything only after a theme change or a restart, and gives the renderer only the visible lines. Never call `parse_ansi_trace` on the whole log from render code.
+* Diffs (`get_mr_diff`, `diff_pr_in_checkout`) are read up to `MR_DIFF_MAX_BYTES` (32 MiB). A larger diff fails with an error (`ensure_complete_diff`) instead of showing a partial diff that a review could be submitted against.
 
 ### Code Review & Diff System
 * **Diff view** supports inline comments, code suggestions, draft reviews, dynamic gutter sizing, and tab expansion:
@@ -305,7 +315,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Operation | Endpoint | Why raw API |
 |---|---|---|
 | List pipeline jobs | `GET /projects/{}/pipelines/{}/jobs?per_page=<N>` | `glab ci view` is interactive TUI; `glab ci get` returns nested pipeline object with different structure |
-| Get job trace | `GET /projects/{}/jobs/{}/trace` | `glab ci trace` is interactive/streaming; we need programmatic text output |
+| Get job trace | `GET /projects/{}/jobs/{}/trace` (read up to `JOB_TRACE_MAX_BYTES`) | `glab ci trace` is interactive/streaming; we need programmatic text output |
+| Follow job trace (follow mode poll) | `GET /projects/{}/jobs/{}/trace?byte_offset=<N>&byte_limit=<≤500 KiB>` | Only the bytes after what is shown; a server that ignores the parameters is detected and polled with full (bounded) reads |
 | List done todos | `GET todos?state=done` | `glab todo list` only shows pending |
 | List branches | `GET /projects/{}/repository/branches?per_page=<N>` | No `glab branch` command |
 | Create branch | `POST /projects/{}/repository/branches?branch=...&ref=...` | No `glab branch` command |

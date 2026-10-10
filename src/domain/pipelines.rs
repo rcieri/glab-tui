@@ -1,4 +1,5 @@
 use crate::domain::client::GitlabClient;
+use crate::domain::job_trace::{JobTrace, TraceCursor, TraceUpdate};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -297,8 +298,21 @@ pub async fn get_job_trace(
     client: &GitlabClient,
     project_path: &str,
     job_id: u64,
-) -> Result<String> {
+) -> Result<JobTrace> {
     client.backend.get_job_trace(project_path, job_id).await
+}
+
+/// What a job's log gained since `cursor`, for follow mode.
+pub async fn get_job_trace_since(
+    client: &GitlabClient,
+    project_path: &str,
+    job_id: u64,
+    cursor: &TraceCursor,
+) -> Result<TraceUpdate> {
+    client
+        .backend
+        .get_job_trace_since(project_path, job_id, cursor)
+        .await
 }
 
 #[cfg(test)]

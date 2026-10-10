@@ -564,41 +564,6 @@ pub fn build_pipeline_document(
     }
 }
 
-pub fn build_job_document(
-    job: &crate::domain::pipelines::Job,
-    trace: Option<&str>,
-    wrap: bool,
-) -> crate::app::EntityDocument {
-    let mut fields = vec![
-        crate::app::Field::read_only("ID", format!("#{}", job.id)),
-        crate::app::Field::read_only("Name", job.name.clone()),
-        crate::app::Field::read_only("Stage", job.stage.clone()),
-        crate::app::Field::read_only("Status", job.status.to_uppercase()),
-    ];
-    if let Some(runner) = &job.runner {
-        fields.push(crate::app::Field::read_only("Runner", runner.clone()));
-    }
-    if let Some(duration) = job.duration_seconds {
-        fields.push(crate::app::Field::read_only(
-            "Duration",
-            format!("{}s", duration),
-        ));
-    }
-    let content = if let Some(tr) = trace {
-        crate::app::InspectorContent::AnsiTrace {
-            trace: tr.to_string(),
-            wrap,
-        }
-    } else {
-        crate::app::InspectorContent::Empty("Press Enter to fetch/view job trace...")
-    };
-    crate::app::EntityDocument {
-        title: format!("Job #{} - {}", job.id, job.name),
-        fields,
-        content,
-    }
-}
-
 pub fn build_milestone_document(
     milestone: &crate::domain::milestones::Milestone,
     issues: Option<&[crate::domain::issues::Issue]>,

@@ -1775,8 +1775,8 @@ pub async fn handle_active_tab_key(
                         {
                             let temp_file =
                                 std::env::temp_dir().join(format!("job_{}_trace.txt", job_id));
-                            if let Some(trace) = &app.job_trace {
-                                let _ = std::fs::write(&temp_file, trace);
+                            if let Some(view) = &app.job_trace {
+                                let _ = std::fs::write(&temp_file, view.trace().text());
                             } else if let Some(_) = &app.gitlab_client {
                                 let _ = std::fs::write(&temp_file, "Trace will be here");
                             }

@@ -2562,7 +2562,7 @@ pub async fn handle_active_tab_key(
                         Err(e) => {
                             let _ = tx.send(Event::FetchFailed(
                                 crate::app::Tab::Todos,
-                                format!("Update failed: {}", e),
+                                format!("Update failed: {e:#}"),
                             ));
                         }
                     }

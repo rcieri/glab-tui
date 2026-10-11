@@ -2496,6 +2496,13 @@ pub async fn handle_active_tab_key(
             if keybinding_matches(&app.config.keybindings.terminal.toggle_wrap, &key_event) {
                 app.terminal_wrap = !app.terminal_wrap;
                 app.terminal_scroll = 0;
+            } else if keybinding_matches(&app.config.keybindings.terminal.clear_log, &key_event) {
+                app.clear_terminal_log();
+            } else if keybinding_matches(&app.config.keybindings.terminal.copy_command, &key_event)
+            {
+                if let Err(error) = app.copy_terminal_command() {
+                    app.raise_error_toast(format!("Failed to copy command: {error}"));
+                }
             } else {
                 handled = false;
             }

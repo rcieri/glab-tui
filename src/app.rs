@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::backend::BackendKind;
+use crate::command_log::{CommandLog, LogRow, TerminalCommand};
 use crate::config::{Config, KeybindingConfig, THEME, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
@@ -2984,13 +2985,6 @@ impl DatePicker {
 /// Prefix of every terminal-log entry written for a custom keybinding.
 pub const CUSTOM_COMMAND_LOG_PREFIX: &str = "Custom command: ";
 
-#[derive(Debug, Clone)]
-pub struct TerminalCommand {
-    pub timestamp: String,
-    pub command: String,
-    pub status: String,
-}
-
 #[derive(Debug)]
 pub enum GroupItem {
     Header(String),
@@ -3541,7 +3535,7 @@ pub struct App {
     pub group_repos: Vec<String>,
     pub project_cache: crate::utils::cache::ProjectCache,
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
-    pub terminal_commands: Vec<TerminalCommand>,
+    pub terminal_commands: CommandLog,
     pub terminal_wrap: bool,
     pub issues: StatefulTable<crate::domain::issues::Issue>,
     pub mrs: StatefulTable<crate::domain::mr::MergeRequest>,
@@ -3735,7 +3729,7 @@ impl Default for App {
             group_repos: vec![],
             project_cache: crate::utils::cache::ProjectCache::default(),
             gitlab_client: None,
-            terminal_commands: vec![],
+            terminal_commands: CommandLog::default(),
             terminal_wrap: false,
             issues: StatefulTable::with_items(vec![]),
             mrs: StatefulTable::with_items(vec![]),
@@ -4590,10 +4584,9 @@ impl App {
     pub fn show_error(&mut self, msg: String) {
         let failed_status = format!("Failed: {}", msg);
         self.raise_error_toast(msg);
-        let pos = self
+        let row = self
             .terminal_commands
-            .iter()
-            .rposition(|cmd| {
+            .find_latest(|cmd| {
                 (cmd.command.contains("glab")
                     || cmd.command.contains("gh")
                     || cmd.command.contains("submit")
@@ -4602,8 +4595,8 @@ impl App {
                     && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
             })
             .or_else(|| self.latest_running_cli_command());
-        if let Some(pos) = pos {
-            self.terminal_commands[pos].status = failed_status;
+        if let Some(row) = row {
+            self.terminal_commands.set_status(row, failed_status);
         }
     }
 
@@ -4631,33 +4624,77 @@ impl App {
     }
 
     /// Appends a command still running to the terminal log and returns its
-    /// row for `settle_command`. The log is append-only, so the row stays valid.
-    pub fn start_command(&mut self, command: String) -> usize {
+    /// row for `settle_command`. The row stays valid when older entries are
+    /// dropped; it stops resolving once its own entry is dropped or cleared.
+    pub fn start_command(&mut self, command: String) -> LogRow {
         self.terminal_commands.push(TerminalCommand {
             timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
             command,
             status: "Running".to_string(),
-        });
-        self.terminal_commands.len() - 1
+        })
     }
 
     /// Stamps the outcome on a row returned by `start_command`.
-    pub fn settle_command(&mut self, row: usize, outcome: &Result<(), String>) {
-        if let Some(entry) = self.terminal_commands.get_mut(row) {
-            entry.status = match outcome {
-                Ok(()) => "Success".to_string(),
-                Err(error) => format!("Failed: {error}"),
-            };
-        }
+    pub fn settle_command(&mut self, row: LogRow, outcome: &Result<(), String>) {
+        let status = match outcome {
+            Ok(()) => "Success".to_string(),
+            Err(error) => format!("Failed: {error}"),
+        };
+        self.terminal_commands.set_status(row, status);
     }
 
     /// Most recent running entry started by the `glab`/`gh` event plumbing.
-    /// Custom commands are skipped: they settle their own row by index, and
+    /// Custom commands are skipped: they settle their own row, and
     /// an unrelated completion must not stamp a background command finished.
-    pub fn latest_running_cli_command(&self) -> Option<usize> {
-        self.terminal_commands.iter().rposition(|cmd| {
+    pub fn latest_running_cli_command(&self) -> Option<LogRow> {
+        self.terminal_commands.find_latest(|cmd| {
             cmd.status == "Running" && !cmd.command.starts_with(CUSTOM_COMMAND_LOG_PREFIX)
         })
+    }
+
+    /// Terminal-log entries matching the search bar, oldest first.
+    pub fn filtered_terminal_commands(&self) -> Vec<&TerminalCommand> {
+        let query = self.search_query.trim();
+        if query.is_empty() {
+            return self.terminal_commands.iter().collect();
+        }
+        let matcher = &*FUZZY_MATCHER;
+        self.terminal_commands
+            .iter()
+            .filter(|cmd| {
+                matcher.fuzzy_match(&cmd.command, query).is_some()
+                    || matcher.fuzzy_match(&cmd.status, query).is_some()
+            })
+            .collect()
+    }
+
+    /// Position, within `filtered_terminal_commands`, of the entry the copy
+    /// key acts on: the bottom row of the unwrapped view, which is the newest
+    /// entry unless the log is scrolled back. Wrapped mode scrolls by screen
+    /// line rather than by entry, so there it is always the newest entry.
+    pub fn terminal_cursor(&self, filtered_len: usize) -> Option<usize> {
+        let scrolled_back = if self.terminal_wrap {
+            0
+        } else {
+            self.terminal_scroll
+        };
+        filtered_len.checked_sub(scrolled_back + 1)
+    }
+
+    pub fn copy_terminal_command(&mut self) -> anyhow::Result<()> {
+        let entries = self.filtered_terminal_commands();
+        let line = self
+            .terminal_cursor(entries.len())
+            .and_then(|index| entries.get(index))
+            .map(|cmd| cmd.command_line().to_string())
+            .ok_or_else(|| anyhow::anyhow!("no terminal log entry to copy"))?;
+        self.clipboard.set_text(line)?;
+        Ok(())
+    }
+
+    pub fn clear_terminal_log(&mut self) {
+        self.terminal_commands.clear();
+        self.terminal_scroll = 0;
     }
 
     /// Rebuilds `custom_commands` from the current config, logging every
@@ -10732,7 +10769,7 @@ index 123456..789012 100644
 
         assert_eq!(app.error_message, Some("boom".to_string()));
         assert!(app.error_message_at.is_some());
-        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
     #[test]
@@ -10751,8 +10788,7 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Running");
-        assert_eq!(app.terminal_commands[1].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Running", "Failed: boom"]);
     }
 
     #[test]
@@ -10766,7 +10802,7 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Failed: boom");
+        assert_eq!(terminal_statuses(&app), ["Failed: boom"]);
     }
 
     #[test]
@@ -10780,7 +10816,121 @@ index 123456..789012 100644
 
         app.show_error("boom".to_string());
 
-        assert_eq!(app.terminal_commands[0].status, "Success");
+        assert_eq!(terminal_statuses(&app), ["Success"]);
+    }
+
+    fn terminal_statuses(app: &App) -> Vec<&str> {
+        app.terminal_commands
+            .iter()
+            .map(|cmd| cmd.status.as_str())
+            .collect()
+    }
+
+    fn log_entry(command: &str, status: &str) -> TerminalCommand {
+        TerminalCommand {
+            timestamp: String::new(),
+            command: command.to_string(),
+            status: status.to_string(),
+        }
+    }
+
+    fn app_with_recording_clipboard() -> (App, std::rc::Rc<std::cell::RefCell<Option<String>>>) {
+        struct RecordingClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
+
+        impl ClipboardWriter for RecordingClipboard {
+            fn set_text(&mut self, text: String) -> anyhow::Result<()> {
+                *self.0.borrow_mut() = Some(text);
+                Ok(())
+            }
+        }
+
+        let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut app = App::default();
+        app.clipboard = Box::new(RecordingClipboard(copied.clone()));
+        (app, copied)
+    }
+
+    #[test]
+    fn search_query_filters_terminal_log_by_command_and_status() {
+        let mut app = App::default();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Failed: HTTP 502"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Running"));
+
+        app.search_query = "glab".to_string();
+        let commands: Vec<&str> = app
+            .filtered_terminal_commands()
+            .iter()
+            .map(|cmd| cmd.command.as_str())
+            .collect();
+        assert_eq!(
+            commands,
+            ["Fetch issues: glab issue list", "Fetch MRs: glab mr list"]
+        );
+
+        app.search_query = "502".to_string();
+        let commands: Vec<&str> = app
+            .filtered_terminal_commands()
+            .iter()
+            .map(|cmd| cmd.command.as_str())
+            .collect();
+        assert_eq!(commands, ["Fetch PRs: gh pr list"]);
+    }
+
+    #[test]
+    fn copy_terminal_command_copies_the_newest_command_line() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list -R a/b", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list -R a/b", "Success"));
+
+        app.copy_terminal_command().unwrap();
+
+        assert_eq!(copied.borrow().as_deref(), Some("glab mr list -R a/b"));
+    }
+
+    #[test]
+    fn copy_terminal_command_follows_scroll_within_the_filtered_log() {
+        let (mut app, copied) = app_with_recording_clipboard();
+        app.terminal_commands
+            .push(log_entry("Fetch issues: glab issue list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch PRs: gh pr list", "Success"));
+        app.terminal_commands
+            .push(log_entry("Fetch MRs: glab mr list", "Success"));
+        app.search_query = "glab".to_string();
+        app.terminal_scroll = 1;
+
+        app.copy_terminal_command().unwrap();
+
+        assert_eq!(copied.borrow().as_deref(), Some("glab issue list"));
+    }
+
+    #[test]
+    fn copy_terminal_command_on_an_empty_log_is_an_error() {
+        let (mut app, copied) = app_with_recording_clipboard();
+
+        let error = app.copy_terminal_command().unwrap_err();
+
+        assert_eq!(error.to_string(), "no terminal log entry to copy");
+        assert_eq!(*copied.borrow(), None);
+    }
+
+    #[test]
+    fn clearing_the_terminal_log_stops_a_running_row_from_being_settled() {
+        let mut app = App::default();
+        let row = app.start_command("Custom command: sleep 5".to_string());
+        app.terminal_scroll = 3;
+
+        app.clear_terminal_log();
+        app.settle_command(row, &Ok(()));
+
+        assert!(app.terminal_commands.is_empty());
+        assert_eq!(app.terminal_scroll, 0);
     }
 
     #[test]

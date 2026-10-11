@@ -451,7 +451,10 @@ fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
     ]));
 }
 
-pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) -> Line<'static> {
+pub(crate) fn build_log_line(
+    cmd: &crate::command_log::TerminalCommand,
+    width: usize,
+) -> Line<'static> {
     let time_str = if cmd.timestamp.len() >= 8 {
         let parts: Vec<&str> = cmd.timestamp.split('T').collect();
         if parts.len() > 1 {

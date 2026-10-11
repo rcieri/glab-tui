@@ -1248,6 +1248,10 @@ pub struct KeybindingEnvironments {
 pub struct KeybindingTerminal {
     #[serde(default)]
     pub toggle_wrap: String,
+    #[serde(default = "def_clear_terminal_log")]
+    pub clear_log: String,
+    #[serde(default = "def_copy_terminal_command")]
+    pub copy_command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1395,6 +1399,8 @@ keybind_defaults! {
     def_delete_branch = "d",
     def_view_deployments = "Enter",
     def_toggle_terminal_wrap = "w",
+    def_clear_terminal_log = "C",
+    def_copy_terminal_command = "y",
     def_drill_into_scope = "G",
     def_switch_repo = "Ctrl+s",
     def_jump_to_id = "g",
@@ -1584,6 +1590,8 @@ impl Default for KeybindingTerminal {
     fn default() -> Self {
         Self {
             toggle_wrap: def_toggle_terminal_wrap(),
+            clear_log: def_clear_terminal_log(),
+            copy_command: def_copy_terminal_command(),
         }
     }
 }
@@ -1922,6 +1930,8 @@ view_deployments = "Enter"
 
 [keybindings.terminal]
 toggle_wrap = "w"
+clear_log = "C"
+copy_command = "y"
 
 # Tabs to disable/hide from the sidebar.
 # Uncomment to disable specific tabs:

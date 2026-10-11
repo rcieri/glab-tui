@@ -310,15 +310,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
             // Fallback: content area scrolling
             if let Some(content_rect) = app.content_rect {
                 if rect_contains(content_rect, row, col) {
-                    if let Some(s) = app.active_table_state_mut() {
-                        let selected = s.selected().unwrap_or(0);
-                        let new = if scroll_down {
-                            selected.saturating_add(1)
-                        } else {
-                            selected.saturating_sub(1)
-                        };
-                        s.select(Some(new));
-                    }
+                    app.scroll_active_table(scroll_down);
                     return;
                 }
             }
@@ -413,9 +405,7 @@ fn handle_mouse_event(app: &mut App, mouse_event: &crossterm::event::MouseEvent)
             if let Some(content_rect) = app.content_rect {
                 if rect_contains(content_rect, row, col) && row >= content_rect.y + 3 {
                     let row_idx = (row - content_rect.y).saturating_sub(3) as usize;
-                    if let Some(s) = app.active_table_state_mut() {
-                        s.select(Some(row_idx));
-                    }
+                    app.click_active_table_row(row_idx);
                     return;
                 }
             }
@@ -753,13 +743,13 @@ async fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events
     app.mrs.items = cache.mrs;
     crate::fetch::derive_workflow(&mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
-    app.runners.items = cache.runners;
-    app.releases.items = cache.releases;
+    app.runners.set_items(cache.runners);
+    app.releases.set_items(cache.releases);
     app.todos.items = cache.todos;
     app.milestones.items = cache.milestones;
     app.pipeline_jobs = cache.pipeline_jobs;
-    app.branches.items = cache.branches;
-    app.environments.items = cache.environments;
+    app.branches.set_items(cache.branches);
+    app.environments.set_items(cache.environments);
     app.milestone_issues_cache = cache.milestone_issues;
     app.cached_labels = cache.labels;
     app.cached_members = cache.members;
@@ -913,13 +903,13 @@ async fn main() -> Result<()> {
     crate::fetch::derive_workflow(&mut app.mrs.items);
     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
     app.pipelines.items = cache.pipelines;
-    app.runners.items = cache.runners;
-    app.releases.items = cache.releases;
+    app.runners.set_items(cache.runners);
+    app.releases.set_items(cache.releases);
     app.todos.items = cache.todos;
     app.milestones.items = cache.milestones;
     app.pipeline_jobs = cache.pipeline_jobs;
-    app.branches.items = cache.branches;
-    app.environments.items = cache.environments;
+    app.branches.set_items(cache.branches);
+    app.environments.set_items(cache.environments);
     app.milestone_issues_cache = cache.milestone_issues;
     app.cached_labels = cache.labels;
     if app.config.fetch_label_colors {
@@ -934,8 +924,8 @@ async fn main() -> Result<()> {
     let has_any_cached = !app.issues.items.is_empty()
         || !app.mrs.items.is_empty()
         || !app.pipelines.items.is_empty()
-        || !app.runners.items.is_empty()
-        || !app.releases.items.is_empty()
+        || !app.runners.items().is_empty()
+        || !app.releases.items().is_empty()
         || !app.todos.items.is_empty()
         || !app.milestones.items.is_empty();
     if has_any_cached {
@@ -951,10 +941,10 @@ async fn main() -> Result<()> {
     if !app.pipelines.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Pipelines);
     }
-    if !app.runners.items.is_empty() {
+    if !app.runners.items().is_empty() {
         app.loaded_tabs.insert(app::Tab::Runners);
     }
-    if !app.releases.items.is_empty() {
+    if !app.releases.items().is_empty() {
         app.loaded_tabs.insert(app::Tab::Releases);
     }
     if !app.todos.items.is_empty() {
@@ -963,10 +953,10 @@ async fn main() -> Result<()> {
     if !app.milestones.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Milestones);
     }
-    if !app.branches.items.is_empty() {
+    if !app.branches.items().is_empty() {
         app.loaded_tabs.insert(app::Tab::Branches);
     }
-    if !app.environments.items.is_empty() {
+    if !app.environments.items().is_empty() {
         app.loaded_tabs.insert(app::Tab::Environments);
     }
     app.update_filter_selection();
@@ -1217,6 +1207,7 @@ async fn main() -> Result<()> {
             }
         }
 
+        app.sync_list_views();
         terminal.draw(|f| ui::render(f, &mut app))?;
 
         if let Some(event) = events.next().await {
@@ -1586,9 +1577,9 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Runners);
                     app.refreshed_tabs.insert(app::Tab::Runners);
                     app.status_message = None;
-                    app.runners.items = runners;
+                    app.runners.set_items(runners);
                     app.update_filter_selection();
-                    app.project_cache.runners = app.runners.items.clone();
+                    app.project_cache.runners = app.runners.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::ReleasesFetched(releases) => {
@@ -1596,9 +1587,9 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Releases);
                     app.refreshed_tabs.insert(app::Tab::Releases);
                     app.status_message = None;
-                    app.releases.items = releases;
+                    app.releases.set_items(releases);
                     app.update_filter_selection();
-                    app.project_cache.releases = app.releases.items.clone();
+                    app.project_cache.releases = app.releases.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::MilestonesFetched(milestones) => {
@@ -1673,16 +1664,16 @@ async fn main() -> Result<()> {
                 }
                 Event::ReleaseUpdated => {
                     app.status_message = None;
-                    app.project_cache.releases = app.releases.items.clone();
+                    app.project_cache.releases = app.releases.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::ReleaseDeleted => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.status_message = None;
                     if let Some(tag) = app.pending_delete_release_tag.take() {
-                        app.releases.items.retain(|r| r.tag_name != tag);
+                        app.releases.retain(|r| r.tag_name != tag);
                     }
-                    app.project_cache.releases = app.releases.items.clone();
+                    app.project_cache.releases = app.releases.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::IssueDeleted => {
@@ -1723,9 +1714,9 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Branches);
                     app.refreshed_tabs.insert(app::Tab::Branches);
                     app.status_message = None;
-                    app.branches.items = branches;
+                    app.branches.set_items(branches);
                     app.update_filter_selection();
-                    app.project_cache.branches = app.branches.items.clone();
+                    app.project_cache.branches = app.branches.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::EnvironmentsFetched(envs) => {
@@ -1733,9 +1724,9 @@ async fn main() -> Result<()> {
                     app.loaded_tabs.insert(app::Tab::Environments);
                     app.refreshed_tabs.insert(app::Tab::Environments);
                     app.status_message = None;
-                    app.environments.items = envs;
+                    app.environments.set_items(envs);
                     app.update_filter_selection();
-                    app.project_cache.environments = app.environments.items.clone();
+                    app.project_cache.environments = app.environments.items().to_vec();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);
                 }
                 Event::SelectorItemsFetched(items) => {
@@ -1767,7 +1758,11 @@ async fn main() -> Result<()> {
                                 ),
                                 "source_branch" | "target_branch" | "pipeline_branch"
                                 | "create_from" => Some(
-                                    app.branches.items.iter().map(|b| b.name.clone()).collect(),
+                                    app.branches
+                                        .items()
+                                        .iter()
+                                        .map(|b| b.name.clone())
+                                        .collect(),
                                 ),
                                 "project" => {
                                     let mut known = Vec::new();
@@ -2018,12 +2013,12 @@ async fn main() -> Result<()> {
                         app::Tab::Issues => !app.issues.items.is_empty(),
                         app::Tab::MergeRequests => !app.mrs.items.is_empty(),
                         app::Tab::Pipelines => !app.pipelines.items.is_empty(),
-                        app::Tab::Runners => !app.runners.items.is_empty(),
-                        app::Tab::Releases => !app.releases.items.is_empty(),
+                        app::Tab::Runners => !app.runners.items().is_empty(),
+                        app::Tab::Releases => !app.releases.items().is_empty(),
                         app::Tab::Todos => !app.todos.items.is_empty(),
                         app::Tab::Milestones => !app.milestones.items.is_empty(),
-                        app::Tab::Branches => !app.branches.items.is_empty(),
-                        app::Tab::Environments => !app.environments.items.is_empty(),
+                        app::Tab::Branches => !app.branches.items().is_empty(),
+                        app::Tab::Environments => !app.environments.items().is_empty(),
                         _ => false,
                     };
                     if has_cached_items {
@@ -2109,6 +2104,7 @@ async fn main() -> Result<()> {
                     });
                     // Force an immediate render so the "Running..." banner is visible
                     // even if CommandCompleted arrives in the very next event.
+                    app.sync_list_views();
                     terminal.draw(|f| ui::render(f, &mut app))?;
                 }
                 Event::CommandCompleted(tab, res) => {
@@ -2170,10 +2166,10 @@ async fn main() -> Result<()> {
                     status,
                     active,
                 } => {
-                    if let Some(runner) = app.runners.items.iter_mut().find(|r| r.id == runner_id) {
+                    app.runners.update(&runner_id, |runner| {
                         runner.status = status;
                         runner.active = active;
-                    }
+                    });
                 }
                 Event::Mouse(mouse_event) => {
                     handle_mouse_event(&mut app, &mouse_event);
@@ -2957,13 +2953,13 @@ async fn main() -> Result<()> {
                                                     &mut app.mrs.items,
                                                 );
                                                 app.pipelines.items = cache.pipelines;
-                                                app.runners.items = cache.runners;
-                                                app.releases.items = cache.releases;
+                                                app.runners.set_items(cache.runners);
+                                                app.releases.set_items(cache.releases);
                                                 app.todos.items = cache.todos;
                                                 app.milestones.items = cache.milestones;
                                                 app.pipeline_jobs = cache.pipeline_jobs;
-                                                app.branches.items = cache.branches;
-                                                app.environments.items = cache.environments;
+                                                app.branches.set_items(cache.branches);
+                                                app.environments.set_items(cache.environments);
                                                 app.milestone_issues_cache = cache.milestone_issues;
                                                 if let Some(client) = app.gitlab_client.clone() {
                                                     let tx = events.sender();
@@ -3039,8 +3035,8 @@ async fn main() -> Result<()> {
                                                     app.milestone_progress_cache.clear();
                                                     app.mrs.items.clear();
                                                     app.pipelines.items.clear();
-                                                    app.runners.items.clear();
-                                                    app.releases.items.clear();
+                                                    app.runners.set_items(Vec::new());
+                                                    app.releases.set_items(Vec::new());
                                                     app.todos.items.clear();
                                                     app.milestones.items.clear();
                                                     app.pipeline_jobs.clear();
@@ -3061,13 +3057,13 @@ async fn main() -> Result<()> {
                                                         &mut app.mrs.items,
                                                     );
                                                     app.pipelines.items = cache.pipelines;
-                                                    app.runners.items = cache.runners;
-                                                    app.releases.items = cache.releases;
+                                                    app.runners.set_items(cache.runners);
+                                                    app.releases.set_items(cache.releases);
                                                     app.todos.items = cache.todos;
                                                     app.milestones.items = cache.milestones;
                                                     app.pipeline_jobs = cache.pipeline_jobs;
-                                                    app.branches.items = cache.branches;
-                                                    app.environments.items = cache.environments;
+                                                    app.branches.set_items(cache.branches);
+                                                    app.environments.set_items(cache.environments);
                                                     app.milestone_issues_cache =
                                                         cache.milestone_issues;
                                                     app.cached_labels = cache.labels;
@@ -3077,8 +3073,8 @@ async fn main() -> Result<()> {
                                                         !app.issues.items.is_empty()
                                                             || !app.mrs.items.is_empty()
                                                             || !app.pipelines.items.is_empty()
-                                                            || !app.runners.items.is_empty()
-                                                            || !app.releases.items.is_empty()
+                                                            || !app.runners.items().is_empty()
+                                                            || !app.releases.items().is_empty()
                                                             || !app.todos.items.is_empty()
                                                             || !app.milestones.items.is_empty();
                                                     if has_any_cached {
@@ -3097,10 +3093,10 @@ async fn main() -> Result<()> {
                                                     if !app.pipelines.items.is_empty() {
                                                         app.loaded_tabs.insert(app::Tab::Pipelines);
                                                     }
-                                                    if !app.runners.items.is_empty() {
+                                                    if !app.runners.items().is_empty() {
                                                         app.loaded_tabs.insert(app::Tab::Runners);
                                                     }
-                                                    if !app.releases.items.is_empty() {
+                                                    if !app.releases.items().is_empty() {
                                                         app.loaded_tabs.insert(app::Tab::Releases);
                                                     }
                                                     if !app.todos.items.is_empty() {
@@ -3146,10 +3142,10 @@ async fn main() -> Result<()> {
                                                                 !app.pipelines.items.is_empty()
                                                             }
                                                             app::Tab::Runners => {
-                                                                !app.runners.items.is_empty()
+                                                                !app.runners.items().is_empty()
                                                             }
                                                             app::Tab::Releases => {
-                                                                !app.releases.items.is_empty()
+                                                                !app.releases.items().is_empty()
                                                             }
                                                             app::Tab::Todos => {
                                                                 !app.todos.items.is_empty()
@@ -6568,7 +6564,7 @@ async fn main() -> Result<()> {
                                                 tc.branches.iter().map(|b| b.name.clone()).collect()
                                             } else {
                                                 app.branches
-                                                    .items
+                                                    .items()
                                                     .iter()
                                                     .map(|b| b.name.clone())
                                                     .collect()
@@ -6659,7 +6655,7 @@ async fn main() -> Result<()> {
                                         // Collect existing tags from releases cache + git tag
                                         let mut tags: Vec<String> = app
                                             .releases
-                                            .items
+                                            .items()
                                             .iter()
                                             .map(|r| r.tag_name.clone())
                                             .collect();
@@ -7046,8 +7042,6 @@ async fn main() -> Result<()> {
                                                 "Title" => "title",
                                                 "Target Branch" => "target_branch",
                                                 "Weight" => "weight",
-                                                "Release Name" => "release_name",
-                                                "Tag" => "tag",
                                                 _ => "",
                                             };
                                             match field_type {
@@ -7083,18 +7077,6 @@ async fn main() -> Result<()> {
                                                     .map(|m| m.target_branch.clone())
                                                     .unwrap_or_default(),
                                                 "weight" => "0".to_string(),
-                                                "release_name" => app
-                                                    .releases
-                                                    .items
-                                                    .get(entity_iid as usize)
-                                                    .map(|r| r.name.clone())
-                                                    .unwrap_or_default(),
-                                                "tag" => app
-                                                    .releases
-                                                    .items
-                                                    .get(entity_iid as usize)
-                                                    .map(|r| r.tag_name.clone())
-                                                    .unwrap_or_default(),
                                                 _ => String::new(),
                                             }
                                         };

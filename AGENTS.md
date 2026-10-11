@@ -86,6 +86,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [helpers.rs](src/ui/helpers.rs): Shared UI rendering helpers (`badge_style_for`, `render_fuzzy_cell`).
     * [diff.rs](src/ui/diff.rs): Diff view render functions.
     * [modal.rs](src/ui/modal.rs): Unified modal component.
+    * [list_tab/](src/ui/list_tab/): `ListTab<C: ColumnDef>` — rows, a cached filtered/sorted view, and a cursor keyed by `Row::key()` (not a view index). Each `ColumnDef` enum (`RunnerColumn`, `ReleaseColumn`, `BranchColumn`, `EnvironmentColumn`) defines label, width, cell, search text, filter values and sort key once; `Tab::columns()` reads its labels. `App::sync_list_views()` rebuilds a view only when its rows or inputs (search, enabled columns, column filters, group-by sort) change; it runs before each draw and in `update_filter_selection`. Mutate rows only through `set_items` / `update` / `retain` so the view invalidates; navigate through `App::list_navigation_mut`. Runners, Releases, Branches and Environments use it; the other tabs still use `StatefulTable`.
 * [src/themes/](src/themes/): 38 bundled theme TOML files (default, clean, tokyo-night, tokyo-night-storm, oled, github-dark-hc, gruvbox, gruvbox-material, nord, nord-light, catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe, catppuccin-latte, dracula, dracula-light, deep-space, solarized-dark, solarized-light, monokai, one-dark, synthwave-84, everforest-dark, rose-pine, rose-pine-moon, rose-pine-dawn, kanagawa, cyberpunk, ayu-dark, ayu-mirage, ayu-light, night-owl, poimandres, vesper, sonokai, pop-dark, adwaita-dark, adwaita-light).
 
 ## 3. Core Architectural Patterns
@@ -245,7 +246,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 ## 5. Adding a New Feature (Workflow)
 
 If asked to add a new Tab (e.g., "Deployments"):
-1.  **Update State:** Add the tab to the `Tab` enum in [src/app.rs](src/app.rs) (include it in `ALL`, `title()`, `columns()`, and `default_columns()`). Add a `StatefulTable<Deployment>` to `App`.
+1.  **Update State:** Add the tab to the `Tab` enum in [src/app.rs](src/app.rs) (include it in `ALL`, `title()`, `columns()`, and `default_columns()`). Add a `ListTab<YourColumn>` to `App` with a `ColumnDef` enum in [src/ui/list_tab/](src/ui/list_tab/), and add it to `sync_list_views` / `list_navigation(_mut)`.
 2.  **Define Domain Logic:** Create [src/domain/deployments.rs](src/domain/deployments.rs). Define the `Deployment` struct with `serde` traits. Write a `list_deployments` function that delegates to the backend.
 3.  **Add Backend Methods:** Add the relevant method to the `Backend` trait in [src/backend/mod.rs](src/backend/mod.rs) and implement it in both [glab.rs](src/backend/glab.rs) and [gh.rs](src/backend/gh.rs). Use native subcommands where available; fall back to `raw_api()` only if no native command exists.
 4.  **Create Events:** Add `DeploymentsFetched(Vec<Deployment>)` to the `Event` enum in [src/event.rs](src/event.rs).

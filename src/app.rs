@@ -6,6 +6,13 @@ use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
 use crate::domain::workflow_inputs::WorkflowInput;
+use crate::ui::list_tab::branches::BranchColumn;
+use crate::ui::list_tab::environments::EnvironmentColumn;
+use crate::ui::list_tab::releases::ReleaseColumn;
+use crate::ui::list_tab::runners::RunnerColumn;
+use crate::ui::list_tab::{
+    ListNavigation, ListTab, ViewInputs, column_labels, default_column_labels,
+};
 use crate::utils::format::{expand_tabs, strip_ansi_escapes};
 use crate::utils::ui::StatefulTable;
 use fuzzy_matcher::FuzzyMatcher;
@@ -26,7 +33,7 @@ static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 /// Single shared fuzzy matcher. Reusing one instance avoids allocating a
 /// `SkimMatcherV2` on every filter keystroke (the search bar filters on each
 /// key press).
-static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
+pub(crate) static FUZZY_MATCHER: LazyLock<SkimMatcherV2> = LazyLock::new(SkimMatcherV2::default);
 
 trait ClipboardWriter {
     fn set_text(&mut self, text: String) -> anyhow::Result<()>;
@@ -424,19 +431,12 @@ impl Tab {
                 cols.push("Duration");
                 cols
             }
-            Tab::Runners => vec!["ID", "Description", "Status", "Active"],
-            Tab::Releases => vec![
-                "Tag",
-                "Release Name",
-                "Date",
-                "Author",
-                "Assets",
-                "Release Notes",
-            ],
+            Tab::Runners => column_labels::<RunnerColumn>(),
+            Tab::Releases => column_labels::<ReleaseColumn>(),
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
-            Tab::Branches => vec!["Name", "Default", "Protected", "SHA"],
-            Tab::Environments => vec!["Name", "State", "Deployment Status", "URL"],
+            Tab::Branches => column_labels::<BranchColumn>(),
+            Tab::Environments => column_labels::<EnvironmentColumn>(),
             Tab::Terminal => vec![],
         }
     }
@@ -491,12 +491,12 @@ impl Tab {
                     vec!["ID", "Stage", "Status", "Name", "Matrix"]
                 }
             }
-            Tab::Runners => vec!["ID", "Description", "Status", "Active"],
-            Tab::Releases => vec!["Tag", "Release Name", "Date"],
+            Tab::Runners => default_column_labels::<RunnerColumn>(),
+            Tab::Releases => default_column_labels::<ReleaseColumn>(),
             Tab::Todos => vec!["State", "Project", "Type", "ID", "Title", "Updated"],
             Tab::Milestones => vec!["ID", "State", "Title", "Progress", "Due Date"],
-            Tab::Branches => vec!["Name", "Default", "Protected"],
-            Tab::Environments => vec!["Name", "State", "Deployment Status"],
+            Tab::Branches => default_column_labels::<BranchColumn>(),
+            Tab::Environments => default_column_labels::<EnvironmentColumn>(),
             Tab::Terminal => vec![],
         }
     }
@@ -3552,8 +3552,8 @@ pub struct App {
     /// rejections that never ran a CLI command.  Controls the hint line shown
     /// in the toast.
     pub error_has_cli_detail: bool,
-    pub runners: StatefulTable<crate::domain::runners::Runner>,
-    pub releases: StatefulTable<crate::domain::releases::Release>,
+    pub(crate) runners: ListTab<RunnerColumn>,
+    pub(crate) releases: ListTab<ReleaseColumn>,
     pub pipeline_jobs: std::collections::HashMap<u64, Vec<crate::domain::pipelines::Job>>,
     pub pipeline_nav: Vec<NavFrame>,
     pub pending_triggers: Vec<crate::domain::pipelines::PendingTrigger>,
@@ -3684,8 +3684,8 @@ pub struct App {
     /// Milestones progress column to avoid per-row API calls.
     pub milestone_progress_cache: std::collections::HashMap<u64, (usize, usize)>,
     pub terminal_scroll: usize,
-    pub branches: StatefulTable<crate::domain::branches::Branch>,
-    pub environments: StatefulTable<crate::domain::deployments::Environment>,
+    pub(crate) branches: ListTab<BranchColumn>,
+    pub(crate) environments: ListTab<EnvironmentColumn>,
     pub deployments: StatefulTable<crate::domain::deployments::Deployment>,
     pub group_by_column: std::collections::HashMap<Tab, Option<String>>,
     pub group_ascending: std::collections::HashMap<Tab, bool>,
@@ -3742,8 +3742,8 @@ impl Default for App {
             error_message: None,
             error_message_at: None,
             error_has_cli_detail: false,
-            runners: StatefulTable::with_items(vec![]),
-            releases: StatefulTable::with_items(vec![]),
+            runners: ListTab::default(),
+            releases: ListTab::default(),
             pipeline_jobs: std::collections::HashMap::new(),
             pipeline_nav: Vec::new(),
             pending_triggers: Vec::new(),
@@ -3828,8 +3828,8 @@ impl Default for App {
             milestone_issues_cache: std::collections::HashMap::new(),
             milestone_progress_cache: std::collections::HashMap::new(),
             terminal_scroll: 0,
-            branches: StatefulTable::with_items(vec![]),
-            environments: StatefulTable::with_items(vec![]),
+            branches: ListTab::default(),
+            environments: ListTab::default(),
             deployments: StatefulTable::with_items(vec![]),
             group_by_column: std::collections::HashMap::new(),
             group_ascending: std::collections::HashMap::new(),
@@ -3873,14 +3873,47 @@ pub(crate) fn milestone_state_display(raw: &str) -> &'static str {
 }
 
 /// Map a runner's raw `status` field to the uppercase display text shown
-/// in the table cell. Used by both `runner_filter_values` (the column
-/// filter picker) and `render_tab_runners`.
+/// in the Runners table's Status cell, which its column filter also offers.
 pub(crate) fn runner_status_display(raw: &str) -> &'static str {
     match raw {
         "online" => "ONLINE",
         "paused" => "PAUSED",
         "offline" => "OFFLINE",
         other => "UNKNOWN",
+    }
+}
+
+/// Whether a row whose `col` cell has `values` passes the column filter
+/// `selected`. Text columns match case-insensitive substrings; the rest
+/// match exactly, also accepting the raw API values older configs saved.
+pub(crate) fn column_filter_matches(
+    col: &str,
+    values: &[String],
+    selected: &HashSet<String>,
+) -> bool {
+    let is_text = matches!(
+        col,
+        "Project" | "Title" | "Name" | "Ref" | "Tag" | "Release Name"
+    );
+    if is_text {
+        values.iter().any(|v| {
+            selected.contains(v)
+                || selected.iter().any(|s| {
+                    let norm_v = v.to_lowercase();
+                    let norm_s = s.to_lowercase();
+                    norm_v == norm_s || norm_v.contains(&norm_s) || norm_s.contains(&norm_v)
+                })
+        })
+    } else {
+        values.iter().any(|v| {
+            let norm_v = App::normalize_filter_value(v);
+            selected.contains(v)
+                || selected.contains(norm_v)
+                || selected.iter().any(|s| {
+                    let norm_s = App::normalize_filter_value(s);
+                    norm_s == v.as_str() || norm_s == norm_v
+                })
+        })
     }
 }
 
@@ -3980,12 +4013,12 @@ impl App {
         self.issues.state.select(Some(0));
         self.mrs.state.select(Some(0));
         self.pipelines.state.select(Some(0));
-        self.runners.state.select(Some(0));
-        self.releases.state.select(Some(0));
+        self.runners.reset_cursor();
+        self.releases.reset_cursor();
         self.todos.state.select(Some(0));
         self.milestones.state.select(Some(0));
-        self.branches.state.select(Some(0));
-        self.environments.state.select(Some(0));
+        self.branches.reset_cursor();
+        self.environments.reset_cursor();
     }
 
     pub fn drill_into(&mut self, repo: String) {
@@ -4514,9 +4547,7 @@ impl App {
 
     pub fn selected_branch_name(&self) -> Option<String> {
         self.branches
-            .state
-            .selected()
-            .and_then(|index| self.filtered_branches().get(index).copied())
+            .cursor_row()
             .map(|b| b.name.clone())
             .filter(|name| !name.is_empty())
     }
@@ -4669,19 +4700,92 @@ impl App {
             .unwrap_or(BackendKind::GitLab)
     }
 
-    pub fn active_table_state_mut(&mut self) -> Option<&mut ratatui::widgets::TableState> {
+    /// Table state of a tab not yet backed by a `ListTab`.
+    fn legacy_table_state_mut(&mut self) -> Option<&mut ratatui::widgets::TableState> {
         match self.active_tab {
             Tab::Issues => Some(&mut self.issues.state),
             Tab::MergeRequests => Some(&mut self.mrs.state),
             Tab::Pipelines => Some(&mut self.pipelines.state),
             Tab::Jobs => Some(&mut self.jobs.state),
-            Tab::Runners => Some(&mut self.runners.state),
-            Tab::Releases => Some(&mut self.releases.state),
             Tab::Todos => Some(&mut self.todos.state),
             Tab::Milestones => Some(&mut self.milestones.state),
-            Tab::Branches => Some(&mut self.branches.state),
-            Tab::Environments => Some(&mut self.environments.state),
-            Tab::Terminal => None,
+            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {
+                None
+            }
+        }
+    }
+
+    /// The `ListTab` behind `tab`, with its view brought up to date.
+    pub(crate) fn list_navigation_mut(&mut self, tab: Tab) -> Option<&mut dyn ListNavigation> {
+        self.sync_list_views();
+        match tab {
+            Tab::Runners => Some(&mut self.runners),
+            Tab::Releases => Some(&mut self.releases),
+            Tab::Branches => Some(&mut self.branches),
+            Tab::Environments => Some(&mut self.environments),
+            _ => None,
+        }
+    }
+
+    fn list_navigation(&self, tab: Tab) -> Option<&dyn ListNavigation> {
+        match tab {
+            Tab::Runners => Some(&self.runners),
+            Tab::Releases => Some(&self.releases),
+            Tab::Branches => Some(&self.branches),
+            Tab::Environments => Some(&self.environments),
+            _ => None,
+        }
+    }
+
+    /// Rebuild the view of every `ListTab` whose rows or view inputs changed.
+    pub fn sync_list_views(&mut self) {
+        let Self {
+            ref mut runners,
+            ref mut releases,
+            ref mut branches,
+            ref mut environments,
+            ref search_query,
+            ref enabled_columns,
+            ref column_filters,
+            ref group_by_column,
+            ref group_ascending,
+            ..
+        } = *self;
+        let inputs = |tab: Tab| ViewInputs {
+            query: search_query,
+            enabled_columns: enabled_columns.get(&tab),
+            column_filters: column_filters.get(&tab),
+            sort: group_by_column
+                .get(&tab)
+                .and_then(Option::as_deref)
+                .map(|col| (col, group_ascending.get(&tab).copied().unwrap_or(true))),
+        };
+        runners.refresh(inputs(Tab::Runners));
+        releases.refresh(inputs(Tab::Releases));
+        branches.refresh(inputs(Tab::Branches));
+        environments.refresh(inputs(Tab::Environments));
+    }
+
+    /// Mouse wheel over the active table: move the selection one row.
+    pub fn scroll_active_table(&mut self, down: bool) {
+        if let Some(list) = self.list_navigation_mut(self.active_tab) {
+            list.step(down);
+        } else if let Some(state) = self.legacy_table_state_mut() {
+            let selected = state.selected().unwrap_or(0);
+            state.select(Some(if down {
+                selected.saturating_add(1)
+            } else {
+                selected.saturating_sub(1)
+            }));
+        }
+    }
+
+    /// Mouse click on the `row`-th drawn line of the active table.
+    pub fn click_active_table_row(&mut self, row: usize) {
+        if let Some(list) = self.list_navigation_mut(self.active_tab) {
+            list.select_visible_row(row);
+        } else if let Some(state) = self.legacy_table_state_mut() {
+            state.select(Some(row));
         }
     }
 
@@ -5882,201 +5986,6 @@ impl App {
         list
     }
 
-    pub fn filter_runners_list<'a>(
-        items: &'a [crate::domain::runners::Runner],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::runners::Runner> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("ID") {
-                    check_match(&item.id.to_string());
-                }
-                if enabled_cols.contains("Description") {
-                    if let Some(desc) = &item.description {
-                        check_match(desc);
-                    }
-                }
-                if enabled_cols.contains("Status") {
-                    check_match(&item.status);
-                }
-                if enabled_cols.contains("Active") {
-                    let active_str = if item.active { "active" } else { "inactive" };
-                    check_match(active_str);
-                    check_match(&item.active.to_string());
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn runner_filter_values(item: &crate::domain::runners::Runner, col: &str) -> Vec<String> {
-        match col {
-            "ID" => vec![item.id.to_string()],
-            // Match the table cell text (`render_tab_runners` shows
-            // "ONLINE"/"PAUSED"/"OFFLINE"/"UNKNOWN"), not the raw API
-            // value. The picker is a multi-select on displayed text, so a
-            // lowercase entry would never match anything in the column.
-            "Status" => vec![runner_status_display(&item.status).to_string()],
-            "Active" => vec![item.active.to_string()],
-            "Description" => item
-                .description
-                .as_ref()
-                .map(|d| vec![d.clone()])
-                .unwrap_or_default(),
-            _ => vec![],
-        }
-    }
-
-    pub fn filtered_runners(&self) -> Vec<&crate::domain::runners::Runner> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Runners)
-            .unwrap_or(&default_set);
-        let mut list: Vec<&crate::domain::runners::Runner> =
-            Self::filter_runners_list(&self.runners.items, &self.search_query, enabled_cols);
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Runners,
-            Self::runner_filter_values,
-        );
-        list
-    }
-
-    pub fn filter_releases_list<'a>(
-        items: &'a [crate::domain::releases::Release],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::releases::Release> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("Tag") {
-                    check_match(&item.tag_name);
-                }
-                if enabled_cols.contains("Release Name") {
-                    check_match(&item.name);
-                }
-                if enabled_cols.contains("Date") {
-                    check_match(&item.released_at);
-                    check_match(&crate::utils::format::time_ago(&item.released_at));
-                }
-                if enabled_cols.contains("Description") {
-                    if let Some(ref desc) = item.description {
-                        check_match(desc);
-                    }
-                }
-                if enabled_cols.contains("Author") {
-                    if let Some(ref a) = item.author_name {
-                        check_match(a);
-                    }
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn filtered_releases_list<'a>(
-        items: &'a [crate::domain::releases::Release],
-        query: &str,
-        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
-        ascending: bool,
-        group_by_column: &Option<String>,
-    ) -> Vec<&'a crate::domain::releases::Release> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = enabled_columns.get(&Tab::Releases).unwrap_or(&default_set);
-        let mut list = Self::filter_releases_list(items, query, enabled_cols);
-        if let Some(col) = group_by_column {
-            list.sort_by(|a, b| {
-                let val_a = match col.as_str() {
-                    "Tag" => a.tag_name.clone(),
-                    "Release Name" => a.name.clone(),
-                    "Date" => a.released_at.clone(),
-                    "Description" => a.description.clone().unwrap_or_default(),
-                    "Author" => a.author_name.clone().unwrap_or_default(),
-                    _ => String::new(),
-                };
-                let val_b = match col.as_str() {
-                    "Tag" => b.tag_name.clone(),
-                    "Release Name" => b.name.clone(),
-                    "Date" => b.released_at.clone(),
-                    "Description" => b.description.clone().unwrap_or_default(),
-                    "Author" => b.author_name.clone().unwrap_or_default(),
-                    _ => String::new(),
-                };
-                let cmp = val_a.cmp(&val_b);
-                if !ascending { cmp.reverse() } else { cmp }
-            });
-        }
-        list
-    }
-
-    pub fn release_filter_values(
-        item: &crate::domain::releases::Release,
-        col: &str,
-    ) -> Vec<String> {
-        match col {
-            "Tag" => vec![item.tag_name.clone()],
-            "Release Name" => vec![item.name.clone()],
-            "Description" => item
-                .description
-                .clone()
-                .map(|d| vec![d])
-                .unwrap_or_default(),
-            "Author" => item
-                .author_name
-                .clone()
-                .map(|a| vec![a])
-                .unwrap_or_default(),
-            _ => vec![],
-        }
-    }
-
-    pub fn filtered_releases(&self) -> Vec<&crate::domain::releases::Release> {
-        let mut list = Self::filtered_releases_list(
-            &self.releases.items,
-            &self.search_query,
-            &self.enabled_columns,
-            self.group_ascending
-                .get(&Tab::Releases)
-                .copied()
-                .unwrap_or(true),
-            self.group_by_column.get(&Tab::Releases).unwrap_or(&None),
-        );
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Releases,
-            Self::release_filter_values,
-        );
-        list
-    }
-
     pub fn filter_todos_list<'a>(
         items: &'a [crate::domain::notifications::Notification],
         query: &str,
@@ -6366,128 +6275,6 @@ impl App {
         list
     }
 
-    pub fn filter_branches_list<'a>(
-        items: &'a [crate::domain::branches::Branch],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::branches::Branch> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("Name") {
-                    check_match(&item.name);
-                }
-                if enabled_cols.contains("SHA") {
-                    check_match(&item.commit_sha);
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn branch_filter_values(item: &crate::domain::branches::Branch, col: &str) -> Vec<String> {
-        match col {
-            "Name" => vec![item.name.clone()],
-            "Default" => vec![item.default.to_string()],
-            "Protected" => vec![item.protected.to_string()],
-            _ => vec![],
-        }
-    }
-
-    pub fn filtered_branches(&self) -> Vec<&crate::domain::branches::Branch> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Branches)
-            .unwrap_or(&default_set);
-        let mut list =
-            Self::filter_branches_list(&self.branches.items, &self.search_query, enabled_cols);
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Branches,
-            Self::branch_filter_values,
-        );
-        list
-    }
-
-    pub fn environment_filter_values(
-        item: &crate::domain::deployments::Environment,
-        col: &str,
-    ) -> Vec<String> {
-        match col {
-            "Name" => vec![item.name.clone()],
-            "State" => vec![item.state.clone()],
-            "Deployment Status" => item
-                .last_deployment
-                .as_ref()
-                .map(|d| vec![d.status.clone()])
-                .unwrap_or_default(),
-            _ => vec![],
-        }
-    }
-
-    pub fn filter_environments_list<'a>(
-        items: &'a [crate::domain::deployments::Environment],
-        query: &str,
-        enabled_cols: &std::collections::HashSet<String>,
-    ) -> Vec<&'a crate::domain::deployments::Environment> {
-        if query.trim().is_empty() {
-            return items.iter().collect();
-        }
-        let matcher = &*FUZZY_MATCHER;
-        let q = query.trim();
-        items
-            .iter()
-            .filter(|item| {
-                let mut matches = false;
-                let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
-                    }
-                };
-                if enabled_cols.contains("Name") {
-                    check_match(&item.name);
-                }
-                if enabled_cols.contains("State") {
-                    check_match(&item.state);
-                }
-                matches
-            })
-            .collect()
-    }
-
-    pub fn filtered_environments(&self) -> Vec<&crate::domain::deployments::Environment> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Environments)
-            .unwrap_or(&default_set);
-        let mut list = Self::filter_environments_list(
-            &self.environments.items,
-            &self.search_query,
-            enabled_cols,
-        );
-        Self::apply_column_filters(
-            &mut list,
-            &self.column_filters,
-            Tab::Environments,
-            Self::environment_filter_values,
-        );
-        list
-    }
-
     /// Canonicalise a saved filter value to the display string that
     /// `mr_filter_values` / issue filter functions now produce.
     ///
@@ -6623,40 +6410,15 @@ impl App {
             if selected.is_empty() {
                 continue;
             }
-            let is_text = matches!(
-                col.as_str(),
-                "Project" | "Title" | "Name" | "Ref" | "Tag" | "Release Name"
-            );
-            list.retain(|item| {
-                let vals = get_values(item, col);
-                if is_text {
-                    vals.iter().any(|v| {
-                        selected.contains(v)
-                            || selected.iter().any(|s| {
-                                let norm_v = v.to_lowercase();
-                                let norm_s = s.to_lowercase();
-                                norm_v == norm_s
-                                    || norm_v.contains(&norm_s)
-                                    || norm_s.contains(&norm_v)
-                            })
-                    })
-                } else {
-                    vals.iter().any(|v| {
-                        let norm_v = Self::normalize_filter_value(v);
-                        selected.contains(v)
-                            || selected.contains(norm_v)
-                            || selected.iter().any(|s| {
-                                let norm_s = Self::normalize_filter_value(s);
-                                norm_s == v.as_str() || norm_s == norm_v
-                            })
-                    })
-                }
-            });
+            list.retain(|item| column_filter_matches(col, &get_values(item, col), selected));
         }
     }
 
     pub fn collect_unique_column_values(&self, tab: Tab, col: &str) -> Vec<String> {
         use std::collections::BTreeSet;
+        if let Some(list) = self.list_navigation(tab) {
+            return list.distinct_filter_values(col);
+        }
         let mut values: BTreeSet<String> = BTreeSet::new();
         match tab {
             Tab::Issues => {
@@ -6708,20 +6470,6 @@ impl App {
                     }
                 }
             }
-            Tab::Runners => {
-                for item in &self.runners.items {
-                    for v in Self::runner_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
-            Tab::Releases => {
-                for item in &self.releases.items {
-                    for v in Self::release_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
             Tab::Todos => {
                 for item in &self.todos.items {
                     for v in Self::todo_filter_values(item, col) {
@@ -6736,21 +6484,7 @@ impl App {
                     }
                 }
             }
-            Tab::Branches => {
-                for item in &self.branches.items {
-                    for v in Self::branch_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
-            Tab::Environments => {
-                for item in &self.environments.items {
-                    for v in Self::environment_filter_values(item, col) {
-                        values.insert(v);
-                    }
-                }
-            }
-            Tab::Terminal => {}
+            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {}
         }
         values.into_iter().collect()
     }
@@ -6968,10 +6702,9 @@ impl App {
                 map
             }
             Tab::Releases => {
-                let items = self.filtered_releases();
                 let mut map: std::collections::BTreeMap<String, Vec<usize>> =
                     std::collections::BTreeMap::new();
-                for (idx, r) in items.iter().enumerate() {
+                for (idx, r) in self.releases.view_rows().enumerate() {
                     let key = match col.as_str() {
                         "Date" => {
                             if r.released_at.len() >= 10 {
@@ -7033,6 +6766,7 @@ impl App {
     }
 
     pub fn update_filter_selection(&mut self) {
+        self.sync_list_views();
         match self.active_tab {
             Tab::Issues => {
                 let len = self.filtered_issues().len();
@@ -7084,42 +6818,6 @@ impl App {
                         }
                         None => {
                             self.pipelines.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Runners => {
-                let len = self.filtered_runners().len();
-                let sel = self.runners.state.selected();
-                if len == 0 {
-                    self.runners.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.runners.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.runners.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Releases => {
-                let len = self.filtered_releases().len();
-                let sel = self.releases.state.selected();
-                if len == 0 {
-                    self.releases.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.releases.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.releases.state.select(Some(0));
                         }
                     }
                 }
@@ -7178,43 +6876,7 @@ impl App {
                     }
                 }
             }
-            Tab::Branches => {
-                let len = self.filtered_branches().len();
-                let sel = self.branches.state.selected();
-                if len == 0 {
-                    self.branches.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.branches.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.branches.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Environments => {
-                let len = self.filtered_environments().len();
-                let sel = self.environments.state.selected();
-                if len == 0 {
-                    self.environments.state.select(None);
-                } else {
-                    match sel {
-                        Some(idx) => {
-                            if idx >= len {
-                                self.environments.state.select(Some(len - 1));
-                            }
-                        }
-                        None => {
-                            self.environments.state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            Tab::Terminal => {}
+            Tab::Runners | Tab::Releases | Tab::Branches | Tab::Environments | Tab::Terminal => {}
         }
         self.rebuild_group_map();
     }
@@ -7732,15 +7394,16 @@ mod tests {
         let mut app = App::default();
         app.clipboard = Box::new(RecordingClipboard(copied.clone()));
 
-        app.branches.items = vec![crate::domain::branches::Branch {
-            name: "feature/new-api".to_string(),
-            default: false,
-            protected: true,
-            can_push: true,
-            commit_sha: "abc1234".to_string(),
-            web_url: "https://gitlab.com/acme/project/-/tree/feature/new-api".to_string(),
-        }];
-        app.branches.state.select(Some(0));
+        app.branches
+            .set_items(vec![crate::domain::branches::Branch {
+                name: "feature/new-api".to_string(),
+                default: false,
+                protected: true,
+                can_push: true,
+                commit_sha: "abc1234".to_string(),
+                web_url: "https://gitlab.com/acme/project/-/tree/feature/new-api".to_string(),
+            }]);
+        app.sync_list_views();
 
         assert_eq!(
             app.selected_branch_name().as_deref(),

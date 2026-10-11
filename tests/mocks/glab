@@ -81,6 +81,10 @@ elif [[ "$*" == *"mr view"* ]]; then
     cat "$FIXTURES_DIR/mr_view.json"
 elif [[ "$*" == *"mr note list"* ]]; then
     cat "$FIXTURES_DIR/mr_notes.json"
+elif [[ "$*" == *"release list"* ]]; then
+    cat "$FIXTURES_DIR/releases.json"
+elif [[ "$*" == *"runner list"* ]]; then
+    cat "$FIXTURES_DIR/runners.json"
 else
     echo "[]"
 fi

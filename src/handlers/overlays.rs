@@ -818,6 +818,7 @@ pub fn handle_refresh(
         *last_refresh = Instant::now();
         app.last_attr_refresh = Instant::now();
         if let Some(client) = app.gitlab_client.clone() {
+            let tx = app.scoped_sender(tx);
             if !app.loading_tabs.contains(&app.active_tab) {
                 app.start_loading_tab(app.active_tab);
                 spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());

@@ -107,7 +107,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * **Adding an API Call:** When adding a new API call:
     1. Spawn a `tokio::spawn` task in [src/main.rs](src/main.rs) (on keypress) or [src/app.rs](src/app.rs).
     2. Make the API call using `app.gitlab_client`.
-    3. Send an `Event` back to the main thread (e.g., `tx.send(Event::MyDataFetched(data))`).
+    3. Send an `Event` back to the main thread (e.g., `tx.send(Event::MyDataFetched(data))`). Fetches whose result belongs to the current repo/group send through `app.scoped_sender(events.sender())` (an `event::ScopedSender`): it tags the event with `app.scope_generation`, which `reset_on_scope_change` bumps, and the event loop drops results from an older generation before any handler runs, so a fetch that outlives a scope switch never writes into the new scope's tabs or cache.
     4. Handle the event in the [src/main.rs](src/main.rs) event loop to update `app` state.
 
 ### External Editor Integration

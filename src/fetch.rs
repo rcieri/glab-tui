@@ -1,6 +1,6 @@
 use crate::app;
 use crate::domain;
-use crate::event::Event;
+use crate::event::{Event, ScopedSender};
 use crate::git_helpers::get_current_branch;
 
 /// Fetches an MR/PR diff with its review comments and builds the `DiffView`
@@ -204,7 +204,7 @@ pub fn sync_linked_references(
 pub fn spawn_fetch_repo_attributes(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let client = client.clone();
     let scope = scope.clone();
@@ -224,7 +224,7 @@ pub fn spawn_fetch_related_mrs(
     client: &domain::client::GitlabClient,
     project_context: &str,
     issue_iid: u64,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let mut client = client.clone();
     client.tx = None;
@@ -281,7 +281,7 @@ pub fn dispatch_pending_related_mrs_fetch(
         return false;
     }
     let project_path = app.project_path_for_issue(iid);
-    spawn_fetch_related_mrs(client, &project_path, iid, tx.clone());
+    spawn_fetch_related_mrs(client, &project_path, iid, app.scoped_sender(tx.clone()));
     true
 }
 
@@ -289,7 +289,7 @@ pub fn spawn_fetch_mr_related_issues(
     client: &domain::client::GitlabClient,
     project_context: &str,
     mr_iid: u64,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let mut client = client.clone();
     client.tx = None;
@@ -331,7 +331,7 @@ pub fn dispatch_pending_mr_related_issues_fetch(
         return false;
     }
     let project_path = app.project_path_for_mr(iid);
-    spawn_fetch_mr_related_issues(client, &project_path, iid, tx.clone());
+    spawn_fetch_mr_related_issues(client, &project_path, iid, app.scoped_sender(tx.clone()));
     true
 }
 
@@ -343,7 +343,7 @@ pub fn spawn_refresh_child_level(
     client: &domain::client::GitlabClient,
     project_context: &str,
     parent_id: u64,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
@@ -364,7 +364,7 @@ pub fn spawn_refresh_active_tab(
     client: &domain::client::GitlabClient,
     scope: &crate::scope::Scope,
     tab: app::Tab,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
@@ -581,7 +581,7 @@ pub fn spawn_fetch_issue(
     client: &domain::client::GitlabClient,
     project_path: &str,
     iid: u64,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let mut client = client.clone();
     client.tx = None;
@@ -609,7 +609,7 @@ pub fn spawn_fetch_mr(
     client: &domain::client::GitlabClient,
     project_path: &str,
     iid: u64,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let mut client = client.clone();
     client.tx = None;
@@ -657,7 +657,7 @@ pub fn request_pr_stack(
     }
     let (project_path, pr_number) = pr;
     let client = client.clone().muted();
-    let tx = tx.clone();
+    let tx = app.scoped_sender(tx.clone());
     tokio::spawn(async move {
         let result = client.get_pr_stack(&project_path, pr_number).await;
         let _ = tx.send(Event::PrStackFetched {
@@ -676,7 +676,7 @@ pub fn spawn_fetch_pr_stack_summaries(
     client: &domain::client::GitlabClient,
     project_path: &str,
     pr_numbers: Vec<u64>,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let client = client.clone().muted();
     let project_path = project_path.to_string();
@@ -759,7 +759,7 @@ pub fn spawn_refresh_all_tabs(
     active_tab: app::Tab,
     available_tabs: Vec<app::Tab>,
     already_loaded: std::collections::HashSet<app::Tab>,
-    tx: tokio::sync::mpsc::UnboundedSender<Event>,
+    tx: ScopedSender,
 ) {
     let client = client.clone();
     let scope = scope.clone();

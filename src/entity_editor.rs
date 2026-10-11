@@ -960,59 +960,6 @@ pub fn apply_field_text_change(
         return;
     }
 
-    if entity_type == "release" {
-        let release_opt = app.releases.items.get(iid as usize).cloned();
-        if let Some(release) = release_opt {
-            let mut name = release.name.clone();
-            let mut tag = release.tag_name.clone();
-            let mut description = release.description.clone().unwrap_or_default();
-
-            match field_type {
-                "title" | "release_name" => name = value.clone(),
-                "tag" => tag = value.clone(),
-                "description" => description = value.clone(),
-                _ => {}
-            }
-
-            if let Some(item) = app.releases.items.get_mut(iid as usize) {
-                if field_type == "title" || field_type == "release_name" {
-                    item.name = value.clone();
-                }
-                if field_type == "description" {
-                    item.description = Some(value.clone());
-                }
-            }
-
-            let Some(client) = app.gitlab_client.clone() else {
-                return;
-            };
-            let project_path = app.project_path_for_release(&tag);
-            let tx_spawn = tx.clone();
-            tokio::spawn(async move {
-                let res = crate::domain::releases::update_release(
-                    &client,
-                    &project_path,
-                    &tag,
-                    &name,
-                    &description,
-                )
-                .await;
-                match res {
-                    Ok(_) => {
-                        let _ = tx_spawn.send(Event::ReleaseUpdated);
-                    }
-                    Err(e) => {
-                        let _ = tx_spawn.send(Event::CommandCompleted(
-                            crate::app::Tab::Releases,
-                            Err(e.to_string()),
-                        ));
-                    }
-                }
-            });
-        }
-        return;
-    }
-
     match field_type {
         "title" => {
             let project_path = get_entity_project_path(app, entity_type, iid);
@@ -1121,9 +1068,9 @@ pub fn apply_field_text_change(
         }
         "runner_description" => {
             let project_path = app.project_path_for_runner(iid);
-            if let Some(runner) = app.runners.items.iter_mut().find(|r| r.id == iid) {
+            app.runners.update(&iid, |runner| {
                 runner.description = Some(value.clone());
-            }
+            });
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
@@ -1580,34 +1527,38 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
                 desc_scroll: 0,
             });
         }
-    } else if entity_type == "release" {
-        if let Some(release) = app.releases.items.get(entity_iid as usize).cloned() {
-            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-            let mut doc = build_release_document(&release);
-            doc.fields.push(crate::app::Field::text(
-                "Release Notes",
-                release.description.clone().unwrap_or_default(),
-            ));
+    }
+}
 
-            app.open_edit_menu(crate::app::EditMenu {
-                title: format!("Edit Release {}", release.tag_name),
-                entity_project: app.scope.as_str().to_string(),
-                fields: doc.fields,
-                initial_fields: std::collections::HashMap::new(),
-                selected_idx,
-                entity_iid,
-                entity_kind: crate::app::EditEntityKind::EditRelease,
-                state: {
-                    let mut s = ratatui::widgets::ListState::default();
-                    s.select(Some(selected_idx));
-                    s
-                },
-                workflow_inputs: vec![],
-                cursor_pos: 0,
-                editing: false,
-                desc_scroll: 0,
-            });
-        }
+/// The edit menu for `release`. Releases have no numeric id, so the menu's
+/// `entity_iid` stays 0 and submitting resolves the release by its
+/// read-only Tag field.
+pub fn release_edit_menu(
+    release: &crate::domain::releases::Release,
+    project: &str,
+) -> crate::app::EditMenu {
+    let mut doc = build_release_document(release);
+    doc.fields.push(crate::app::Field::text(
+        "Release Notes",
+        release.description.clone().unwrap_or_default(),
+    ));
+    crate::app::EditMenu {
+        title: format!("Edit Release {}", release.tag_name),
+        entity_project: project.to_string(),
+        fields: doc.fields,
+        initial_fields: std::collections::HashMap::new(),
+        selected_idx: 0,
+        entity_iid: 0,
+        entity_kind: crate::app::EditEntityKind::EditRelease,
+        state: {
+            let mut s = ratatui::widgets::ListState::default();
+            s.select(Some(0));
+            s
+        },
+        workflow_inputs: vec![],
+        cursor_pos: 0,
+        editing: false,
+        desc_scroll: 0,
     }
 }
 

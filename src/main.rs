@@ -16,6 +16,7 @@ mod git_helpers;
 pub mod handlers;
 mod keybinding;
 pub mod scope;
+mod syntax;
 mod templates;
 mod ui;
 pub mod utils;

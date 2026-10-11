@@ -12,7 +12,7 @@ mod tabs;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
@@ -22,7 +22,7 @@ use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
 use crate::app::{App, DiffLine, Tab};
-use crate::config::{ICONS, THEME};
+use crate::config::{ICONS, THEME, Theme};
 use crate::utils::format::truncate;
 use std::collections::HashSet;
 
@@ -126,33 +126,27 @@ fn render_mode_indicator(f: &mut Frame, app: &App, area: Rect) {
 fn render_diff_line_content(
     line: &DiffLine,
     base_style: Style,
-    code_fg: Color,
-    match_fg: Color,
+    theme: &Theme,
 ) -> Vec<Span<'static>> {
-    let code = if line.content.len() > 1 {
-        &line.content[1..]
-    } else {
-        ""
-    };
+    let code = line.code();
 
-    let Some(ref indices) = line.fuzzy_indices else {
-        return render_content_normal(line, base_style, code_fg, code);
+    let Some(indices) = &line.fuzzy_indices else {
+        return render_content_normal(line, base_style, theme, code);
     };
 
     let code_indices: HashSet<usize> = indices.iter().filter(|&&i| i > 0).map(|&i| i - 1).collect();
 
     if code_indices.is_empty() {
-        return render_content_normal(line, base_style, code_fg, code);
+        return render_content_normal(line, base_style, theme, code);
     }
 
-    let mut match_style = base_style;
-    match_style = match_style
-        .fg(match_fg)
+    let match_style = base_style
+        .fg(theme.yellow)
         .add_modifier(Modifier::BOLD)
         .add_modifier(Modifier::UNDERLINED);
 
-    if let Some(ref highlighted) = line.syntax_highlighted {
-        merge_syntax_with_fuzzy(highlighted, &code_indices, base_style, match_style, code_fg)
+    if let Some(highlighted) = line.syntax_spans(theme) {
+        merge_syntax_with_fuzzy(highlighted, &code_indices, base_style, match_style)
     } else {
         let mut indices_vec: Vec<usize> = code_indices.into_iter().collect();
         indices_vec.sort_unstable();
@@ -163,69 +157,50 @@ fn render_diff_line_content(
 fn render_content_normal(
     line: &DiffLine,
     base_style: Style,
-    code_fg: Color,
+    theme: &Theme,
     code: &str,
 ) -> Vec<Span<'static>> {
-    if let Some(ref highlighted) = line.syntax_highlighted {
+    if let Some(highlighted) = line.syntax_spans(theme) {
         highlighted
-            .iter()
-            .map(|(s, t)| {
-                Span::styled(
-                    t.clone(),
-                    base_style
-                        .fg(s.fg.unwrap_or(code_fg))
-                        .add_modifier(s.add_modifier),
-                )
-            })
+            .map(|(s, t)| Span::styled(t.to_string(), base_style.patch(s)))
             .collect()
     } else {
         vec![Span::styled(code.to_string(), base_style)]
     }
 }
 
-fn merge_syntax_with_fuzzy(
-    highlighted: &[(Style, String)],
+fn merge_syntax_with_fuzzy<'a>(
+    highlighted: impl Iterator<Item = (Style, &'a str)>,
     code_indices: &HashSet<usize>,
     base_style: Style,
     match_style: Style,
-    code_fg: Color,
 ) -> Vec<Span<'static>> {
     let mut result = Vec::new();
     let mut pos: usize = 0;
     for (syn_style, text) in highlighted {
-        let chars: Vec<char> = text.chars().collect();
+        // Keep the fuzzy match color (yellow) so matches stay visible over
+        // syntax coloring.
+        let style_for = |in_match: bool| {
+            if in_match {
+                match_style.add_modifier(syn_style.add_modifier)
+            } else {
+                base_style.patch(syn_style)
+            }
+        };
         let mut buf = String::new();
         let mut in_match = false;
-        for (j, &c) in chars.iter().enumerate() {
-            let char_pos = pos + j;
-            let is_match = code_indices.contains(&char_pos);
+        for (j, c) in text.chars().enumerate() {
+            let is_match = code_indices.contains(&(pos + j));
             if is_match != in_match && !buf.is_empty() {
-                let s = if in_match {
-                    // Keep the fuzzy match color (yellow) so matches stay visible
-                    // over syntax coloring.
-                    match_style.add_modifier(syn_style.add_modifier)
-                } else {
-                    base_style
-                        .fg(syn_style.fg.unwrap_or(code_fg))
-                        .add_modifier(syn_style.add_modifier)
-                };
-                result.push(Span::styled(buf.clone(), s));
-                buf.clear();
+                result.push(Span::styled(std::mem::take(&mut buf), style_for(in_match)));
             }
             in_match = is_match;
             buf.push(c);
         }
         if !buf.is_empty() {
-            let s = if in_match {
-                match_style.add_modifier(syn_style.add_modifier)
-            } else {
-                base_style
-                    .fg(syn_style.fg.unwrap_or(code_fg))
-                    .add_modifier(syn_style.add_modifier)
-            };
-            result.push(Span::styled(buf, s));
+            result.push(Span::styled(buf, style_for(in_match)));
         }
-        pos += chars.len();
+        pos += text.chars().count();
     }
     result
 }
@@ -1100,12 +1075,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
-                                let mut content_spans = render_diff_line_content(
-                                    line,
-                                    final_style,
-                                    code_fg,
-                                    THEME.read().unwrap().yellow,
-                                );
+                                let mut content_spans =
+                                    render_diff_line_content(line, final_style, &theme);
                                 left_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Normal => {
@@ -1134,12 +1105,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
-                                let mut content_spans = render_diff_line_content(
-                                    line,
-                                    final_style,
-                                    THEME.read().unwrap().text_normal,
-                                    THEME.read().unwrap().yellow,
-                                );
+                                let theme = THEME.read().unwrap();
+                                let mut content_spans =
+                                    render_diff_line_content(line, final_style, &theme);
                                 left_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Meta => {
@@ -1155,16 +1123,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 } else {
                                     s
                                 };
-                                if let Some(ref highlighted) = line.syntax_highlighted {
-                                    for (span_style, text) in highlighted {
-                                        let merged = final_style
-                                            .fg(span_style.fg.unwrap_or(THEME.read().unwrap().blue))
-                                            .add_modifier(span_style.add_modifier);
-                                        left_spans.push(Span::styled(text.clone(), merged));
-                                    }
-                                } else {
-                                    left_spans.push(Span::styled(&line.content, final_style));
-                                }
+                                left_spans.push(Span::styled(&line.content, final_style));
                             }
                             crate::app::DiffLineType::HunkHeader => {
                                 let mut s = Style::default()
@@ -1179,18 +1138,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 } else {
                                     s
                                 };
-                                if let Some(ref highlighted) = line.syntax_highlighted {
-                                    for (span_style, text) in highlighted {
-                                        let merged = final_style
-                                            .fg(span_style
-                                                .fg
-                                                .unwrap_or(THEME.read().unwrap().purple))
-                                            .add_modifier(span_style.add_modifier);
-                                        left_spans.push(Span::styled(text.clone(), merged));
-                                    }
-                                } else {
-                                    left_spans.push(Span::styled(&line.content, final_style));
-                                }
+                                left_spans.push(Span::styled(&line.content, final_style));
                             }
                             _ => {}
                         }
@@ -1269,12 +1217,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
-                                let mut content_spans = render_diff_line_content(
-                                    line,
-                                    final_style,
-                                    code_fg,
-                                    THEME.read().unwrap().yellow,
-                                );
+                                let mut content_spans =
+                                    render_diff_line_content(line, final_style, &theme);
                                 right_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Normal => {
@@ -1303,12 +1247,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                     content_base
                                 };
 
-                                let mut content_spans = render_diff_line_content(
-                                    line,
-                                    final_style,
-                                    THEME.read().unwrap().text_normal,
-                                    THEME.read().unwrap().yellow,
-                                );
+                                let theme = THEME.read().unwrap();
+                                let mut content_spans =
+                                    render_diff_line_content(line, final_style, &theme);
                                 right_spans.append(&mut content_spans);
                             }
                             crate::app::DiffLineType::Meta => {
@@ -1324,16 +1265,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 } else {
                                     s
                                 };
-                                if let Some(ref highlighted) = line.syntax_highlighted {
-                                    for (span_style, text) in highlighted {
-                                        let merged = final_style
-                                            .fg(span_style.fg.unwrap_or(THEME.read().unwrap().blue))
-                                            .add_modifier(span_style.add_modifier);
-                                        right_spans.push(Span::styled(text.clone(), merged));
-                                    }
-                                } else {
-                                    right_spans.push(Span::styled(&line.content, final_style));
-                                }
+                                right_spans.push(Span::styled(&line.content, final_style));
                             }
                             crate::app::DiffLineType::HunkHeader => {
                                 let mut s = Style::default()
@@ -1348,18 +1280,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 } else {
                                     s
                                 };
-                                if let Some(ref highlighted) = line.syntax_highlighted {
-                                    for (span_style, text) in highlighted {
-                                        let merged = final_style
-                                            .fg(span_style
-                                                .fg
-                                                .unwrap_or(THEME.read().unwrap().purple))
-                                            .add_modifier(span_style.add_modifier);
-                                        right_spans.push(Span::styled(text.clone(), merged));
-                                    }
-                                } else {
-                                    right_spans.push(Span::styled(&line.content, final_style));
-                                }
+                                right_spans.push(Span::styled(&line.content, final_style));
                             }
                             _ => {}
                         }
@@ -1661,12 +1582,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 content_base
                             };
 
-                            let mut content_spans = render_diff_line_content(
-                                line,
-                                final_style,
-                                code_fg,
-                                THEME.read().unwrap().yellow,
-                            );
+                            let mut content_spans =
+                                render_diff_line_content(line, final_style, &theme);
                             line_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Normal => {
@@ -1695,12 +1612,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
                                 content_base
                             };
 
-                            let mut content_spans = render_diff_line_content(
-                                line,
-                                final_style,
-                                THEME.read().unwrap().text_normal,
-                                THEME.read().unwrap().yellow,
-                            );
+                            let theme = THEME.read().unwrap();
+                            let mut content_spans =
+                                render_diff_line_content(line, final_style, &theme);
                             line_spans.append(&mut content_spans);
                         }
                         crate::app::DiffLineType::Meta => {
@@ -1716,20 +1630,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             } else {
                                 s
                             };
-                            if let Some(ref highlighted) = line.syntax_highlighted {
-                                for (span_style, text) in highlighted {
-                                    let merged = final_style
-                                        .fg(span_style.fg.unwrap_or(THEME.read().unwrap().blue))
-                                        .add_modifier(span_style.add_modifier);
-                                    if let Some(bg) = sel_bg {
-                                        line_spans.push(Span::styled(text.clone(), merged.bg(bg)));
-                                    } else {
-                                        line_spans.push(Span::styled(text.clone(), merged));
-                                    }
-                                }
-                            } else {
-                                line_spans.push(Span::styled(&line.content, final_style));
-                            }
+                            line_spans.push(Span::styled(&line.content, final_style));
                         }
                         crate::app::DiffLineType::HunkHeader => {
                             let mut s = Style::default()
@@ -1744,20 +1645,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                             } else {
                                 s
                             };
-                            if let Some(ref highlighted) = line.syntax_highlighted {
-                                for (span_style, text) in highlighted {
-                                    let merged = final_style
-                                        .fg(span_style.fg.unwrap_or(THEME.read().unwrap().purple))
-                                        .add_modifier(span_style.add_modifier);
-                                    if let Some(bg) = sel_bg {
-                                        line_spans.push(Span::styled(text.clone(), merged.bg(bg)));
-                                    } else {
-                                        line_spans.push(Span::styled(text.clone(), merged));
-                                    }
-                                }
-                            } else {
-                                line_spans.push(Span::styled(&line.content, final_style));
-                            }
+                            line_spans.push(Span::styled(&line.content, final_style));
                         }
                     }
                     list_lines.push(Line::from(line_spans));

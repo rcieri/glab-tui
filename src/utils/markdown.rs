@@ -5,8 +5,8 @@ use pulldown_cmark::{
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::app::highlight_line_syntax;
 use crate::config::Theme;
+use crate::syntax::{highlight_code, styled_tokens, syntax_for_token};
 use crate::utils::format::sanitize_untrusted;
 
 pub fn render_markdown(markdown: &str, theme: &Theme, width: u16) -> Vec<Line<'static>> {
@@ -87,10 +87,10 @@ fn truncate_url(url: &str) -> String {
     }
 }
 
-/// Map a fenced code block language token (e.g. `"rust"`, `"python"`) to the
-/// file extension syntect's `find_syntax_by_extension` expects (e.g. `"rs"`,
-/// `"py"`). Returns `None` when the token is already the right extension or
-/// simply unknown (caller falls back to the token itself).
+/// Map a fenced code block language token (e.g. `"shell"`, `"c#"`) to a
+/// name or file extension syntect knows (e.g. `"sh"`, `"cs"`). Returns `None`
+/// when the token is already one or simply unknown (caller falls back to the
+/// token itself).
 fn resolve_syntax_lang(lang: &str) -> Option<&'static str> {
     // Compare case-insensitively by ASCII-lowering the input byte-by-byte.
     let lower = lang.to_ascii_lowercase();
@@ -489,32 +489,32 @@ impl<'a> MarkdownRenderer<'a> {
         }
         self.lines.push(Line::from(opening));
 
-        // Resolve the fenced language token to the file extension syntect expects
-        // (e.g. "rust" → "rs", "python" → "py"). If the token is already an
-        // extension or is unknown, resolve_syntax_lang returns None and we use
-        // the token itself as a fallback.
-        let resolved: Option<String> = code_block
+        // Resolve the fenced language token to a name or extension syntect
+        // knows (e.g. "shell" → "sh"). An unmapped token is looked up as is.
+        let syntax = code_block
             .language
             .as_deref()
-            .map(|lang| resolve_syntax_lang(lang).unwrap_or(lang).to_string());
-        let lang_ext: Option<&str> = resolved.as_deref();
+            .and_then(|lang| syntax_for_token(resolve_syntax_lang(lang).unwrap_or(lang)));
+        let highlighted = syntax.map(|syntax| highlight_code(syntax, &code_block.content));
 
-        for code_line in code_block.content.lines() {
-            let content_spans: Vec<Span<'static>> = highlight_line_syntax("", code_line, lang_ext)
-                .map(|highlighted| {
-                    highlighted
-                        .into_iter()
-                        .map(|(style, text)| Span::styled(text, style.bg(self.theme.inactive_bg)))
-                        .collect()
-                })
-                .unwrap_or_else(|| {
-                    vec![Span::styled(
-                        code_line.to_string(),
-                        Style::default()
-                            .fg(self.theme.text_normal)
-                            .bg(self.theme.inactive_bg),
-                    )]
-                });
+        for (index, code_line) in code_block.content.lines().enumerate() {
+            let tokens = highlighted
+                .as_ref()
+                .and_then(|lines| lines.get(index))
+                .and_then(Option::as_deref);
+            let content_spans: Vec<Span<'static>> = match tokens {
+                Some(tokens) => styled_tokens(tokens, code_line, &self.theme)
+                    .map(|(style, text)| {
+                        Span::styled(text.to_string(), style.bg(self.theme.inactive_bg))
+                    })
+                    .collect(),
+                None => vec![Span::styled(
+                    code_line.to_string(),
+                    Style::default()
+                        .fg(self.theme.text_normal)
+                        .bg(self.theme.inactive_bg),
+                )],
+            };
             let mut line_spans = vec![Span::styled("│ ".to_string(), border_style)];
             line_spans.extend(content_spans);
             self.lines.push(Line::from(line_spans));
@@ -850,7 +850,7 @@ mod tests {
 
         assert_eq!(
             text,
-            "┌─ rust\n│ fn main() {\n│    println!(\"hello\");\n│ }\n└─"
+            "┌─ rust\n│ fn main() {\n│     println!(\"hello\");\n│ }\n└─"
         );
     }
 

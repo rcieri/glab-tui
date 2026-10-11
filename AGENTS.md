@@ -67,6 +67,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
     * [tabs.rs](src/handlers/tabs.rs): Per-tab keybindings (create/edit/delete/approve/merge/view-diff etc.).
     * [overlays.rs](src/handlers/overlays.rs): Overlay handlers (submit dialog, date picker, help, refresh, repo switcher).
     * [custom_commands.rs](src/handlers/custom_commands.rs): `run_bound_command` — resolves the highlighted row's template values, runs the custom command through `editor::suspend_while` (or a background thread) and logs the outcome.
+    * [todos.rs](src/handlers/todos.rs): Todos tab actions (open target and mark read, mark done, mark all read, unsubscribe, show-read toggle). Every mutation goes through `spawn_todo_change`, which reports `Event::TodoChanged`.
 * [src/utils/](src/utils/):
     * [cache.rs](src/utils/cache.rs): Offline caching at `~/.cache/glab-tui/<repo>.json` plus recent-groups state (`recent_groups.json`).
     * [format.rs](src/utils/format.rs): Time parsing, ANSI formatting, string truncation, tab expansion (`expand_tabs`), text wrapping (`wrap_text`).
@@ -176,6 +177,13 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * `MergeRequest` carries `approval` and `mergeability` as `Option<…>` and a `#[serde(skip)]` derived `workflow`. After any load (live fetch or cache read), call `derive_workflow()` in [src/fetch.rs](src/fetch.rs) to recompute `workflow` from approval state — cached rows deserialize with it unset even though the approval state it reads was persisted.
 * **Rebase gating:** `rebase_gate()` in [src/domain/mr_state.rs](src/domain/mr_state.rs) decides whether `R` may rebase — `Allowed`, `ResolveLocally` (conflicts), or `NotNeeded` — surfaced as a confirm popup or a user-facing error toast. Revoking approval (`A`) is GitLab-only; `gh pr review` has no revoke path.
 
+### Todos Tab (GitLab Todos / GitHub Notifications)
+* The read filter lives on `GitlabClient::show_read_notifications` (default `false`, unread only) so every refresh path fetches with it. `App::toggle_show_read_todos` flips it and `Event::TodosFetched` carries the filter it was requested with, so a list fetched before a toggle is dropped.
+* Mutations report `Event::TodoChanged(TodoChange, Result)`. On success `App::apply_todo_change` updates `app.todos` in place (no refetch): read and done items are restated while the tab shows them and dropped otherwise, and GitHub's done notifications always leave the list. On failure the error goes through `App::show_error`.
+* GitLab todos have no read state: `mark_notification_as_read` and `mark_notification_as_done` both run `glab todo done`.
+* `mark_as_read` and `Enter` share `handlers::todos::open_selected`. The jump resolves the target in the todo's own project (`Scope::contains_project`, `App::focus_issue_in` / `focus_mr_in`) and fetches it when unlisted. A todo outside the current scope raises an error instead of landing on a same-numbered item.
+* E2E coverage: `tests/e2e/todos.rs`, driven by `todo list` (`todos.json`) and `api todos?state=done` (`todos_done.json`) in `tests/mocks/glab`.
+
 ### Cache & State Persistence
 * Cache directory: `~/.cache/glab-tui/` (migrated from `~/.glab-tui-cache`).
 * `ProjectCache` stores `enabled_columns`, `group_by_column`, `group_ascending`, `column_filters`, `labels`, `label_colors`, and `reviewed_files` in addition to API data.
@@ -282,7 +290,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
 | List milestones | `glab milestone list --output json --project <repo> --per-page <N>` | Single call (`milestone list` requires `--project`/`--group`, not `-R`) |
 | List milestone issues | `glab issue list --milestone <title> --all --output json -R <repo> --per-page <N>` | Single call (`--milestone` filters by milestone **title**, not iid — resolved from the selected milestone at the call site) |
-| List todos | `glab todo list --output=json` | Single call |
+| List todos | `glab todo list --output=json` | Single call (done todos are added from the raw API only while the Todos tab shows read items) |
 | List labels | `glab label list --output json -R <repo> --per-page <api_per_page>` | Single call (label colors feed the Labels column) |
 
 #### Mutations — Native Subcommands
@@ -301,6 +309,8 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Start manual job | `glab ci retry <job_id> -R <repo>` |
 | Run pipeline (variables/inputs) | `glab ci run [--branch <ref>] [--mr] [--variables k:v ...] [--input k:v ...]` |
 | Mark todo done | `glab todo done <id>` |
+| Mark all todos done | `glab todo done --all` |
+| Unsubscribe from a todo's issue/MR | `glab issue\|mr unsubscribe <iid> -R <project>` |
 | Revoke MR approval | `glab mr revoke <iid> -R <repo>` |
 | Rebase MR | `glab mr rebase <iid> -R <repo>` |
 | MR diff refs (review anchors) | `glab mr view <iid> --output json -R <repo>` (`diff_refs`) |
@@ -379,6 +389,9 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | List milestones | `GET /repos/{}/milestones?state=all&per_page=<N>` | No `gh milestone` command |
 | List notifications | `GET notifications[?all=true]` | No `gh notification` command |
 | Mark notification read | `PATCH notifications/threads/{}` | No native command |
+| Mark notification done | `DELETE notifications/threads/{}` | No native command |
+| Mark all notifications read | `PUT notifications` | No native command |
+| Unsubscribe from notification thread | `DELETE notifications/threads/{}/subscription` | No native command |
 | List branches | `GET /repos/{}/branches?per_page=<N>` | No native command |
 | Create branch | `POST /repos/{}/git/refs` | No native command |
 | Delete branch | `DELETE /repos/{}/git/refs/heads/{}` | No native command |

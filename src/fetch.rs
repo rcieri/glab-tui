@@ -276,6 +276,7 @@ mod tests {
             tx: None,
             page_size: 100,
             api_per_page: 100,
+            show_read_notifications: false,
         }
     }
 
@@ -356,6 +357,7 @@ mod tests {
             tx: None,
             page_size: 100,
             api_per_page: 100,
+            show_read_notifications: false,
         });
         app.scope = crate::scope::Scope::Repository("owner/repo".to_string());
         app.active_tab = app::Tab::MergeRequests;
@@ -836,9 +838,13 @@ pub fn spawn_refresh_active_tab(
                 }
             },
             app::Tab::Todos => {
-                match domain::notifications::list_notifications(&client, true).await {
-                    Ok(notifs) => {
-                        let _ = tx.send(Event::TodosFetched(notifs));
+                let show_read = client.show_read_notifications;
+                match domain::notifications::list_notifications(&client, show_read).await {
+                    Ok(notifications) => {
+                        let _ = tx.send(Event::TodosFetched {
+                            notifications,
+                            show_read,
+                        });
                     }
                     Err(e) => {
                         let _ = tx.send(Event::FetchFailed(

@@ -1,0 +1,15 @@
+[
+  {
+    "id": 3,
+    "project": {
+      "path_with_namespace": "test-owner/test-repo"
+    },
+    "target": {
+      "title": "Already handled todo",
+      "iid": 9
+    },
+    "target_type": "Issue",
+    "state": "done",
+    "updated_at": "2026-07-04T12:00:00Z"
+  }
+]

@@ -726,13 +726,17 @@ Press `D` on an MR/PR to open its diff. Use `Tab` to move focus between the **fi
 
 ### Todos tab
 
-On GitLab this tab shows **Todos**; on GitHub it shows **Notifications**.
+On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lists unread items only until `r` toggles read (GitHub) or done (GitLab) items on, and the tab title shows the active filter (`Unread` / `All`). Every action updates the list as soon as the CLI call succeeds, and a failed call raises an error toast.
 
 > Remappable via `[keybindings.todos]` in `config.toml`.
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Mark item as read and jump to its target (issue / MR) | `mark_as_read` |
+| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead, open it with `o`) | `mark_as_read` |
+| `d` | Mark item as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
+| `A` | Mark all items as read (with confirmation) | `mark_all_as_read` |
+| `U` | Unsubscribe from the item's thread (GitLab: issues and MRs only) | `unsubscribe` |
+| `r` | Toggle showing read / done items | `toggle_show_read` |
 | `o` | Open item in browser | `open_in_browser` |
 
 ---

@@ -54,6 +54,8 @@ if [[ "$*" == *"api"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then
         cat "$FIXTURES_DIR/runners.json"
+    elif [[ "$*" == *"todos?state=done"* ]]; then
+        cat "$FIXTURES_DIR/todos_done.json"
     elif [[ "$*" == *"/todos"* ]]; then
         cat "$FIXTURES_DIR/todos.json"
     elif [[ "$*" == *"/milestones"* ]]; then
@@ -63,6 +65,8 @@ if [[ "$*" == *"api"* ]]; then
     fi
 elif [[ "$*" == *"ci list"* ]]; then
     cat "$FIXTURES_DIR/pipelines.json"
+elif [[ "$*" == "todo list"* ]]; then
+    cat "$FIXTURES_DIR/todos.json"
 elif [[ "$*" == *"mr list"* ]]; then
     # Pages are requested concurrently; only the first carries the fixture so
     # the MR is not duplicated once per page.

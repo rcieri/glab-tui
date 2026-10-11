@@ -325,6 +325,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Style::default().fg(THEME.read().unwrap().yellow),
         ));
     }
+    if let Some(status) = &app.status_message {
+        title_spans.push(Span::styled(
+            format!(" {} ", crate::utils::format::sanitize_untrusted(status)),
+            Style::default().fg(THEME.read().unwrap().text_muted),
+        ));
+    }
 
     // Top banner split into left content and a right-aligned mode indicator.
     let banner = Layout::default()

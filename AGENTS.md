@@ -130,6 +130,11 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * All API errors, network failures, and guard violations route through `App::show_error(msg)` instead of setting `error_message` directly.
 * Displays a 3-row floating rounded toast box with `status_failed` icon and auto-dismiss after 5 seconds.
 * Automatically stamps the most recent running command in the terminal commands bar as failed, keeping both UI surfaces synchronized.
+* Non-error feedback (`App::status_message`) renders as muted text in the top header bar, passed through `sanitize_untrusted()` because it can carry job, stage or branch names. It stays until a writer clears it (most fetch-success events do).
+
+### Jobs Tab (current branch)
+* `fetch::fetch_current_branch_jobs` reads the branch with `git_helpers::get_current_branch` on `tokio::task::spawn_blocking` (it runs a synchronous `git`), then asks `Backend::find_branch_pipeline_id` for the newest pipeline of that branch (on GitLab also its open MR's `refs/merge-requests/<iid>/head` pipeline). Never list every MR or pipeline to find it.
+* Starting a manual job is GitLab only. On GitHub the `start_job` key is omitted from the help overlay and does nothing when pressed (it is still consumed, so the custom-command shadow report stays accurate).
 
 ### Rate Limiting (`src/backend/rate_limit.rs`)
 * `ApiRateLimiter` is a global (`RATE_LIMITER`) that shields every `glab`/`gh` CLI call from HTTP 429 and GitLab GraphQL rate-limit errors.
@@ -271,6 +276,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get MR diff | `glab mr diff <iid> -R <repo>` | N/A |
 | List MR notes | `glab mr note list <iid> --output json -R <repo>` | N/A |
 | List pipelines | `glab ci list --output json -R <repo> --page N --per-page <api_per_page>` | Loops up to `page_size/api_per_page` pages |
+| Current branch's pipeline (Jobs tab) | `glab ci list --output json -R <repo> --ref <branch> --per-page 1` and `glab mr list --output json -R <repo> --source-branch <branch> --per-page 1`, then `glab ci list … --ref refs/merge-requests/<iid>/head --per-page 1` when the branch has an open MR. Newest id wins | Single targeted calls, never a full MR or pipeline listing |
 | List runners | `glab runner list --output json -R <repo> --per-page <N>` | Single call |
 | List releases | `glab release list --output json -R <repo> --per-page <N>` | Single call |
 | List milestones | `glab milestone list --output json --project <repo> --per-page <N>` | Single call (`milestone list` requires `--project`/`--group`, not `-R`) |
@@ -337,6 +343,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Get PR diff | `gh pr diff <iid> -R <repo>` | N/A |
 | Get PR diff over 20,000 lines (only after `gh pr diff` fails with `too_large`) | `gh pr view <iid> -R <repo> --json baseRefOid,headRefOid`, then in the local clone: `git fetch --no-tags origin <baseRefOid> pull/<iid>/head` (skipped when both commits are local) and `git diff <baseRefOid>...<headRefOid>` | N/A |
 | List actions/runs | `gh run list --json databaseId,status,... -R <repo> --limit <N>` | Single `--limit` call |
+| Current branch's run (Jobs tab) | `gh run list -R <repo> --branch <branch> --limit 1 --json databaseId` | Single call. PR runs carry the head branch |
 | List pipeline jobs | `gh run view <id> --json jobs --jq .jobs -R <repo>` | Single call |
 | Get job trace | `gh run view --job <id> --log -R <repo>` | N/A |
 | List releases | `gh release list --json name,tagName,... -R <repo> --limit <N>` | Single call |

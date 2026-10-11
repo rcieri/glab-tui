@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - **Multi-line diff comments** — Continuation lines of diff comments were indented by the prefix's byte length instead of its display width, shifting them two columns right of the first line (#538).
 - **Selector filter borders** — The italic placeholder in selector filter boxes no longer italicises the box borders, which terminals without an italic face (e.g. Fira Mono) drew slanted (#538).
 - **Stacked-PR queries only when shown** — GitHub PR refreshes no longer run the stacked-PR GraphQL queries for data nothing displays. The batch stack query runs once per PR-list fetch only while the `Stack` column is shown (or the list is grouped by it), and a PR's full stack is fetched once per session when the inspector opens on it or `Y` is pressed, instead of once per stacked PR on every refresh (#547).
+- **Jobs tab finds the branch pipeline directly**: Opening the Jobs tab no longer lists every MR and every pipeline of the project to find the checked-out branch's pipeline. It asks for the newest pipeline of that branch (`glab ci list --ref` plus the branch's open MR via `glab mr list --source-branch`, or `gh run list --branch`) and reads the branch off the async runtime. Select-stage confirmations and other status messages now show in the header bar, and the GitLab-only start-job key is no longer offered on GitHub (#579).
 
 ## [0.9.2] - 2026-09-26
 

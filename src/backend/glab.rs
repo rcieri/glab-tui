@@ -421,6 +421,17 @@ fn merge_tolerating_partial_failure(
     Ok(merged)
 }
 
+/// First element of the JSON array a `glab … --output json` list printed.
+/// `glab` is written in Go, where an empty nil slice marshals to `null`.
+fn first_listed<T: serde::de::DeserializeOwned>(raw: &str) -> Result<Option<T>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let items: Option<Vec<T>> = serde_json::from_str(raw)?;
+    Ok(items.and_then(|items| items.into_iter().next()))
+}
+
 pub struct GlabBackend {
     tx: Option<UnboundedSender<Event>>,
 }
@@ -441,6 +452,61 @@ impl GlabBackend {
             desc.to_string(),
         )
         .await
+    }
+
+    /// Newest pipeline built for `git_ref`. `glab ci list` orders by id,
+    /// newest first, so the first row is the one wanted.
+    async fn find_latest_pipeline_id(&self, project: &str, git_ref: &str) -> Result<Option<u64>> {
+        #[derive(Deserialize)]
+        struct ListedPipeline {
+            id: u64,
+        }
+        let raw = self
+            .run_glab(
+                &[
+                    "ci",
+                    "list",
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                    "--ref",
+                    git_ref,
+                    "--per-page",
+                    "1",
+                ],
+                "Finding Branch Pipeline",
+            )
+            .await?;
+        let pipeline: Option<ListedPipeline> =
+            first_listed(&raw).context("parsing `glab ci list` output")?;
+        Ok(pipeline.map(|p| p.id))
+    }
+
+    async fn find_open_mr_iid(&self, project: &str, source_branch: &str) -> Result<Option<u64>> {
+        #[derive(Deserialize)]
+        struct ListedMr {
+            iid: u64,
+        }
+        let raw = self
+            .run_glab(
+                &[
+                    "mr",
+                    "list",
+                    "--output",
+                    "json",
+                    "-R",
+                    project,
+                    "--source-branch",
+                    source_branch,
+                    "--per-page",
+                    "1",
+                ],
+                "Finding Branch MR",
+            )
+            .await?;
+        let mr: Option<ListedMr> = first_listed(&raw).context("parsing `glab mr list` output")?;
+        Ok(mr.map(|m| m.iid))
     }
 
     /// Build the `glab` arguments that fetch approval/mergeability state for
@@ -1786,6 +1852,21 @@ impl Backend for GlabBackend {
                 Ok(all)
             }
         }
+    }
+
+    async fn find_branch_pipeline_id(&self, project: &str, branch: &str) -> Result<Option<u64>> {
+        let (branch_pipeline, mr_iid) = tokio::try_join!(
+            self.find_latest_pipeline_id(project, branch),
+            self.find_open_mr_iid(project, branch),
+        )?;
+        let mr_pipeline = match mr_iid {
+            Some(iid) => {
+                let mr_head_ref = format!("refs/merge-requests/{iid}/head");
+                self.find_latest_pipeline_id(project, &mr_head_ref).await?
+            }
+            None => None,
+        };
+        Ok(branch_pipeline.max(mr_pipeline))
     }
 
     async fn list_pipeline_jobs(

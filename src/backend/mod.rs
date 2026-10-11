@@ -491,6 +491,11 @@ pub trait Backend: Send + Sync {
         per_request: usize,
     ) -> Result<Vec<Pipeline>>;
 
+    /// Id of the newest pipeline built for `branch`, counting GitLab's
+    /// merge-request pipelines (`refs/merge-requests/<iid>/head`) of the open
+    /// MR whose source branch it is. `Ok(None)` when no pipeline exists.
+    async fn find_branch_pipeline_id(&self, project: &str, branch: &str) -> Result<Option<u64>>;
+
     async fn list_pipeline_jobs(
         &self,
         project: &str,

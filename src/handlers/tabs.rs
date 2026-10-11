@@ -1595,10 +1595,11 @@ pub async fn handle_active_tab_key(
                                 key_event,
                             ) =>
                         {
-                            if app.is_github() {
-                                app.error_message =
-                                    Some("Manual job start is not supported on GitHub".to_string());
-                            } else if let Some(client) = &app.gitlab_client {
+                            // GitHub cannot start a manual job. The key is still
+                            // taken there, so it never reaches a custom binding.
+                            if !app.is_github()
+                                && let Some(client) = &app.gitlab_client
+                            {
                                 let client_clone = client.clone();
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);

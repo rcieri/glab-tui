@@ -61,6 +61,8 @@ if [[ "$*" == *"api"* ]]; then
     else
         echo "{}"
     fi
+elif [[ "$*" == *"ci list"* ]]; then
+    cat "$FIXTURES_DIR/pipelines.json"
 elif [[ "$*" == *"mr list"* ]]; then
     # Pages are requested concurrently; only the first carries the fixture so
     # the MR is not duplicated once per page.

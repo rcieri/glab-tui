@@ -3629,6 +3629,48 @@ pub struct NavFrame {
     pub pending: Vec<crate::domain::pipelines::PendingTrigger>,
 }
 
+/// How long a `StatusMessage::Notice` stays in the header bar.
+pub const STATUS_NOTICE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Feedback shown in the header bar. Errors use the toast instead.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StatusMessage {
+    /// A confirmation that disappears after `STATUS_NOTICE_LIFETIME`.
+    Notice {
+        text: String,
+        shown_at: std::time::Instant,
+    },
+    /// The data on screen is stale: it came from the offline cache or its
+    /// refresh failed. Stays until a fetch succeeds.
+    Offline(String),
+}
+
+impl StatusMessage {
+    pub fn notice(text: impl Into<String>) -> Self {
+        StatusMessage::Notice {
+            text: text.into(),
+            shown_at: std::time::Instant::now(),
+        }
+    }
+
+    pub fn offline(text: impl Into<String>) -> Self {
+        StatusMessage::Offline(text.into())
+    }
+
+    pub fn text(&self) -> &str {
+        match self {
+            StatusMessage::Notice { text, .. } | StatusMessage::Offline(text) => text,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        match self {
+            StatusMessage::Notice { shown_at, .. } => shown_at.elapsed() >= STATUS_NOTICE_LIFETIME,
+            StatusMessage::Offline(_) => false,
+        }
+    }
+}
+
 pub struct App {
     pub config: Config,
     /// The first keypress of an in-progress key sequence (e.g. the `g` of
@@ -3787,7 +3829,7 @@ pub struct App {
     pub submit_dialog: Option<SubmitDialog>,
     pub diff_loading: bool,
     pub todos: StatefulTable<crate::domain::notifications::Notification>,
-    pub status_message: Option<String>,
+    pub status_message: Option<StatusMessage>,
     clipboard: Box<dyn ClipboardWriter>,
     pub refreshed_tabs: std::collections::HashSet<Tab>,
     pub tx: Option<tokio::sync::mpsc::UnboundedSender<crate::event::Event>>,
@@ -7797,7 +7839,7 @@ mod tests {
             .unwrap(),
         ];
         app.issues.state.select(Some(0));
-        app.status_message = Some("Loaded from offline cache".to_string());
+        app.status_message = Some(StatusMessage::offline("Loaded from offline cache"));
 
         app.copy_selected_issue_reference().unwrap();
 
@@ -7806,8 +7848,8 @@ mod tests {
             Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
         );
         assert_eq!(
-            app.status_message.as_deref(),
-            Some("Loaded from offline cache")
+            app.status_message,
+            Some(StatusMessage::offline("Loaded from offline cache"))
         );
     }
 
@@ -7862,7 +7904,7 @@ mod tests {
             .unwrap(),
         ];
         app.mrs.state.select(Some(0));
-        app.status_message = Some("Offline".to_string());
+        app.status_message = Some(StatusMessage::offline("Offline"));
 
         assert_eq!(
             app.selected_mr_reference().as_deref(),
@@ -7879,7 +7921,7 @@ mod tests {
                 r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
             )
         );
-        assert_eq!(app.status_message.as_deref(), Some("Offline"));
+        assert_eq!(app.status_message, Some(StatusMessage::offline("Offline")));
     }
 
     #[test]

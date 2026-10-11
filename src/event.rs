@@ -104,6 +104,18 @@ pub enum Event {
         status: String,
         active: bool,
     },
+    /// An optimistic pipeline retry/cancel failed; restore the row's prior status.
+    PipelineStatusRevert {
+        pipeline_id: u64,
+        status: String,
+    },
+    /// An optimistic job retry/start/cancel failed; restore the row's prior status.
+    JobStatusRevert {
+        job_id: u64,
+        status: String,
+    },
+    /// The backend confirmed the todo/notification with this id as read.
+    TodoMarkedRead(String),
     /// A background fetch result, tagged with the scope generation that was
     /// current when the fetch started. Built only by `ScopedSender`.
     Scoped(ScopeGeneration, Box<Event>),

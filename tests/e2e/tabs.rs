@@ -201,6 +201,28 @@ fn test_own_jobs_key_on_a_pipeline_without_jobs_stays_put_and_reports() {
     );
 }
 
+/// A refresh that fails while cached rows are on screen must say so: the
+/// stale list alone looks exactly like a successful refresh.
+#[test]
+fn test_failed_refresh_over_cached_issues_shows_offline_banner() {
+    let mut first = TestSession::new(false, 24, 120);
+    first
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("first run fetches and caches the issues");
+    first.settle(1000);
+    let TestSession { sandbox, pty, .. } = first;
+    drop(pty);
+
+    let mut session =
+        TestSession::launch(sandbox, 24, 120, &[("TEST_GLAB_FAIL_MATCH", "issue list")]);
+    session
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("cached issues are shown");
+    session
+        .wait_for_screen_contains("Offline: refresh failed, showing cached data", 15000)
+        .expect("the failed refresh is reported in the header");
+}
+
 // --- Tier 1: Feature Coverage (5 cases) ---
 
 #[test]

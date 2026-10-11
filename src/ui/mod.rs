@@ -19,7 +19,7 @@ use self::diff::{CommentAnchor, centered_rect_min, format_comment_with_suggestio
 use self::helpers::{build_log_line, highlight_fuzzy_match};
 use self::modal::clear_area;
 use self::overlays::render_overlays;
-use crate::app::{App, DiffLine, Tab};
+use crate::app::{App, DiffLine, StatusMessage, Tab};
 use crate::config::{ICONS, THEME};
 use crate::utils::format::{sanitize_untrusted, truncate};
 use std::collections::HashSet;
@@ -250,6 +250,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
         return;
     }
 
+    if app
+        .status_message
+        .as_ref()
+        .is_some_and(StatusMessage::is_expired)
+    {
+        app.status_message = None;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -323,6 +331,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
             format!(" {} ", app.search_query),
             Style::default().fg(THEME.read().unwrap().yellow),
         ));
+    }
+    if let Some(status) = &app.status_message {
+        let theme = THEME.read().unwrap();
+        let text = crate::utils::format::sanitize_untrusted(status.text());
+        let style = match status {
+            StatusMessage::Offline(_) => Style::default()
+                .bg(theme.red)
+                .fg(theme.highlight_bg)
+                .add_modifier(Modifier::BOLD),
+            StatusMessage::Notice { .. } => Style::default().fg(theme.text_muted),
+        };
+        title_spans.push(Span::raw(" "));
+        title_spans.push(Span::styled(format!(" {text} "), style));
     }
 
     // Top banner split into left content and a right-aligned mode indicator.

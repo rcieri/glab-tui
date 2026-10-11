@@ -1,4 +1,4 @@
-use crate::app::{App, ConfirmAction, DialogChoice};
+use crate::app::{App, ConfirmAction, DialogChoice, StatusMessage};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
@@ -117,14 +117,18 @@ fn run_dialog_choice(
             // again restores them from there.
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
-            app.status_message = Some(format!("Kept {count} draft {noun} for later"));
+            app.status_message = Some(StatusMessage::notice(format!(
+                "Kept {count} draft {noun} for later"
+            )));
         }
         DialogChoice::DiscardDrafts => {
             app.draft_comments.clear();
             app.stale_draft_comments.clear();
             app.persist_draft_comments(project_path, mr_iid);
             app.in_review_mode = false;
-            app.status_message = Some(format!("Discarded {count} draft {noun}"));
+            app.status_message = Some(StatusMessage::notice(format!(
+                "Discarded {count} draft {noun}"
+            )));
         }
     }
     app.diff_view = None;
@@ -979,7 +983,9 @@ fn jump_to_review_thread(app: &mut App, overview: &crate::app::ReviewThreadsOver
     if diff_view.jump_to_anchor(position) {
         if was_hiding_reviewed && !diff_view.hide_reviewed {
             app.hide_reviewed_files = false;
-            app.status_message = Some("Showing reviewed files to reach the thread".to_string());
+            app.status_message = Some(crate::app::StatusMessage::notice(
+                "Showing reviewed files to reach the thread",
+            ));
         }
         return true;
     }
@@ -1019,7 +1025,8 @@ mod tests {
         handle_help_keybinding, handle_help_overlay, handle_review_threads, handle_submit_dialog,
     };
     use crate::app::{
-        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, SubmitDialog,
+        App, ConfirmAction, DiffView, EditEntityKind, EditMenu, Selector, StatusMessage,
+        SubmitDialog,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -1489,7 +1496,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.submit_dialog.is_none());
         assert!(app.diff_view.is_none());
         assert_eq!(
-            app.status_message.as_deref(),
+            app.status_message.as_ref().map(StatusMessage::text),
             Some("Kept 2 draft comments for later")
         );
         assert_eq!(
@@ -1512,7 +1519,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
-            app.status_message.as_deref(),
+            app.status_message.as_ref().map(StatusMessage::text),
             Some("Discarded 2 draft comments")
         );
     }
@@ -1571,7 +1578,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.stale_draft_comments.is_empty());
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
-            app.status_message.as_deref(),
+            app.status_message.as_ref().map(StatusMessage::text),
             Some("Discarded 4 draft comments")
         );
     }

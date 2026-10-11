@@ -1,7 +1,7 @@
 use crate::AppTerminal;
-use crate::app::App;
+use crate::app::{App, StatusMessage, Tab};
 use crate::entity_editor::rebuild_edit_menu;
-use crate::event::Event;
+use crate::event::{Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
 use crate::keybinding::keybinding_matches;
@@ -34,6 +34,132 @@ fn spawn_open_diff(
                 comments,
             },
             Err(err) => Event::DiffFetchFailed(format!("Failed to fetch diff: {err}")),
+        };
+        let _ = tx.send(event);
+    });
+}
+
+fn show_selected_all_notice(app: &mut App, added: usize) {
+    if added == 0 {
+        return;
+    }
+    let plural = if added == 1 { "" } else { "s" };
+    app.status_message = Some(StatusMessage::notice(format!(
+        "Selected all {added} item{plural}"
+    )));
+}
+
+/// A row whose status was set before the backend confirmed the mutation:
+/// its id and the status it showed before, when the row was on screen.
+type OptimisticRow = (u64, Option<String>);
+
+/// The table an optimistic status flip was applied to.
+#[derive(Clone, Copy)]
+enum OptimisticTable {
+    Pipelines,
+    Jobs,
+}
+
+impl OptimisticTable {
+    fn tab(self) -> Tab {
+        match self {
+            OptimisticTable::Pipelines => Tab::Pipelines,
+            OptimisticTable::Jobs => Tab::Jobs,
+        }
+    }
+
+    fn revert(self, id: u64, status: String) -> Event {
+        match self {
+            OptimisticTable::Pipelines => Event::PipelineStatusRevert {
+                pipeline_id: id,
+                status,
+            },
+            OptimisticTable::Jobs => Event::JobStatusRevert { job_id: id, status },
+        }
+    }
+}
+
+fn flip_pipeline_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<OptimisticRow> {
+    ids.iter()
+        .map(|&id| {
+            let previous = app
+                .pipelines
+                .items
+                .iter_mut()
+                .find(|pipeline| pipeline.id() == id)
+                .map(|pipeline| std::mem::replace(&mut pipeline.status, status.to_string()));
+            (id, previous)
+        })
+        .collect()
+}
+
+fn flip_job_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<OptimisticRow> {
+    ids.iter()
+        .map(|&id| {
+            let previous = app
+                .jobs
+                .items
+                .iter_mut()
+                .find(|job| job.id() == id)
+                .map(|job| std::mem::replace(&mut job.status, status.to_string()));
+            (id, previous)
+        })
+        .collect()
+}
+
+/// Runs `mutate` for every row, pacing bulk runs. A failed row gets its prior
+/// status back, and all failures surface as a single error toast.
+async fn run_optimistic_mutation<F, Fut>(
+    table: OptimisticTable,
+    action: &str,
+    rows: Vec<OptimisticRow>,
+    tx: &ScopedSender,
+    mutate: F,
+) where
+    F: Fn(u64) -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    let mut failures = Vec::new();
+    for (i, (id, previous)) in rows.into_iter().enumerate() {
+        if i > 0 {
+            crate::backend::rate_limit::pace_bulk_operation().await;
+        }
+        if let Err(e) = mutate(id).await {
+            if let Some(status) = previous {
+                let _ = tx.send(table.revert(id, status));
+            }
+            failures.push(format!("#{id}: {e}"));
+        }
+    }
+    if let Some(message) = mutation_failure_message(action, &failures) {
+        let _ = tx.send(Event::CommandCompleted(table.tab(), Err(message)));
+    }
+}
+
+fn mutation_failure_message(action: &str, failures: &[String]) -> Option<String> {
+    let (first, rest) = failures.split_first()?;
+    Some(match rest.len() {
+        0 => format!("Failed to {action} {first}"),
+        more => format!("Failed to {action} {first} (+{more} more failed)"),
+    })
+}
+
+/// Marks a todo/notification read, and reflects it in the list only once the
+/// backend confirms.
+fn spawn_mark_todo_read(app: &App, todo_id: String, tx: &UnboundedSender<Event>) {
+    let Some(client) = app.gitlab_client.clone() else {
+        return;
+    };
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let event = match crate::domain::notifications::mark_notification_as_read(&client, &todo_id)
+            .await
+        {
+            Ok(()) => Event::TodoMarkedRead(todo_id),
+            Err(e) => Event::CommandCompleted(
+                Tab::Todos,
+                Err(format!("Failed to mark todo as read: {e}")),
+            ),
         };
         let _ = tx.send(event);
     });
@@ -123,7 +249,10 @@ fn with_pr_stack(
     if !is_known && can_be_stacked {
         if let Some(client) = app.gitlab_client.clone() {
             crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
-            app.status_message = Some(format!("Loading the stack of PR #{}…", pr.1));
+            app.status_message = Some(StatusMessage::notice(format!(
+                "Loading the stack of PR #{}…",
+                pr.1
+            )));
             app.pending_stack_action = Some((pr, action));
             return;
         }
@@ -602,13 +731,7 @@ pub async fn handle_active_tab_key(
             }
             _ if keybinding_matches(&app.config.keybindings.issues.select_all, key_event) => {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             }
             _ if keybinding_matches(&app.config.keybindings.issues.create_mr, key_event) => {
                 if let Some(selected_idx) = app.issues.state.selected() {
@@ -786,13 +909,7 @@ pub async fn handle_active_tab_key(
                 app.toggle_select_mode();
             } else if keybinding_matches(&app.config.keybindings.mrs.select_all, key_event) {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             } else if keybinding_matches(&app.config.keybindings.mrs.edit_entity, key_event) {
                 if app.selected_mrs.len() > 1 {
                     let count = app.selected_mrs.len();
@@ -1270,13 +1387,7 @@ pub async fn handle_active_tab_key(
                 app.toggle_select_mode();
             } else if keybinding_matches(&app.config.keybindings.pipelines.select_all, key_event) {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             } else if keybinding_matches(
                 &app.config.keybindings.pipelines.trigger_pipeline,
                 key_event,
@@ -1324,61 +1435,24 @@ pub async fn handle_active_tab_key(
                                 let project_context = scope.as_str().to_string();
                                 let tx = app.scoped_sender(tx.clone());
                                 let active_tab = app.active_tab;
-                                if !app.selected_pipelines.is_empty() {
-                                    let pipe_ids: Vec<u64> =
-                                        app.selected_pipelines.iter().cloned().collect();
-                                    for p_id in &pipe_ids {
-                                        if let Some(p) = app
-                                            .pipelines
-                                            .items
-                                            .iter_mut()
-                                            .find(|pipe| pipe.id() == *p_id)
-                                        {
-                                            p.status = "running".to_string();
-                                        }
-                                    }
-                                    app.selected_pipelines.clear();
-                                    tokio::spawn(async move {
-                                        for (i, p_id) in pipe_ids.iter().enumerate() {
-                                            if i > 0 {
-                                                crate::backend::rate_limit::pace_bulk_operation()
-                                                    .await;
-                                            }
-                                            let _ = client_clone
-                                                .retry_pipeline(&project_context, *p_id)
-                                                .await;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        spawn_refresh_active_tab(
-                                            &client_clone,
-                                            &scope,
-                                            active_tab,
-                                            tx.clone(),
-                                        );
-                                    });
+                                let pipe_ids: Vec<u64> = if app.selected_pipelines.is_empty() {
+                                    vec![pipe_id]
                                 } else {
-                                    if let Some(p) = app
-                                        .pipelines
-                                        .items
-                                        .iter_mut()
-                                        .find(|pipe| pipe.id() == pipe_id)
-                                    {
-                                        p.status = "running".to_string();
-                                    }
-                                    let tx = tx.clone();
-                                    tokio::spawn(async move {
-                                        let _ = client_clone
-                                            .retry_pipeline(&project_context, pipe_id)
-                                            .await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        spawn_refresh_active_tab(
-                                            &client_clone,
-                                            &scope,
-                                            active_tab,
-                                            tx,
-                                        );
-                                    });
-                                }
+                                    app.selected_pipelines.drain().collect()
+                                };
+                                let rows = flip_pipeline_statuses(app, &pipe_ids, "running");
+                                tokio::spawn(async move {
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Pipelines,
+                                        "retry pipeline",
+                                        rows,
+                                        &tx,
+                                        |id| client_clone.retry_pipeline(&project_context, id),
+                                    )
+                                    .await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    spawn_refresh_active_tab(&client_clone, &scope, active_tab, tx);
+                                });
                             }
                         }
                         _ if ((key_event.code == KeyCode::Char('d')
@@ -1388,24 +1462,22 @@ pub async fn handle_active_tab_key(
                                 key_event,
                             )) =>
                         {
-                            if let Some(p) = app
-                                .pipelines
-                                .items
-                                .iter_mut()
-                                .find(|pipe| pipe.id() == pipe_id)
-                            {
-                                p.status = "canceled".to_string();
-                            }
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
                                 let scope = app.scope.clone();
                                 let project_context = scope.as_str().to_string();
                                 let tx = app.scoped_sender(tx.clone());
                                 let active_tab = app.active_tab;
+                                let rows = flip_pipeline_statuses(app, &[pipe_id], "canceled");
                                 tokio::spawn(async move {
-                                    let _ = client_clone
-                                        .cancel_pipeline(&project_context, pipe_id)
-                                        .await;
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Pipelines,
+                                        "cancel pipeline",
+                                        rows,
+                                        &tx,
+                                        |id| client_clone.cancel_pipeline(&project_context, id),
+                                    )
+                                    .await;
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                     spawn_refresh_active_tab(&client_clone, &scope, active_tab, tx);
                                 });
@@ -1538,13 +1610,7 @@ pub async fn handle_active_tab_key(
                 app.toggle_select_mode();
             } else if keybinding_matches(&app.config.keybindings.jobs.select_all, key_event) {
                 let added = app.select_all_filtered();
-                if added > 0 {
-                    app.status_message = Some(format!(
-                        "Selected all {} item{}",
-                        added,
-                        if added == 1 { "" } else { "s" }
-                    ));
-                }
+                show_selected_all_notice(app, added);
             } else if let Some(idx) = app.jobs.state.selected() {
                 let job_info = app
                     .filtered_jobs()
@@ -1569,58 +1635,32 @@ pub async fn handle_active_tab_key(
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
                                 let tx = app.scoped_sender(tx.clone());
-
-                                if !app.selected_jobs.is_empty() {
-                                    let job_ids: Vec<u64> =
-                                        app.selected_jobs.iter().cloned().collect();
-                                    for j in app.jobs.items.iter_mut() {
-                                        if app.selected_jobs.contains(&j.id()) {
-                                            j.status = "running".to_string();
-                                        }
-                                    }
-                                    app.selected_jobs.clear();
-                                    tokio::spawn(async move {
-                                        for (i, j_id) in job_ids.iter().enumerate() {
-                                            if i > 0 {
-                                                crate::backend::rate_limit::pace_bulk_operation()
-                                                    .await;
-                                            }
-                                            let _ = client_clone
-                                                .retry_job(&project_context, *j_id)
-                                                .await;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
+                                let job_ids: Vec<u64> = if app.selected_jobs.is_empty() {
+                                    vec![job_id]
                                 } else {
-                                    if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        j.status = "running".to_string();
+                                    app.selected_jobs.drain().collect()
+                                };
+                                let rows = flip_job_statuses(app, &job_ids, "running");
+                                tokio::spawn(async move {
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Jobs,
+                                        "retry job",
+                                        rows,
+                                        &tx,
+                                        |id| client_clone.retry_job(&project_context, id),
+                                    )
+                                    .await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
+                                        &client_clone,
+                                        &project_context,
+                                        pipe_id,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
                                     }
-                                    tokio::spawn(async move {
-                                        let _ =
-                                            client_clone.retry_job(&project_context, job_id).await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
-                                }
+                                });
                             }
                         }
                         _ if key_event.code == KeyCode::Char('S')
@@ -1638,13 +1678,23 @@ pub async fn handle_active_tab_key(
                                 let project_context = app.project_path_for_pipeline(pipe_id);
                                 let tx = app.scoped_sender(tx.clone());
 
-                                if let Some(j) = app.jobs.items.get_mut(idx) {
-                                    if j.status == "manual" {
-                                        j.status = "running".to_string();
-                                    }
-                                }
+                                let previous = app
+                                    .jobs
+                                    .items
+                                    .iter_mut()
+                                    .find(|job| job.id() == job_id && job.status == "manual")
+                                    .map(|job| {
+                                        std::mem::replace(&mut job.status, "running".to_string())
+                                    });
                                 tokio::spawn(async move {
-                                    let _ = client_clone.start_job(&project_context, job_id).await;
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Jobs,
+                                        "start job",
+                                        vec![(job_id, previous)],
+                                        &tx,
+                                        |id| client_clone.start_job(&project_context, id),
+                                    )
+                                    .await;
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                                     if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
                                         &client_clone,
@@ -1671,8 +1721,9 @@ pub async fn handle_active_tab_key(
                                         app.selected_jobs.insert(job.id());
                                     }
                                 }
-                                app.status_message =
-                                    Some(format!("Selected all jobs in stage '{stage_name}'"));
+                                app.status_message = Some(StatusMessage::notice(format!(
+                                    "Selected all jobs in stage '{stage_name}'"
+                                )));
                             }
                         }
                         _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {
@@ -1681,54 +1732,32 @@ pub async fn handle_active_tab_key(
                                 let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
                                 let tx = app.scoped_sender(tx.clone());
-
-                                if !app.selected_jobs.is_empty() {
-                                    let job_ids: Vec<u64> =
-                                        app.selected_jobs.iter().cloned().collect();
-                                    for j in app.jobs.items.iter_mut() {
-                                        if app.selected_jobs.contains(&j.id()) {
-                                            j.status = "canceled".to_string();
-                                        }
-                                    }
-                                    app.selected_jobs.clear();
-                                    tokio::spawn(async move {
-                                        for j_id in &job_ids {
-                                            let _ = client_clone
-                                                .cancel_job(&project_context, *j_id)
-                                                .await;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
+                                let job_ids: Vec<u64> = if app.selected_jobs.is_empty() {
+                                    vec![job_id]
                                 } else {
-                                    if let Some(j) = app.jobs.items.get_mut(idx) {
-                                        j.status = "canceled".to_string();
+                                    app.selected_jobs.drain().collect()
+                                };
+                                let rows = flip_job_statuses(app, &job_ids, "canceled");
+                                tokio::spawn(async move {
+                                    run_optimistic_mutation(
+                                        OptimisticTable::Jobs,
+                                        "cancel job",
+                                        rows,
+                                        &tx,
+                                        |id| client_clone.cancel_job(&project_context, id),
+                                    )
+                                    .await;
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
+                                        &client_clone,
+                                        &project_context,
+                                        pipe_id,
+                                    )
+                                    .await
+                                    {
+                                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
                                     }
-                                    tokio::spawn(async move {
-                                        let _ =
-                                            client_clone.cancel_job(&project_context, job_id).await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                        if let Ok(jobs) =
-                                            crate::domain::pipelines::list_pipeline_jobs(
-                                                &client_clone,
-                                                &project_context,
-                                                pipe_id,
-                                            )
-                                            .await
-                                        {
-                                            let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                        }
-                                    });
-                                }
+                                });
                             }
                         }
                         _ if keybinding_matches(
@@ -2128,16 +2157,7 @@ pub async fn handle_active_tab_key(
                             let n_id = item.id.clone();
                             let target_iid = item.target_iid;
                             let target_type = item.target_type.clone();
-                            let client_opt = app.gitlab_client.clone();
-                            if let Some(client) = client_opt {
-                                tokio::spawn(async move {
-                                    let _ =
-                                        crate::domain::notifications::mark_notification_as_read(
-                                            &client, &n_id,
-                                        )
-                                        .await;
-                                });
-                            }
+                            spawn_mark_todo_read(app, n_id, &tx);
                             app.active_tab = match target_type.as_str() {
                                 "MergeRequest" => crate::app::Tab::MergeRequests,
                                 _ => crate::app::Tab::Issues,
@@ -2515,10 +2535,6 @@ pub async fn handle_active_tab_key(
                                             crate::app::Tab::Environments,
                                             Err(format!("Failed to fetch deployments: {e}")),
                                         ));
-                                        let _ = tx.send(Event::FetchFailed(
-                                            crate::app::Tab::Environments,
-                                            format!("Failed to fetch deployments: {e}"),
-                                        ));
                                     }
                                 }
                             }
@@ -2660,16 +2676,7 @@ pub async fn handle_active_tab_key(
                             let n_id = n.id.clone();
                             let target_iid = n.target_iid;
                             let target_type = n.target_type.clone();
-                            let client_opt = app.gitlab_client.clone();
-                            if let Some(client) = client_opt {
-                                tokio::spawn(async move {
-                                    let _ =
-                                        crate::domain::notifications::mark_notification_as_read(
-                                            &client, &n_id,
-                                        )
-                                        .await;
-                                });
-                            }
+                            spawn_mark_todo_read(app, n_id, &tx);
                             app.active_tab = match target_type.as_str() {
                                 "MergeRequest" => crate::app::Tab::MergeRequests,
                                 _ => crate::app::Tab::Issues,
@@ -3352,7 +3359,75 @@ pub fn jump_to_issue_tab_from_selector(
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::event::ScopeGeneration;
     use crossterm::event::{KeyEvent, KeyModifiers};
+
+    #[tokio::test]
+    async fn failed_bulk_mutation_reverts_only_failed_rows_and_reports_once() {
+        let (raw_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = ScopedSender::new(raw_tx, ScopeGeneration::default());
+        let rows = vec![
+            (1, Some("failed".to_string())),
+            (2, Some("success".to_string())),
+            (3, Some("failed".to_string())),
+        ];
+
+        run_optimistic_mutation(
+            OptimisticTable::Pipelines,
+            "retry pipeline",
+            rows,
+            &tx,
+            |id| async move {
+                if id == 2 {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("offline"))
+                }
+            },
+        )
+        .await;
+        drop(tx);
+
+        let mut reverted = Vec::new();
+        let mut errors = Vec::new();
+        while let Some(event) = rx.recv().await {
+            match event
+                .for_scope(ScopeGeneration::default())
+                .expect("event from the current scope")
+            {
+                Event::PipelineStatusRevert {
+                    pipeline_id,
+                    status,
+                } => reverted.push((pipeline_id, status)),
+                Event::CommandCompleted(Tab::Pipelines, Err(message)) => errors.push(message),
+                other => panic!("unexpected event {other:?}"),
+            }
+        }
+        assert_eq!(
+            reverted,
+            vec![(1, "failed".to_string()), (3, "failed".to_string())]
+        );
+        assert_eq!(
+            errors,
+            vec!["Failed to retry pipeline #1: offline (+1 more failed)".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_mutation_sends_nothing() {
+        let (raw_tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let tx = ScopedSender::new(raw_tx, ScopeGeneration::default());
+        run_optimistic_mutation(
+            OptimisticTable::Jobs,
+            "cancel job",
+            vec![(7, Some("running".to_string()))],
+            &tx,
+            |_| async { Ok(()) },
+        )
+        .await;
+        drop(tx);
+        assert!(rx.recv().await.is_none());
+    }
 
     /// Constructs the real `AppTerminal` and dispatches `key_event` through
     /// `handle_active_tab_key`, discarding any events it sends.

@@ -102,10 +102,15 @@ pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender
     app.pending_mr_related_issues_since = Some(std::time::Instant::now());
 }
 
-/// `view_stack`: open the selector over the PR's stack. When the session does
-/// not know the stack yet it is fetched first and the selector opens once it
-/// lands (see `Event::PrStackFetched`).
-fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &UnboundedSender<Event>) {
+/// Run `action` on the PR once the session knows its stack. When it does not
+/// yet, the stack is fetched first and the action runs once it lands (see
+/// `Event::PrStackFetched`).
+fn with_pr_stack(
+    app: &mut App,
+    mr: &crate::domain::mr::MergeRequest,
+    action: crate::app::StackAction,
+    tx: &UnboundedSender<Event>,
+) {
     use crate::domain::mr::StackLookup;
     let pr = app.mr_ref(mr);
     let is_known = matches!(
@@ -119,16 +124,41 @@ fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &Unbounde
         if let Some(client) = app.gitlab_client.clone() {
             crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
             app.status_message = Some(format!("Loading the stack of PR #{}…", pr.1));
-            app.pending_stack_selector = Some(pr);
+            app.pending_stack_action = Some((pr, action));
             return;
         }
     }
-    open_stack_selector(app, &pr.0, pr.1);
+    run_stack_action(app, &pr.0, pr.1, action);
+}
+
+/// Run a PR action whose stack the session already knows.
+pub(crate) fn run_stack_action(
+    app: &mut App,
+    project: &str,
+    pr_number: u64,
+    action: crate::app::StackAction,
+) {
+    match action {
+        crate::app::StackAction::Browse => open_stack_selector(app, project, pr_number),
+        crate::app::StackAction::Merge => open_merge_dialog(app, project, pr_number),
+    }
+}
+
+/// A stacked PR merges with every open PR below it through GitHub's stack
+/// merge; any other MR/PR gets the plain merge dialog.
+fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
+    let action = match app.pr_stack(project, pr_number) {
+        Some(crate::domain::mr::StackLookup::Full(_)) => {
+            crate::app::ConfirmAction::MergeStack(pr_number)
+        }
+        _ => crate::app::ConfirmAction::MergeMr(pr_number),
+    };
+    app.submit_dialog = Some(crate::app::SubmitDialog::build(action, app));
 }
 
 /// Open the selector over a PR's stack the session already knows, so the
 /// user can jump to another PR in it, or say why there is nothing to open.
-pub(crate) fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
+fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
     use crate::domain::mr::StackLookup;
     let Some(StackLookup::Full(stack)) = app.pr_stack(project, pr_number) else {
         app.show_error("This PR is not part of a stack.".to_string());
@@ -912,10 +942,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                                crate::app::ConfirmAction::MergeMr(mr_iid),
-                                app,
-                            ));
+                            with_pr_stack(app, &mr, crate::app::StackAction::Merge, &tx);
                         }
                         _ if (key_event.code == KeyCode::Char('D')
                             || keybinding_matches(
@@ -959,7 +986,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            view_stack(app, &mr, &tx);
+                            with_pr_stack(app, &mr, crate::app::StackAction::Browse, &tx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.open_in_browser,

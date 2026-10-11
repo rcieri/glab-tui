@@ -235,10 +235,11 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * Navigation: `h`/`l` → previous/next month, `j`/`k` → previous/next day, `Enter` → confirm, `Esc` → cancel.
 
 ### Submit Dialog & Confirmations (`SubmitDialog`)
-* Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review) open a `SubmitDialog` ([src/app.rs](src/app.rs)).
+* Mutating and destructive actions (close/reopen issue/MR, merge MR, bulk merge, delete branch/release/milestone/issue/MR, rebase, revoke approval, submit review, cancel pipeline, bulk job cancel) open a `SubmitDialog` ([src/app.rs](src/app.rs)). Confirmed bulk job cancels are paced with `pace_bulk_operation()`.
+* Pipeline and job actions resolve their project through `App::project_path_for_pipeline(id)` (the listed row's `project_path`, then `active_pipeline_project` for the active pipeline, then the scope) or `App::project_path_for_jobs()` for the Jobs tab. Never pass `app.scope.as_str()` as a pipeline/job project: in group scope it is the group path.
 * Includes title, context-aware description body, optional toggleable options (squash, delete branch, auto-merge), and explicit `[ Submit ]` (left, idx 0) and `[ Cancel ]` (right) buttons. `SubmitDialog::extra_buttons` (`DialogChoice`) adds buttons between them; the submit-review dialog uses it for `Keep drafts` / `Discard`.
 * Navigation: `h`/`l` / Left/Right move to the neighbouring button, `j`/`k` / Up/Down for vertical option traversal, `Tab`/`BackTab` for full control cycling, `Space` to toggle options, `Enter` to activate focused button, `Esc` to cancel. Cancel never has side effects.
-* Destructive actions (close, delete, revoke) default the cursor to Cancel; reversible actions (merge, rebase, review) default to Submit.
+* Destructive actions (close, delete, revoke, cancel pipeline/jobs) default the cursor to Cancel; reversible actions (merge, rebase, review) default to Submit.
 * Mouse clicks on button boxes or option rows are supported.
 
 ### Mouse Support

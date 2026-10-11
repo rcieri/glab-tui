@@ -85,6 +85,8 @@ if [[ "$*" == *"api"* ]]; then
         else
             echo '[{"id": 54321, "status": "success", "stage": "test", "name": "rspec"}]'
         fi
+    elif [[ "$*" == *"groups/"*"/pipelines"* ]]; then
+        echo '[{"id": 777, "status": "running", "ref": "main", "updated_at": "2026-07-06T12:00:00Z", "web_url": "https://gitlab.com/acme/project-b/-/pipelines/777"}]'
     elif [[ "$*" == *"/pipelines"* ]] || [[ "$*" == *"/actions/runs"* ]]; then
         cat "$FIXTURES_DIR/pipelines.json"
     elif [[ "$*" == *"/runners"* ]] || [[ "$*" == *"/actions/runners"* ]]; then

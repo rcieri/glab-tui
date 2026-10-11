@@ -1287,7 +1287,7 @@ async fn main() -> Result<()> {
                         if let (Some(cursor), Some(job_id), Some(client)) =
                             (cursor, app.trace_job_id(), app.gitlab_client.clone())
                         {
-                            let project = app.scope.as_str().to_string();
+                            let project = app.project_path_for_jobs();
                             let tx = app.scoped_sender(events.sender());
                             app.job_trace_poll_in_flight = true;
                             app.job_trace_last_refresh = std::time::Instant::now();
@@ -3410,13 +3410,15 @@ async fn main() -> Result<()> {
                                             {
                                                 if let Ok(pipeline_id) = id_str.parse::<u64>() {
                                                     if let Some(client) = &app.gitlab_client {
+                                                        let project_context = app
+                                                            .project_path_for_pipeline(pipeline_id);
                                                         app.active_pipeline_id = Some(pipeline_id);
+                                                        app.active_pipeline_project =
+                                                            Some(project_context.clone());
                                                         app.jobs.state.select(Some(0));
                                                         app.jobs.items.clear();
                                                         app.loading_tabs.insert(app::Tab::Jobs);
                                                         let client_clone = client.clone();
-                                                        let project_context =
-                                                            app.scope.as_str().to_string();
                                                         let tx = app.scoped_sender(events.sender());
                                                         tokio::spawn(async move {
                                                             match domain::pipelines::list_pipeline_jobs(

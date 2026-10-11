@@ -984,6 +984,8 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
                 icons.action_review.clone()
             }
             crate::app::ConfirmAction::RebaseMr(_) => icons.merge_rebase.clone(),
+            crate::app::ConfirmAction::CancelPipeline(_)
+            | crate::app::ConfirmAction::CancelJobs { .. } => icons.status_canceled.clone(),
         };
         let option_rows = dialog.options.len();
 

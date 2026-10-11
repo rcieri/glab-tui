@@ -3089,6 +3089,8 @@ pub enum ConfirmAction {
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
     SubmitReview(u64),                // mr iid
+    CancelPipeline(u64),              // pipeline id
+    CancelJobs { pipeline_id: u64, job_ids: Vec<u64> },
 }
 
 impl ConfirmAction {
@@ -3107,6 +3109,8 @@ impl ConfirmAction {
                 | Self::ReopenMr(_)
                 | Self::ReopenMilestone(_)
                 | Self::RevokeMr(_)
+                | Self::CancelPipeline(_)
+                | Self::CancelJobs { .. }
         )
     }
 }
@@ -3375,6 +3379,7 @@ impl SubmitDialog {
     ///
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
+
     pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
@@ -3541,6 +3546,37 @@ impl SubmitDialog {
                     "Submit".to_string(),
                     vec![],
                     false,
+                )
+            }
+            ConfirmAction::CancelPipeline(id) => {
+                let pipeline = kind.term("pipeline");
+                (
+                    format!("Cancel {pipeline} #{id}"),
+                    format!(
+                        "Are you sure you want to cancel {} #{id}?",
+                        pipeline.to_lowercase()
+                    ),
+                    format!("Cancel {pipeline}"),
+                    vec![],
+                    true,
+                )
+            }
+            ConfirmAction::CancelJobs {
+                pipeline_id,
+                job_ids,
+            } => {
+                let pipeline = kind.term("pipeline").to_lowercase();
+                let count = job_ids.len();
+                let jobs = if count == 1 { "Job" } else { "Jobs" };
+                (
+                    format!("Cancel {count} {jobs}"),
+                    format!(
+                        "Are you sure you want to cancel {count} {} in {pipeline} #{pipeline_id}?",
+                        jobs.to_lowercase()
+                    ),
+                    format!("Cancel {jobs}"),
+                    vec![],
+                    true,
                 )
             }
         };
@@ -4441,19 +4477,30 @@ impl App {
         }
     }
 
+    /// The project a pipeline belongs to: its own row's path, then the
+    /// project the Jobs tab was opened with when `id` is the active pipeline,
+    /// then the scope. A listed row always wins so an older Jobs-tab project
+    /// never redirects actions on other pipelines.
     pub fn project_path_for_pipeline(&self, id: u64) -> String {
-        if let Some(proj) = &self.active_pipeline_project {
-            if !proj.is_empty() {
-                return proj.clone();
-            }
-        }
         self.pipelines
             .items
             .iter()
             .find(|p| p.id() == id)
-            .map(|p| p.project_path.clone())
+            .map(|p| p.project_path.as_str())
             .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| self.scope.as_str().to_string())
+            .or_else(|| {
+                self.active_pipeline_project
+                    .as_deref()
+                    .filter(|p| !p.is_empty() && self.active_pipeline_id == Some(id))
+            })
+            .unwrap_or_else(|| self.scope.as_str())
+            .to_string()
+    }
+
+    /// The project of the jobs on the Jobs tab. Jobs carry no project of
+    /// their own: they all belong to the active pipeline.
+    pub fn project_path_for_jobs(&self) -> String {
+        self.project_path_for_pipeline(self.active_pipeline_id.unwrap_or(0))
     }
 
     pub fn project_path_for_release(&self, _tag_name: &str) -> String {
@@ -8880,6 +8927,41 @@ mod tests {
                 "Submit"
             ]
         );
+    }
+
+    #[test]
+    fn pipeline_project_prefers_the_listed_row_over_an_older_jobs_tab_project() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("acme".to_string());
+        let mut in_project_b = nav_pipe(7);
+        in_project_b.project_path = "acme/project-b".to_string();
+        app.pipelines.items = vec![nav_pipe(5), in_project_b];
+        app.active_pipeline_id = Some(5);
+        app.active_pipeline_project = Some("acme/project-a".to_string());
+
+        assert_eq!(app.project_path_for_pipeline(7), "acme/project-b");
+        assert_eq!(app.project_path_for_pipeline(5), "acme/project-a");
+        assert_eq!(app.project_path_for_pipeline(9), "acme");
+        assert_eq!(app.project_path_for_jobs(), "acme/project-a");
+    }
+
+    #[test]
+    fn cancel_pipeline_and_cancel_jobs_dialogs_default_to_cancel() {
+        let app = App::default();
+
+        let cancel_pipeline = SubmitDialog::build(ConfirmAction::CancelPipeline(7), &app);
+        assert!(cancel_pipeline.is_on_cancel());
+        assert!(cancel_pipeline.action.is_destructive());
+
+        let cancel_jobs = SubmitDialog::build(
+            ConfirmAction::CancelJobs {
+                pipeline_id: 7,
+                job_ids: vec![1, 2],
+            },
+            &app,
+        );
+        assert!(cancel_jobs.is_on_cancel());
+        assert!(cancel_jobs.action.is_destructive());
     }
 
     #[test]

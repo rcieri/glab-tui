@@ -51,11 +51,11 @@ fn show_selected_all_notice(app: &mut App, added: usize) {
 
 /// A row whose status was set before the backend confirmed the mutation:
 /// its id and the status it showed before, when the row was on screen.
-type OptimisticRow = (u64, Option<String>);
+pub(crate) type OptimisticRow = (u64, Option<String>);
 
 /// The table an optimistic status flip was applied to.
 #[derive(Clone, Copy)]
-enum OptimisticTable {
+pub(crate) enum OptimisticTable {
     Pipelines,
     Jobs,
 }
@@ -79,7 +79,11 @@ impl OptimisticTable {
     }
 }
 
-fn flip_pipeline_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<OptimisticRow> {
+pub(crate) fn flip_pipeline_statuses(
+    app: &mut App,
+    ids: &[u64],
+    status: &str,
+) -> Vec<OptimisticRow> {
     ids.iter()
         .map(|&id| {
             let previous = app
@@ -93,7 +97,7 @@ fn flip_pipeline_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<Optim
         .collect()
 }
 
-fn flip_job_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<OptimisticRow> {
+pub(crate) fn flip_job_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<OptimisticRow> {
     ids.iter()
         .map(|&id| {
             let previous = app
@@ -109,7 +113,7 @@ fn flip_job_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<Optimistic
 
 /// Runs `mutate` for every row, pacing bulk runs. A failed row gets its prior
 /// status back, and all failures surface as a single error toast.
-async fn run_optimistic_mutation<F, Fut>(
+pub(crate) async fn run_optimistic_mutation<F, Fut>(
     table: OptimisticTable,
     action: &str,
     rows: Vec<OptimisticRow>,
@@ -1304,7 +1308,7 @@ pub async fn handle_active_tab_key(
                     .selected()
                     .and_then(|idx| app.filtered_pipelines().get(idx).map(|p| p.id()));
                 if let Some(pipeline_id) = pipe_id {
-                    let project_context = app.scope.as_str().to_string();
+                    let project_context = app.project_path_for_pipeline(pipeline_id);
                     spawn_open_pipeline(
                         app,
                         &tx,
@@ -1421,7 +1425,6 @@ pub async fn handle_active_tab_key(
                             if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
                                 let scope = app.scope.clone();
-                                let project_context = scope.as_str().to_string();
                                 let tx = app.scoped_sender(tx.clone());
                                 let active_tab = app.active_tab;
                                 let pipe_ids: Vec<u64> = if app.selected_pipelines.is_empty() {
@@ -1429,6 +1432,10 @@ pub async fn handle_active_tab_key(
                                 } else {
                                     app.selected_pipelines.drain().collect()
                                 };
+                                let projects: std::collections::HashMap<u64, String> = pipe_ids
+                                    .iter()
+                                    .map(|&id| (id, app.project_path_for_pipeline(id)))
+                                    .collect();
                                 let rows = flip_pipeline_statuses(app, &pipe_ids, "running");
                                 tokio::spawn(async move {
                                     run_optimistic_mutation(
@@ -1436,7 +1443,7 @@ pub async fn handle_active_tab_key(
                                         "retry pipeline",
                                         rows,
                                         &tx,
-                                        |id| client_clone.retry_pipeline(&project_context, id),
+                                        |id| client_clone.retry_pipeline(&projects[&id], id),
                                     )
                                     .await;
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1451,26 +1458,12 @@ pub async fn handle_active_tab_key(
                                 &key_event,
                             )) =>
                         {
-                            if let Some(client) = &app.gitlab_client {
-                                let client_clone = client.clone();
-                                let scope = app.scope.clone();
-                                let project_context = scope.as_str().to_string();
-                                let tx = app.scoped_sender(tx.clone());
-                                let active_tab = app.active_tab;
-                                let rows = flip_pipeline_statuses(app, &[pipe_id], "canceled");
-                                tokio::spawn(async move {
-                                    run_optimistic_mutation(
-                                        OptimisticTable::Pipelines,
-                                        "cancel pipeline",
-                                        rows,
-                                        &tx,
-                                        |id| client_clone.cancel_pipeline(&project_context, id),
-                                    )
-                                    .await;
-                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    spawn_refresh_active_tab(&client_clone, &scope, active_tab, tx);
-                                });
-                            }
+                            let project_path = app.project_path_for_pipeline(pipe_id);
+                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+                                crate::app::ConfirmAction::CancelPipeline(pipe_id),
+                                project_path,
+                                app,
+                            ));
                         }
                         _ if (key_event.code == KeyCode::Char('W')
                             || keybinding_matches(
@@ -1500,7 +1493,7 @@ pub async fn handle_active_tab_key(
                             let Some(client) = app.gitlab_client.clone() else {
                                 return false;
                             };
-                            let project_context = app.scope.as_str().to_string();
+                            let project_context = app.project_path_for_pipeline(pipe_id);
                             let tx2 = tx.clone();
                             tokio::spawn(async move {
                                 let result = client
@@ -1721,17 +1714,26 @@ pub async fn handle_active_tab_key(
                             }
                         }
                         _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {
-                            if let Some(client) = &app.gitlab_client {
+                            let pipe_id = app.active_pipeline_id.unwrap_or(0);
+                            if !app.selected_jobs.is_empty() {
+                                let mut job_ids: Vec<u64> =
+                                    app.selected_jobs.iter().copied().collect();
+                                job_ids.sort_unstable();
+                                let project_path = app.project_path_for_pipeline(pipe_id);
+                                app.submit_dialog =
+                                    Some(crate::app::SubmitDialog::build_with_project(
+                                        crate::app::ConfirmAction::CancelJobs {
+                                            pipeline_id: pipe_id,
+                                            job_ids,
+                                        },
+                                        project_path,
+                                        app,
+                                    ));
+                            } else if let Some(client) = &app.gitlab_client {
                                 let client_clone = client.clone();
-                                let pipe_id = app.active_pipeline_id.unwrap_or(0);
                                 let project_context = app.project_path_for_pipeline(pipe_id);
                                 let tx = app.scoped_sender(tx.clone());
-                                let job_ids: Vec<u64> = if app.selected_jobs.is_empty() {
-                                    vec![job_id]
-                                } else {
-                                    app.selected_jobs.drain().collect()
-                                };
-                                let rows = flip_job_statuses(app, &job_ids, "canceled");
+                                let rows = flip_job_statuses(app, &[job_id], "canceled");
                                 tokio::spawn(async move {
                                     run_optimistic_mutation(
                                         OptimisticTable::Jobs,
@@ -1877,7 +1879,7 @@ pub async fn handle_active_tab_key(
                                 app.details_zoomed = !app.details_zoomed;
                             } else if let Some(client) = &app.gitlab_client {
                                 let client = client.clone();
-                                let project_context = app.scope.as_str().to_string();
+                                let project_context = app.project_path_for_jobs();
                                 let tx = app.scoped_sender(tx.clone());
                                 app.job_trace_loading = true;
                                 tokio::spawn(async move {
@@ -3300,6 +3302,7 @@ pub(crate) fn apply_opened_pipeline(
             }
             let has_jobs = !jobs.is_empty();
             app.jobs.items = jobs;
+            app.active_pipeline_project = Some(app.project_path_for_pipeline(pipeline_id));
             app.active_pipeline_id = Some(pipeline_id);
             app.jobs.state.select(Some(0));
             app.detail_scroll = 0;
@@ -3733,6 +3736,86 @@ mod tests {
             app.pipelines.items[0].status, "running",
             "Ctrl+d must not flip the pipeline status to canceled"
         );
+    }
+
+    #[tokio::test]
+    async fn d_on_a_pipeline_asks_for_confirmation_before_cancelling() {
+        use crate::domain::pipelines::Pipeline;
+
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Pipelines;
+        app.pipelines.items = vec![Pipeline {
+            id: 42,
+            status: "running".to_string(),
+            r#ref: String::new(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+        }];
+        app.pipelines.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        assert!(matches!(
+            dialog.action,
+            crate::app::ConfirmAction::CancelPipeline(42)
+        ));
+        assert_eq!(app.pipelines.items[0].status, "running");
+    }
+
+    #[tokio::test]
+    async fn cancelling_selected_jobs_asks_for_confirmation_first() {
+        use crate::domain::pipelines::Job;
+
+        let job = |id| Job {
+            id,
+            status: "running".to_string(),
+            stage: "test".to_string(),
+            name: format!("job-{id}"),
+            matrix: None,
+            duration_seconds: None,
+            runner: None,
+            needs: Vec::new(),
+        };
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Jobs;
+        app.active_pipeline_id = Some(7);
+        app.jobs.items = vec![job(3), job(1), job(2)];
+        app.jobs.state.select(Some(0));
+        app.selected_jobs.extend([3, 1]);
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let dialog = app.submit_dialog.as_ref().expect("a confirmation opens");
+        match &dialog.action {
+            crate::app::ConfirmAction::CancelJobs {
+                pipeline_id,
+                job_ids,
+            } => {
+                assert_eq!(*pipeline_id, 7);
+                assert_eq!(job_ids, &vec![1, 3]);
+            }
+            other => panic!("expected CancelJobs, got {other:?}"),
+        }
+        assert!(app.jobs.items.iter().all(|j| j.status == "running"));
+        assert_eq!(app.selected_jobs.len(), 2);
     }
 
     /// `Ctrl+u` must not start a self-update check.

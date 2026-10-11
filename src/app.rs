@@ -3514,6 +3514,9 @@ pub struct App {
     pub running: bool,
     pub scope: crate::scope::Scope,
     pub prev_scope: Option<crate::scope::Scope>,
+    /// Bumped on every repository/group switch; background fetches carry the
+    /// value current when they started (see `scoped_sender`).
+    pub scope_generation: crate::event::ScopeGeneration,
     pub group_repos: Vec<String>,
     pub project_cache: crate::utils::cache::ProjectCache,
     pub gitlab_client: Option<crate::domain::client::GitlabClient>,
@@ -3709,6 +3712,7 @@ impl Default for App {
             running: true,
             scope: crate::scope::Scope::default(),
             prev_scope: None,
+            scope_generation: crate::event::ScopeGeneration::default(),
             group_repos: vec![],
             project_cache: crate::utils::cache::ProjectCache::default(),
             gitlab_client: None,
@@ -3934,7 +3938,17 @@ impl App {
         )
     }
 
+    /// The sender for a background fetch started now: its results are dropped
+    /// if the scope changes before they arrive.
+    pub fn scoped_sender(
+        &self,
+        tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
+    ) -> crate::event::ScopedSender {
+        crate::event::ScopedSender::new(tx, self.scope_generation)
+    }
+
     pub fn reset_on_scope_change(&mut self) {
+        self.scope_generation = self.scope_generation.next();
         if self.scope.is_group() {
             for tab in [Tab::Issues, Tab::MergeRequests, Tab::Pipelines] {
                 self.enabled_columns
@@ -3960,6 +3974,17 @@ impl App {
         self.refreshed_tabs.clear();
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
+        self.fetching_related_mrs.clear();
+        self.pending_related_mrs_iid = None;
+        self.pending_related_mrs_since = None;
+        self.fetching_mr_related_issues.clear();
+        self.pending_mr_related_issues_iid = None;
+        self.pending_mr_related_issues_since = None;
+        self.fetching_pr_stacks.clear();
+        self.pending_stack_selector = None;
+        self.pr_stack_candidate = None;
+        self.diff_loading = false;
+        self.job_trace_loading = false;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;

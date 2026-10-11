@@ -734,11 +734,7 @@ pub fn build_runner_document(
         crate::app::Field::read_only("Status", runner.status.to_uppercase()),
         crate::app::Field::read_only(
             "Active",
-            if runner.active {
-                "YES".to_string()
-            } else {
-                "NO".to_string()
-            },
+            crate::app::runner_active_display(runner.active).to_string(),
         ),
     ];
     crate::app::EntityDocument {

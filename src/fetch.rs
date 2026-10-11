@@ -723,6 +723,9 @@ pub fn spawn_refresh_active_tab(
     tab: app::Tab,
     tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
+    if !tab.is_fetchable_in(scope) {
+        return;
+    }
     let mut client = client.clone();
     client.tx = None; // suppress terminal log for background fetches
     let scope = scope.clone();

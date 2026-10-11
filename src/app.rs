@@ -288,6 +288,16 @@ impl Tab {
         }
     }
 
+    /// Whether this tab's list can be fetched in `scope`. Runners are listed
+    /// per repository only, so in group scope the fetch could only fail on
+    /// every refresh.
+    pub fn is_fetchable_in(&self, scope: &crate::scope::Scope) -> bool {
+        match self {
+            Tab::Runners => scope.is_repository(),
+            _ => true,
+        }
+    }
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "issues" => Some(Tab::Issues),
@@ -3883,6 +3893,13 @@ pub(crate) fn runner_status_display(raw: &str) -> &'static str {
     }
 }
 
+/// The Runners `Active` cell text, matching the `YES`/`NO` of the Branches
+/// boolean columns. The column filter picker, search, group-by and the
+/// inspector all read it so they agree with what the table shows.
+pub(crate) fn runner_active_display(active: bool) -> &'static str {
+    if active { "YES" } else { "NO" }
+}
+
 /// Build the zero-padded percent string used as the sort/group key for the
 /// Milestones "Progress" column. Prefers the cheap aggregate derived from
 /// `Issue.milestone` (see `App::rebuild_milestone_progress_cache`) and
@@ -5897,13 +5914,13 @@ impl App {
         }
         let matcher = &*FUZZY_MATCHER;
         let q = query.trim();
-        items
+        let mut scored_items: Vec<(i64, &crate::domain::runners::Runner)> = items
             .iter()
-            .filter(|item| {
-                let mut matches = false;
+            .filter_map(|item| {
+                let mut best_score: Option<i64> = None;
                 let mut check_match = |text: &str| {
-                    if matcher.fuzzy_match(text, q).is_some() {
-                        matches = true;
+                    if let Some(score) = matcher.fuzzy_match(text, q) {
+                        best_score = Some(best_score.map_or(score, |best| best.max(score)));
                     }
                 };
                 if enabled_cols.contains("ID") {
@@ -5916,15 +5933,40 @@ impl App {
                 }
                 if enabled_cols.contains("Status") {
                     check_match(&item.status);
+                    check_match(runner_status_display(&item.status));
                 }
                 if enabled_cols.contains("Active") {
-                    let active_str = if item.active { "active" } else { "inactive" };
-                    check_match(active_str);
-                    check_match(&item.active.to_string());
+                    check_match(runner_active_display(item.active));
                 }
-                matches
+                best_score.map(|score| (score, item))
             })
-            .collect()
+            .collect();
+        scored_items.sort_by(|a, b| b.0.cmp(&a.0));
+        scored_items.into_iter().map(|(_, item)| item).collect()
+    }
+
+    pub fn filtered_runners_list<'a>(
+        items: &'a [crate::domain::runners::Runner],
+        query: &str,
+        enabled_columns: &std::collections::HashMap<Tab, std::collections::HashSet<String>>,
+        ascending: bool,
+        group_by_column: &Option<String>,
+    ) -> Vec<&'a crate::domain::runners::Runner> {
+        let default_set = std::collections::HashSet::new();
+        let enabled_cols = enabled_columns.get(&Tab::Runners).unwrap_or(&default_set);
+        let mut list = Self::filter_runners_list(items, query, enabled_cols);
+        if let Some(col) = group_by_column {
+            list.sort_by(|a, b| {
+                let cmp = match col.as_str() {
+                    "ID" => a.id.cmp(&b.id),
+                    _ => {
+                        Self::runner_filter_values(a, col).cmp(&Self::runner_filter_values(b, col))
+                    }
+                };
+                if ascending { cmp } else { cmp.reverse() }
+            });
+        }
+        list
     }
 
     pub fn runner_filter_values(item: &crate::domain::runners::Runner, col: &str) -> Vec<String> {
@@ -5935,7 +5977,7 @@ impl App {
             // value. The picker is a multi-select on displayed text, so a
             // lowercase entry would never match anything in the column.
             "Status" => vec![runner_status_display(&item.status).to_string()],
-            "Active" => vec![item.active.to_string()],
+            "Active" => vec![runner_active_display(item.active).to_string()],
             "Description" => item
                 .description
                 .as_ref()
@@ -5946,13 +5988,16 @@ impl App {
     }
 
     pub fn filtered_runners(&self) -> Vec<&crate::domain::runners::Runner> {
-        let default_set = std::collections::HashSet::new();
-        let enabled_cols = self
-            .enabled_columns
-            .get(&Tab::Runners)
-            .unwrap_or(&default_set);
-        let mut list: Vec<&crate::domain::runners::Runner> =
-            Self::filter_runners_list(&self.runners.items, &self.search_query, enabled_cols);
+        let mut list = Self::filtered_runners_list(
+            &self.runners.items,
+            &self.search_query,
+            &self.enabled_columns,
+            self.group_ascending
+                .get(&Tab::Runners)
+                .copied()
+                .unwrap_or(true),
+            self.group_by_column.get(&Tab::Runners).unwrap_or(&None),
+        );
         Self::apply_column_filters(
             &mut list,
             &self.column_filters,
@@ -7362,6 +7407,109 @@ mod tests {
         assert_eq!(runner_status_display("paused"), "PAUSED");
         assert_eq!(runner_status_display("offline"), "OFFLINE");
         assert_eq!(runner_status_display("not_a_state"), "UNKNOWN");
+    }
+
+    fn runner(
+        id: u64,
+        description: &str,
+        status: &str,
+        active: bool,
+    ) -> crate::domain::runners::Runner {
+        crate::domain::runners::Runner {
+            id,
+            description: Some(description.to_string()),
+            status: status.to_string(),
+            active,
+        }
+    }
+
+    fn runner_ids(list: &[&crate::domain::runners::Runner]) -> Vec<u64> {
+        list.iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn runner_search_ranks_the_closer_match_first() {
+        let runners = vec![
+            runner(
+                1,
+                "dedicated orchestrator cache keeper extra runner",
+                "online",
+                true,
+            ),
+            runner(2, "docker", "online", true),
+            runner(3, "shell", "online", true),
+        ];
+        let enabled: std::collections::HashSet<String> = Tab::Runners
+            .default_columns(BackendKind::GitLab, false)
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let found = App::filter_runners_list(&runners, "docker", &enabled);
+
+        assert_eq!(runner_ids(&found), vec![2, 1]);
+    }
+
+    #[test]
+    fn runner_search_matches_the_displayed_active_text() {
+        let runners = vec![
+            runner(1, "a", "online", true),
+            runner(2, "b", "paused", false),
+        ];
+        let enabled: std::collections::HashSet<String> = ["Active".to_string()].into();
+
+        assert_eq!(
+            runner_ids(&App::filter_runners_list(&runners, "YES", &enabled)),
+            vec![1]
+        );
+        assert_eq!(
+            runner_ids(&App::filter_runners_list(&runners, "NO", &enabled)),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn runners_group_by_status_orders_by_displayed_status() {
+        let runners = vec![
+            runner(1, "a", "paused", false),
+            runner(2, "b", "online", true),
+            runner(3, "c", "offline", true),
+            runner(4, "d", "online", true),
+        ];
+        let group_by = Some("Status".to_string());
+        let enabled = std::collections::HashMap::new();
+
+        let ascending = App::filtered_runners_list(&runners, "", &enabled, true, &group_by);
+        let descending = App::filtered_runners_list(&runners, "", &enabled, false, &group_by);
+
+        assert_eq!(runner_ids(&ascending), vec![3, 2, 4, 1]);
+        assert_eq!(runner_ids(&descending), vec![1, 2, 4, 3]);
+    }
+
+    #[test]
+    fn runners_group_by_id_sorts_numerically() {
+        let runners = vec![
+            runner(10, "a", "online", true),
+            runner(9, "b", "online", true),
+        ];
+        let enabled = std::collections::HashMap::new();
+
+        let list =
+            App::filtered_runners_list(&runners, "", &enabled, true, &Some("ID".to_string()));
+
+        assert_eq!(runner_ids(&list), vec![9, 10]);
+    }
+
+    #[test]
+    fn runner_active_filter_values_match_the_yes_no_cell() {
+        assert_eq!(
+            App::runner_filter_values(&runner(1, "a", "online", true), "Active"),
+            vec!["YES".to_string()]
+        );
+        assert_eq!(
+            App::runner_filter_values(&runner(2, "b", "paused", false), "Active"),
+            vec!["NO".to_string()]
+        );
     }
 
     #[test]

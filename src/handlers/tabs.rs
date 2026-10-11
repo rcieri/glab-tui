@@ -1873,14 +1873,16 @@ pub async fn handle_active_tab_key(
             }
         }
         crate::app::Tab::Runners => {
+            let can_manage_runners = app.kind().supports_runner_management();
             if let Some(selected_idx) = app.runners.state.selected() {
                 if let Some(item) = app.filtered_runners().get(selected_idx) {
                     let runner_id = item.id;
                     match key_event.code {
-                        _ if keybinding_matches(
-                            &app.config.keybindings.runners.pause,
-                            key_event,
-                        ) =>
+                        _ if can_manage_runners
+                            && keybinding_matches(
+                                &app.config.keybindings.runners.pause,
+                                key_event,
+                            ) =>
                         {
                             let prev = item.status.clone();
                             let prev_active = item.active;
@@ -1909,10 +1911,11 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.runners.resume,
-                            key_event,
-                        ) =>
+                        _ if can_manage_runners
+                            && keybinding_matches(
+                                &app.config.keybindings.runners.resume,
+                                key_event,
+                            ) =>
                         {
                             let prev = item.status.clone();
                             let prev_active = item.active;
@@ -1941,10 +1944,11 @@ pub async fn handle_active_tab_key(
                                 });
                             }
                         }
-                        _ if keybinding_matches(
-                            &app.config.keybindings.runners.edit_description,
-                            key_event,
-                        ) =>
+                        _ if can_manage_runners
+                            && keybinding_matches(
+                                &app.config.keybindings.runners.edit_description,
+                                key_event,
+                            ) =>
                         {
                             let current_desc = item.description.clone().unwrap_or_default();
                             app.text_input = Some(crate::app::TextInput {

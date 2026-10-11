@@ -395,10 +395,11 @@ pub async fn handle_active_tab_key(
             _ if keybinding_matches(&app.config.keybindings.issues.create_issue, key_event) => {
                 let is_github = app.is_github();
                 let project = if app.scope.is_group() {
+                    let issues = app.filtered_issues();
                     app.issues
                         .state
                         .selected()
-                        .and_then(|idx| app.issues.items.get(idx))
+                        .and_then(|idx| issues.get(idx))
                         .map(|i| {
                             if !i.project_path.is_empty() {
                                 i.project_path.clone()
@@ -801,10 +802,11 @@ pub async fn handle_active_tab_key(
                 };
                 let target_branch_val = get_default_branch().unwrap_or_else(|| "main".to_string());
                 let project = if app.scope.is_group() {
+                    let mrs = app.filtered_mrs();
                     app.mrs
                         .state
                         .selected()
-                        .and_then(|idx| app.mrs.items.get(idx))
+                        .and_then(|idx| mrs.get(idx))
                         .map(|m| {
                             if !m.project_path.is_empty() {
                                 m.project_path.clone()
@@ -1313,11 +1315,12 @@ pub async fn handle_active_tab_key(
                 let is_github = app.is_github();
                 let mut fields = vec![];
                 let default_project = if app.scope.is_group() {
+                    let pipelines = app.filtered_pipelines();
                     let proj = app
                         .pipelines
                         .state
                         .selected()
-                        .and_then(|idx| app.pipelines.items.get(idx))
+                        .and_then(|idx| pipelines.get(idx))
                         .map(|p| p.project_path.clone())
                         .filter(|p| !p.is_empty())
                         .unwrap_or_default();
@@ -1694,10 +1697,12 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let jobs = &app.jobs.items;
-                            if let Some(highlighted_job) = jobs.get(idx) {
-                                let stage_name = highlighted_job.stage();
-                                for job in jobs {
+                            let highlighted_stage = app
+                                .filtered_jobs()
+                                .get(idx)
+                                .map(|job| job.stage().to_string());
+                            if let Some(stage_name) = highlighted_stage {
+                                for job in &app.jobs.items {
                                     if job.stage() == stage_name {
                                         app.selected_jobs.insert(job.id());
                                     }
@@ -2135,32 +2140,8 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            let n_id = item.id.clone();
-                            let target_iid = item.target_iid;
-                            let target_type = item.target_type.clone();
-                            spawn_mark_todo_read(app, n_id, &tx);
-                            app.active_tab = match target_type.as_str() {
-                                "MergeRequest" => crate::app::Tab::MergeRequests,
-                                _ => crate::app::Tab::Issues,
-                            };
-                            app.update_filter_selection();
-                            match app.active_tab {
-                                crate::app::Tab::Issues => {
-                                    if let Some(pos) =
-                                        app.issues.items.iter().position(|i| i.iid == target_iid)
-                                    {
-                                        app.issues.state.select(Some(pos));
-                                    }
-                                }
-                                crate::app::Tab::MergeRequests => {
-                                    if let Some(pos) =
-                                        app.mrs.items.iter().position(|m| m.iid == target_iid)
-                                    {
-                                        app.mrs.state.select(Some(pos));
-                                    }
-                                }
-                                _ => {}
-                            }
+                            let todo = (*item).clone();
+                            mark_todo_read_and_jump(app, todo, &tx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.todos.open_in_browser,
@@ -2210,10 +2191,11 @@ pub async fn handle_active_tab_key(
             {
                 let is_github = app.is_github();
                 let project = if app.scope.is_group() {
+                    let milestones = app.filtered_milestones();
                     app.milestones
                         .state
                         .selected()
-                        .and_then(|idx| app.milestones.items.get(idx))
+                        .and_then(|idx| milestones.get(idx))
                         .map(|m| m.project_path.clone())
                         .filter(|p| !p.is_empty())
                         .unwrap_or_default()
@@ -2656,32 +2638,8 @@ pub async fn handle_active_tab_key(
                 crate::app::Tab::Todos => {
                     if let Some(idx) = app.todos.state.selected() {
                         if let Some(n) = app.filtered_todos().get(idx) {
-                            let n_id = n.id.clone();
-                            let target_iid = n.target_iid;
-                            let target_type = n.target_type.clone();
-                            spawn_mark_todo_read(app, n_id, &tx);
-                            app.active_tab = match target_type.as_str() {
-                                "MergeRequest" => crate::app::Tab::MergeRequests,
-                                _ => crate::app::Tab::Issues,
-                            };
-                            app.update_filter_selection();
-                            match app.active_tab {
-                                crate::app::Tab::Issues => {
-                                    if let Some(pos) =
-                                        app.issues.items.iter().position(|i| i.iid == target_iid)
-                                    {
-                                        app.issues.state.select(Some(pos));
-                                    }
-                                }
-                                crate::app::Tab::MergeRequests => {
-                                    if let Some(pos) =
-                                        app.mrs.items.iter().position(|m| m.iid == target_iid)
-                                    {
-                                        app.mrs.state.select(Some(pos));
-                                    }
-                                }
-                                _ => {}
-                            }
+                            let todo = (*n).clone();
+                            mark_todo_read_and_jump(app, todo, &tx);
                         }
                     }
                 }
@@ -3222,22 +3180,19 @@ pub async fn handle_active_tab_key(
     handled
 }
 
-/// Switch to the Merge Requests tab and focus the given MR/PR. If the MR is
-/// already loaded, focus it immediately; otherwise set `pending_mr_select`
-/// so the `Event::MrsFetched` handler in `main.rs` can focus it once the
-/// in-flight tab refresh completes.
+/// Switch to the Merge Requests tab, drop the filters that would hide the
+/// target, and focus the given MR/PR. If the MR is already loaded, focus it
+/// immediately; otherwise set `pending_mr_select` so the `Event::MrsFetched`
+/// handler in `main.rs` can focus it once the in-flight tab refresh completes.
 pub(crate) fn jump_to_mr_tab(
     app: &mut crate::app::App,
     mr_iid: u64,
     client: Option<crate::domain::client::GitlabClient>,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
 ) {
-    if let Some(idx) = app.mrs.items.iter().position(|m| m.iid == mr_iid) {
-        app.mrs.state.select(Some(idx));
-    } else {
+    if !app.focus_mr(None, mr_iid) {
         app.pending_mr_select = Some(mr_iid);
     }
-    app.active_tab = crate::app::Tab::MergeRequests;
     app.detail_scroll = 0;
     if let Some(client) = client {
         crate::fetch::spawn_refresh_active_tab(
@@ -3299,22 +3254,20 @@ async fn enter_pipeline_jobs(
     }
 }
 
-/// Switch to the Issues tab and focus the given Issue. If the Issue is
-/// already loaded, focus it immediately; otherwise set `pending_issue_select`
-/// so the `Event::IssuesFetched` handler in `main.rs` can focus it once the
-/// in-flight tab refresh completes.
+/// Switch to the Issues tab, drop the filters that would hide the target, and
+/// focus the given Issue. If the Issue is already loaded, focus it
+/// immediately; otherwise set `pending_issue_select` so the
+/// `Event::IssuesFetched` handler in `main.rs` can focus it once the in-flight
+/// tab refresh completes.
 pub(crate) fn jump_to_issue_tab(
     app: &mut crate::app::App,
     issue_iid: u64,
     client: Option<crate::domain::client::GitlabClient>,
     tx: tokio::sync::mpsc::UnboundedSender<crate::event::Event>,
 ) {
-    if let Some(idx) = app.issues.items.iter().position(|i| i.iid == issue_iid) {
-        app.issues.state.select(Some(idx));
-    } else {
+    if !app.focus_issue(None, issue_iid) {
         app.pending_issue_select = Some(issue_iid);
     }
-    app.active_tab = crate::app::Tab::Issues;
     app.detail_scroll = 0;
     if let Some(client) = client {
         crate::fetch::spawn_refresh_active_tab(
@@ -3338,12 +3291,29 @@ pub(crate) fn jump_to_issue_tab_from_selector(
     jump_to_issue_tab(app, issue_iid, Some(client.clone()), tx);
 }
 
+/// Mark `todo` read and jump to the issue or MR/PR it points at, in the
+/// todo's own project rather than any row that shares its number.
+fn mark_todo_read_and_jump(
+    app: &mut crate::app::App,
+    todo: crate::domain::notifications::Notification,
+    tx: &UnboundedSender<Event>,
+) {
+    spawn_mark_todo_read(app, todo.id.clone(), tx);
+    let project = (!todo.project_path.is_empty()).then_some(todo.project_path.as_str());
+    if todo.target_type == "MergeRequest" {
+        app.focus_mr(project, todo.target_iid);
+    } else {
+        app.focus_issue(project, todo.target_iid);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::App;
     use crate::event::ScopeGeneration;
     use crossterm::event::{KeyEvent, KeyModifiers};
+    use std::collections::{HashMap, HashSet};
 
     #[tokio::test]
     async fn failed_bulk_mutation_reverts_only_failed_rows_and_reports_once() {
@@ -4112,5 +4082,179 @@ mod tests {
             crate::app::ConfirmAction::CloseMilestone(3)
         ));
         assert_eq!(dialog.project_path, "acme/beta");
+    }
+
+    fn issue_in(project: &str, iid: u64) -> crate::domain::issues::Issue {
+        serde_json::from_value(serde_json::json!({
+            "iid": iid,
+            "title": format!("Issue {iid}"),
+            "state": "opened",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "author": { "username": "alice" },
+            "project_path": project,
+        }))
+        .expect("issue fixture")
+    }
+
+    fn mr_in(project: &str, iid: u64, author: &str) -> crate::domain::mr::MergeRequest {
+        serde_json::from_value(serde_json::json!({
+            "iid": iid,
+            "title": format!("MR {iid}"),
+            "state": "opened",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "author": { "username": author },
+            "target_branch": "main",
+            "draft": false,
+            "project_path": project,
+        }))
+        .expect("merge request fixture")
+    }
+
+    fn todo_for(
+        project: &str,
+        target_type: &str,
+        iid: u64,
+    ) -> crate::domain::notifications::Notification {
+        serde_json::from_value(serde_json::json!({
+            "id": "todo-1",
+            "project_path": project,
+            "title": "Review me",
+            "target_type": target_type,
+            "target_iid": iid,
+            "state": "pending",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("todo fixture")
+    }
+
+    fn column_filter(column: &str, value: &str) -> HashMap<String, HashSet<String>> {
+        HashMap::from([(column.to_string(), HashSet::from([value.to_string()]))])
+    }
+
+    fn enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    #[tokio::test]
+    async fn group_milestone_create_uses_project_of_highlighted_filtered_row() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("grp".to_string());
+        app.active_tab = crate::app::Tab::Milestones;
+        app.milestones.items = serde_json::from_value(serde_json::json!([
+            { "iid": 1, "title": "Alpha", "description": null, "start_date": null,
+              "due_date": null, "project_path": "grp/a" },
+            { "iid": 2, "title": "Beta", "description": null, "start_date": null,
+              "due_date": null, "project_path": "grp/b" },
+        ]))
+        .expect("milestone fixtures");
+        app.column_filters
+            .insert(crate::app::Tab::Milestones, column_filter("Title", "Beta"));
+        app.milestones.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+        )
+        .await;
+
+        let menu = app.edit_menu.expect("create milestone menu");
+        assert_eq!(menu.entity_project, "grp/b");
+    }
+
+    #[tokio::test]
+    async fn select_stage_selects_stage_of_highlighted_filtered_job() {
+        let mut app = App::default();
+        app.active_tab = crate::app::Tab::Jobs;
+        app.jobs.items = serde_json::from_value(serde_json::json!([
+            { "id": 1, "status": "success", "stage": "build", "name": "compile" },
+            { "id": 2, "status": "success", "stage": "test", "name": "unit" },
+            { "id": 3, "status": "failed", "stage": "test", "name": "e2e" },
+        ]))
+        .expect("job fixtures");
+        app.column_filters
+            .insert(crate::app::Tab::Jobs, column_filter("Stage", "test"));
+        app.jobs.state.select(Some(0));
+
+        dispatch(
+            &mut app,
+            &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+        )
+        .await;
+
+        assert_eq!(app.selected_jobs, HashSet::from([2, 3]));
+    }
+
+    #[tokio::test]
+    async fn todo_jump_highlights_issue_in_the_todos_project() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("grp".to_string());
+        app.issues.items = vec![issue_in("grp/a", 7), issue_in("grp/b", 7)];
+        app.todos.items = vec![todo_for("grp/b", "Issue", 7)];
+        app.active_tab = crate::app::Tab::Todos;
+        app.todos.state.select(Some(0));
+
+        dispatch(&mut app, &enter()).await;
+
+        assert_eq!(app.active_tab, crate::app::Tab::Issues);
+        let selected = app
+            .issues
+            .state
+            .selected()
+            .and_then(|idx| app.filtered_issues().get(idx).copied())
+            .map(|issue| (issue.project_path.clone(), issue.iid));
+        assert_eq!(selected, Some(("grp/b".to_string(), 7)));
+    }
+
+    #[tokio::test]
+    async fn enter_on_todo_with_remapped_mark_as_read_highlights_mr_in_the_todos_project() {
+        let mut app = App::default();
+        app.config.keybindings.todos.mark_as_read = "x".to_string();
+        app.scope = crate::scope::Scope::Group("grp".to_string());
+        app.mrs.items = vec![mr_in("grp/a", 3, "alice"), mr_in("grp/b", 3, "alice")];
+        app.todos.items = vec![todo_for("grp/b", "MergeRequest", 3)];
+        app.active_tab = crate::app::Tab::Todos;
+        app.todos.state.select(Some(0));
+
+        dispatch(&mut app, &enter()).await;
+
+        assert_eq!(app.active_tab, crate::app::Tab::MergeRequests);
+        assert_eq!(app.selected_mr_ref(), Some(("grp/b".to_string(), 3)));
+    }
+
+    #[tokio::test]
+    async fn todo_from_another_project_does_not_highlight_a_same_numbered_issue() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("me/repo".to_string());
+        app.issues.items = vec![issue_in("", 1), issue_in("", 7)];
+        app.issues.state.select(Some(0));
+        app.todos.items = vec![todo_for("other/proj", "Issue", 7)];
+        app.active_tab = crate::app::Tab::Todos;
+        app.todos.state.select(Some(0));
+
+        dispatch(&mut app, &enter()).await;
+
+        assert_eq!(app.active_tab, crate::app::Tab::Issues);
+        assert_eq!(app.issues.state.selected(), Some(0));
+    }
+
+    #[test]
+    fn jump_to_mr_tab_highlights_target_mr_while_a_filter_hides_earlier_rows() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("me/repo".to_string());
+        app.mrs.items = vec![
+            mr_in("me/repo", 1, "alice"),
+            mr_in("me/repo", 2, "bob"),
+            mr_in("me/repo", 3, "bob"),
+        ];
+        app.column_filters.insert(
+            crate::app::Tab::MergeRequests,
+            column_filter("Author", "bob"),
+        );
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        jump_to_mr_tab(&mut app, 3, None, tx);
+
+        assert_eq!(app.active_tab, crate::app::Tab::MergeRequests);
+        assert_eq!(app.selected_mr_ref(), Some(("me/repo".to_string(), 3)));
     }
 }

@@ -31,7 +31,7 @@ pub fn create_dir_all(path: &Path) -> io::Result<()> {
 }
 
 /// Writes `contents` to `path` with mode `0600`, tightening an existing file
-/// before the new contents land in it.
+/// before truncating it, so a refused chmod leaves the old contents intact.
 pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -40,10 +40,11 @@ pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .truncate(true)
+            .truncate(false)
             .mode(PRIVATE_FILE_MODE)
             .open(path)?;
         file.set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE_MODE))?;
+        file.set_len(0)?;
         file.write_all(contents.as_ref())
     }
     #[cfg(not(unix))]

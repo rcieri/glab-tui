@@ -12,6 +12,8 @@ pub struct Release {
     pub commit_id: Option<String>,
     pub commit_title: Option<String>,
     pub assets_link: Option<String>,
+    #[serde(default)]
+    pub project_path: String,
 }
 
 pub async fn list_releases(

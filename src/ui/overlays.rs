@@ -1793,7 +1793,7 @@ pub(crate) fn render_help(f: &mut Frame, app: &mut App, size: Rect) {
         Shortcut {
             category: "Releases",
             key: d(app.config.keybindings.releases.create_release.clone()),
-            action: "Create new release tag & changelog",
+            action: "Create new release",
         },
         Shortcut {
             category: "Releases",

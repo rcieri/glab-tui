@@ -1,6 +1,5 @@
 use crate::AppTerminal;
 use crate::app::App;
-use crate::entity_editor::rebuild_edit_menu;
 use crate::event::Event;
 use crate::fetch::spawn_refresh_active_tab;
 use crate::git_helpers::{get_default_branch, slugify};
@@ -2031,14 +2030,7 @@ pub async fn handle_active_tab_key(
                         filtered.get(selected_idx).map(|r| r.tag_name.clone())
                     };
                     if let Some(tag_name) = release_tag {
-                        if let Some(idx) = app
-                            .releases
-                            .items
-                            .iter()
-                            .position(|r| r.tag_name == tag_name)
-                        {
-                            rebuild_edit_menu(app, "release", idx as u64);
-                        }
+                        crate::entity_editor::open_release_edit_menu(app, &tag_name);
                     }
                 }
             }
@@ -2065,7 +2057,7 @@ pub async fn handle_active_tab_key(
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
-                        let project_path = app.scope.as_str().to_string();
+                        let project_path = app.project_path_for_release(&release.tag_name);
                         let tag_name = release.tag_name.clone();
                         let tx2 = tx.clone();
 
@@ -2879,32 +2871,14 @@ pub async fn handle_active_tab_key(
                             }
                             crate::app::Tab::Releases => {
                                 if let Some(selected_idx) = app.releases.state.selected() {
-                                    let filtered = app.filtered_releases();
-                                    if let Some(release) = filtered.get(selected_idx) {
-                                        let mut doc =
-                                            crate::entity_editor::build_release_document(release);
-                                        doc.fields.push(crate::app::Field::text(
-                                            "Description",
-                                            release.description.clone().unwrap_or_default(),
-                                        ));
-                                        app.open_edit_menu(crate::app::EditMenu {
-                                            title: format!("Edit Release {}", release.tag_name),
-                                            entity_project: app.scope.as_str().to_string(),
-                                            fields: doc.fields,
-                                            initial_fields: std::collections::HashMap::new(),
-                                            selected_idx: 0,
-                                            entity_iid: 0,
-                                            entity_kind: crate::app::EditEntityKind::EditRelease,
-                                            state: {
-                                                let mut s = ListState::default();
-                                                s.select(Some(0));
-                                                s
-                                            },
-                                            workflow_inputs: vec![],
-                                            cursor_pos: 0,
-                                            editing: false,
-                                            desc_scroll: 0,
-                                        });
+                                    let release_tag = app
+                                        .filtered_releases()
+                                        .get(selected_idx)
+                                        .map(|r| r.tag_name.clone());
+                                    if let Some(tag_name) = release_tag {
+                                        crate::entity_editor::open_release_edit_menu(
+                                            app, &tag_name,
+                                        );
                                     }
                                 }
                             }

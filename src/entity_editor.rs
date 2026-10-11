@@ -961,27 +961,24 @@ pub fn apply_field_text_change(
     }
 
     if entity_type == "release" {
-        let release_opt = app.releases.items.get(iid as usize).cloned();
+        let Some(tag_name) = edited_release_tag(app) else {
+            return;
+        };
+        let release_opt = app
+            .releases
+            .items
+            .iter_mut()
+            .find(|r| r.tag_name == tag_name);
         if let Some(release) = release_opt {
-            let mut name = release.name.clone();
-            let mut tag = release.tag_name.clone();
-            let mut description = release.description.clone().unwrap_or_default();
-
-            match field_type {
-                "title" | "release_name" => name = value.clone(),
-                "tag" => tag = value.clone(),
-                "description" => description = value.clone(),
-                _ => {}
+            if field_type == "title" || field_type == "release_name" {
+                release.name = value.clone();
             }
-
-            if let Some(item) = app.releases.items.get_mut(iid as usize) {
-                if field_type == "title" || field_type == "release_name" {
-                    item.name = value.clone();
-                }
-                if field_type == "description" {
-                    item.description = Some(value.clone());
-                }
+            if field_type == "description" {
+                release.description = Some(value.clone());
             }
+            let name = release.name.clone();
+            let tag = release.tag_name.clone();
+            let description = release.description.clone().unwrap_or_default();
 
             let Some(client) = app.gitlab_client.clone() else {
                 return;
@@ -1581,34 +1578,61 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
             });
         }
     } else if entity_type == "release" {
-        if let Some(release) = app.releases.items.get(entity_iid as usize).cloned() {
-            let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
-            let mut doc = build_release_document(&release);
-            doc.fields.push(crate::app::Field::text(
-                "Release Notes",
-                release.description.clone().unwrap_or_default(),
-            ));
-
-            app.open_edit_menu(crate::app::EditMenu {
-                title: format!("Edit Release {}", release.tag_name),
-                entity_project: app.scope.as_str().to_string(),
-                fields: doc.fields,
-                initial_fields: std::collections::HashMap::new(),
-                selected_idx,
-                entity_iid,
-                entity_kind: crate::app::EditEntityKind::EditRelease,
-                state: {
-                    let mut s = ratatui::widgets::ListState::default();
-                    s.select(Some(selected_idx));
-                    s
-                },
-                workflow_inputs: vec![],
-                cursor_pos: 0,
-                editing: false,
-                desc_scroll: 0,
-            });
+        if let Some(tag_name) = edited_release_tag(app) {
+            open_release_edit_menu(app, &tag_name);
         }
     }
+}
+
+/// The tag of the release the open edit form belongs to. The form's Tag
+/// field is read-only, so it identifies the release across list refetches
+/// that reorder `app.releases`.
+fn edited_release_tag(app: &App) -> Option<String> {
+    let menu = app.edit_menu.as_ref()?;
+    if menu.entity_kind != crate::app::EditEntityKind::EditRelease {
+        return None;
+    }
+    menu.fields
+        .iter()
+        .find(|f| f.label == "Tag")
+        .map(|f| f.value.clone())
+}
+
+pub fn open_release_edit_menu(app: &mut App, tag_name: &str) {
+    let Some(release) = app
+        .releases
+        .items
+        .iter()
+        .find(|r| r.tag_name == tag_name)
+        .cloned()
+    else {
+        return;
+    };
+    let selected_idx = app.edit_menu.as_ref().map(|m| m.selected_idx).unwrap_or(0);
+    let mut doc = build_release_document(&release);
+    doc.fields.push(crate::app::Field::text(
+        "Release Notes",
+        release.description.clone().unwrap_or_default(),
+    ));
+
+    app.open_edit_menu(crate::app::EditMenu {
+        title: format!("Edit Release {}", release.tag_name),
+        entity_project: app.project_path_for_release(&release.tag_name),
+        fields: doc.fields,
+        initial_fields: std::collections::HashMap::new(),
+        selected_idx,
+        entity_iid: 0,
+        entity_kind: crate::app::EditEntityKind::EditRelease,
+        state: {
+            let mut s = ratatui::widgets::ListState::default();
+            s.select(Some(selected_idx));
+            s
+        },
+        workflow_inputs: vec![],
+        cursor_pos: 0,
+        editing: false,
+        desc_scroll: 0,
+    });
 }
 
 pub async fn handle_entity_update(
@@ -2388,5 +2412,51 @@ mod tests {
         } else {
             panic!("Expected Markdown content");
         }
+    }
+
+    #[test]
+    fn release_edit_form_rebuilds_from_its_tag_after_the_list_reorders() {
+        let release = |tag: &str, project: &str| crate::domain::releases::Release {
+            name: format!("Release {tag}"),
+            tag_name: tag.to_string(),
+            released_at: "2026-10-01".to_string(),
+            description: Some(format!("notes for {tag}")),
+            author_name: None,
+            commit_id: None,
+            commit_title: None,
+            assets_link: None,
+            project_path: project.to_string(),
+        };
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.releases.items = vec![
+            release("v1.0.0", "group/a"),
+            release("v2.0.0", "group/b"),
+            release("v3.0.0", "group/c"),
+        ];
+
+        open_release_edit_menu(&mut app, "v2.0.0");
+        app.releases.items.rotate_right(1);
+        let entity_iid = app
+            .edit_menu
+            .as_ref()
+            .map(|m| m.entity_iid)
+            .unwrap_or_default();
+        rebuild_edit_menu(&mut app, "release", entity_iid);
+
+        let menu = app
+            .edit_menu
+            .as_ref()
+            .expect("release edit form stays open");
+        let field = |label: &str| {
+            menu.fields
+                .iter()
+                .find(|f| f.label == label)
+                .map(|f| f.value.as_str())
+        };
+        assert_eq!(menu.title, "Edit Release v2.0.0");
+        assert_eq!(menu.entity_project, "group/b");
+        assert_eq!(field("Tag"), Some("v2.0.0"));
+        assert_eq!(field("Release Notes"), Some("notes for v2.0.0"));
     }
 }

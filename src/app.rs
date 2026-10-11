@@ -2813,7 +2813,6 @@ pub enum TextInputAction {
         end_old_line_num: Option<u32>,
     },
     EnterPipelineId,
-    CreateRelease,
     CreateMilestone,
     SubmitReviewFinal {
         mr_iid: u64,
@@ -4194,8 +4193,14 @@ impl App {
             .unwrap_or_else(|| self.scope.as_str().to_string())
     }
 
-    pub fn project_path_for_release(&self, _tag_name: &str) -> String {
-        self.scope.as_str().to_string()
+    pub fn project_path_for_release(&self, tag_name: &str) -> String {
+        self.releases
+            .items
+            .iter()
+            .find(|r| r.tag_name == tag_name)
+            .map(|r| r.project_path.clone())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| self.scope.as_str().to_string())
     }
 
     pub fn project_path_for_milestone(&self, iid: u64) -> String {
@@ -5986,7 +5991,7 @@ impl App {
                     check_match(&item.released_at);
                     check_match(&crate::utils::format::time_ago(&item.released_at));
                 }
-                if enabled_cols.contains("Description") {
+                if enabled_cols.contains("Release Notes") {
                     if let Some(ref desc) = item.description {
                         check_match(desc);
                     }
@@ -6017,7 +6022,7 @@ impl App {
                     "Tag" => a.tag_name.clone(),
                     "Release Name" => a.name.clone(),
                     "Date" => a.released_at.clone(),
-                    "Description" => a.description.clone().unwrap_or_default(),
+                    "Release Notes" => a.description.clone().unwrap_or_default(),
                     "Author" => a.author_name.clone().unwrap_or_default(),
                     _ => String::new(),
                 };
@@ -6025,7 +6030,7 @@ impl App {
                     "Tag" => b.tag_name.clone(),
                     "Release Name" => b.name.clone(),
                     "Date" => b.released_at.clone(),
-                    "Description" => b.description.clone().unwrap_or_default(),
+                    "Release Notes" => b.description.clone().unwrap_or_default(),
                     "Author" => b.author_name.clone().unwrap_or_default(),
                     _ => String::new(),
                 };
@@ -6043,7 +6048,7 @@ impl App {
         match col {
             "Tag" => vec![item.tag_name.clone()],
             "Release Name" => vec![item.name.clone()],
-            "Description" => item
+            "Release Notes" => item
                 .description
                 .clone()
                 .map(|d| vec![d])
@@ -7381,6 +7386,93 @@ mod tests {
         };
         let values = App::milestone_filter_values(&closed, "State");
         assert_eq!(values, vec!["CLOSED".to_string()]);
+    }
+
+    fn release_fixture(tag: &str, notes: &str, project: &str) -> crate::domain::releases::Release {
+        crate::domain::releases::Release {
+            name: format!("Release {tag}"),
+            tag_name: tag.to_string(),
+            released_at: "2026-10-01".to_string(),
+            description: Some(notes.to_string()),
+            author_name: None,
+            commit_id: None,
+            commit_title: None,
+            assets_link: None,
+            project_path: project.to_string(),
+        }
+    }
+
+    #[test]
+    fn release_notes_column_drives_search_and_column_filter() {
+        let mut app = App::default();
+        app.releases.items = vec![
+            release_fixture("v1.0.0", "Fixes the login crash", "owner/repo"),
+            release_fixture("v1.1.0", "Adds dark mode", "owner/repo"),
+        ];
+        app.enabled_columns
+            .entry(Tab::Releases)
+            .or_default()
+            .insert("Release Notes".to_string());
+
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Releases, "Release Notes"),
+            vec![
+                "Adds dark mode".to_string(),
+                "Fixes the login crash".to_string()
+            ]
+        );
+
+        app.search_query = "login crash".to_string();
+        let tags: Vec<&str> = app
+            .filtered_releases()
+            .iter()
+            .map(|r| r.tag_name.as_str())
+            .collect();
+        assert_eq!(tags, vec!["v1.0.0"]);
+
+        app.search_query.clear();
+        app.set_column_filter(
+            Tab::Releases,
+            "Release Notes",
+            ["Adds dark mode".to_string()].into_iter().collect(),
+        );
+        let tags: Vec<&str> = app
+            .filtered_releases()
+            .iter()
+            .map(|r| r.tag_name.as_str())
+            .collect();
+        assert_eq!(tags, vec!["v1.1.0"]);
+    }
+
+    #[test]
+    fn grouping_releases_by_release_notes_sorts_by_notes_text() {
+        let items = vec![
+            release_fixture("v1.0.0", "b second", "owner/repo"),
+            release_fixture("v1.1.0", "a first", "owner/repo"),
+        ];
+        let sorted = App::filtered_releases_list(
+            &items,
+            "",
+            &std::collections::HashMap::new(),
+            true,
+            &Some("Release Notes".to_string()),
+        );
+        let tags: Vec<&str> = sorted.iter().map(|r| r.tag_name.as_str()).collect();
+        assert_eq!(tags, vec!["v1.1.0", "v1.0.0"]);
+    }
+
+    #[test]
+    fn release_project_resolves_to_the_release_own_project_in_group_scope() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.releases.items = vec![
+            release_fixture("v1.0.0", "", "group/repo-a"),
+            release_fixture("v2.0.0", "", ""),
+        ];
+
+        assert_eq!(app.project_path_for_release("v1.0.0"), "group/repo-a");
+        assert_eq!(app.project_path_for_release("v2.0.0"), "group");
+        assert_eq!(app.project_path_for_release("v9.9.9"), "group");
     }
 
     #[test]

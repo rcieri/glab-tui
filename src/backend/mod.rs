@@ -2,6 +2,7 @@ mod bounded_output;
 pub mod gh;
 pub mod glab;
 pub mod rate_limit;
+pub mod subprocess;
 
 use crate::domain::branches::Branch;
 use crate::domain::deployments::{Deployment, Environment};

@@ -38,6 +38,15 @@ pub(crate) async fn output_bounded(
     command: &mut Command,
     max_stdout_bytes: Option<usize>,
 ) -> io::Result<BoundedOutput> {
+    output_bounded_within(command, max_stdout_bytes, crate::config::command_timeout()).await
+}
+
+pub(crate) async fn output_bounded_within(
+    command: &mut Command,
+    max_stdout_bytes: Option<usize>,
+    timeout: std::time::Duration,
+) -> io::Result<BoundedOutput> {
+    let invocation = super::subprocess::describe(command);
     // Uncapped runs carry mutations (merge, approve, delete): a CLI already
     // started finishes even when glab-tui quits before it does.
     command
@@ -45,37 +54,69 @@ pub(crate) async fn output_bounded(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(max_stdout_bytes.is_some());
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().map_err(|e| {
+        io::Error::other(format!("Failed to execute: {invocation}: {e}"))
+    })?;
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return Err(io::Error::other(
             "child process has no stdout or stderr pipe",
         ));
     };
 
-    let read_stdout = async {
+    let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let read_stdout = async move {
         let (bytes, is_truncated) = match max_stdout_bytes {
             Some(limit) => read_prefix(stdout, limit).await?,
             None => (read_all(stdout).await?, false),
         };
         if is_truncated {
-            child.start_kill()?;
+            let _ = kill_tx.send(());
         }
         io::Result::Ok(CapturedStdout {
             bytes,
             is_truncated,
         })
     };
-    // Stderr past its limit is drained, not left in the pipe: a child blocked
-    // on a full stderr pipe would never finish writing stdout.
-    let read_stderr = async {
+    let read_stderr = async move {
         let (kept, has_more) = read_prefix_from(stderr, STDERR_MAX_BYTES).await?;
         if let Some(mut rest) = has_more {
             tokio::io::copy(&mut rest, &mut tokio::io::sink()).await?;
         }
         io::Result::Ok(kept)
     };
-    let (stdout, stderr) = tokio::try_join!(read_stdout, read_stderr)?;
-    let status = child.wait().await?;
+    let killer = async {
+        if kill_rx.await.is_ok() {
+            let _ = child.start_kill();
+        }
+        io::Result::Ok(())
+    };
+
+    let read_all_streams = async {
+        let (stdout, stderr, _) = tokio::try_join!(read_stdout, read_stderr, killer)?;
+        io::Result::Ok((stdout, stderr))
+    };
+
+    let (stdout, stderr) = match tokio::time::timeout(timeout, read_all_streams).await {
+        Ok(res) => res?,
+        Err(_) => {
+            let _ = child.kill().await;
+            return Err(io::Error::other(format!(
+                "{invocation} timed out after {timeout:?} and was killed \
+                 (raise command_timeout_seconds in config.toml for a slow host)"
+            )));
+        }
+    };
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(res) => res?,
+        Err(_) => {
+            let _ = child.kill().await;
+            return Err(io::Error::other(format!(
+                "{invocation} timed out after {timeout:?} and was killed \
+                 (raise command_timeout_seconds in config.toml for a slow host)"
+            )));
+        }
+    };
     Ok(BoundedOutput {
         status,
         stdout,

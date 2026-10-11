@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::LazyLock as Lazy;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 /// Serializes tests that mutate process-global environment variables
 /// (config paths, cache dirs). Env vars are visible to every test thread,
@@ -1638,6 +1640,10 @@ fn def_prefetch_tabs() -> bool {
     false
 }
 
+fn def_command_timeout_seconds() -> u64 {
+    120
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1682,6 +1688,10 @@ pub struct Config {
     /// startup and repository switches. Off by default to conserve API quota.
     #[serde(default = "def_prefetch_tabs")]
     pub prefetch_tabs: bool,
+    /// How long one `gh`/`glab` call may run before it is killed and reported
+    /// as an error. Zero is read as one second.
+    #[serde(default = "def_command_timeout_seconds")]
+    pub command_timeout_seconds: u64,
     /// `ascii` for terminals without a Nerd Font installed.
     pub icons: IconSet,
     pub disabled_tabs: Option<Vec<String>>,
@@ -1713,6 +1723,7 @@ impl Default for Config {
             keybinding_timeout_ms: def_keybinding_timeout_ms(),
             fetch_label_colors: def_fetch_label_colors(),
             prefetch_tabs: def_prefetch_tabs(),
+            command_timeout_seconds: def_command_timeout_seconds(),
             icons: IconSet::default(),
             disabled_tabs: None,
             ui: UiConfig::default(),
@@ -1756,6 +1767,10 @@ impl Config {
         self.api_per_page.clamp(1, 100)
     }
 
+    pub fn command_timeout(&self) -> Duration {
+        Duration::from_secs(self.command_timeout_seconds.max(1))
+    }
+
     fn generate_default_toml() -> String {
         let theme = Theme::default();
         format!(
@@ -1785,6 +1800,9 @@ page_size = 100
 
 # Eagerly prefetch data for all enabled tabs in the background on startup / repo switch.
 # prefetch_tabs = false
+
+# Seconds one gh/glab call may run before it is killed and shown as an error.
+# command_timeout_seconds = 120
 
 # Icon glyphs: "nerd" needs a Nerd Font (https://www.nerdfonts.com) in the terminal.
 # Use "ascii" when boxes and columns are misaligned because no Nerd Font is installed.
@@ -2051,6 +2069,13 @@ toggle_wrap = "w"
 
 pub static THEME: Lazy<RwLock<Theme>> = Lazy::new(|| RwLock::new(Config::load().resolve_theme()));
 pub static ICONS: Lazy<RwLock<Icons>> = Lazy::new(|| RwLock::new(Config::load().icons.icons()));
+static COMMAND_TIMEOUT_SECONDS: Lazy<AtomicU64> =
+    Lazy::new(|| AtomicU64::new(Config::load().command_timeout().as_secs()));
+
+/// The `command_timeout_seconds` every `gh`/`glab` subprocess runs under.
+pub fn command_timeout() -> Duration {
+    Duration::from_secs(COMMAND_TIMEOUT_SECONDS.load(Ordering::Relaxed))
+}
 
 pub fn all_theme_presets() -> Vec<String> {
     let mut presets: Vec<String> = BUNDLED_THEMES
@@ -2270,6 +2295,13 @@ pub fn reload_icons() {
     if let Ok(mut icons) = ICONS.write() {
         *icons = Config::load().icons.icons();
     }
+}
+
+pub fn reload_command_timeout() {
+    COMMAND_TIMEOUT_SECONDS.store(
+        Config::load().command_timeout().as_secs(),
+        Ordering::Relaxed,
+    );
 }
 
 pub fn set_theme_preset(name: &str) {

@@ -307,9 +307,19 @@ async fn run_glab_command_inner(
     let label = desc.to_uppercase();
     let cmd_str = format!("glab {}", args.join(" "));
 
-    let output = output_bounded(Command::new("glab").args(&args), max_stdout_bytes)
-        .await
-        .with_context(|| format!("Failed to execute: glab {}", args.join(" ")))?;
+    let output = match output_bounded(Command::new("glab").args(&args), max_stdout_bytes).await {
+        Ok(output) => output,
+        Err(e) => {
+            if let Some(tx) = &tx {
+                let _ = tx.send(Event::TerminalCommandLogged {
+                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    command: format!("{}: {}", label, cmd_str),
+                    status: format!("Failed: {}", e),
+                });
+            }
+            return Err(e.into());
+        }
+    };
 
     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     if output.succeeded() {
@@ -3061,35 +3071,14 @@ async fn run_glab_raw_api(
         cmd.arg("-X");
         cmd.arg(method);
     }
-    if let Some(b) = body {
-        if !b.is_empty() {
-            cmd.arg("--input");
-            cmd.arg("-");
-            // Pipe all three streams: inherited stdout/stderr is a TTY under the
-            // ratatui alternate screen, which lets the CLI page JSON through
-            // $PAGER and corrupt the TUI after POSTs like create_branch.
-            cmd.stdin(std::process::Stdio::piped());
-            cmd.stdout(std::process::Stdio::piped());
-            cmd.stderr(std::process::Stdio::piped());
-        }
+    let input = body.filter(|b| !b.is_empty());
+    if input.is_some() {
+        cmd.arg("--input");
+        cmd.arg("-");
     }
     cmd.arg(endpoint);
 
-    let output = if let Some(b) = body {
-        if !b.is_empty() {
-            let mut child = cmd.spawn().context("Failed to spawn glab api command")?;
-            use tokio::io::AsyncWriteExt;
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(b.as_bytes()).await?;
-                stdin.flush().await?;
-            }
-            child.wait_with_output().await
-        } else {
-            cmd.output().await
-        }
-    } else {
-        cmd.output().await
-    };
+    let output = super::subprocess::output(&mut cmd, input.map(str::as_bytes)).await;
 
     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     match output {
@@ -3125,7 +3114,7 @@ async fn run_glab_raw_api(
                     status: format!("Failed: {err_msg}"),
                 });
             }
-            Err(e.into())
+            Err(e)
         }
     }
 }

@@ -3055,6 +3055,7 @@ async fn main() -> Result<()> {
                                                     app.load_custom_commands();
                                                     crate::config::reload_theme();
                                                     crate::config::reload_icons();
+                                                    crate::config::reload_command_timeout();
 
                                                     if let Ok(context) =
                                                         domain::client::get_project_context().await
@@ -4074,10 +4075,12 @@ async fn main() -> Result<()> {
                                                                             let _ = std::fs::write(&temp_path, serde_json::to_string(&payload).unwrap());
                                                                             let temp_str = temp_path.to_string_lossy().to_string();
 
-                                                                            let res = tokio::process::Command::new("gh")
-                                                                                .args(["api", &endpoint, "--input", &temp_str, "-X", "PATCH"])
-                                                                                .output()
-                                                                                .await;
+                                                                            let res = crate::backend::subprocess::output(
+                                                                                tokio::process::Command::new("gh")
+                                                                                    .args(["api", &endpoint, "--input", &temp_str, "-X", "PATCH"]),
+                                                                                None,
+                                                                            )
+                                                                            .await;
                                                                             let _ = std::fs::remove_file(&temp_path);
                                                                             res
                                                                         } else {
@@ -4091,17 +4094,18 @@ async fn main() -> Result<()> {
                                                                             let _ = std::fs::write(&temp_path, serde_json::to_string(&payload).unwrap());
                                                                             let temp_str = temp_path.to_string_lossy().to_string();
 
-                                                                            let res = tokio::process::Command::new("glab")
-                                                                                .args([
+                                                                            let res = crate::backend::subprocess::output(
+                                                                                tokio::process::Command::new("glab").args([
                                                                                     "api",
                                                                                     &format!("projects/{}/merge_requests/{}/notes/{}", encoded_path, mr_iid, comment_id),
                                                                                     "--input",
                                                                                     &temp_str,
                                                                                     "-X",
                                                                                     "PUT"
-                                                                                ])
-                                                                                .output()
-                                                                                .await;
+                                                                                ]),
+                                                                                None,
+                                                                            )
+                                                                            .await;
                                                                             let _ = std::fs::remove_file(&temp_path);
                                                                             res
                                                                         };
@@ -4171,28 +4175,26 @@ async fn main() -> Result<()> {
                                                                             comment_id
                                                                         )
                                                                     };
-                                                                    tokio::process::Command::new(
-                                                                        "gh",
+                                                                    crate::backend::subprocess::output(
+                                                                        tokio::process::Command::new("gh")
+                                                                            .args(["api", &endpoint, "-X", "DELETE"]),
+                                                                        None,
                                                                     )
-                                                                    .args([
-                                                                        "api", &endpoint, "-X",
-                                                                        "DELETE",
-                                                                    ])
-                                                                    .output()
                                                                     .await
                                                                 } else {
                                                                     let encoded_path =
                                                                         project_context
                                                                             .replace("/", "%2F");
-                                                                    tokio::process::Command::new("glab")
-                                                                        .args([
+                                                                    crate::backend::subprocess::output(
+                                                                        tokio::process::Command::new("glab").args([
                                                                             "api",
                                                                             &format!("projects/{}/merge_requests/{}/notes/{}", encoded_path, mr_iid, comment_id),
                                                                             "-X",
                                                                             "DELETE"
-                                                                        ])
-                                                                        .output()
-                                                                        .await
+                                                                        ]),
+                                                                        None,
+                                                                    )
+                                                                    .await
                                                                 };
 
                                                                 match output {

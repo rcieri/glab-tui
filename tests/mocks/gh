@@ -10,6 +10,11 @@ if [[ -n "$TEST_GH_FAIL_MATCH" && "$*" == *"$TEST_GH_FAIL_MATCH"* ]]; then
     exit 1
 fi
 
+# Hang injection: never answer a call whose arguments contain the value.
+if [[ -n "$TEST_GH_HANG_MATCH" && "$*" == *"$TEST_GH_HANG_MATCH"* ]]; then
+    exec sleep 300
+fi
+
 # Request bodies piped with `--input -`, one per line, for payload assertions.
 if [[ " $* " == *" --input - "* ]]; then
     { cat; echo; } >> "$LOG_FILE.stdin"

@@ -4222,42 +4222,71 @@ impl App {
     }
 
     /// Switch to the Issues tab, drop filters that would hide the target, and
-    /// select + preview `iid`. Returns whether the item is already loaded.
-    pub fn focus_issue(&mut self, iid: u64) -> bool {
+    /// select + preview `iid` (in `project` when given). Returns whether the
+    /// item is already loaded.
+    pub fn focus_issue(&mut self, project: Option<&str>, iid: u64) -> bool {
         self.active_tab = Tab::Issues;
         self.clear_tab_filters(Tab::Issues);
-        let idx = {
-            let filtered = self.filtered_issues();
-            filtered.iter().position(|i| i.iid == iid)
-        };
-        if let Some(idx) = idx {
-            self.issues.state.select(Some(idx));
+        let found = self.select_visible_issue(project, iid);
+        if found {
             self.detail_scroll = 0;
             self.details_zoomed = false;
-            true
-        } else {
-            false
         }
+        found
     }
 
     /// Switch to the MergeRequests tab, drop filters that would hide the
-    /// target, and select + preview `iid`. Returns whether the item is already
-    /// loaded.
-    pub fn focus_mr(&mut self, iid: u64) -> bool {
+    /// target, and select + preview `iid` (in `project` when given). Returns
+    /// whether the item is already loaded.
+    pub fn focus_mr(&mut self, project: Option<&str>, iid: u64) -> bool {
         self.active_tab = Tab::MergeRequests;
         self.clear_tab_filters(Tab::MergeRequests);
-        let idx = {
-            let filtered = self.filtered_mrs();
-            filtered.iter().position(|m| m.iid == iid)
-        };
-        if let Some(idx) = idx {
-            self.mrs.state.select(Some(idx));
+        let found = self.select_visible_mr(project, iid);
+        if found {
             self.detail_scroll = 0;
             self.details_zoomed = false;
-            true
-        } else {
-            false
         }
+        found
+    }
+
+    /// Highlight issue `iid` (in `project` when given) among the rows the
+    /// Issues table shows. Returns false, leaving the selection alone, when no
+    /// visible row matches.
+    pub fn select_visible_issue(&mut self, project: Option<&str>, iid: u64) -> bool {
+        let idx = self
+            .filtered_issues()
+            .iter()
+            .position(|issue| issue.iid == iid && self.is_listed_in(&issue.project_path, project));
+        if let Some(idx) = idx {
+            self.issues.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Highlight MR/PR `iid` (in `project` when given) among the rows the
+    /// MergeRequests table shows. Returns false, leaving the selection alone,
+    /// when no visible row matches.
+    pub fn select_visible_mr(&mut self, project: Option<&str>, iid: u64) -> bool {
+        let idx = self
+            .filtered_mrs()
+            .iter()
+            .position(|mr| mr.iid == iid && self.is_listed_in(&mr.project_path, project));
+        if let Some(idx) = idx {
+            self.mrs.state.select(Some(idx));
+        }
+        idx.is_some()
+    }
+
+    /// Whether a row listed with `row_project` belongs to `project`; `None`
+    /// accepts every project.
+    fn is_listed_in(&self, row_project: &str, project: Option<&str>) -> bool {
+        // GitHub and GitLab resolve project paths case-insensitively, so the
+        // remote URL's spelling may differ from the one the API returns.
+        project.is_none_or(|project| {
+            self.scope
+                .project_of(row_project)
+                .eq_ignore_ascii_case(project)
+        })
     }
 
     pub fn project_path_for_issue(&self, iid: u64) -> String {

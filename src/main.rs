@@ -2210,10 +2210,9 @@ async fn main() -> Result<()> {
                             .contains(crossterm::event::KeyModifiers::CONTROL)
                             && key_event.code == KeyCode::Char('e')
                         {
-                            if let Some(new_val) = edit_in_editor(&text_input.value, &mut terminal)
+                            if let Some(new_val) = edit_in_editor(text_input.value(), &mut terminal)
                             {
-                                text_input.value = new_val.clone();
-                                text_input.cursor_idx = new_val.len();
+                                text_input.set_value(new_val);
                             }
                             app.text_input = Some(text_input);
                             continue;
@@ -2223,37 +2222,27 @@ async fn main() -> Result<()> {
                                 // Cancel
                             }
                             KeyCode::Backspace => {
-                                if text_input.cursor_idx > 0 {
-                                    text_input.value.remove(text_input.cursor_idx - 1);
-                                    text_input.cursor_idx -= 1;
-                                }
+                                text_input.delete_char_before_cursor();
                                 app.text_input = Some(text_input);
                             }
                             KeyCode::Delete => {
-                                if text_input.cursor_idx < text_input.value.len() {
-                                    text_input.value.remove(text_input.cursor_idx);
-                                }
+                                text_input.delete_char_at_cursor();
                                 app.text_input = Some(text_input);
                             }
                             KeyCode::Left => {
-                                if text_input.cursor_idx > 0 {
-                                    text_input.cursor_idx -= 1;
-                                }
+                                text_input.move_cursor_left();
                                 app.text_input = Some(text_input);
                             }
                             KeyCode::Right => {
-                                if text_input.cursor_idx < text_input.value.len() {
-                                    text_input.cursor_idx += 1;
-                                }
+                                text_input.move_cursor_right();
                                 app.text_input = Some(text_input);
                             }
                             KeyCode::Char(c) => {
-                                text_input.value.insert(text_input.cursor_idx, c);
-                                text_input.cursor_idx += 1;
+                                text_input.insert_char(c);
                                 app.text_input = Some(text_input);
                             }
                             KeyCode::Enter => {
-                                let value = text_input.value.clone();
+                                let value = text_input.value().to_string();
                                 match text_input.action {
                                     crate::app::TextInputAction::EditPageSize => {
                                         if let Ok(new_size) = value.trim().parse::<usize>() {
@@ -3281,18 +3270,16 @@ async fn main() -> Result<()> {
                                         let status =
                                             selected_val.unwrap_or_else(|| "Comment".to_string());
                                         app.selector = None;
-                                        app.text_input = Some(crate::app::TextInput {
-                                            title: format!(
+                                        app.text_input = Some(crate::app::TextInput::new(
+                                            format!(
                                                 " Submit Review ({status}) - Summary/Description "
                                             ),
-                                            value: String::new(),
-                                            cursor_idx: 0,
-                                            action:
-                                                crate::app::TextInputAction::SubmitReviewFinal {
-                                                    mr_iid: selector.entity_iid,
-                                                    status,
-                                                },
-                                        });
+                                            String::new(),
+                                            crate::app::TextInputAction::SubmitReviewFinal {
+                                                mr_iid: selector.entity_iid,
+                                                status,
+                                            },
+                                        ));
                                         continue;
                                     }
 
@@ -3620,16 +3607,15 @@ async fn main() -> Result<()> {
                                                             .unwrap_or_else(|| {
                                                                 comment.id.to_string()
                                                             });
-                                                        app.text_input = Some(crate::app::TextInput {
-                                                            title: format!(" Reply to @{} ", comment.author.username),
-                                                            value: String::new(),
-                                                            cursor_idx: 0,
-                                                            action: crate::app::TextInputAction::ReplyToComment {
+                                                        app.text_input = Some(crate::app::TextInput::new(
+                                                            format!(" Reply to @{} ", comment.author.username),
+                                                            String::new(),
+                                                            crate::app::TextInputAction::ReplyToComment {
                                                                 mr_iid,
                                                                 comment_id,
                                                                 discussion_id,
                                                             },
-                                                        });
+                                                        ));
                                                     }
                                                     "Resolve Thread" | "Unresolve Thread" => {
                                                         let is_resolve =
@@ -6750,12 +6736,11 @@ async fn main() -> Result<()> {
                                         field_idx: menu.selected_idx,
                                     };
 
-                                    app.text_input = Some(crate::app::TextInput {
-                                        title: format!("Edit {field_name}"),
-                                        cursor_idx: current_val.len(),
-                                        value: current_val,
+                                    app.text_input = Some(crate::app::TextInput::new(
+                                        format!("Edit {field_name}"),
+                                        current_val,
                                         action,
-                                    });
+                                    ));
 
                                     app.edit_menu = Some(menu);
                                     continue;
@@ -7409,11 +7394,10 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Char('c') => {
                                 if let Some(range) = diff_view.get_comment_range() {
-                                    app.text_input = Some(crate::app::TextInput {
-                                        title: format!(" Add Comment to {} ", range.file_path),
-                                        value: String::new(),
-                                        cursor_idx: 0,
-                                        action: crate::app::TextInputAction::AddReviewComment {
+                                    app.text_input = Some(crate::app::TextInput::new(
+                                        format!(" Add Comment to {} ", range.file_path),
+                                        String::new(),
+                                        crate::app::TextInputAction::AddReviewComment {
                                             mr_iid: diff_view.mr_iid,
                                             file_path: range.file_path,
                                             line_num: range.line_num,
@@ -7421,7 +7405,7 @@ async fn main() -> Result<()> {
                                             end_line_num: range.end_line_num,
                                             end_old_line_num: range.end_old_line_num,
                                         },
-                                    });
+                                    ));
                                     // Clear selection after starting a comment
                                     diff_view.selection_start = None;
                                     diff_view.selection_end = None;

@@ -299,14 +299,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
             )
             .split(area);
 
-        let mut display_val = text_input.value.clone();
-        if text_input.cursor_idx <= display_val.len() {
-            display_val.insert(text_input.cursor_idx, '▋');
-        } else {
-            display_val.push('▋');
-        }
-
-        let value_p = Paragraph::new(display_val)
+        let value_p = Paragraph::new(text_input.value_with_cursor('▋'))
             .style(
                 Style::default()
                     .fg(THEME.read().unwrap().text_normal)

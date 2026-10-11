@@ -2798,9 +2798,78 @@ pub enum TextInputAction {
 #[derive(Clone, Debug)]
 pub struct TextInput {
     pub title: String,
-    pub value: String,
-    pub cursor_idx: usize,
+    value: String,
+    cursor_char_idx: usize,
     pub action: TextInputAction,
+}
+
+impl TextInput {
+    /// Opens the input with the cursor after the last character of `value`.
+    pub fn new(title: impl Into<String>, value: String, action: TextInputAction) -> Self {
+        let cursor_char_idx = value.chars().count();
+        Self {
+            title: title.into(),
+            value,
+            cursor_char_idx,
+            action,
+        }
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Replaces the whole value and moves the cursor to its end.
+    pub fn set_value(&mut self, value: String) {
+        self.cursor_char_idx = value.chars().count();
+        self.value = value;
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        let at = self.byte_offset(self.cursor_char_idx);
+        self.value.insert(at, c);
+        self.cursor_char_idx += 1;
+    }
+
+    pub fn delete_char_before_cursor(&mut self) {
+        let Some(previous) = self.cursor_char_idx.checked_sub(1) else {
+            return;
+        };
+        let at = self.byte_offset(previous);
+        self.value.remove(at);
+        self.cursor_char_idx = previous;
+    }
+
+    pub fn delete_char_at_cursor(&mut self) {
+        let at = self.byte_offset(self.cursor_char_idx);
+        if at < self.value.len() {
+            self.value.remove(at);
+        }
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        self.cursor_char_idx = self.cursor_char_idx.saturating_sub(1);
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        if self.byte_offset(self.cursor_char_idx) < self.value.len() {
+            self.cursor_char_idx += 1;
+        }
+    }
+
+    /// The value with `cursor` inserted between the characters around the cursor.
+    pub fn value_with_cursor(&self, cursor: char) -> String {
+        let mut rendered = self.value.clone();
+        rendered.insert(self.byte_offset(self.cursor_char_idx), cursor);
+        rendered
+    }
+
+    fn byte_offset(&self, char_idx: usize) -> usize {
+        self.value
+            .char_indices()
+            .nth(char_idx)
+            .map_or(self.value.len(), |(offset, _)| offset)
+    }
 }
 
 /// Target kind parsed from the "go to issue/MR by ID" prompt value.
@@ -7676,6 +7745,61 @@ mod tests {
         assert_eq!(parse_jump_input("issue"), None);
         assert_eq!(parse_jump_input("123abc"), None);
         assert_eq!(parse_jump_input("#123abc"), None);
+    }
+
+    fn text_input(value: &str) -> TextInput {
+        TextInput::new(" Test ", value.to_string(), TextInputAction::EditPageSize)
+    }
+
+    #[test]
+    fn text_input_typing_multibyte_characters_keeps_the_cursor_after_them() {
+        let mut input = text_input("");
+        for c in ['é', '日', 'a'] {
+            input.insert_char(c);
+        }
+        assert_eq!(input.value(), "é日a");
+        assert_eq!(input.value_with_cursor('|'), "é日a|");
+    }
+
+    #[test]
+    fn text_input_inserts_between_multibyte_characters_after_moving_left() {
+        let mut input = text_input("é日");
+        input.move_cursor_left();
+        input.insert_char('x');
+        assert_eq!(input.value(), "éx日");
+        assert_eq!(input.value_with_cursor('|'), "éx|日");
+    }
+
+    #[test]
+    fn text_input_backspace_and_delete_remove_whole_multibyte_characters() {
+        let mut input = text_input("aé日b");
+        input.move_cursor_left();
+        input.move_cursor_left();
+        assert_eq!(input.value_with_cursor('|'), "aé|日b");
+        input.delete_char_before_cursor();
+        assert_eq!(input.value_with_cursor('|'), "a|日b");
+        input.delete_char_at_cursor();
+        assert_eq!(input.value_with_cursor('|'), "a|b");
+    }
+
+    #[test]
+    fn text_input_cursor_edits_stop_at_both_ends_of_multibyte_text() {
+        let mut input = text_input("日");
+        input.move_cursor_right();
+        input.delete_char_at_cursor();
+        assert_eq!(input.value_with_cursor('|'), "日|");
+        input.move_cursor_left();
+        input.move_cursor_left();
+        input.delete_char_before_cursor();
+        assert_eq!(input.value_with_cursor('|'), "|日");
+    }
+
+    #[test]
+    fn text_input_set_value_moves_the_cursor_to_the_end_of_multibyte_text() {
+        let mut input = text_input("");
+        input.set_value("ñandú".to_string());
+        input.delete_char_before_cursor();
+        assert_eq!(input.value_with_cursor('|'), "ñand|");
     }
 
     #[test]

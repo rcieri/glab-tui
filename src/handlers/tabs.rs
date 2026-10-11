@@ -1983,16 +1983,15 @@ pub async fn handle_active_tab_key(
                         ) =>
                         {
                             let current_desc = item.description.clone().unwrap_or_default();
-                            app.text_input = Some(crate::app::TextInput {
-                                title: " Edit Runner Description ".to_string(),
-                                cursor_idx: current_desc.len(),
-                                value: current_desc,
-                                action: crate::app::TextInputAction::EditField {
+                            app.text_input = Some(crate::app::TextInput::new(
+                                " Edit Runner Description ",
+                                current_desc,
+                                crate::app::TextInputAction::EditField {
                                     entity_iid: runner_id,
                                     entity_type: "runner".to_string(),
                                     field_type: "runner_description".to_string(),
                                 },
-                            });
+                            ));
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.runners.open_in_browser,

@@ -778,7 +778,13 @@ pub fn handle_refresh(
         if let Some(client) = app.gitlab_client.clone() {
             if !app.loading_tabs.contains(&app.active_tab) {
                 app.start_loading_tab(app.active_tab);
-                spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
+                spawn_refresh_active_tab(
+                    &client,
+                    &app.scope,
+                    app.requested_state_queries(),
+                    app.active_tab,
+                    tx.clone(),
+                );
             }
             if let Some(parent_id) = app.current_parent_id() {
                 crate::fetch::spawn_refresh_child_level(

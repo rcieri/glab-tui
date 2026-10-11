@@ -101,7 +101,13 @@ pub fn toggle_show_read(app: &mut App, tx: &UnboundedSender<Event>) {
         return;
     };
     app.start_loading_tab(Tab::Todos);
-    crate::fetch::spawn_refresh_active_tab(&client, &app.scope, Tab::Todos, tx.clone());
+    crate::fetch::spawn_refresh_active_tab(
+        &client,
+        &app.scope,
+        app.requested_state_queries(),
+        Tab::Todos,
+        tx.clone(),
+    );
 }
 
 fn backend_client(app: &mut App) -> Option<GitlabClient> {

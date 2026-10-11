@@ -948,6 +948,7 @@ pub async fn handle_active_tab_key(
                                 crate::fetch::spawn_refresh_active_tab(
                                     client,
                                     &app.scope,
+                                    app.requested_state_queries(),
                                     crate::app::Tab::Pipelines,
                                     tx.clone(),
                                 );
@@ -1287,6 +1288,7 @@ pub async fn handle_active_tab_key(
                                 let project_context = scope.as_str().to_string();
                                 let tx = tx.clone();
                                 let active_tab = app.active_tab;
+                                let states = app.requested_state_queries();
                                 if !app.selected_pipelines.is_empty() {
                                     let pipe_ids: Vec<u64> =
                                         app.selected_pipelines.iter().cloned().collect();
@@ -1315,6 +1317,7 @@ pub async fn handle_active_tab_key(
                                         spawn_refresh_active_tab(
                                             &client_clone,
                                             &scope,
+                                            states,
                                             active_tab,
                                             tx.clone(),
                                         );
@@ -1337,6 +1340,7 @@ pub async fn handle_active_tab_key(
                                         spawn_refresh_active_tab(
                                             &client_clone,
                                             &scope,
+                                            states,
                                             active_tab,
                                             tx,
                                         );
@@ -1365,12 +1369,19 @@ pub async fn handle_active_tab_key(
                                 let project_context = scope.as_str().to_string();
                                 let tx = tx.clone();
                                 let active_tab = app.active_tab;
+                                let states = app.requested_state_queries();
                                 tokio::spawn(async move {
                                     let _ = client_clone
                                         .cancel_pipeline(&project_context, pipe_id)
                                         .await;
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    spawn_refresh_active_tab(&client_clone, &scope, active_tab, tx);
+                                    spawn_refresh_active_tab(
+                                        &client_clone,
+                                        &scope,
+                                        states,
+                                        active_tab,
+                                        tx,
+                                    );
                                 });
                             }
                         }
@@ -2809,7 +2820,13 @@ pub async fn handle_active_tab_key(
                         if !app.loaded_tabs.contains(&app.active_tab) {
                             app.loading_tabs.insert(app.active_tab);
                         }
-                        spawn_refresh_active_tab(client, &app.scope, app.active_tab, tx.clone());
+                        spawn_refresh_active_tab(
+                            client,
+                            &app.scope,
+                            app.requested_state_queries(),
+                            app.active_tab,
+                            tx.clone(),
+                        );
                     }
                 }
                 if app.active_tab == crate::app::Tab::Issues {
@@ -2831,7 +2848,13 @@ pub async fn handle_active_tab_key(
                         if !app.loaded_tabs.contains(&app.active_tab) {
                             app.loading_tabs.insert(app.active_tab);
                         }
-                        spawn_refresh_active_tab(client, &app.scope, app.active_tab, tx.clone());
+                        spawn_refresh_active_tab(
+                            client,
+                            &app.scope,
+                            app.requested_state_queries(),
+                            app.active_tab,
+                            tx.clone(),
+                        );
                     }
                 }
                 if app.active_tab == crate::app::Tab::Issues {
@@ -3091,6 +3114,7 @@ pub(crate) fn jump_to_mr_tab(
         crate::fetch::spawn_refresh_active_tab(
             &client,
             &app.scope,
+            app.requested_state_queries(),
             crate::app::Tab::MergeRequests,
             tx,
         );
@@ -3165,7 +3189,13 @@ pub(crate) fn jump_to_issue_tab(
     app.active_tab = crate::app::Tab::Issues;
     app.detail_scroll = 0;
     if let Some(client) = client {
-        crate::fetch::spawn_refresh_active_tab(&client, &app.scope, crate::app::Tab::Issues, tx);
+        crate::fetch::spawn_refresh_active_tab(
+            &client,
+            &app.scope,
+            app.requested_state_queries(),
+            crate::app::Tab::Issues,
+            tx,
+        );
     } else {
         app.show_error("No backend client available to load Issues.".to_string());
     }

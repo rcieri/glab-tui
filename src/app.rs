@@ -6,6 +6,7 @@ use crate::config::{Config, KeybindingConfig, THEME, Theme};
 use crate::domain::mr::{DiscussionNote, NotePosition};
 use crate::domain::review::DraftComment;
 use crate::domain::review_threads::{ReviewThread, group_threads};
+use crate::domain::state_query::{StateQueries, StateQuery};
 use crate::domain::workflow_inputs::WorkflowInput;
 use crate::utils::format::{expand_tabs, strip_ansi_escapes};
 use crate::utils::ui::StatefulTable;
@@ -3619,6 +3620,9 @@ pub struct App {
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
     pub loading_tabs: std::collections::HashSet<Tab>,
     pub loaded_tabs: std::collections::HashSet<Tab>,
+    /// The server state queries in effect when `take_state_query_refetches`
+    /// last ran; `None` until it first runs for the current scope.
+    pub observed_state_queries: Option<StateQueries>,
     pub edit_menu: Option<EditMenu>,
     pub selector: Option<Selector>,
     /// Mapping from the `all_items` display strings to the absolute on-disk
@@ -3782,6 +3786,7 @@ impl Default for App {
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
+            observed_state_queries: None,
             edit_menu: None,
             selector: None,
             switch_repo_paths: std::collections::HashMap::new(),
@@ -4001,6 +4006,7 @@ impl App {
         self.loaded_tabs.clear();
         self.loading_tabs.clear();
         self.refreshed_tabs.clear();
+        self.observed_state_queries = None;
         self.pipeline_jobs.clear();
         self.fetching_pipelines.clear();
         self.active_pipeline_project = None;
@@ -4904,6 +4910,103 @@ impl App {
                 self.column_filters.remove(&tab);
             }
         }
+    }
+
+    /// The narrowest state query whose rows contain everything `tab`'s State
+    /// column filter shows. Several states, an unknown value or no filter
+    /// need every state.
+    pub fn state_filter_query(&self, tab: Tab) -> StateQuery {
+        let Some(selected) = self.get_column_filter(tab, "State") else {
+            return StateQuery::All;
+        };
+        let mut queries = selected
+            .iter()
+            .map(|value| match Self::normalize_filter_value(value) {
+                "OPEN" => StateQuery::Open,
+                "CLOSED" => StateQuery::Closed,
+                "MERGED" => StateQuery::Merged,
+                _ => StateQuery::All,
+            });
+        let Some(first) = queries.next() else {
+            return StateQuery::All;
+        };
+        if queries.all(|query| query == first) {
+            first
+        } else {
+            StateQuery::All
+        }
+    }
+
+    /// Whether rows listed with `listed` contain every row `tab`'s State
+    /// column filter shows.
+    pub fn covers_state_filter(&self, tab: Tab, listed: StateQuery) -> bool {
+        listed.includes(self.state_filter_query(tab))
+    }
+
+    /// The states to list from the server for `tab`.
+    pub fn requested_state_query(&self, tab: Tab) -> StateQuery {
+        let filtered = self.state_filter_query(tab);
+        self.gitlab_client
+            .as_ref()
+            .map_or(StateQuery::All, |client| {
+                client.backend.server_state_query(&self.scope, filtered)
+            })
+    }
+
+    pub fn requested_state_queries(&self) -> StateQueries {
+        StateQueries {
+            issues: self.requested_state_query(Tab::Issues),
+            mrs: self.requested_state_query(Tab::MergeRequests),
+        }
+    }
+
+    /// List tabs whose server state query changed since the last call and
+    /// that show or are loading rows listed for the previous query. The first
+    /// call for a scope only records the queries: the scope's first fetch
+    /// already used them.
+    pub fn take_state_query_refetches(&mut self) -> Vec<Tab> {
+        let requested = self.requested_state_queries();
+        let Some(observed) = self.observed_state_queries.replace(requested) else {
+            return Vec::new();
+        };
+        [
+            (Tab::Issues, observed.issues, requested.issues),
+            (Tab::MergeRequests, observed.mrs, requested.mrs),
+        ]
+        .into_iter()
+        .filter(|(tab, before, now)| {
+            before != now && (self.loaded_tabs.contains(tab) || self.loading_tabs.contains(tab))
+        })
+        .map(|(tab, ..)| tab)
+        .collect()
+    }
+
+    /// Show cached issues, unless they were listed for fewer states than the
+    /// State column filter shows: the tab's fetch fills it instead.
+    pub fn restore_cached_issues(
+        &mut self,
+        issues: Vec<crate::domain::issues::Issue>,
+        listed: StateQuery,
+    ) {
+        self.issues.items = if self.covers_state_filter(Tab::Issues, listed) {
+            issues
+        } else {
+            Vec::new()
+        };
+    }
+
+    /// Show cached MRs/PRs, unless they were listed for fewer states than the
+    /// State column filter shows: the tab's fetch fills it instead.
+    pub fn restore_cached_mrs(
+        &mut self,
+        mrs: Vec<crate::domain::mr::MergeRequest>,
+        listed: StateQuery,
+    ) {
+        self.mrs.items = if self.covers_state_filter(Tab::MergeRequests, listed) {
+            mrs
+        } else {
+            Vec::new()
+        };
     }
 
     /// How many levels down the pipeline descent currently is.
@@ -6854,6 +6957,16 @@ impl App {
     pub fn collect_unique_column_values(&self, tab: Tab, col: &str) -> Vec<String> {
         use std::collections::BTreeSet;
         let mut values: BTreeSet<String> = BTreeSet::new();
+        // Rows listed for one state cannot offer the others, so every state
+        // stays selectable while the server narrows the list.
+        if col == "State" && self.requested_state_query(tab) != StateQuery::All {
+            let states: &[&str] = match tab {
+                Tab::Issues => &["OPEN", "CLOSED"],
+                Tab::MergeRequests => &["OPEN", "MERGED", "CLOSED"],
+                _ => &[],
+            };
+            values.extend(states.iter().map(|state| state.to_string()));
+        }
         match tab {
             Tab::Issues => {
                 let is_gh = self.is_github();
@@ -12125,6 +12238,56 @@ index 123456..789012 100644
         );
     }
 
+    fn app_on(is_github: bool, scope: crate::scope::Scope) -> App {
+        let mut app = App::default();
+        app.scope = scope;
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github,
+            backend: crate::backend::create_backend(is_github),
+            tx: None,
+            page_size: 100,
+            api_per_page: 100,
+            show_read_notifications: false,
+        });
+        app
+    }
+
+    fn github_repo_app() -> App {
+        app_on(true, crate::scope::Scope::Repository("o/r".to_string()))
+    }
+
+    fn filter_state(app: &mut App, tab: Tab, values: &[&str]) {
+        app.set_column_filter(tab, "State", values.iter().map(|v| v.to_string()).collect());
+    }
+
+    #[test]
+    fn state_filter_query_is_the_single_selected_state_and_all_otherwise() {
+        let cases: &[(&[&str], StateQuery)] = &[
+            (&["OPEN"], StateQuery::Open),
+            (&["opened"], StateQuery::Open),
+            (&["OPEN", "opened"], StateQuery::Open),
+            (&["CLOSED"], StateQuery::Closed),
+            (&["merged"], StateQuery::Merged),
+            (&["OPEN", "MERGED"], StateQuery::All),
+            (&["OPEN", "CLOSED", "MERGED"], StateQuery::All),
+            (&["LOCKED"], StateQuery::All),
+            (&[], StateQuery::All),
+        ];
+        for (values, expected) in cases {
+            let mut app = App::default();
+            filter_state(&mut app, Tab::MergeRequests, values);
+            assert_eq!(
+                app.state_filter_query(Tab::MergeRequests),
+                *expected,
+                "{values:?}"
+            );
+        }
+        assert_eq!(
+            App::default().state_filter_query(Tab::MergeRequests),
+            StateQuery::All
+        );
+    }
+
     #[test]
     fn a_done_github_notification_leaves_the_list_even_while_read_ones_are_shown() {
         use crate::domain::notifications::TodoChange;
@@ -12137,6 +12300,61 @@ index 123456..789012 100644
         assert_eq!(
             todo_states(&gitlab),
             vec![("1", "pending"), ("2", "done"), ("3", "done")]
+        );
+    }
+
+    #[test]
+    fn only_a_github_repository_asks_the_server_for_the_filtered_state() {
+        let backends = [
+            (
+                true,
+                crate::scope::Scope::Repository("o/r".to_string()),
+                StateQuery::Merged,
+            ),
+            (
+                true,
+                crate::scope::Scope::Group("o".to_string()),
+                StateQuery::All,
+            ),
+            (
+                false,
+                crate::scope::Scope::Repository("g/r".to_string()),
+                StateQuery::All,
+            ),
+            (
+                false,
+                crate::scope::Scope::Group("g".to_string()),
+                StateQuery::All,
+            ),
+        ];
+        for (is_github, scope, expected) in backends {
+            let mut app = app_on(is_github, scope.clone());
+            filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+            assert_eq!(
+                app.requested_state_query(Tab::MergeRequests),
+                expected,
+                "github={is_github} scope={scope}"
+            );
+        }
+    }
+
+    #[test]
+    fn changing_the_state_filter_refetches_a_loaded_tab_once() {
+        let mut app = github_repo_app();
+        app.loaded_tabs.insert(Tab::Issues);
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+
+        filter_state(&mut app, Tab::Issues, &["CLOSED"]);
+        assert_eq!(app.take_state_query_refetches(), vec![Tab::Issues]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+
+        app.remove_column_filter(Tab::Issues, "State");
+        filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+        assert_eq!(
+            app.take_state_query_refetches(),
+            vec![Tab::Issues, Tab::MergeRequests]
         );
     }
 
@@ -12203,5 +12421,92 @@ index 123456..789012 100644
         assert!(app.is_row_in_project("", "ACME/api"));
         assert!(!app.is_row_in_project("", "acme/web"));
         assert!(app.is_row_in_project("acme/web", "acme/web"));
+    }
+
+    #[test]
+    fn a_state_filter_change_refetches_a_tab_still_loading_but_not_an_unvisited_one() {
+        let mut app = github_repo_app();
+        app.loading_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), vec![Tab::MergeRequests]);
+    }
+
+    #[test]
+    fn changing_the_state_filter_on_gitlab_never_refetches() {
+        let mut app = app_on(false, crate::scope::Scope::Repository("g/r".to_string()));
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        filter_state(&mut app, Tab::MergeRequests, &["MERGED"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+    }
+
+    #[test]
+    fn a_scope_change_lets_its_first_fetch_use_the_current_filter_without_a_refetch() {
+        let mut app = github_repo_app();
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        app.take_state_query_refetches();
+
+        app.reset_on_scope_change();
+        app.loaded_tabs.insert(Tab::MergeRequests);
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        assert_eq!(app.take_state_query_refetches(), Vec::<Tab>::new());
+    }
+
+    #[test]
+    fn cached_rows_listed_for_fewer_states_than_the_filter_shows_are_not_restored() {
+        let open = || vec![mr_fixture(1, "opened", "a", false, "open")];
+        let cases = [
+            (StateQuery::Open, None, false),
+            (StateQuery::Open, Some("MERGED"), false),
+            (StateQuery::Open, Some("OPEN"), true),
+            (StateQuery::All, Some("OPEN"), true),
+            (StateQuery::All, None, true),
+        ];
+        for (listed, filter, restored) in cases {
+            let mut app = App::default();
+            if let Some(value) = filter {
+                filter_state(&mut app, Tab::MergeRequests, &[value]);
+            }
+            app.restore_cached_mrs(open(), listed);
+            assert_eq!(
+                app.mrs.items.len(),
+                usize::from(restored),
+                "listed={listed:?} filter={filter:?}"
+            );
+        }
+
+        let mut app = App::default();
+        app.restore_cached_issues(vec![issue_with_no_milestone("opened")], StateQuery::Open);
+        assert!(app.issues.items.is_empty());
+    }
+
+    #[test]
+    fn state_picker_offers_every_state_while_the_server_lists_one() {
+        let mut app = github_repo_app();
+        app.mrs.items = vec![mr_fixture(1, "opened", "a", false, "open")];
+        app.issues.items = vec![issue_with_no_milestone("opened")];
+        assert_eq!(
+            app.collect_unique_column_values(Tab::MergeRequests, "State"),
+            vec!["OPEN".to_string()]
+        );
+
+        filter_state(&mut app, Tab::MergeRequests, &["OPEN"]);
+        filter_state(&mut app, Tab::Issues, &["OPEN"]);
+        assert_eq!(
+            app.collect_unique_column_values(Tab::MergeRequests, "State"),
+            vec![
+                "CLOSED".to_string(),
+                "MERGED".to_string(),
+                "OPEN".to_string()
+            ]
+        );
+        assert_eq!(
+            app.collect_unique_column_values(Tab::Issues, "State"),
+            vec!["CLOSED".to_string(), "OPEN".to_string()]
+        );
     }
 }

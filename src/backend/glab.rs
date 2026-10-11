@@ -10,6 +10,7 @@ use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
+use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
 use anyhow::{Context, Result};
@@ -692,10 +693,13 @@ impl Backend for GlabBackend {
     async fn list_issues(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>> {
+        // Only open-only listings are narrowed here. Closed and merged rows
+        // come with every state and the State column filter hides the rest.
+        let show_closed = state != StateQuery::Open;
         match scope {
             Scope::Repository(project) => {
                 let pages = page_count(page_size, per_request);
@@ -954,10 +958,13 @@ impl Backend for GlabBackend {
     async fn list_mrs(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
+        // Only open-only listings are narrowed here. Closed and merged rows
+        // come with every state and the State column filter hides the rest.
+        let show_closed = state != StateQuery::Open;
         match scope {
             Scope::Repository(project) => {
                 let pages = page_count(page_size, per_request);

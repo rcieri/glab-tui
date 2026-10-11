@@ -15,6 +15,7 @@ mod review_threads;
 mod runners;
 mod scenarios;
 mod stacked_prs;
+mod state_filter;
 mod tabs;
 mod todos;
 mod workspace;

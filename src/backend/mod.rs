@@ -12,6 +12,7 @@ use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
+use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
 use anyhow::Result;
@@ -129,14 +130,21 @@ pub trait Backend: Send + Sync {
 
     fn set_tx(&mut self, tx: UnboundedSender<Event>);
 
+    /// The states to list from the server for a tab whose State column
+    /// filter shows `filtered`. Rows of other states are filtered out on the
+    /// client, so a backend that cannot narrow lists every state.
+    fn server_state_query(&self, _scope: &Scope, _filtered: StateQuery) -> StateQuery {
+        StateQuery::All
+    }
+
     // ── Issues ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
-    /// in the group/org.
+    /// in the group/org. A backend may return more states than `state` asks for.
     async fn list_issues(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<Issue>>;
@@ -282,11 +290,11 @@ pub trait Backend: Send + Sync {
     // ── Merge Requests ──
     /// `page_size` is the total item budget across all pages; `per_request` is how many
     /// items each HTTP call asks for.  For `Scope::Group` the listing spans all projects
-    /// in the group/org.
+    /// in the group/org. A backend may return more states than `state` asks for.
     async fn list_mrs(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         per_request: usize,
     ) -> Result<Vec<MergeRequest>>;

@@ -10,6 +10,7 @@ use crate::domain::pipelines::{Job, Pipeline};
 use crate::domain::releases::Release;
 use crate::domain::review::{DraftComment, ReviewEvent};
 use crate::domain::runners::Runner;
+use crate::domain::state_query::StateQuery;
 use crate::event::Event;
 use crate::scope::Scope;
 use anyhow::{Context, Result};
@@ -250,6 +251,27 @@ pub(crate) fn map_gh_pr_state(raw: &str) -> &'static str {
         "OPEN" => "opened",
         "MERGED" => "merged",
         _ => "closed",
+    }
+}
+
+/// `gh issue list --state` value. Issues are never merged, so a merged query
+/// lists every state and leaves the State column filter to the client.
+fn gh_issue_state_flag(state: StateQuery) -> &'static str {
+    match state {
+        StateQuery::Open => "open",
+        StateQuery::Closed => "closed",
+        StateQuery::Merged | StateQuery::All => "all",
+    }
+}
+
+/// `gh pr list --state` value. GitHub's `closed` excludes merged PRs, matching
+/// the CLOSED value of the State column.
+fn gh_pr_state_flag(state: StateQuery) -> &'static str {
+    match state {
+        StateQuery::Open => "open",
+        StateQuery::Closed => "closed",
+        StateQuery::Merged => "merged",
+        StateQuery::All => "all",
     }
 }
 
@@ -1048,6 +1070,16 @@ impl Backend for GhBackend {
         self.tx = Some(tx);
     }
 
+    /// `gh issue list` and `gh pr list` narrow a repository listing by state.
+    /// Organization listings go through the search API and keep listing every
+    /// state.
+    fn server_state_query(&self, scope: &Scope, filtered: StateQuery) -> StateQuery {
+        match scope {
+            Scope::Repository(_) => filtered,
+            Scope::Group(_) => StateQuery::All,
+        }
+    }
+
     // ── Issues ──
 
     /// `_per_request` is unused in the GitHub backend (as with all `Backend`
@@ -1056,13 +1088,13 @@ impl Backend for GhBackend {
     async fn list_issues(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<Issue>> {
         match scope {
             Scope::Repository(project) => {
-                let state = if show_closed { "all" } else { "open" };
+                let state = gh_issue_state_flag(state);
                 let total = page_size * 10;
                 let raw = self
                     .run_gh(
@@ -1092,7 +1124,7 @@ impl Backend for GhBackend {
             }
             Scope::Group(org) => {
                 let per_page = (page_size * 10).clamp(1, 100);
-                let q = if show_closed {
+                let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:issue")
                 } else {
                     format!("owner:{org}+is:issue+state:open")
@@ -1397,13 +1429,13 @@ impl Backend for GhBackend {
     async fn list_mrs(
         &self,
         scope: &Scope,
-        show_closed: bool,
+        state: StateQuery,
         page_size: usize,
         _per_request: usize,
     ) -> Result<Vec<MergeRequest>> {
         match scope {
             Scope::Repository(project) => {
-                let state = if show_closed { "all" } else { "open" };
+                let state = gh_pr_state_flag(state);
                 let total = page_size * 10;
                 let raw = self
                     .run_gh(
@@ -1582,7 +1614,7 @@ impl Backend for GhBackend {
             }
             Scope::Group(org) => {
                 let per_page = (page_size * 10).clamp(1, 100);
-                let q = if show_closed {
+                let q = if state != StateQuery::Open {
                     format!("owner:{org}+is:pr")
                 } else {
                     format!("owner:{org}+is:pr+state:open")

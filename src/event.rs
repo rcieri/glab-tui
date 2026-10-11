@@ -17,8 +17,16 @@ pub enum Event {
     PipelineJobs(u64, Vec<crate::domain::pipelines::Job>),
     /// The children of the pipeline currently descended into, re-fetched.
     ChildLevelFetched(u64, crate::domain::pipelines::ChildLevel),
-    IssuesFetched(Vec<crate::domain::issues::Issue>),
-    MrsFetched(Vec<crate::domain::mr::MergeRequest>),
+    /// Issues listed with the given state query.
+    IssuesFetched(
+        crate::domain::state_query::StateQuery,
+        Vec<crate::domain::issues::Issue>,
+    ),
+    /// MRs/PRs listed with the given state query.
+    MrsFetched(
+        crate::domain::state_query::StateQuery,
+        Vec<crate::domain::mr::MergeRequest>,
+    ),
     PipelinesFetched(Vec<crate::domain::pipelines::Pipeline>),
     RunnersFetched(Vec<crate::domain::runners::Runner>),
     ReleasesFetched(Vec<crate::domain::releases::Release>),

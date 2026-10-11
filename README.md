@@ -306,7 +306,9 @@ edit_entity = "e"
 copy_reference = "y"
 # ...
 
-# Persist default column visibility / grouping / filters per pane
+# Persist default column visibility / grouping / filters per pane.
+# On a GitHub repository, a State filter with a single state also makes
+# `gh issue list` / `gh pr list` fetch only that state (`--state open`).
 # [issues]
 # columns = ["ID", "State", "Title", "Labels"]
 # group_by_column = "State"

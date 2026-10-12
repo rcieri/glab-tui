@@ -110,17 +110,19 @@ fn run_dialog_choice(
     let ConfirmAction::SubmitReview(mr_iid) = *action else {
         return;
     };
-    let count = app.draft_comments.len();
+    let count = app.draft_comments.len() + app.stale_draft_comments.len();
     let noun = if count == 1 { "comment" } else { "comments" };
     match choice {
         DialogChoice::KeepDrafts => {
             // The project cache already holds them, and opening this diff
             // again restores them from there.
             app.draft_comments.clear();
+            app.stale_draft_comments.clear();
             app.status_message = Some(format!("Kept {count} draft {noun} for later"));
         }
         DialogChoice::DiscardDrafts => {
             app.draft_comments.clear();
+            app.stale_draft_comments.clear();
             app.persist_draft_comments(project_path, mr_iid);
             app.in_review_mode = false;
             app.status_message = Some(format!("Discarded {count} draft {noun}"));
@@ -1480,5 +1482,42 @@ diff --git a/src/lib.rs b/src/lib.rs
 
         assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(saved_drafts(&app, "acme/gadget", 7), ["other project"]);
+    }
+
+    #[test]
+    fn drafts_whose_lines_left_the_diff_are_held_back_but_kept_until_discarded() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        let moved = crate::domain::review::DraftComment {
+            line_num: Some(9),
+            ..draft("moved")
+        };
+        let range_end_moved = crate::domain::review::DraftComment {
+            end_line_num: Some(9),
+            ..draft("range")
+        };
+        app.draft_comments = vec![draft("nit"), moved, range_end_moved];
+        app.persist_draft_comments(PROJECT, 7);
+
+        let diff_view = app.diff_view.take().expect("fixture opens a diff");
+        assert_eq!(app.restore_draft_comments(&diff_view), 2);
+        app.diff_view = Some(diff_view);
+        assert_eq!(bodies(&app.draft_comments), ["nit"]);
+
+        app.draft_comments.push(draft("new"));
+        app.persist_draft_comments(PROJECT, 7);
+        assert_eq!(
+            saved_drafts(&app, PROJECT, 7),
+            ["nit", "new", "moved", "range"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(app.stale_draft_comments.is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Discarded 4 draft comments")
+        );
     }
 }

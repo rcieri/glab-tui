@@ -2048,15 +2048,24 @@ async fn main() -> Result<()> {
                     app.diff_loading = false;
                     let mut diff_view = *diff_view;
                     let mr_iid = diff_view.mr_iid;
-                    let restored_drafts =
-                        app.draft_comments_for_mr(&diff_view.project_path, mr_iid);
+                    let held_back = app.restore_draft_comments(&diff_view);
                     // Restore the files marked as reviewed on an earlier pass.
                     diff_view.restore_review_state(
                         app.reviewed_files_for_mr(mr_iid),
                         app.hide_reviewed_files,
                     );
                     app.diff_view = Some(diff_view);
-                    app.draft_comments = restored_drafts;
+                    if held_back > 0 {
+                        app.raise_error_toast(if held_back == 1 {
+                            "1 draft comment no longer matches the diff and was set aside"
+                                .to_string()
+                        } else {
+                            format!(
+                                "{held_back} draft comments no longer match the diff and were set aside"
+                            )
+                        });
+                        app.error_has_cli_detail = false;
+                    }
                     app.current_comments = comments;
                     if let (Some(overview), Some(diff_view)) =
                         (app.review_threads.as_mut(), app.diff_view.as_ref())

@@ -38,9 +38,14 @@ pub struct ProjectCache {
         HashMap<crate::app::Tab, HashMap<String, std::collections::HashSet<String>>>,
 }
 
+fn prepare_cache_dir() -> PathBuf {
+    let dir = get_cache_dir();
+    let _ = private_fs::create_owned_dir(&dir);
+    dir
+}
+
 fn get_cache_file_path(project_context: &str) -> PathBuf {
-    let mut path = get_cache_dir();
-    let _ = private_fs::create_dir_all(&path);
+    let mut path = prepare_cache_dir();
     path.push(cache_file_name(project_context));
     path
 }
@@ -63,8 +68,7 @@ pub fn save_cache(project_context: &str, cache: &ProjectCache) {
 }
 
 fn get_recent_repos_file_path() -> PathBuf {
-    let mut path = get_cache_dir();
-    let _ = private_fs::create_dir_all(&path);
+    let mut path = prepare_cache_dir();
     path.push("recent_repos.json");
     path
 }
@@ -106,8 +110,7 @@ pub fn add_recent_repo(repo_path: &str) {
 }
 
 fn get_recent_groups_file_path() -> PathBuf {
-    let mut path = get_cache_dir();
-    let _ = private_fs::create_dir_all(&path);
+    let mut path = prepare_cache_dir();
     path.push("recent_groups.json");
     path
 }
@@ -632,5 +635,22 @@ mod tests {
         assert_eq!(mode_of(&cache_dir.join("group_project.json")), 0o600);
         assert_eq!(mode_of(&cache_dir.join("recent_repos.json")), 0o600);
         assert_eq!(mode_of(&cache_dir.join("recent_groups.json")), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_dir_left_world_readable_is_tightened_on_load() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = crate::config::TEST_ENV_MUTEX.lock().unwrap();
+        let home = tempdir().unwrap();
+        let _env = crate::config::EnvGuard::isolate_home(home.path());
+        let cache_dir = get_cache_dir();
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::set_permissions(&cache_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        load_cache("group/project");
+
+        assert_eq!(mode_of(&cache_dir), 0o700);
     }
 }

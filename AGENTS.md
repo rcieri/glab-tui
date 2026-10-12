@@ -138,7 +138,7 @@ Group/org-level browsing is supported via the `Scope` enum ([src/scope.rs](src/s
 * All API errors, network failures, and guard violations route through `App::show_error(msg)` instead of setting `error_message` directly.
 * Displays a 3-row floating rounded toast box with `status_failed` icon and auto-dismiss after 5 seconds.
 * Automatically stamps the most recent running command in the terminal commands bar as failed, keeping both UI surfaces synchronized.
-* Non-error feedback goes to `App::status_message` (`StatusMessage` in [src/app.rs](src/app.rs)), rendered in the header bar: `StatusMessage::notice` expires after `STATUS_NOTICE_LIFETIME`, `StatusMessage::offline` stays (red badge) until a fetch succeeds. A `FetchFailed` over cached rows sets the offline badge instead of a toast.
+* Non-error feedback goes to `App::status_message` (`StatusMessage` in [src/app.rs](src/app.rs)), rendered in the header bar: `StatusMessage::notice` expires after `STATUS_NOTICE_LIFETIME`, `StatusMessage::offline` stays (red badge) until a fetch succeeds. A `FetchFailed` over cached rows sets the offline badge instead of a toast, so only list refreshes send `FetchFailed`: other background failures send `CommandCompleted(Err)`, and background successes send `Event::Notice`.
 * Background mutations never discard their `Result`. Optimistic pipeline/job status flips go through `run_optimistic_mutation` ([src/handlers/tabs.rs](src/handlers/tabs.rs)): failed rows are restored via `PipelineStatusRevert`/`JobStatusRevert`, and all failures surface as one `CommandCompleted(Err)` toast. A failed fetch sends exactly one error event.
 
 ### Rate Limiting (`src/backend/rate_limit.rs`)

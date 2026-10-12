@@ -2599,21 +2599,17 @@ pub async fn handle_active_tab_key(
                 tokio::spawn(async move {
                     match crate::utils::update::perform_self_update().await {
                         Ok(true) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                crate::app::Tab::Todos,
+                            let _ = tx.send(Event::Notice(
                                 "Update complete! Please restart glab-tui.".to_string(),
                             ));
                         }
                         Ok(false) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                crate::app::Tab::Todos,
-                                "Already up to date.".to_string(),
-                            ));
+                            let _ = tx.send(Event::Notice("Already up to date.".to_string()));
                         }
                         Err(e) => {
-                            let _ = tx.send(Event::FetchFailed(
+                            let _ = tx.send(Event::CommandCompleted(
                                 crate::app::Tab::Todos,
-                                format!("Update failed: {e}"),
+                                Err(format!("Update failed: {e}")),
                             ));
                         }
                     }

@@ -3989,6 +3989,9 @@ impl App {
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.pending_issue_select = None;
+        self.pending_mr_select = None;
+        self.pending_pipeline_select = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;

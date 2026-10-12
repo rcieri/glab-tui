@@ -6849,19 +6849,23 @@ impl App {
     /// places (keys, mouse, search, column filters, refetches, tab switches),
     /// so the event loop reconciles here once per frame instead.
     pub fn discard_stale_deployments(&mut self) {
-        let Some(shown) = &self.environment_deployments else {
-            return;
-        };
-        let is_still_selected = self.active_tab == Tab::Environments
+        let is_stale = self
+            .environment_deployments
+            .as_ref()
+            .is_some_and(|shown| !self.is_highlighted_environment(&shown.environment));
+        if is_stale {
+            self.environment_deployments = None;
+        }
+    }
+
+    pub fn is_highlighted_environment(&self, name: &str) -> bool {
+        self.active_tab == Tab::Environments
             && self
                 .environments
                 .state
                 .selected()
                 .and_then(|idx| self.filtered_environments().get(idx).copied())
-                .is_some_and(|env| env.name == shown.environment);
-        if !is_still_selected {
-            self.environment_deployments = None;
-        }
+                .is_some_and(|env| env.name == name)
     }
 
     /// Canonicalise a saved filter value to the display string that

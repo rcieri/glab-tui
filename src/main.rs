@@ -1971,10 +1971,12 @@ async fn main() -> Result<()> {
                     environment,
                     deployments,
                 } => {
-                    let mut table = crate::utils::ui::StatefulTable::with_items(deployments);
-                    table.state.select(Some(0));
-                    app.environment_deployments =
-                        Some(app::EnvironmentDeployments { environment, table });
+                    if app.is_highlighted_environment(&environment) {
+                        let mut table = crate::utils::ui::StatefulTable::with_items(deployments);
+                        table.state.select(Some(0));
+                        app.environment_deployments =
+                            Some(app::EnvironmentDeployments { environment, table });
+                    }
                     app.status_message = None;
                     app.update_filter_selection();
                 }

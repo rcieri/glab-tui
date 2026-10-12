@@ -7470,17 +7470,7 @@ async fn main() -> Result<()> {
                                     let content = range
                                         .lines
                                         .iter()
-                                        .map(|l| {
-                                            let c = l.content.as_str();
-                                            if c.starts_with('+')
-                                                || c.starts_with('-')
-                                                || c.starts_with(' ')
-                                            {
-                                                if c.len() > 1 { &c[1..] } else { "" }
-                                            } else {
-                                                c
-                                            }
-                                        })
+                                        .map(|l| crate::app::strip_diff_marker(&l.content))
                                         .collect::<Vec<_>>()
                                         .join("\n");
 

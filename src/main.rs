@@ -2657,12 +2657,17 @@ async fn main() -> Result<()> {
                                         let comments = std::mem::take(&mut app.draft_comments);
                                         app.in_review_mode = false;
                                         if let Some(client) = app.gitlab_client.clone() {
-                                            let project = app
+                                            let Some(project) = app
                                                 .diff_view
                                                 .as_ref()
                                                 .filter(|diff| diff.mr_iid == mr_iid)
                                                 .map(|diff| diff.project_path.clone())
-                                                .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
+                                            else {
+                                                app.show_error(format!(
+                                                    "diff for MR #{mr_iid} closed before the review was submitted"
+                                                ));
+                                                continue;
+                                            };
                                             let event = ReviewEvent::from_label(&status);
                                             let body = value.clone();
                                             let tx = events.sender();

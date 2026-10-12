@@ -14,6 +14,12 @@ const OVERLAP_BYTES: usize = 1024;
 /// GitLab's largest accepted `byte_limit`.
 const RANGE_MAX_BYTES: usize = 500 * 1024;
 const TRACE_ENDPOINT: &str = "glab api /projects/test-owner%2Ftest-repo/jobs/54321/trace";
+/// Lines of a log that, with the `follow line N` lines the job writes, fits
+/// the 36 rows of the zoomed log pane in a 40-row terminal.
+const PANE_FITTING_LINES: usize = 32;
+/// Bytes of each of those lines, so the re-requested overlap spans 16 whole
+/// lines: appending it again would push lines off screen and show others twice.
+const PANE_FITTING_LINE_BYTES: usize = 64;
 
 fn trace_calls(session: &TestSession) -> Vec<String> {
     session
@@ -61,8 +67,11 @@ fn ranged_read_after(log: &str) -> String {
 
 #[test]
 fn follow_mode_appends_what_the_log_gained_from_a_ranged_read() {
-    let log: String = (0..100)
-        .map(|line| format!("build output line {line:03}\n"))
+    let log: String = (0..PANE_FITTING_LINES)
+        .map(|line| {
+            let label = format!("build output line {line:03} ");
+            format!("{label:.<width$}\n", width = PANE_FITTING_LINE_BYTES - 1)
+        })
         .collect();
     let mut session = show_job_log(&log, &[]);
 
@@ -77,14 +86,11 @@ fn follow_mode_appends_what_the_log_gained_from_a_ranged_read() {
         [TRACE_ENDPOINT.to_string(), ranged_read_after(&log)],
         "{calls:?}"
     );
-    assert!(
-        session
-            .emulator
-            .get_text()
-            .contains("build output line 099"),
-        "the lines read before stay on screen:\n{}",
-        session.emulator.get_text()
-    );
+    let screen = session.emulator.get_text();
+    for line in 0..PANE_FITTING_LINES {
+        let label = format!("build output line {line:03}");
+        assert_eq!(screen.matches(&label).count(), 1, "{label} once:\n{screen}");
+    }
 }
 
 #[test]

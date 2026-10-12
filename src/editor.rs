@@ -100,9 +100,10 @@ pub fn edit_in_editor_with_suffix(
     }
 }
 
-/// Shows `content` in the editor through a temp file named after `prefix`,
-/// removed once the editor exits. A non-zero exit is reported as an error so
-/// a missing editor binary does not fail silently.
+/// Shows `content` in the editor through a temp file named after `prefix`.
+/// The file is left in place: an editor that returns before reading it
+/// (`code` without `--wait`) would otherwise find it gone. A non-zero exit is
+/// reported as an error so a missing editor binary does not fail silently.
 pub fn view_in_editor(
     content: &str,
     prefix: &str,
@@ -113,7 +114,7 @@ pub fn view_in_editor(
         .suffix(".txt")
         .tempfile()?;
     tmp.write_all(content.as_bytes())?;
-    let file_path = tmp.into_temp_path();
+    let file_path = tmp.into_temp_path().keep()?;
 
     let status = suspend_and_run(&mut editor_command(&file_path), terminal)?;
     if status.success() {

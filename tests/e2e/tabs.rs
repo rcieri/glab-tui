@@ -334,24 +334,36 @@ fn test_group_scope_pipeline_cancel_confirms_and_targets_its_own_project() {
 }
 
 /// The trace editor key hands the real log to an `EDITOR` that carries its
-/// own arguments, fetching the trace first when it was never shown. A
-/// placeholder file or `EDITOR` run as one program name is the original bug.
+/// own arguments, fetching the trace first when it was never shown, and
+/// leaves the file behind for an editor that returns before reading it
+/// (`code` without `--wait`). A placeholder file, `EDITOR` run as one program
+/// name, or a file deleted as soon as the editor returns are the bugs.
 #[test]
-fn trace_editor_key_fetches_the_trace_and_opens_it_in_a_multi_word_editor() {
+fn trace_editor_key_hands_the_fetched_trace_to_a_multi_word_non_blocking_editor() {
     use std::os::unix::fs::PermissionsExt;
 
     let sandbox = Sandbox::new(false).unwrap();
+    let tmp_dir = sandbox.temp_dir.path().join("tmp");
+    std::fs::create_dir_all(&tmp_dir).unwrap();
     let received = sandbox.temp_dir.path().join("editor_received.txt");
-    let editor = sandbox.bin_dir.join("copy-editor");
+    let editor = sandbox.bin_dir.join("path-editor");
     std::fs::write(
         &editor,
-        "#!/bin/sh\n[ \"$1\" = \"--into\" ] || exit 2\ncp \"$3\" \"$2\"\n",
+        "#!/bin/sh\n[ \"$1\" = \"--into\" ] || exit 2\nprintf '%s' \"$3\" > \"$2\"\n",
     )
     .unwrap();
     std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let editor_env = format!("copy-editor --into {}", received.display());
+    let editor_env = format!("path-editor --into {}", received.display());
 
-    let mut session = TestSession::launch(sandbox, 24, 100, &[("EDITOR", &editor_env)]);
+    let mut session = TestSession::launch(
+        sandbox,
+        24,
+        100,
+        &[
+            ("EDITOR", &editor_env),
+            ("TMPDIR", tmp_dir.to_str().unwrap()),
+        ],
+    );
     session
         .wait_for_screen_contains("Issues", 5000)
         .expect("app starts");
@@ -372,8 +384,9 @@ fn trace_editor_key_fetches_the_trace_and_opens_it_in_a_multi_word_editor() {
         .wait_for_screen_contains("mock gitlab job trace output", 15_000)
         .expect("the TUI is back and shows the fetched trace");
 
+    let trace_path = std::fs::read_to_string(&received).expect("the editor ran");
     assert_eq!(
-        std::fs::read_to_string(&received).expect("the editor ran"),
+        std::fs::read_to_string(&trace_path).expect("the trace file outlives the editor"),
         "mock gitlab job trace output\n"
     );
 }

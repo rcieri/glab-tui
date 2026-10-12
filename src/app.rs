@@ -5050,22 +5050,30 @@ impl App {
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
-    pub fn draft_comments_for_mr(&self, mr_iid: u64) -> Vec<DraftComment> {
+    pub fn draft_comments_for_mr(&self, project_path: &str, mr_iid: u64) -> Vec<DraftComment> {
         self.project_cache
             .draft_comments
-            .get(&mr_iid)
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
             .cloned()
             .unwrap_or_default()
     }
 
     /// Saves `draft_comments` as the drafts of an MR/PR and writes the project
     /// cache to disk, so drafts outlive the diff view and the process.
-    pub fn persist_draft_comments(&mut self, mr_iid: u64) {
+    pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
+        let drafts = &mut self.project_cache.draft_comments;
         if self.draft_comments.is_empty() {
-            self.project_cache.draft_comments.remove(&mr_iid);
+            if let Some(project_drafts) = drafts.get_mut(project_path) {
+                project_drafts.remove(&mr_iid);
+                if project_drafts.is_empty() {
+                    drafts.remove(project_path);
+                }
+            }
         } else {
-            self.project_cache
-                .draft_comments
+            drafts
+                .entry(project_path.to_string())
+                .or_default()
                 .insert(mr_iid, self.draft_comments.clone());
         }
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);

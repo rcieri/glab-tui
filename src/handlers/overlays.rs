@@ -91,7 +91,7 @@ pub fn handle_submit_dialog(
         let options = std::mem::take(&mut dialog.options);
         run_submit_action(app, action, project_path, options, tx);
     } else if let Some(choice) = choice {
-        run_dialog_choice(app, &dialog.action, choice);
+        run_dialog_choice(app, &dialog.action, &dialog.project_path, choice);
     } else if !cancel {
         // Either the user navigated or toggled an option — keep the
         // dialog open.
@@ -101,7 +101,12 @@ pub fn handle_submit_dialog(
     true
 }
 
-fn run_dialog_choice(app: &mut App, action: &ConfirmAction, choice: DialogChoice) {
+fn run_dialog_choice(
+    app: &mut App,
+    action: &ConfirmAction,
+    project_path: &str,
+    choice: DialogChoice,
+) {
     let ConfirmAction::SubmitReview(mr_iid) = *action else {
         return;
     };
@@ -116,7 +121,7 @@ fn run_dialog_choice(app: &mut App, action: &ConfirmAction, choice: DialogChoice
         }
         DialogChoice::DiscardDrafts => {
             app.draft_comments.clear();
-            app.persist_draft_comments(mr_iid);
+            app.persist_draft_comments(project_path, mr_iid);
             app.in_review_mode = false;
             app.status_message = Some(format!("Discarded {count} draft {noun}"));
         }
@@ -1346,19 +1351,25 @@ diff --git a/src/lib.rs b/src/lib.rs
         drafts.iter().map(|d| d.body.as_str()).collect()
     }
 
+    const PROJECT: &str = "acme/widget";
+
     /// Diff view of MR 7 in review mode with two saved drafts, and the
     /// submit-review dialog that leaving it raises.
     fn app_leaving_the_diff_with_drafts() -> App {
         let mut app = App::default();
         app.diff_view = Some(DiffView::new(
             7,
-            "acme/widget".to_string(),
+            PROJECT.to_string(),
             REVIEW_DIFF.to_string(),
         ));
         app.in_review_mode = true;
         app.draft_comments = vec![draft("nit"), draft("typo")];
-        app.persist_draft_comments(7);
-        app.submit_dialog = Some(SubmitDialog::build(ConfirmAction::SubmitReview(7), &app));
+        app.persist_draft_comments(PROJECT, 7);
+        app.submit_dialog = Some(SubmitDialog::build_with_project(
+            ConfirmAction::SubmitReview(7),
+            PROJECT.to_string(),
+            &app,
+        ));
         app
     }
 
@@ -1373,10 +1384,11 @@ diff --git a/src/lib.rs b/src/lib.rs
         }
     }
 
-    fn saved_drafts(app: &App, mr_iid: u64) -> Vec<String> {
+    fn saved_drafts(app: &App, project_path: &str, mr_iid: u64) -> Vec<String> {
         crate::utils::cache::load_cache(app.scope.as_str())
             .draft_comments
-            .get(&mr_iid)
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
             .map(|drafts| drafts.iter().map(|d| d.body.clone()).collect())
             .unwrap_or_default()
     }
@@ -1392,7 +1404,7 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert_eq!(app.diff_view.as_ref().map(|d| d.mr_iid), Some(7));
         assert_eq!(bodies(&app.draft_comments), ["nit", "typo"]);
         assert!(app.in_review_mode);
-        assert_eq!(saved_drafts(&app, 7), ["nit", "typo"]);
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
     }
 
     #[test]
@@ -1423,8 +1435,11 @@ diff --git a/src/lib.rs b/src/lib.rs
             app.status_message.as_deref(),
             Some("Kept 2 draft comments for later")
         );
-        assert_eq!(bodies(&app.draft_comments_for_mr(7)), ["nit", "typo"]);
-        assert_eq!(saved_drafts(&app, 7), ["nit", "typo"]);
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(saved_drafts(&app, PROJECT, 7), ["nit", "typo"]);
     }
 
     #[test]
@@ -1437,11 +1452,33 @@ diff --git a/src/lib.rs b/src/lib.rs
         assert!(app.submit_dialog.is_none());
         assert!(app.diff_view.is_none());
         assert!(app.draft_comments.is_empty());
-        assert!(app.draft_comments_for_mr(7).is_empty());
-        assert!(saved_drafts(&app, 7).is_empty());
+        assert!(app.draft_comments_for_mr(PROJECT, 7).is_empty());
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
         assert_eq!(
             app.status_message.as_deref(),
             Some("Discarded 2 draft comments")
         );
+    }
+
+    #[test]
+    fn drafts_of_one_project_never_load_for_the_same_iid_in_another_project() {
+        let _cache = isolate_cache();
+        let mut app = app_leaving_the_diff_with_drafts();
+        app.draft_comments = vec![draft("other project")];
+        app.persist_draft_comments("acme/gadget", 7);
+
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr(PROJECT, 7)),
+            ["nit", "typo"]
+        );
+        assert_eq!(
+            bodies(&app.draft_comments_for_mr("acme/gadget", 7)),
+            ["other project"]
+        );
+
+        press_in_dialog(&mut app, &[KeyCode::Right, KeyCode::Right, KeyCode::Enter]);
+
+        assert!(saved_drafts(&app, PROJECT, 7).is_empty());
+        assert_eq!(saved_drafts(&app, "acme/gadget", 7), ["other project"]);
     }
 }

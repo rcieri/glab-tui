@@ -1314,13 +1314,12 @@ pub async fn handle_active_tab_key(
         }
         crate::app::Tab::Pipelines => {
             if keybinding_matches(&app.config.keybindings.pipelines.enter_jobs, key_event) {
-                let pipe_id = app
-                    .pipelines
-                    .state
-                    .selected()
-                    .and_then(|idx| app.filtered_pipelines().get(idx).map(|p| p.id()));
-                if let Some(pipeline_id) = pipe_id {
-                    let project_context = app.scope.as_str().to_string();
+                let pipe_id = app.pipelines.state.selected().and_then(|idx| {
+                    app.filtered_pipelines()
+                        .get(idx)
+                        .map(|p| (p.id(), app.scope.project_of(&p.project_path).to_string()))
+                });
+                if let Some((pipeline_id, project_context)) = pipe_id {
                     spawn_open_pipeline(
                         app,
                         &tx,
@@ -2666,18 +2665,12 @@ pub async fn handle_active_tab_key(
                 }
                 crate::app::Tab::Pipelines => {
                     if let Some(idx) = app.pipelines.state.selected() {
-                        let pipe_info = app
-                            .filtered_pipelines()
-                            .get(idx)
-                            .map(|p| (p.id(), p.project_path.clone()));
-                        if let Some((pipeline_id, pipe_project)) = pipe_info {
+                        let pipe_info = app.filtered_pipelines().get(idx).map(|p| {
                             // A group-scoped list mixes projects, so the row's
                             // own path wins over the scope it was listed under.
-                            let project_context = if !pipe_project.is_empty() {
-                                pipe_project
-                            } else {
-                                app.scope.as_str().to_string()
-                            };
+                            (p.id(), app.scope.project_of(&p.project_path).to_string())
+                        });
+                        if let Some((pipeline_id, project_context)) = pipe_info {
                             spawn_open_pipeline(
                                 app,
                                 &tx,

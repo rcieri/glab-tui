@@ -11,7 +11,7 @@ impl Scope {
         }
     }
 
-    /// The project a listed issue, MR or milestone belongs to. Rows fetched
+    /// The project a listed issue, MR, milestone or pipeline belongs to. Rows fetched
     /// without a project of their own stand for the scope itself.
     pub fn project_of<'a>(&'a self, row_project_path: &'a str) -> &'a str {
         if row_project_path.is_empty() {

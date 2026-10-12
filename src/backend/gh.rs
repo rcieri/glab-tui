@@ -3481,7 +3481,7 @@ impl Backend for GhBackend {
         if project.is_empty() {
             anyhow::bail!("project path required to open environment in browser");
         }
-        let url = format!("https://github.com/{project}/settings/environments",);
+        let url = format!("https://github.com/{project}/settings/environments");
         open_github_url(&url, self.tx.clone(), "OPENING ENVIRONMENT IN BROWSER").await
     }
     // ── Raw API ──

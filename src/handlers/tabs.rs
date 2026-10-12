@@ -189,9 +189,14 @@ fn spawn_mark_todo_read(app: &App, todo_id: String, tx: &UnboundedSender<Event>)
     });
 }
 
-pub(crate) fn spawn_job_trace_fetch(app: &mut App, tx: &UnboundedSender<Event>, job_id: u64) {
+/// Returns whether a fetch started: there is none without a client.
+pub(crate) fn spawn_job_trace_fetch(
+    app: &mut App,
+    tx: &UnboundedSender<Event>,
+    job_id: u64,
+) -> bool {
     let Some(client) = app.gitlab_client.clone() else {
-        return;
+        return false;
     };
     let project_context = app.project_path_for_jobs();
     let tx = app.scoped_sender(tx.clone());
@@ -203,6 +208,7 @@ pub(crate) fn spawn_job_trace_fetch(app: &mut App, tx: &UnboundedSender<Event>, 
             res.map_err(|e| e.to_string()),
         ));
     });
+    true
 }
 
 pub fn open_job_trace_in_editor(app: &mut App, job_id: u64, terminal: &mut AppTerminal) {
@@ -1877,9 +1883,8 @@ pub async fn handle_active_tab_key(
                         {
                             if app.job_trace.is_some() {
                                 open_job_trace_in_editor(app, job_id, terminal);
-                            } else {
+                            } else if spawn_job_trace_fetch(app, &tx, job_id) {
                                 app.pending_job_trace_editor = Some(job_id);
-                                spawn_job_trace_fetch(app, &tx, job_id);
                             }
                         }
                         _ if keybinding_matches(

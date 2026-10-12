@@ -4260,6 +4260,7 @@ impl App {
         self.pending_issue_select = None;
         self.pending_mr_select = None;
         self.pending_pipeline_select = None;
+        self.pending_job_trace_editor = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;

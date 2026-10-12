@@ -1,5 +1,8 @@
 use crate::backend::BackendKind;
 
+/// Safe to await on the UI thread: `git symbolic-ref --short HEAD` and
+/// `git branch --show-current` read the local `.git` only. No network
+/// roundtrip, no prompt for credentials.
 pub async fn get_current_branch() -> Option<String> {
     let probes: [&[&str]; 2] = [
         &["symbolic-ref", "--short", "HEAD"],

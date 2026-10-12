@@ -4,6 +4,8 @@
 //! With `TEST_GLAB_TRACE_FILE` set, the mock `glab` serves that file as the
 //! job log, honouring `byte_offset`/`byte_limit`, and appends `follow line N`
 //! after every read, like a job still writing output.
+//! `TEST_GLAB_TRACE_IGNORES_RANGES` makes it ignore the range parameters and
+//! send the whole log, like a GitLab that predates them.
 
 use crate::{Sandbox, TestSession};
 
@@ -11,6 +13,7 @@ use crate::{Sandbox, TestSession};
 const OVERLAP_BYTES: usize = 1024;
 /// GitLab's largest accepted `byte_limit`.
 const RANGE_MAX_BYTES: usize = 500 * 1024;
+const TRACE_ENDPOINT: &str = "glab api /projects/test-owner%2Ftest-repo/jobs/54321/trace";
 
 fn trace_calls(session: &TestSession) -> Vec<String> {
     session
@@ -21,20 +24,15 @@ fn trace_calls(session: &TestSession) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn follow_mode_appends_what_the_log_gained_from_a_ranged_read() {
+/// Launches glab-tui with `log` as the job's log and opens it.
+fn show_job_log(log: &str, extra: &[(&str, &str)]) -> TestSession {
     let sandbox = Sandbox::new(false).unwrap();
     let trace_file = sandbox.temp_dir.path().join("job.log");
-    let log: String = (0..100)
-        .map(|line| format!("build output line {line:03}\n"))
-        .collect();
-    std::fs::write(&trace_file, &log).unwrap();
-    let mut session = TestSession::launch(
-        sandbox,
-        40,
-        140,
-        &[("TEST_GLAB_TRACE_FILE", trace_file.to_str().unwrap())],
-    );
+    std::fs::write(&trace_file, log).unwrap();
+    let trace_path = trace_file.to_str().unwrap().to_string();
+    let mut envs = vec![("TEST_GLAB_TRACE_FILE", trace_path.as_str())];
+    envs.extend_from_slice(extra);
+    let mut session = TestSession::launch(sandbox, 40, 140, &envs);
 
     session
         .wait_for_screen_contains("Issues", 30000)
@@ -51,23 +49,32 @@ fn follow_mode_appends_what_the_log_gained_from_a_ranged_read() {
     session
         .wait_for_screen_contains("build output line 000", 15000)
         .expect("the job log is shown");
+    session
+}
+
+fn ranged_read_after(log: &str) -> String {
+    format!(
+        "{TRACE_ENDPOINT}?byte_offset={}&byte_limit={RANGE_MAX_BYTES}",
+        log.len() - OVERLAP_BYTES
+    )
+}
+
+#[test]
+fn follow_mode_appends_what_the_log_gained_from_a_ranged_read() {
+    let log: String = (0..100)
+        .map(|line| format!("build output line {line:03}\n"))
+        .collect();
+    let mut session = show_job_log(&log, &[]);
 
     session.send_input(b"f");
     session
         .wait_for_screen_contains("follow line 1", 15000)
         .expect("the follow poll appends the line the job wrote");
 
-    let endpoint = "glab api /projects/test-owner%2Ftest-repo/jobs/54321/trace";
     let calls = trace_calls(&session);
     assert_eq!(
         calls[..2],
-        [
-            endpoint.to_string(),
-            format!(
-                "{endpoint}?byte_offset={}&byte_limit={RANGE_MAX_BYTES}",
-                log.len() - OVERLAP_BYTES
-            ),
-        ],
+        [TRACE_ENDPOINT.to_string(), ranged_read_after(&log)],
         "{calls:?}"
     );
     assert!(
@@ -78,4 +85,31 @@ fn follow_mode_appends_what_the_log_gained_from_a_ranged_read() {
         "the lines read before stay on screen:\n{}",
         session.emulator.get_text()
     );
+}
+
+#[test]
+fn follow_mode_reads_whole_logs_once_the_server_ignores_ranges() {
+    let log: String = (0..100)
+        .map(|line| format!("build output line {line:03}\n"))
+        .collect();
+    let mut session = show_job_log(&log, &[("TEST_GLAB_TRACE_IGNORES_RANGES", "1")]);
+
+    session.send_input(b"f");
+    session
+        .wait_for_screen_contains("follow line 2", 20000)
+        .expect("two follow polls append the lines the job wrote");
+
+    let calls = trace_calls(&session);
+    assert_eq!(
+        calls[..3],
+        [
+            TRACE_ENDPOINT.to_string(),
+            ranged_read_after(&log),
+            TRACE_ENDPOINT.to_string(),
+        ],
+        "a whole log answering the ranged read makes later polls read whole logs: {calls:?}"
+    );
+    let screen = session.emulator.get_text();
+    assert_eq!(screen.matches("follow line 1").count(), 1, "{screen}");
+    assert_eq!(screen.matches("follow line 2").count(), 1, "{screen}");
 }

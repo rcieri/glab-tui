@@ -1716,11 +1716,13 @@ pub async fn handle_active_tab_key(
                                 .get(idx)
                                 .map(|job| job.stage().to_string());
                             if let Some(stage_name) = highlighted_stage {
-                                for job in &app.jobs.items {
-                                    if job.stage() == stage_name {
-                                        app.selected_jobs.insert(job.id());
-                                    }
-                                }
+                                let stage_ids: Vec<u64> = app
+                                    .filtered_jobs()
+                                    .iter()
+                                    .filter(|job| job.stage() == stage_name)
+                                    .map(|job| job.id())
+                                    .collect();
+                                app.selected_jobs.extend(stage_ids);
                                 app.show_notice(format!(
                                     "Selected all jobs in stage '{stage_name}'"
                                 ));
@@ -4198,7 +4200,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn select_stage_selects_stage_of_highlighted_filtered_job() {
+    async fn select_stage_selects_visible_jobs_in_the_highlighted_stage() {
         let mut app = App::default();
         app.active_tab = crate::app::Tab::Jobs;
         app.jobs.items = serde_json::from_value(serde_json::json!([
@@ -4208,7 +4210,7 @@ mod tests {
         ]))
         .expect("job fixtures");
         app.column_filters
-            .insert(crate::app::Tab::Jobs, column_filter("Stage", "test"));
+            .insert(crate::app::Tab::Jobs, column_filter("Name", "e2e"));
         app.jobs.state.select(Some(0));
 
         dispatch(
@@ -4217,7 +4219,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(app.selected_jobs, HashSet::from([2, 3]));
+        assert_eq!(app.selected_jobs, HashSet::from([3]));
     }
 
     #[tokio::test]

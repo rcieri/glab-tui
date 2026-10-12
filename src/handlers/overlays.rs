@@ -1,5 +1,5 @@
 use crate::AppTerminal;
-use crate::app::{App, ConfirmAction, DialogChoice, StatusMessage};
+use crate::app::{App, ConfirmAction, DialogChoice};
 use crate::entity_editor::{apply_field_text_change, rebuild_edit_menu};
 use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
@@ -112,17 +112,13 @@ fn run_dialog_choice(app: &mut App, action: &ConfirmAction, choice: DialogChoice
             // The project cache already holds them, and opening this diff
             // again restores them from there.
             app.draft_comments.clear();
-            app.status_message = Some(StatusMessage::notice(format!(
-                "Kept {count} draft {noun} for later"
-            )));
+            app.show_notice(format!("Kept {count} draft {noun} for later"));
         }
         DialogChoice::DiscardDrafts => {
             app.draft_comments.clear();
             app.persist_draft_comments(mr_iid);
             app.in_review_mode = false;
-            app.status_message = Some(StatusMessage::notice(format!(
-                "Discarded {count} draft {noun}"
-            )));
+            app.show_notice(format!("Discarded {count} draft {noun}"));
         }
     }
     app.diff_view = None;
@@ -921,9 +917,7 @@ fn jump_to_review_thread(app: &mut App, overview: &crate::app::ReviewThreadsOver
     if diff_view.jump_to_anchor(position) {
         if was_hiding_reviewed && !diff_view.hide_reviewed {
             app.hide_reviewed_files = false;
-            app.status_message = Some(crate::app::StatusMessage::notice(
-                "Showing reviewed files to reach the thread",
-            ));
+            app.show_notice("Showing reviewed files to reach the thread");
         }
         return true;
     }

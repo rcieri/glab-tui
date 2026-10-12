@@ -1,5 +1,5 @@
 use crate::AppTerminal;
-use crate::app::{App, StatusMessage, Tab};
+use crate::app::{App, Tab};
 use crate::entity_editor::rebuild_edit_menu;
 use crate::event::{Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
@@ -44,9 +44,7 @@ fn show_selected_all_notice(app: &mut App, added: usize) {
         return;
     }
     let plural = if added == 1 { "" } else { "s" };
-    app.status_message = Some(StatusMessage::notice(format!(
-        "Selected all {added} item{plural}"
-    )));
+    app.show_notice(format!("Selected all {added} item{plural}"));
 }
 
 /// A row whose status was set before the backend confirmed the mutation:
@@ -244,10 +242,7 @@ fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &Unbounde
     if !is_known && can_be_stacked {
         if let Some(client) = app.gitlab_client.clone() {
             crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
-            app.status_message = Some(StatusMessage::notice(format!(
-                "Loading the stack of PR #{}…",
-                pr.1
-            )));
+            app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
             app.pending_stack_selector = Some(pr);
             return;
         }
@@ -1702,10 +1697,10 @@ pub async fn handle_active_tab_key(
                                         app.selected_jobs.insert(job.id());
                                     }
                                 }
-                                app.status_message = Some(StatusMessage::notice(format!(
+                                app.show_notice(format!(
                                     "Selected all jobs in stage '{}'",
                                     stage_name
-                                )));
+                                ));
                             }
                         }
                         _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {

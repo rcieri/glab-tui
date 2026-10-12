@@ -1600,9 +1600,9 @@ async fn main() -> Result<()> {
                             app.milestone_issues_cache.insert(iid, cached.clone());
                             if app.selected_milestone_iid == Some(iid) {
                                 app.selected_milestone_issues = Some(cached.clone());
-                                app.status_message = Some(app::StatusMessage::notice(
+                                app.show_notice(
                                     "Offline fallback: loaded cached milestone issues.",
-                                ));
+                                );
                             }
                             fallback_success = true;
                         }
@@ -1771,9 +1771,7 @@ async fn main() -> Result<()> {
                             };
                             if let Some(cached) = fallback {
                                 if !cached.is_empty() {
-                                    app.status_message = Some(app::StatusMessage::notice(
-                                        "Offline fallback: cached selector items.",
-                                    ));
+                                    app.show_notice("Offline fallback: cached selector items.");
                                     if let Some(mut selector) = app.selector.take() {
                                         selector.all_items = cached;
                                         selector.is_loading = false;
@@ -2072,7 +2070,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::CommandStarted(msg) => {
-                    app.status_message = Some(app::StatusMessage::notice(msg.clone()));
+                    app.show_notice(msg.clone());
                     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
                     app.terminal_commands.push(crate::app::TerminalCommand {
                         timestamp,
@@ -2135,7 +2133,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::Notice(msg) => {
-                    app.status_message = Some(app::StatusMessage::notice(msg));
+                    app.show_notice(msg);
                 }
                 Event::RunnerStateRevert {
                     runner_id,
@@ -2348,11 +2346,10 @@ async fn main() -> Result<()> {
                                                 {
                                                     app.persist_draft_comments(&project, mr_iid);
                                                 }
-                                                app.status_message =
-                                                    Some(app::StatusMessage::notice(format!(
-                                                        "Added draft comment. ({} pending)",
-                                                        app.draft_comments.len()
-                                                    )));
+                                                app.show_notice(format!(
+                                                    "Added draft comment. ({} pending)",
+                                                    app.draft_comments.len()
+                                                ));
                                             } else {
                                                 post_review_comment(
                                                     &app,
@@ -3652,10 +3649,9 @@ async fn main() -> Result<()> {
                                                             app.scope.as_str().to_string();
                                                         let tx = events.sender();
 
-                                                        app.status_message =
-                                                            Some(app::StatusMessage::notice(
-                                                                "Opening editor to edit comment...",
-                                                            ));
+                                                        app.show_notice(
+                                                            "Opening editor to edit comment...",
+                                                        );
 
                                                         let is_github = client
                                                             .as_ref()
@@ -7025,13 +7021,13 @@ async fn main() -> Result<()> {
                                         &app.project_cache,
                                     );
                                     let (reviewed, total) = diff_view.review_progress();
-                                    app.status_message = Some(app::StatusMessage::notice(format!(
+                                    app.show_notice(format!(
                                         "{} {} ({}/{} reviewed)",
                                         if marked { "Reviewed" } else { "Unmarked" },
                                         target,
                                         reviewed,
                                         total
-                                    )));
+                                    ));
                                 }
                                 app.diff_view = Some(diff_view);
                             }
@@ -7039,11 +7035,11 @@ async fn main() -> Result<()> {
                                 let hidden = diff_view.toggle_hide_reviewed();
                                 app.hide_reviewed_files = hidden;
                                 let (reviewed, total) = diff_view.review_progress();
-                                app.status_message = Some(app::StatusMessage::notice(if hidden {
+                                app.show_notice(if hidden {
                                     format!("Hiding {reviewed} reviewed file(s)")
                                 } else {
                                     format!("Showing all {total} file(s)")
-                                }));
+                                });
                                 app.diff_view = Some(diff_view);
                             }
                             KeyCode::Char('[') => {
@@ -7263,15 +7259,11 @@ async fn main() -> Result<()> {
                                     if in_selection {
                                         diff_view.selection_start = None;
                                         diff_view.selection_end = None;
-                                        app.status_message = Some(app::StatusMessage::notice(
-                                            "Selection cancelled.",
-                                        ));
+                                        app.show_notice("Selection cancelled.");
                                     } else {
                                         diff_view.selection_start = Some(diff_view.cursor_idx);
                                         diff_view.selection_end = Some(diff_view.cursor_idx);
-                                        app.status_message = Some(app::StatusMessage::notice(
-                                            "Selection started. Use j/k to extend, Esc to cancel, c to comment.",
-                                        ));
+                                        app.show_notice("Selection started. Use j/k to extend, Esc to cancel, c to comment.");
                                     }
                                 }
                                 app.diff_view = Some(diff_view);
@@ -7410,9 +7402,7 @@ async fn main() -> Result<()> {
                             }
                             KeyCode::Char('C') => {
                                 if let Some(range) = diff_view.get_comment_range() {
-                                    app.status_message = Some(app::StatusMessage::notice(
-                                        "Opening editor for comment...",
-                                    ));
+                                    app.show_notice("Opening editor for comment...");
                                     let comment_content = edit_in_editor("", &mut terminal);
                                     if let Some(body) = comment_content {
                                         if !body.trim().is_empty() {
@@ -7430,11 +7420,10 @@ async fn main() -> Result<()> {
                                                     &diff_view.project_path,
                                                     diff_view.mr_iid,
                                                 );
-                                                app.status_message =
-                                                    Some(app::StatusMessage::notice(format!(
-                                                        "Added draft comment. ({} pending)",
-                                                        app.draft_comments.len()
-                                                    )));
+                                                app.show_notice(format!(
+                                                    "Added draft comment. ({} pending)",
+                                                    app.draft_comments.len()
+                                                ));
                                             } else {
                                                 post_review_comment(
                                                     &app,
@@ -7499,9 +7488,7 @@ async fn main() -> Result<()> {
                                         .collect::<Vec<_>>()
                                         .join("\n");
 
-                                    app.status_message = Some(app::StatusMessage::notice(
-                                        "Opening editor for code suggestion...",
-                                    ));
+                                    app.show_notice("Opening editor for code suggestion...");
                                     let ext = std::path::Path::new(&range.file_path)
                                         .extension()
                                         .and_then(|s| s.to_str())
@@ -7529,11 +7516,10 @@ async fn main() -> Result<()> {
                                                 &diff_view.project_path,
                                                 diff_view.mr_iid,
                                             );
-                                            app.status_message =
-                                                Some(app::StatusMessage::notice(format!(
-                                                    "Added suggestion draft. ({} pending)",
-                                                    app.draft_comments.len()
-                                                )));
+                                            app.show_notice(format!(
+                                                "Added suggestion draft. ({} pending)",
+                                                app.draft_comments.len()
+                                            ));
                                         } else {
                                             post_review_comment(
                                                 &app,

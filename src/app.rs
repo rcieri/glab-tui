@@ -4799,6 +4799,12 @@ impl App {
         rows
     }
 
+    /// Single entry point for non-error feedback in the header bar. Stale
+    /// data has its own badge (`stale_tabs`), so a notice never hides it.
+    pub fn show_notice(&mut self, text: impl Into<String>) {
+        self.status_message = Some(StatusMessage::notice(text));
+    }
+
     /// Single entry point for surfacing a runtime error. Sets the transient
     /// error toast (`error_message`) and marks the failed terminal command so
     /// both UI surfaces stay in sync.
@@ -7931,8 +7937,8 @@ mod tests {
             .unwrap(),
         ];
         app.issues.state.select(Some(0));
-        let status = StatusMessage::notice("Selected all 3 items");
-        app.status_message = Some(status.clone());
+        app.show_notice("Selected all 3 items");
+        let status = app.status_message.clone();
 
         app.copy_selected_issue_reference().unwrap();
 
@@ -7940,7 +7946,7 @@ mod tests {
             copied.borrow().as_deref(),
             Some("[#42: Fix parser](https://github.com/acme/project/issues/42)")
         );
-        assert_eq!(app.status_message, Some(status));
+        assert_eq!(app.status_message, status);
     }
 
     #[test]
@@ -7996,8 +8002,8 @@ mod tests {
             .unwrap(),
         ];
         app.mrs.state.select(Some(0));
-        let status = StatusMessage::notice("Selected all 3 items");
-        app.status_message = Some(status.clone());
+        app.show_notice("Selected all 3 items");
+        let status = app.status_message.clone();
 
         assert_eq!(
             app.selected_mr_reference().as_deref(),
@@ -8014,7 +8020,7 @@ mod tests {
                 r"[!101: Add feature \[v2\]](https://gitlab.com/acme/project/-/merge_requests/101)"
             )
         );
-        assert_eq!(app.status_message, Some(status));
+        assert_eq!(app.status_message, status);
     }
 
     #[test]

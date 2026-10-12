@@ -3294,7 +3294,8 @@ pub(crate) fn jump_to_issue_tab_from_selector(
 }
 
 /// Mark `todo` read and jump to the issue or MR/PR it points at, in the
-/// todo's own project rather than any row that shares its number.
+/// todo's own project rather than any row that shares its number. Says so in
+/// the header bar when the target is not among the loaded rows.
 fn mark_todo_read_and_jump(
     app: &mut crate::app::App,
     todo: crate::domain::notifications::Notification,
@@ -3302,10 +3303,18 @@ fn mark_todo_read_and_jump(
 ) {
     spawn_mark_todo_read(app, todo.id.clone(), tx);
     let project = (!todo.project_path.is_empty()).then_some(todo.project_path.as_str());
-    if todo.target_type == "MergeRequest" {
-        app.focus_mr(project, todo.target_iid);
+    let (found, kind) = if todo.target_type == "MergeRequest" {
+        let kind = if app.is_github() { "PR" } else { "MR" };
+        (app.focus_mr(project, todo.target_iid), kind)
     } else {
-        app.focus_issue(project, todo.target_iid);
+        (app.focus_issue(project, todo.target_iid), "Issue")
+    };
+    if !found {
+        let location = project.map(|p| format!(" in {p}")).unwrap_or_default();
+        app.status_message = Some(StatusMessage::notice(format!(
+            "{kind} #{}{location} isn't loaded here",
+            todo.target_iid
+        )));
     }
 }
 
@@ -4224,7 +4233,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn todo_from_another_project_does_not_highlight_a_same_numbered_issue() {
+    async fn todo_from_another_project_does_not_highlight_a_same_numbered_issue_and_says_so() {
         let mut app = App::default();
         app.scope = crate::scope::Scope::Repository("me/repo".to_string());
         app.issues.items = vec![issue_in("", 1), issue_in("", 7)];
@@ -4237,6 +4246,10 @@ mod tests {
 
         assert_eq!(app.active_tab, crate::app::Tab::Issues);
         assert_eq!(app.issues.state.selected(), Some(0));
+        assert_eq!(
+            app.status_message.as_ref().map(StatusMessage::text),
+            Some("Issue #7 in other/proj isn't loaded here")
+        );
     }
 
     #[test]

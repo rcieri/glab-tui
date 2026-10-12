@@ -16,10 +16,11 @@
 #
 # Every argument is also exported as GLAB_TUI_<NAME> (GLAB_TUI_PR_NUMBER,
 # GLAB_TUI_ISSUE_TITLE, ...). A {{.Arg}} is only spliced in when its value is a
-# single plain word: one that starts with '-', or holds whitespace or a
-# character the shell interprets (` $ ; & | < > ( ) \ " ' ~ * ? [ ] { } # =),
-# is refused. Free text such as titles must go through the quoted variable,
-# after -- when it could start with '-'.
+# single plain word: one that starts with '-' or '+' (vim, nvim and less run
+# '+cmd' as a command), or holds whitespace or a character the shell interprets
+# (` $ ; & | < > ( ) \ " ' ~ * ? [ ] { } # =), is refused. Free text such as
+# titles must go through the quoted variable, after -- when it could start with
+# '-' or '+'.
 #
 # With issues or MRs selected (Space, or v select mode), an issues/mrs binding
 # runs once per selected item.

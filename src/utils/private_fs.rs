@@ -14,7 +14,7 @@ const PRIVATE_FILE_MODE: u32 = 0o600;
 
 /// Creates `path` and any missing parents with mode `0700`. Directories that
 /// already exist keep their mode: they may be user-chosen, such as the parent
-/// of a `GLAB_TUI_CONFIG` file.
+/// of a `GLAB_TUI_CONFIG` file. Use `create_owned_dir` for glab-tui's own.
 pub fn create_dir_all(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -28,6 +28,19 @@ pub fn create_dir_all(path: &Path) -> io::Result<()> {
     {
         std::fs::create_dir_all(path)
     }
+}
+
+/// Creates a directory glab-tui owns outright with mode `0700`, and tightens
+/// one an older version left at `0755`: through it, other accounts could read
+/// every file inside that was written before files were made owner-only.
+pub fn create_owned_dir(path: &Path) -> io::Result<()> {
+    create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(PRIVATE_DIR_MODE))?;
+    }
+    Ok(())
 }
 
 /// Writes `contents` to `path` with mode `0600`, tightening an existing file
@@ -90,6 +103,18 @@ mod tests {
         create_dir_all(&existing).unwrap();
 
         assert_eq!(mode_of(&existing), 0o755);
+    }
+
+    #[test]
+    fn owned_directory_left_world_readable_is_tightened() {
+        let root = tempfile::tempdir().unwrap();
+        let owned = root.path().join("owned");
+        std::fs::create_dir(&owned).unwrap();
+        std::fs::set_permissions(&owned, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        create_owned_dir(&owned).unwrap();
+
+        assert_eq!(mode_of(&owned), 0o700);
     }
 
     #[test]

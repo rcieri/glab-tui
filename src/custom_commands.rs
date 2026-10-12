@@ -623,8 +623,8 @@ impl TemplateValues {
 }
 
 /// Substitutes `values` into `template`. Fails when a referenced argument is
-/// unavailable, starts with `-`, or holds whitespace or a character the shell
-/// interprets, since issue titles and branch names are third-party text.
+/// unavailable, starts with `-` or `+`, or holds whitespace or a character the
+/// shell interprets, since issue titles and branch names are third-party text.
 pub fn render(template: &str, values: &TemplateValues) -> Result<String, String> {
     let mut rendered = String::with_capacity(template.len());
     for segment in parse_template(template)? {
@@ -642,9 +642,9 @@ pub fn render(template: &str, values: &TemplateValues) -> Result<String, String>
             }
             None => return Err(format!("{{{{.{argument}}}}} is unavailable here")),
         };
-        if value.starts_with('-') {
+        if let Some(prefix) = value.chars().next().filter(|c| matches!(c, '-' | '+')) {
             return Err(format!(
-                "{{{{.{argument}}}}} starts with '-', so the command could read it as an option; \
+                "{{{{.{argument}}}}} starts with '{prefix}', so the command could read it as an option; \
                  pass -- \"${}\" in the command instead",
                 environment_variable(argument)
             ));
@@ -1174,18 +1174,23 @@ command = "true"
     }
 
     #[test]
-    fn render_refuses_values_that_start_with_a_dash() {
-        for hostile in ["-o", "--upload-pack=evil", "-"] {
+    fn render_refuses_values_that_start_like_an_option() {
+        for (hostile, prefix) in [
+            ("-o", '-'),
+            ("--upload-pack=evil", '-'),
+            ("-", '-'),
+            ("+!make", '+'),
+            ("+5", '+'),
+        ] {
             assert_eq!(
                 render(
                     "some-tool {{.IssueTitle}}",
                     &values(&[("IssueTitle", hostile)])
                 ),
-                Err(
-                    "{{.IssueTitle}} starts with '-', so the command could read it as an option; \
+                Err(format!(
+                    "{{{{.IssueTitle}}}} starts with '{prefix}', so the command could read it as an option; \
                      pass -- \"$GLAB_TUI_ISSUE_TITLE\" in the command instead"
-                        .to_string()
-                ),
+                )),
                 "value {hostile:?}"
             );
         }

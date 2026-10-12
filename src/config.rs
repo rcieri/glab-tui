@@ -814,11 +814,18 @@ pub fn use_config_file(file: PathBuf) {
 }
 
 fn config_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("GLAB_TUI_CONFIG") {
-        let mut p = PathBuf::from(path);
-        p.pop();
-        return p;
-    }
+    user_chosen_config_dir().unwrap_or_else(default_config_dir)
+}
+
+/// The parent of a `GLAB_TUI_CONFIG` file: a directory the user picked, whose
+/// mode glab-tui must not change.
+fn user_chosen_config_dir() -> Option<PathBuf> {
+    let mut dir = PathBuf::from(std::env::var("GLAB_TUI_CONFIG").ok()?);
+    dir.pop();
+    Some(dir)
+}
+
+fn default_config_dir() -> PathBuf {
     let xdg_config = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| home_dir().join(".config"));
@@ -1748,8 +1755,17 @@ impl Config {
         if let Some(file) = CONFIG_FILE_OVERRIDE.get() {
             return file.clone();
         }
-        let mut path = config_dir();
-        let _ = private_fs::create_dir_all(&path);
+        let mut path = match user_chosen_config_dir() {
+            Some(dir) => {
+                let _ = private_fs::create_dir_all(&dir);
+                dir
+            }
+            None => {
+                let dir = default_config_dir();
+                let _ = private_fs::create_owned_dir(&dir);
+                dir
+            }
+        };
         path.push("config.toml");
         path
     }
@@ -2656,6 +2672,41 @@ page_size = 250
             mode_of(&config_dir.join("themes").join("default.toml")),
             0o600
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_dir_left_world_readable_is_tightened_on_load() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let config_dir = temp_dir.path().join(".config").join("glab-tui");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        Config::load();
+
+        assert_eq!(mode_of(&config_dir), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn glab_tui_config_parent_keeps_its_mode() {
+        use crate::utils::private_fs::mode_of;
+        use std::os::unix::fs::PermissionsExt;
+        let _lock = TEST_ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _guard = EnvGuard::isolate_home(temp_dir.path());
+        let chosen = temp_dir.path().join("dotfiles");
+        std::fs::create_dir_all(&chosen).unwrap();
+        std::fs::set_permissions(&chosen, std::fs::Permissions::from_mode(0o755)).unwrap();
+        unsafe { std::env::set_var("GLAB_TUI_CONFIG", chosen.join("glab-tui.toml")) };
+
+        Config::load();
+
+        assert_eq!(mode_of(&chosen), 0o755);
     }
 
     #[test]

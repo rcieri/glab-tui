@@ -6,8 +6,9 @@
 //! for `release list`, `todos.json` for `todo list`, `milestones.json` for
 //! `milestone list`, `branches.json` for the branches endpoint and
 //! `environments.json` / `deployments.json` for the environment endpoints.
-//! Every fixture holds two rows, so a search that matches one of them is
-//! visible on screen.
+//! Every tab-list fixture holds two rows, so a search that matches one of
+//! them is visible on screen. `deployments.json` holds one: the test only
+//! checks that its endpoint is called.
 
 use crate::TestSession;
 

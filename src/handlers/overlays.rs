@@ -620,10 +620,10 @@ fn run_submit_action(
             });
         }
         crate::app::ConfirmAction::CancelPipeline(pipeline_id) => {
-            let rows = flip_pipeline_statuses(app, &[pipeline_id], "canceled");
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
+            let rows = flip_pipeline_statuses(app, &[pipeline_id], "canceled");
             let scope = app.scope.clone();
             let active_tab = app.active_tab;
             let tx = app.scoped_sender(tx);
@@ -644,11 +644,11 @@ fn run_submit_action(
             pipeline_id,
             job_ids,
         } => {
-            let rows = flip_job_statuses(app, &job_ids, "canceled");
-            app.selected_jobs.clear();
             let Some(client) = app.gitlab_client.clone() else {
                 return;
             };
+            let rows = flip_job_statuses(app, &job_ids, "canceled");
+            app.selected_jobs.clear();
             let tx = app.scoped_sender(tx);
             tokio::spawn(async move {
                 run_optimistic_mutation(OptimisticTable::Jobs, "cancel job", rows, &tx, |id| {
@@ -1670,8 +1670,26 @@ diff --git a/src/lib.rs b/src/lib.rs
     }
 
     #[test]
-    fn confirming_the_cancel_jobs_dialog_cancels_only_the_selected_jobs() {
+    fn confirming_the_cancel_jobs_dialog_without_a_backend_cancels_nothing() {
         let mut app = app_with_cancel_jobs_dialog();
+
+        press_in_submit_dialog(&mut app, KeyCode::Left);
+        press_in_submit_dialog(&mut app, KeyCode::Enter);
+
+        assert!(app.jobs.items.iter().all(|j| j.status == "running"));
+        assert_eq!(app.selected_jobs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn confirming_the_cancel_jobs_dialog_cancels_only_the_selected_jobs() {
+        let mut app = app_with_cancel_jobs_dialog();
+        app.gitlab_client = Some(crate::domain::client::GitlabClient {
+            is_github: false,
+            backend: crate::backend::create_backend(false),
+            tx: None,
+            page_size: 10,
+            api_per_page: 10,
+        });
 
         press_in_submit_dialog(&mut app, KeyCode::Left);
         press_in_submit_dialog(&mut app, KeyCode::Enter);

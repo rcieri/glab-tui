@@ -86,7 +86,7 @@ fn flip_pipeline_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<Optim
                 .pipelines
                 .items
                 .iter_mut()
-                .find(|pipeline| pipeline.id() == id)
+                .find(|pipeline| pipeline.id() == id && pipeline.status != status)
                 .map(|pipeline| std::mem::replace(&mut pipeline.status, status.to_string()));
             (id, previous)
         })
@@ -100,7 +100,7 @@ fn flip_job_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<Optimistic
                 .jobs
                 .items
                 .iter_mut()
-                .find(|job| job.id() == id)
+                .find(|job| job.id() == id && job.status != status)
                 .map(|job| std::mem::replace(&mut job.status, status.to_string()));
             (id, previous)
         })
@@ -3427,6 +3427,34 @@ mod tests {
         .await;
         drop(tx);
         assert!(rx.recv().await.is_none());
+    }
+
+    #[test]
+    fn second_flip_while_in_flight_keeps_the_revert_with_the_first() {
+        let mut app = App::default();
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "failed".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+        }];
+
+        let first = flip_pipeline_statuses(&mut app, &[1], "running");
+        let second = flip_pipeline_statuses(&mut app, &[1], "running");
+
+        assert_eq!(first, vec![(1, Some("failed".to_string()))]);
+        assert_eq!(second, vec![(1, None)]);
+        assert_eq!(app.pipelines.items[0].status, "running");
     }
 
     /// Constructs the real `AppTerminal` and dispatches `key_event` through

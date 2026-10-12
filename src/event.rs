@@ -231,13 +231,15 @@ mod tests {
 
     #[test]
     fn result_sent_before_a_scope_switch_is_dropped() {
+        let mut app = crate::app::App::default();
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let requested_in = ScopeGeneration::default();
-        ScopedSender::new(tx, requested_in)
+        app.scoped_sender(tx)
             .send(Event::IssuesFetched(Vec::new()))
             .expect("receiver is open");
 
-        assert!(received(&mut rx, requested_in.next()).is_none());
+        app.reset_on_scope_change();
+
+        assert!(received(&mut rx, app.scope_generation).is_none());
     }
 
     #[test]

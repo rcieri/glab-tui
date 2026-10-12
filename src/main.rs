@@ -745,23 +745,27 @@ fn apply_client_ready(
     app: &mut App,
     scope: scope::Scope,
     result: Result<domain::client::GitlabClient, String>,
-    events: &EventHandler,
+    tx: tokio::sync::mpsc::UnboundedSender<Event>,
 ) {
     if app.scope != scope {
         return;
     }
+    // Without a client nothing could fetch the tabs the user left while it
+    // was being built, so their loading marks would never clear.
+    let active_tab = app.active_tab;
+    app.loading_tabs.retain(|tab| *tab == active_tab);
     let mut client = match result {
         Ok(client) => client,
         Err(message) => {
-            app.loading_tabs.remove(&app.active_tab);
+            app.loading_tabs.remove(&active_tab);
             app.show_error(message);
             return;
         }
     };
     client.page_size = app.config.page_size;
     client.api_per_page = app.config.api_per_page_clamped();
-    client.tx = Some(events.sender());
-    client.backend.set_tx(events.sender());
+    client.tx = Some(tx.clone());
+    client.backend.set_tx(tx.clone());
     app.gitlab_client = Some(client.clone());
     // Remember the group implied by a repository scope so the Switch view
     // accumulates every group worked in (see startup).
@@ -771,7 +775,7 @@ fn apply_client_ready(
         }
     }
 
-    let tx = app.scoped_sender(events.sender());
+    let tx = app.scoped_sender(tx);
     spawn_refresh_active_tab(&client, &app.scope, app.active_tab, tx.clone());
     if app.config.prefetch_tabs {
         spawn_refresh_all_tabs(
@@ -1345,7 +1349,7 @@ async fn main() -> Result<()> {
                     handlers::tabs::apply_opened_pipeline(&mut app, pipeline_id, opening, result);
                 }
                 Event::ClientReady { scope, result } => {
-                    apply_client_ready(&mut app, scope, result, &events);
+                    apply_client_ready(&mut app, scope, result, events.sender());
                 }
                 Event::ChildLevelFetched(parent_id, level) => {
                     // Drop a reply that arrives after the user has already
@@ -8058,6 +8062,20 @@ mod tests {
     fn test_jump_to_id_keybinding_defaults() {
         let config = crate::config::Config::default();
         assert_eq!(config.keybindings.global.jump_to_id, "g");
+    }
+
+    #[test]
+    fn failed_client_build_clears_loading_marks_of_tabs_left_while_it_ran() {
+        let mut app = App::default();
+        app.scope = scope::Scope::Group("grp".to_string());
+        app.loading_tabs.insert(app::Tab::Issues);
+        app.active_tab = app::Tab::MergeRequests;
+        let scope = app.scope.clone();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        apply_client_ready(&mut app, scope, Err("auth probe failed".to_string()), tx);
+
+        assert!(app.loading_tabs.is_empty());
     }
 
     #[test]

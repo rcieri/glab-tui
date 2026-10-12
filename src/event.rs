@@ -34,6 +34,8 @@ pub enum Event {
         milestones: Vec<String>,
         branches: Vec<String>,
     },
+    /// A tab's list refresh failed. Only list refreshes send it: over cached
+    /// rows the handler shows the offline badge and drops the message.
     FetchFailed(crate::app::Tab, String),
     /// The view is built off the event loop: parsing and highlighting a large
     /// diff takes seconds.
@@ -46,6 +48,8 @@ pub enum Event {
     JobsTabFetched(u64, Vec<crate::domain::pipelines::Job>),
     CommandStarted(String),
     CommandCompleted(crate::app::Tab, Result<(), String>),
+    /// Non-error feedback from a background task, shown in the header bar.
+    Notice(String),
     /// A background custom command finished all its runs.
     CustomCommandFinished(crate::handlers::custom_commands::RunReport),
     TerminalCommandLogged {

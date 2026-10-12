@@ -1202,11 +1202,11 @@ async fn main() -> Result<()> {
                                             Err(e) => {
                                                 // Don't silently substitute an empty list: that
                                                 // renders as 0% progress with no explanation.
-                                                let _ = tx.send(Event::FetchFailed(
+                                                let _ = tx.send(Event::CommandCompleted(
                                                     app::Tab::Milestones,
-                                                    format!(
+                                                    Err(format!(
                                                         "Failed to fetch milestone issues: {e}"
-                                                    ),
+                                                    )),
                                                 ));
                                             }
                                         }
@@ -2177,6 +2177,9 @@ async fn main() -> Result<()> {
                             app.error_has_cli_detail = true;
                         }
                     }
+                }
+                Event::Notice(msg) => {
+                    app.status_message = Some(app::StatusMessage::notice(msg));
                 }
                 Event::RunnerStateRevert {
                     runner_id,

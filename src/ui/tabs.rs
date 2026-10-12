@@ -2552,7 +2552,7 @@ pub(crate) fn render_tab_todos(
         let rows = filtered_todos.iter().enumerate().map(|(idx, n)| {
             let is_row_highlighted = app.todos.state.selected() == Some(idx);
 
-            let (state_str, state_style) = if n.state == "unread" || n.state == "pending" {
+            let (state_str, state_style) = if n.is_unread() {
                 (
                     " NEW",
                     Style::default()

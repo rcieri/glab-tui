@@ -7100,9 +7100,10 @@ impl App {
         }
     }
 
-    /// Order `list` for group-by on `col`, keyed by the cell text
-    /// `get_values` reports (its first value), so rows group by what the
-    /// column shows.
+    /// Order `list` for group-by on `col`, keyed by the first value
+    /// `get_values` reports (the cell text). Rows with no value key on `""`
+    /// instead of the placeholder their cell shows, so ascending puts them
+    /// ahead of every other text value and descending puts them behind.
     fn sort_by_column_values<T>(
         list: &mut [&T],
         col: &str,

@@ -332,18 +332,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
             Style::default().fg(THEME.read().unwrap().yellow),
         ));
     }
-    if let Some(status) = &app.status_message {
+    if let Some(stale) = app.stale_tabs.get(&app.active_tab) {
         let theme = THEME.read().unwrap();
-        let text = crate::utils::format::sanitize_untrusted(status.text());
-        let style = match status {
-            StatusMessage::Offline(_) => Style::default()
+        title_spans.push(Span::raw(" "));
+        title_spans.push(Span::styled(
+            format!(" {} ", stale.label()),
+            Style::default()
                 .bg(theme.red)
                 .fg(theme.highlight_bg)
                 .add_modifier(Modifier::BOLD),
-            StatusMessage::Notice { .. } => Style::default().fg(theme.text_muted),
-        };
+        ));
+    }
+    if let Some(status) = &app.status_message {
+        let text = crate::utils::format::sanitize_untrusted(status.text());
         title_spans.push(Span::raw(" "));
-        title_spans.push(Span::styled(format!(" {text} "), style));
+        title_spans.push(Span::styled(
+            format!(" {text} "),
+            Style::default().fg(THEME.read().unwrap().text_muted),
+        ));
     }
 
     // Top banner split into left content and a right-aligned mode indicator.

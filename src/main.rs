@@ -894,16 +894,7 @@ async fn main() -> Result<()> {
     }
     app.cached_members = cache.members;
 
-    let has_any_cached = !app.issues.items.is_empty()
-        || !app.mrs.items.is_empty()
-        || !app.pipelines.items.is_empty()
-        || !app.runners.items.is_empty()
-        || !app.releases.items.is_empty()
-        || !app.todos.items.is_empty()
-        || !app.milestones.items.is_empty();
-    if has_any_cached {
-        app.status_message = Some(app::StatusMessage::offline("Loaded from offline cache"));
-    }
+    app.mark_cached_tabs_stale();
 
     if !app.issues.items.is_empty() {
         app.loaded_tabs.insert(app::Tab::Issues);
@@ -1396,7 +1387,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Issues, "Success");
                     app.loaded_tabs.insert(app::Tab::Issues);
                     app.refreshed_tabs.insert(app::Tab::Issues);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Issues);
                     app.issues.items = issues;
                     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
                     if let Some(target_iid) = app.pending_issue_select.take() {
@@ -1415,7 +1406,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::MergeRequests, "Success");
                     app.loaded_tabs.insert(app::Tab::MergeRequests);
                     app.refreshed_tabs.insert(app::Tab::MergeRequests);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::MergeRequests);
                     app.mrs.items = mrs;
                     app.apply_pr_stacks();
                     crate::fetch::sync_linked_references(&mut app.issues.items, &mut app.mrs.items);
@@ -1524,7 +1515,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Pipelines, "Success");
                     app.loaded_tabs.insert(app::Tab::Pipelines);
                     app.refreshed_tabs.insert(app::Tab::Pipelines);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Pipelines);
                     if app.nav_depth() > 0 {
                         // Inside a descent the visible list belongs to a child
                         // level. A freshly fetched top-level list belongs to
@@ -1554,7 +1545,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Todos, "Success");
                     app.loaded_tabs.insert(app::Tab::Todos);
                     app.refreshed_tabs.insert(app::Tab::Todos);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Todos);
                     app.todos.items = notifs;
                     app.update_filter_selection();
                     app.project_cache.todos = app.todos.items.clone();
@@ -1564,7 +1555,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Runners, "Success");
                     app.loaded_tabs.insert(app::Tab::Runners);
                     app.refreshed_tabs.insert(app::Tab::Runners);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Runners);
                     app.runners.items = runners;
                     app.update_filter_selection();
                     app.project_cache.runners = app.runners.items.clone();
@@ -1574,7 +1565,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.loaded_tabs.insert(app::Tab::Releases);
                     app.refreshed_tabs.insert(app::Tab::Releases);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Releases);
                     app.releases.items = releases;
                     app.update_filter_selection();
                     app.project_cache.releases = app.releases.items.clone();
@@ -1584,7 +1575,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Milestones, "Success");
                     app.loaded_tabs.insert(app::Tab::Milestones);
                     app.refreshed_tabs.insert(app::Tab::Milestones);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Milestones);
                     app.milestones.items = milestones;
                     app.update_filter_selection();
                     app.project_cache.milestones = app.milestones.items.clone();
@@ -1609,7 +1600,7 @@ async fn main() -> Result<()> {
                             app.milestone_issues_cache.insert(iid, cached.clone());
                             if app.selected_milestone_iid == Some(iid) {
                                 app.selected_milestone_issues = Some(cached.clone());
-                                app.status_message = Some(app::StatusMessage::offline(
+                                app.status_message = Some(app::StatusMessage::notice(
                                     "Offline fallback: loaded cached milestone issues.",
                                 ));
                             }
@@ -1703,7 +1694,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Branches, "Success");
                     app.loaded_tabs.insert(app::Tab::Branches);
                     app.refreshed_tabs.insert(app::Tab::Branches);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Branches);
                     app.branches.items = branches;
                     app.update_filter_selection();
                     app.project_cache.branches = app.branches.items.clone();
@@ -1713,7 +1704,7 @@ async fn main() -> Result<()> {
                     app.complete_loading_tab(app::Tab::Environments, "Success");
                     app.loaded_tabs.insert(app::Tab::Environments);
                     app.refreshed_tabs.insert(app::Tab::Environments);
-                    app.status_message = None;
+                    app.stale_tabs.remove(&app::Tab::Environments);
                     app.environments.items = envs;
                     app.update_filter_selection();
                     app.project_cache.environments = app.environments.items.clone();
@@ -1780,7 +1771,7 @@ async fn main() -> Result<()> {
                             };
                             if let Some(cached) = fallback {
                                 if !cached.is_empty() {
-                                    app.status_message = Some(app::StatusMessage::offline(
+                                    app.status_message = Some(app::StatusMessage::notice(
                                         "Offline fallback: cached selector items.",
                                     ));
                                     if let Some(mut selector) = app.selector.take() {
@@ -1995,22 +1986,8 @@ async fn main() -> Result<()> {
                 }
                 Event::FetchFailed(tab, err_msg) => {
                     app.complete_loading_tab(tab, &format!("Failed: {err_msg}"));
-                    let has_cached_items = match tab {
-                        app::Tab::Issues => !app.issues.items.is_empty(),
-                        app::Tab::MergeRequests => !app.mrs.items.is_empty(),
-                        app::Tab::Pipelines => !app.pipelines.items.is_empty(),
-                        app::Tab::Runners => !app.runners.items.is_empty(),
-                        app::Tab::Releases => !app.releases.items.is_empty(),
-                        app::Tab::Todos => !app.todos.items.is_empty(),
-                        app::Tab::Milestones => !app.milestones.items.is_empty(),
-                        app::Tab::Branches => !app.branches.items.is_empty(),
-                        app::Tab::Environments => !app.environments.items.is_empty(),
-                        _ => false,
-                    };
-                    if has_cached_items {
-                        app.status_message = Some(app::StatusMessage::offline(
-                            "Offline: refresh failed, showing cached data",
-                        ));
+                    if app.has_rows(tab) {
+                        app.stale_tabs.insert(tab, app::StaleData::RefreshFailed);
                     } else {
                         app.show_error(err_msg);
                         app.error_has_cli_detail = true;
@@ -2095,9 +2072,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Event::CommandStarted(msg) => {
-                    if !matches!(app.status_message, Some(app::StatusMessage::Offline(_))) {
-                        app.status_message = Some(app::StatusMessage::notice(msg.clone()));
-                    }
+                    app.status_message = Some(app::StatusMessage::notice(msg.clone()));
                     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
                     app.terminal_commands.push(crate::app::TerminalCommand {
                         timestamp,
@@ -3087,20 +3062,7 @@ async fn main() -> Result<()> {
                                                     app.cached_labels = cache.labels;
                                                     app.cached_members = cache.members;
 
-                                                    let has_any_cached =
-                                                        !app.issues.items.is_empty()
-                                                            || !app.mrs.items.is_empty()
-                                                            || !app.pipelines.items.is_empty()
-                                                            || !app.runners.items.is_empty()
-                                                            || !app.releases.items.is_empty()
-                                                            || !app.todos.items.is_empty()
-                                                            || !app.milestones.items.is_empty();
-                                                    if has_any_cached {
-                                                        app.status_message =
-                                                            Some(app::StatusMessage::offline(
-                                                                "Loaded from offline cache",
-                                                            ));
-                                                    }
+                                                    app.mark_cached_tabs_stale();
 
                                                     if !app.issues.items.is_empty() {
                                                         app.loaded_tabs.insert(app::Tab::Issues);

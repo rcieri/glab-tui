@@ -223,6 +223,41 @@ fn test_failed_refresh_over_cached_issues_shows_offline_banner() {
         .expect("the failed refresh is reported in the header");
 }
 
+/// The offline badge belongs to the tab whose refresh failed: another tab's
+/// successful refresh must not clear it, and must not show it either.
+#[test]
+fn test_offline_banner_stays_with_the_tab_whose_refresh_failed() {
+    let mut first = TestSession::new(false, 24, 120);
+    first
+        .wait_for_screen_contains("Worktree for seven", 15000)
+        .expect("first run fetches and caches the issues");
+    first.settle(1000);
+    let TestSession { sandbox, pty, .. } = first;
+    drop(pty);
+
+    let mut session =
+        TestSession::launch(sandbox, 24, 120, &[("TEST_GLAB_FAIL_MATCH", "issue list")]);
+    session
+        .wait_for_screen_contains("Offline: refresh failed, showing cached data", 15000)
+        .expect("the failed refresh is reported in the header");
+
+    session.send_input(b"l");
+    session
+        .wait_for_screen_contains("Feature: Add pag", 15000)
+        .expect("the MRs tab is shown");
+    session.settle(2000);
+    let mrs_screen = session.emulator.get_text();
+    assert!(
+        !mrs_screen.contains("Offline:") && !mrs_screen.contains("Loaded from offline cache"),
+        "the freshly refreshed MRs tab carries no offline badge:\n{mrs_screen}"
+    );
+
+    session.send_input(b"h");
+    session
+        .wait_for_screen_contains("Offline: refresh failed, showing cached data", 5000)
+        .expect("back on Issues the stale list is still flagged");
+}
+
 // --- Tier 1: Feature Coverage (5 cases) ---
 
 #[test]

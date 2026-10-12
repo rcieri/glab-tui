@@ -431,24 +431,6 @@ pub(crate) fn append_job_summaries(
     }
 }
 
-#[allow(dead_code)]
-fn add_cmd(text: &mut Vec<Line<'static>>, key: &str, desc: &str) {
-    let padded_key = format!(" {key:^3} ");
-    text.push(Line::from(vec![
-        Span::styled(
-            padded_key,
-            Style::default()
-                .bg(THEME.read().unwrap().border_focused)
-                .fg(THEME.read().unwrap().highlight_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" {desc}"),
-            Style::default().fg(THEME.read().unwrap().text_normal),
-        ),
-    ]));
-}
-
 pub(crate) fn build_log_line(cmd: &crate::app::TerminalCommand, width: usize) -> Line<'static> {
     let time_str = if cmd.timestamp.len() >= 8 {
         let parts: Vec<&str> = cmd.timestamp.split('T').collect();

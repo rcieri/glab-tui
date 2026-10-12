@@ -1411,11 +1411,12 @@ async fn main() -> Result<()> {
                     if app.trace_job_id() == Some(job_id) {
                         match result {
                             Ok(update) => {
+                                let has_new_text = update.has_new_text();
                                 let is_applied = app
                                     .job_trace
                                     .as_mut()
                                     .is_some_and(|view| view.apply(update));
-                                if is_applied && app.job_trace_follow {
+                                if is_applied && has_new_text && app.job_trace_follow {
                                     app.detail_scroll_to_bottom = true;
                                 }
                             }

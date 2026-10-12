@@ -1926,17 +1926,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = app.scoped_sender(tx.clone());
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.pause_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));
@@ -1958,17 +1959,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = app.scoped_sender(tx.clone());
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.resume_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));

@@ -8285,7 +8285,7 @@ async fn main() -> Result<()> {
                                     .lines()
                                     .position(|line| line.to_lowercase().contains(&query))
                                 {
-                                    app.detail_scroll = line as u16;
+                                    app.detail_scroll = u16::try_from(line).unwrap_or(u16::MAX);
                                 }
                             }
                         }

@@ -4234,6 +4234,7 @@ impl App {
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.pending_job_trace_editor = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;

@@ -38,11 +38,13 @@ pub(crate) async fn output_bounded(
     command: &mut Command,
     max_stdout_bytes: Option<usize>,
 ) -> io::Result<BoundedOutput> {
+    // Uncapped runs carry mutations (merge, approve, delete): a CLI already
+    // started finishes even when glab-tui quits before it does.
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .kill_on_drop(max_stdout_bytes.is_some());
     let mut child = command.spawn()?;
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return Err(io::Error::other(

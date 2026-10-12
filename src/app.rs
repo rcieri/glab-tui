@@ -1861,6 +1861,13 @@ impl DiffView {
             .any(|line| note_position_anchors(position, Some(line), Some(line)))
     }
 
+    /// Whether every line the draft is anchored to is still in the diff.
+    pub fn contains_draft_anchor(&self, draft: &DraftComment) -> bool {
+        draft
+            .anchor_positions()
+            .all(|position| self.contains_anchor(&position))
+    }
+
     /// Opens the anchor's file and puts the diff cursor on the anchor line, or
     /// on the file's first row when that line is no longer in the diff. A file
     /// out of reach in the tree is revealed first: its folded parent
@@ -3740,6 +3747,11 @@ pub struct App {
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
     pub draft_comments: Vec<DraftComment>,
+    /// Saved drafts of the open diff whose lines are no longer in it. They
+    /// are never shown or submitted, and are written back with
+    /// `draft_comments` so the cache keeps them until they match again or
+    /// the user discards.
+    pub stale_draft_comments: Vec<DraftComment>,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub page_size: usize,
@@ -3891,6 +3903,7 @@ impl Default for App {
             in_review_mode: false,
             hide_reviewed_files: false,
             draft_comments: Vec::new(),
+            stale_draft_comments: Vec::new(),
             save_menu_open: false,
             save_menu_selection: None,
             page_size: config.page_size,
@@ -5077,11 +5090,25 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// Saves `draft_comments` as the drafts of an MR/PR and writes the project
-    /// cache to disk, so drafts outlive the diff view and the process.
+    /// Loads the saved drafts of `diff_view`'s MR/PR into `draft_comments`.
+    /// Drafts whose lines left the diff go to `stale_draft_comments` instead.
+    /// Returns how many were held back.
+    pub fn restore_draft_comments(&mut self, diff_view: &DiffView) -> usize {
+        let (anchored, stale) = self
+            .draft_comments_for_mr(&diff_view.project_path, diff_view.mr_iid)
+            .into_iter()
+            .partition(|draft| diff_view.contains_draft_anchor(draft));
+        self.draft_comments = anchored;
+        self.stale_draft_comments = stale;
+        self.stale_draft_comments.len()
+    }
+
+    /// Saves `draft_comments` plus the held-back `stale_draft_comments` as the
+    /// drafts of an MR/PR and writes the project cache to disk, so drafts
+    /// outlive the diff view and the process.
     pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
         let drafts = &mut self.project_cache.draft_comments;
-        if self.draft_comments.is_empty() {
+        if self.draft_comments.is_empty() && self.stale_draft_comments.is_empty() {
             if let Some(project_drafts) = drafts.get_mut(project_path) {
                 project_drafts.remove(&mr_iid);
                 if project_drafts.is_empty() {
@@ -5089,10 +5116,16 @@ impl App {
                 }
             }
         } else {
+            let saved = self
+                .draft_comments
+                .iter()
+                .chain(&self.stale_draft_comments)
+                .cloned()
+                .collect();
             drafts
                 .entry(project_path.to_string())
                 .or_default()
-                .insert(mr_iid, self.draft_comments.clone());
+                .insert(mr_iid, saved);
         }
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }

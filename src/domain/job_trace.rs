@@ -97,6 +97,11 @@ impl TraceUpdate {
             Self::Append { after_bytes, .. } | Self::Restart { after_bytes, .. } => *after_bytes,
         }
     }
+
+    /// Whether applying this update adds text: an empty append does not.
+    pub fn has_new_text(&self) -> bool {
+        !matches!(self, Self::Append { bytes, .. } if bytes.is_empty())
+    }
 }
 
 /// A job log as text, read up to `JOB_TRACE_MAX_BYTES`.

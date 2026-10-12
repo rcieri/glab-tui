@@ -458,6 +458,45 @@ fn remember_ignored_trace_ranges(project: &str) {
     }
 }
 
+/// How one reply to a ranged job log read relates to the part already read.
+#[derive(Debug, PartialEq)]
+enum RangedReply<'a> {
+    /// The requested range, filling `byte_limit`: the log may hold more.
+    Chunk(&'a [u8]),
+    /// The requested range, ending before `byte_limit`.
+    Last(&'a [u8]),
+    /// The whole log, which the server sent ignoring the range: what follows
+    /// the read part.
+    WholeLog(&'a [u8]),
+    /// More than `byte_limit`, which a server honouring it never sends.
+    Oversized,
+    /// Lines up with the read part neither way: the log was rewritten.
+    Misaligned,
+}
+
+/// Classifies `reply` to a read of at most `limit` bytes from
+/// `read_to.resume_offset()`.
+fn classify_ranged_reply<'a>(
+    read_to: &TraceCursor,
+    reply: &'a CapturedStdout,
+    limit: usize,
+) -> RangedReply<'a> {
+    if reply.is_truncated {
+        return RangedReply::Oversized;
+    }
+    if let Some(chunk) = read_to.new_bytes_in_resumed_read(&reply.bytes) {
+        return if reply.bytes.len() < limit {
+            RangedReply::Last(chunk)
+        } else {
+            RangedReply::Chunk(chunk)
+        };
+    }
+    match read_to.new_bytes_in_full_read(&reply.bytes) {
+        Some(rest) => RangedReply::WholeLog(rest),
+        None => RangedReply::Misaligned,
+    }
+}
+
 impl GlabBackend {
     pub fn new() -> Self {
         Self { tx: None }
@@ -530,25 +569,26 @@ impl GlabBackend {
             let reply = self
                 .run_glab_capped(&["api", &ranged], "Following Job Log", limit)
                 .await?;
-            // A server honouring `byte_limit` never sends more than that.
-            if reply.is_truncated {
-                remember_ignored_trace_ranges(project);
-                return Ok(None);
-            }
-            if let Some(chunk) = read_to.new_bytes_in_resumed_read(&reply.bytes) {
-                new_bytes.extend_from_slice(chunk);
-                read_to.advance(chunk);
-                if reply.bytes.len() < limit {
+            match classify_ranged_reply(&read_to, &reply, limit) {
+                RangedReply::Chunk(chunk) => {
+                    new_bytes.extend_from_slice(chunk);
+                    read_to.advance(chunk);
+                }
+                RangedReply::Last(chunk) => {
+                    new_bytes.extend_from_slice(chunk);
                     return Ok(Some(cursor.append_update(new_bytes, false)));
                 }
-                continue;
+                RangedReply::WholeLog(rest) => {
+                    remember_ignored_trace_ranges(project);
+                    new_bytes.extend_from_slice(rest);
+                    return Ok(Some(cursor.append_update(new_bytes, false)));
+                }
+                RangedReply::Oversized => {
+                    remember_ignored_trace_ranges(project);
+                    return Ok(None);
+                }
+                RangedReply::Misaligned => return Ok(None),
             }
-            let Some(rest) = read_to.new_bytes_in_full_read(&reply.bytes) else {
-                return Ok(None);
-            };
-            remember_ignored_trace_ranges(project);
-            new_bytes.extend_from_slice(rest);
-            return Ok(Some(cursor.append_update(new_bytes, false)));
         }
     }
 
@@ -3941,5 +3981,105 @@ mod tests {
 
         // Malformed / missing field
         assert!(parse_group_projects(r#"[{"id": 1}]"#).is_err());
+    }
+
+    /// `len` bytes of numbered lines, so no two stretches of it are equal.
+    fn log_of(len: usize) -> Vec<u8> {
+        (0..)
+            .flat_map(|line: usize| format!("{line:07}\n").into_bytes())
+            .take(len)
+            .collect()
+    }
+
+    fn reply(bytes: &[u8], is_truncated: bool) -> CapturedStdout {
+        CapturedStdout {
+            bytes: bytes.to_vec(),
+            is_truncated,
+        }
+    }
+
+    /// A 5000-byte log, read up to byte 3000, and where a resumed read starts.
+    fn log_read_to_3000() -> (Vec<u8>, TraceCursor, usize) {
+        let log = log_of(5000);
+        let cursor = JobTrace::from_read(&log[..3000], false).cursor().clone();
+        let resume = cursor.resume_offset();
+        (log, cursor, resume)
+    }
+
+    #[test]
+    fn honoured_reply_filling_the_limit_is_a_chunk_with_more_to_follow() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..resume + 1500], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, 1500),
+            RangedReply::Chunk(&log[3000..resume + 1500])
+        );
+    }
+
+    #[test]
+    fn honoured_reply_short_of_the_limit_is_the_last_chunk() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Last(&log[3000..])
+        );
+    }
+
+    #[test]
+    fn honoured_reply_holding_only_the_overlap_is_an_empty_last_chunk() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..3000], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Last(&[])
+        );
+    }
+
+    #[test]
+    fn whole_log_sent_for_a_ranged_read_yields_what_follows_the_read_part() {
+        let (log, cursor, _) = log_read_to_3000();
+        let reply = reply(&log, false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::WholeLog(&log[3000..])
+        );
+    }
+
+    #[test]
+    fn reply_over_the_limit_is_oversized_even_when_it_lines_up() {
+        let (log, cursor, resume) = log_read_to_3000();
+        let reply = reply(&log[resume..resume + 1500], true);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, 1500),
+            RangedReply::Oversized
+        );
+    }
+
+    #[test]
+    fn reply_matching_neither_read_is_misaligned() {
+        let (_, cursor, _) = log_read_to_3000();
+        let reply = reply(&[b'z'; 5000], false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Misaligned
+        );
+    }
+
+    #[test]
+    fn empty_reply_after_the_log_shrank_is_misaligned() {
+        let (_, cursor, _) = log_read_to_3000();
+        let reply = reply(b"", false);
+
+        assert_eq!(
+            classify_ranged_reply(&cursor, &reply, GITLAB_TRACE_RANGE_MAX_BYTES),
+            RangedReply::Misaligned
+        );
     }
 }

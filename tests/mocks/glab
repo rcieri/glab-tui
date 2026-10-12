@@ -43,11 +43,13 @@ if [[ "$*" == *"api"* ]]; then
     elif [[ "$*" == *"/trace"* ]]; then
         # Must precede /jobs: a trace URL contains it.
         if [[ -n "$TEST_GLAB_TRACE_FILE" ]]; then
-            # A running job: serve the log, honouring byte_offset/byte_limit,
-            # then write one more line so the next read has something new.
+            # A running job: serve the log, honouring byte_offset/byte_limit
+            # unless TEST_GLAB_TRACE_IGNORES_RANGES plays a GitLab that
+            # predates them, then write one more line so the next read has
+            # something new.
             offset=$(sed -n 's/.*[?&]byte_offset=\([0-9]*\).*/\1/p' <<< "$*")
             limit=$(sed -n 's/.*[?&]byte_limit=\([0-9]*\).*/\1/p' <<< "$*")
-            if [[ -n "$offset" ]]; then
+            if [[ -n "$offset" && -z "$TEST_GLAB_TRACE_IGNORES_RANGES" ]]; then
                 tail -c "+$((offset + 1))" "$TEST_GLAB_TRACE_FILE" | head -c "$limit"
             else
                 cat "$TEST_GLAB_TRACE_FILE"

@@ -27,9 +27,11 @@ pub struct ProjectCache {
     /// Files marked as reviewed in the diff view, keyed by MR/PR iid.
     #[serde(default)]
     pub reviewed_files: HashMap<u64, Vec<String>>,
-    /// Draft review comments not yet submitted, keyed by MR/PR iid.
+    /// Draft review comments not yet submitted, by project path, then MR/PR
+    /// iid. A group-scope cache is shared by every project in the group, and
+    /// the same iid recurs across them.
     #[serde(default)]
-    pub draft_comments: HashMap<u64, Vec<crate::domain::review::DraftComment>>,
+    pub draft_comments: HashMap<String, HashMap<u64, Vec<crate::domain::review::DraftComment>>>,
     #[serde(default)]
     pub enabled_columns: HashMap<crate::app::Tab, std::collections::HashSet<String>>,
     #[serde(default)]

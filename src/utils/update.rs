@@ -75,11 +75,7 @@ fn sha256_hex(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher).with_context(|| format!("reading {}", path.display()))?;
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn verify_archive_checksum(archive: &Path, checksum_file: &str, asset_name: &str) -> Result<()> {

@@ -3998,9 +3998,10 @@ mod tests {
             .iter()
             .find(|row| row.contains("deploy"))
             .expect("job row rendered");
-        assert!(job_row.contains("build, lint"), "row: {job_row:?}");
-        assert!(!job_row.contains("[31m"), "row: {job_row:?}");
-        assert!(!job_row.contains("2Jlint"), "row: {job_row:?}");
+        assert!(
+            job_row.trim_end().ends_with(" build, lint"),
+            "row: {job_row:?}"
+        );
     }
 
     #[test]

@@ -4252,6 +4252,23 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn todo_jump_highlights_issue_when_remote_and_api_spell_the_project_differently() {
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Repository("Me/Repo".to_string());
+        app.issues.items = vec![issue_in("", 1), issue_in("", 7)];
+        app.issues.state.select(Some(0));
+        app.todos.items = vec![todo_for("me/repo", "Issue", 7)];
+        app.active_tab = crate::app::Tab::Todos;
+        app.todos.state.select(Some(0));
+
+        dispatch(&mut app, &enter()).await;
+
+        assert_eq!(app.active_tab, crate::app::Tab::Issues);
+        assert_eq!(app.issues.state.selected(), Some(1));
+        assert_eq!(app.status_message, None);
+    }
+
     #[test]
     fn jump_to_mr_tab_highlights_target_mr_while_a_filter_hides_earlier_rows() {
         let mut app = App::default();

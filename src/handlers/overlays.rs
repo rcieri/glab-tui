@@ -5,6 +5,7 @@ use crate::event::Event;
 use crate::fetch::{spawn_fetch_repo_attributes, spawn_refresh_active_tab};
 use crate::handlers::tabs::{
     OptimisticTable, flip_job_statuses, flip_pipeline_statuses, run_optimistic_mutation,
+    spawn_cancel_jobs,
 };
 use crate::keybinding::keybinding_matches;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -585,23 +586,13 @@ fn run_submit_action(
             };
             let rows = flip_job_statuses(app, &job_ids, "canceled");
             app.selected_jobs.clear();
-            let tx = app.scoped_sender(tx);
-            tokio::spawn(async move {
-                run_optimistic_mutation(OptimisticTable::Jobs, "cancel job", rows, &tx, |id| {
-                    client.cancel_job(&project_path, id)
-                })
-                .await;
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
-                    &client,
-                    &project_path,
-                    pipeline_id,
-                )
-                .await
-                {
-                    let _ = tx.send(Event::PipelineJobs(pipeline_id, jobs));
-                }
-            });
+            spawn_cancel_jobs(
+                client,
+                app.scoped_sender(tx),
+                project_path,
+                pipeline_id,
+                rows,
+            );
         }
     }
 }

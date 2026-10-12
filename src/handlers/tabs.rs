@@ -140,6 +140,28 @@ pub(crate) async fn run_optimistic_mutation<F, Fut>(
     }
 }
 
+/// Cancels `rows`' jobs, then refreshes the pipeline's job list.
+pub(crate) fn spawn_cancel_jobs(
+    client: crate::domain::client::GitlabClient,
+    tx: ScopedSender,
+    project_path: String,
+    pipeline_id: u64,
+    rows: Vec<OptimisticRow>,
+) {
+    tokio::spawn(async move {
+        run_optimistic_mutation(OptimisticTable::Jobs, "cancel job", rows, &tx, |id| {
+            client.cancel_job(&project_path, id)
+        })
+        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        if let Ok(jobs) =
+            crate::domain::pipelines::list_pipeline_jobs(&client, &project_path, pipeline_id).await
+        {
+            let _ = tx.send(Event::PipelineJobs(pipeline_id, jobs));
+        }
+    });
+}
+
 fn mutation_failure_message(action: &str, failures: &[String]) -> Option<String> {
     let (first, rest) = failures.split_first()?;
     Some(match rest.len() {
@@ -1729,31 +1751,11 @@ pub async fn handle_active_tab_key(
                                         project_path,
                                         app,
                                     ));
-                            } else if let Some(client) = &app.gitlab_client {
-                                let client_clone = client.clone();
-                                let project_context = app.project_path_for_pipeline(pipe_id);
+                            } else if let Some(client) = app.gitlab_client.clone() {
+                                let project_path = app.project_path_for_pipeline(pipe_id);
                                 let tx = app.scoped_sender(tx.clone());
                                 let rows = flip_job_statuses(app, &[job_id], "canceled");
-                                tokio::spawn(async move {
-                                    run_optimistic_mutation(
-                                        OptimisticTable::Jobs,
-                                        "cancel job",
-                                        rows,
-                                        &tx,
-                                        |id| client_clone.cancel_job(&project_context, id),
-                                    )
-                                    .await;
-                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    if let Ok(jobs) = crate::domain::pipelines::list_pipeline_jobs(
-                                        &client_clone,
-                                        &project_context,
-                                        pipe_id,
-                                    )
-                                    .await
-                                    {
-                                        let _ = tx.send(Event::PipelineJobs(pipe_id, jobs));
-                                    }
-                                });
+                                spawn_cancel_jobs(client, tx, project_path, pipe_id, rows);
                             }
                         }
                         _ if keybinding_matches(

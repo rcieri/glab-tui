@@ -725,12 +725,15 @@ fn sync_after_scope_change(app: &mut App, old_scope: &scope::Scope, events: &Eve
 /// Builds the client for `app.scope` off the event loop: backend detection
 /// shells out to `git remote` and `gh`/`glab auth status`, which can take
 /// seconds on a slow network. Until `Event::ClientReady` arrives the app has
-/// no client, so nothing runs against the previous scope's backend.
+/// no client, so nothing runs against the previous scope's backend. The
+/// result travels on the scoped sender, so a build that a later switch
+/// superseded is dropped by generation, even when both builds are for the
+/// same scope.
 fn spawn_client_for_scope(app: &mut App, events: &EventHandler) {
     app.gitlab_client = None;
     let config = app.config.clone();
     let scope = app.scope.clone();
-    let tx = events.sender();
+    let tx = app.scoped_sender(events.sender());
     tokio::spawn(async move {
         let result = domain::client::GitlabClient::new(&config)
             .await

@@ -133,13 +133,20 @@ mod tests {
 
     #[tokio::test]
     async fn endless_output_is_cut_at_the_limit_and_the_child_killed() {
-        let output = output_bounded(&mut shell("yes glab-tui"), Some(1000))
-            .await
-            .unwrap();
+        // Ignoring SIGPIPE keeps the child writing once its stdout is closed,
+        // so only the kill ends it. The timeout turns a missing kill into a
+        // failure instead of a hang.
+        let mut command = shell("trap '' PIPE; while :; do printf 'glab-tui'; done");
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            output_bounded(&mut command, Some(1000)),
+        )
+        .await
+        .expect("the child is killed at the limit")
+        .unwrap();
         assert!(output.succeeded());
         assert!(output.stdout.is_truncated);
-        assert_eq!(output.stdout.bytes.len(), 1000);
-        assert!(output.stdout.bytes.starts_with(b"glab-tui\nglab-tui\n"));
+        assert_eq!(output.stdout.bytes, b"glab-tui".repeat(125));
     }
 
     #[tokio::test]

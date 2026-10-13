@@ -264,8 +264,9 @@ fn gh_issue_state_flag(state: StateQuery) -> &'static str {
     }
 }
 
-/// `gh pr list --state` value. GitHub's `closed` excludes merged PRs, matching
-/// the CLOSED value of the State column.
+/// `gh pr list --state` value. GitHub's `closed` also returns merged PRs
+/// (only `merged` returns a single state), so a CLOSED listing still relies
+/// on the State column filter to hide them.
 fn gh_pr_state_flag(state: StateQuery) -> &'static str {
     match state {
         StateQuery::Open => "open",

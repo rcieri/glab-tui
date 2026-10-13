@@ -1899,6 +1899,13 @@ impl DiffView {
             .any(|line| note_position_anchors(position, Some(line), Some(line)))
     }
 
+    /// Whether every line the draft is anchored to is still in the diff.
+    pub fn contains_draft_anchor(&self, draft: &DraftComment) -> bool {
+        draft
+            .anchor_positions()
+            .all(|position| self.contains_anchor(&position))
+    }
+
     /// Opens the anchor's file and puts the diff cursor on the anchor line, or
     /// on the file's first row when that line is no longer in the diff. A file
     /// out of reach in the tree is revealed first: its folded parent
@@ -3070,6 +3077,16 @@ pub enum OverlayKind {
     ReviewThreads,
 }
 
+/// A PR action that needs the PR's stack, so it waits for an on-demand stack
+/// fetch when the session does not know the stack yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackAction {
+    /// Open the selector over the stack (`view_stack`).
+    Browse,
+    /// Open the merge dialog, which merges a stacked PR with its downstack.
+    Merge,
+}
+
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),             // milestone iid
@@ -3084,6 +3101,7 @@ pub enum ConfirmAction {
     ReopenMr(u64),                    // mr iid
     ReopenMilestone(u64),             // milestone iid
     MergeMr(u64),                     // mr iid
+    MergeStack(u64),                  // pr number: merges it with every open PR below it
     BulkMergeMrs(Vec<(String, u64)>), // (project_path, mr iid) (multiple selected)
     RevokeMr(u64),                    // mr iid
     RebaseMr(u64),                    // mr iid
@@ -3374,6 +3392,7 @@ impl SubmitDialog {
     ///
     /// Destructive actions default the cursor to Cancel; reversible
     /// actions (merge, rebase, submit review) default to Submit.
+
     pub fn build_with_project(action: ConfirmAction, project_path: String, app: &App) -> Self {
         let kind = app.kind();
         let mr = kind.term("mr");
@@ -3488,6 +3507,42 @@ impl SubmitDialog {
                     options,
                     false,
                 )
+            }
+            ConfirmAction::MergeStack(iid) => {
+                let stack = match app.pr_stack(&project_path, *iid) {
+                    Some(crate::domain::mr::StackLookup::Full(stack)) => Some(stack),
+                    _ => None,
+                };
+                let title = match stack {
+                    Some(stack) => format!("Merge Stack #{} through #{iid}", stack.info.number),
+                    None => format!("Merge Stack through #{iid}"),
+                };
+                let body = stack
+                    .map(|stack| {
+                        let merged: Vec<String> = stack
+                            .downstack_open_entries()
+                            .map(|e| {
+                                format!(
+                                    "#{}: {}{}",
+                                    e.number,
+                                    crate::utils::format::sanitize_untrusted(&e.title),
+                                    if e.is_draft { " [draft]" } else { "" }
+                                )
+                            })
+                            .collect();
+                        format!(
+                            "Merges {} PRs together, all or nothing:\n{}",
+                            merged.len(),
+                            merged.join("\n")
+                        )
+                    })
+                    .unwrap_or_default();
+                let options = vec![
+                    SubmitOption::new("Strategy: Merge commit", false),
+                    SubmitOption::new("Strategy: Squash", true),
+                    SubmitOption::new("Strategy: Rebase", false),
+                ];
+                (title, body, "Merge".to_string(), options, false)
             }
             ConfirmAction::BulkMergeMrs(iids) => {
                 let options = vec![
@@ -3763,9 +3818,9 @@ pub struct App {
     >,
     /// PRs (project path, number) whose on-demand stack fetch is in flight.
     pub fetching_pr_stacks: std::collections::HashSet<(String, u64)>,
-    /// PR whose stack selector opens once its stack fetch lands: `view_stack`
-    /// was pressed before the session knew the stack.
-    pub pending_stack_selector: Option<(String, u64)>,
+    /// PR whose stack fetch a key press is waiting on, and what to do once it
+    /// lands: the key was pressed before the session knew the stack.
+    pub pending_stack_action: Option<((String, u64), StackAction)>,
     /// PR open in the inspector and when it got there. Its stack is fetched
     /// only once it has stayed selected for the debounce window.
     pub pr_stack_candidate: Option<((String, u64), std::time::Instant)>,
@@ -3846,6 +3901,11 @@ pub struct App {
     /// Session-wide "hide reviewed files" preference for the diff file tree.
     pub hide_reviewed_files: bool,
     pub draft_comments: Vec<DraftComment>,
+    /// Saved drafts of the open diff whose lines are no longer in it. They
+    /// are never shown or submitted, and are written back with
+    /// `draft_comments` so the cache keeps them until they match again or
+    /// the user discards.
+    pub stale_draft_comments: Vec<DraftComment>,
     pub save_menu_open: bool,
     pub save_menu_selection: Option<SaveMenu>,
     pub page_size: usize,
@@ -3933,7 +3993,7 @@ impl Default for App {
             pending_mr_related_issues_since: None,
             pr_stacks: std::collections::HashMap::new(),
             fetching_pr_stacks: std::collections::HashSet::new(),
-            pending_stack_selector: None,
+            pending_stack_action: None,
             pr_stack_candidate: None,
             loading_tabs: std::collections::HashSet::new(),
             loaded_tabs: std::collections::HashSet::new(),
@@ -3997,6 +4057,7 @@ impl Default for App {
             in_review_mode: false,
             hide_reviewed_files: false,
             draft_comments: Vec::new(),
+            stale_draft_comments: Vec::new(),
             save_menu_open: false,
             save_menu_selection: None,
             page_size: config.page_size,
@@ -4170,10 +4231,13 @@ impl App {
         self.pending_mr_related_issues_iid = None;
         self.pending_mr_related_issues_since = None;
         self.fetching_pr_stacks.clear();
-        self.pending_stack_selector = None;
+        self.pending_stack_action = None;
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;
+        self.pending_issue_select = None;
+        self.pending_mr_select = None;
+        self.pending_pipeline_select = None;
         self.active_pipeline_project = None;
         self.selected_milestone_issues = None;
         self.selected_milestone_iid = None;
@@ -5202,23 +5266,51 @@ impl App {
     }
 
     /// Draft review comments saved for an MR/PR, restored from the project cache.
-    pub fn draft_comments_for_mr(&self, mr_iid: u64) -> Vec<DraftComment> {
+    pub fn draft_comments_for_mr(&self, project_path: &str, mr_iid: u64) -> Vec<DraftComment> {
         self.project_cache
             .draft_comments
-            .get(&mr_iid)
+            .get(project_path)
+            .and_then(|drafts| drafts.get(&mr_iid))
             .cloned()
             .unwrap_or_default()
     }
 
-    /// Saves `draft_comments` as the drafts of an MR/PR and writes the project
-    /// cache to disk, so drafts outlive the diff view and the process.
-    pub fn persist_draft_comments(&mut self, mr_iid: u64) {
-        if self.draft_comments.is_empty() {
-            self.project_cache.draft_comments.remove(&mr_iid);
+    /// Loads the saved drafts of `diff_view`'s MR/PR into `draft_comments`.
+    /// Drafts whose lines left the diff go to `stale_draft_comments` instead.
+    /// Returns how many were held back.
+    pub fn restore_draft_comments(&mut self, diff_view: &DiffView) -> usize {
+        let (anchored, stale) = self
+            .draft_comments_for_mr(&diff_view.project_path, diff_view.mr_iid)
+            .into_iter()
+            .partition(|draft| diff_view.contains_draft_anchor(draft));
+        self.draft_comments = anchored;
+        self.stale_draft_comments = stale;
+        self.stale_draft_comments.len()
+    }
+
+    /// Saves `draft_comments` plus the held-back `stale_draft_comments` as the
+    /// drafts of an MR/PR and writes the project cache to disk, so drafts
+    /// outlive the diff view and the process.
+    pub fn persist_draft_comments(&mut self, project_path: &str, mr_iid: u64) {
+        let drafts = &mut self.project_cache.draft_comments;
+        if self.draft_comments.is_empty() && self.stale_draft_comments.is_empty() {
+            if let Some(project_drafts) = drafts.get_mut(project_path) {
+                project_drafts.remove(&mr_iid);
+                if project_drafts.is_empty() {
+                    drafts.remove(project_path);
+                }
+            }
         } else {
-            self.project_cache
+            let saved = self
                 .draft_comments
-                .insert(mr_iid, self.draft_comments.clone());
+                .iter()
+                .chain(&self.stale_draft_comments)
+                .cloned()
+                .collect();
+            drafts
+                .entry(project_path.to_string())
+                .or_default()
+                .insert(mr_iid, saved);
         }
         crate::utils::cache::save_cache(self.scope.as_str(), &self.project_cache);
     }

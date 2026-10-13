@@ -1503,25 +1503,31 @@ async fn main() -> Result<()> {
                 } => {
                     let pr = (project_path, pr_number);
                     app.fetching_pr_stacks.remove(&pr);
-                    let is_awaited = app.pending_stack_selector.as_ref() == Some(&pr);
-                    if is_awaited {
-                        app.pending_stack_selector = None;
+                    let awaited = app
+                        .pending_stack_action
+                        .take_if(|(pending, _)| *pending == pr)
+                        .map(|(_, action)| action);
+                    if awaited.is_some() {
                         app.status_message = None;
                     }
                     match result {
                         Ok(stack) => {
                             app.record_pr_stack(&pr.0, pr.1, stack);
                             app.update_filter_selection();
-                            if is_awaited
-                                && app.selector.is_none()
-                                && app.selected_mr_ref().as_ref() == Some(&pr)
-                            {
-                                crate::handlers::tabs::open_stack_selector(&mut app, &pr.0, pr.1);
+                            if let Some(action) = awaited {
+                                if app.selector.is_none()
+                                    && app.submit_dialog.is_none()
+                                    && app.selected_mr_ref().as_ref() == Some(&pr)
+                                {
+                                    crate::handlers::tabs::run_stack_action(
+                                        &mut app, &pr.0, pr.1, action,
+                                    );
+                                }
                             }
                         }
                         // The inspector simply keeps showing no stack; only an
-                        // explicit `view_stack` press is owed an answer.
-                        Err(e) if is_awaited => {
+                        // explicit key press is owed an answer.
+                        Err(e) if awaited.is_some() => {
                             app.show_error(format!(
                                 "Failed to fetch the stack of PR #{}: {e}",
                                 pr.1
@@ -2025,13 +2031,24 @@ async fn main() -> Result<()> {
                     app.diff_loading = false;
                     let mut diff_view = *diff_view;
                     let mr_iid = diff_view.mr_iid;
+                    let held_back = app.restore_draft_comments(&diff_view);
                     // Restore the files marked as reviewed on an earlier pass.
                     diff_view.restore_review_state(
                         app.reviewed_files_for_mr(mr_iid),
                         app.hide_reviewed_files,
                     );
                     app.diff_view = Some(diff_view);
-                    app.draft_comments = app.draft_comments_for_mr(mr_iid);
+                    if held_back > 0 {
+                        app.raise_error_toast(if held_back == 1 {
+                            "1 draft comment no longer matches the diff and was set aside"
+                                .to_string()
+                        } else {
+                            format!(
+                                "{held_back} draft comments no longer match the diff and were set aside"
+                            )
+                        });
+                        app.error_has_cli_detail = false;
+                    }
                     app.current_comments = comments;
                     if let (Some(overview), Some(diff_view)) =
                         (app.review_threads.as_mut(), app.diff_view.as_ref())
@@ -2355,7 +2372,13 @@ async fn main() -> Result<()> {
                                             };
                                             if app.in_review_mode {
                                                 app.draft_comments.push(comment);
-                                                app.persist_draft_comments(mr_iid);
+                                                if let Some(project) = app
+                                                    .diff_view
+                                                    .as_ref()
+                                                    .map(|diff| diff.project_path.clone())
+                                                {
+                                                    app.persist_draft_comments(&project, mr_iid);
+                                                }
                                                 app.show_notice(format!(
                                                     "Added draft comment. ({} pending)",
                                                     app.draft_comments.len()
@@ -2651,15 +2674,26 @@ async fn main() -> Result<()> {
                                         status,
                                     } => {
                                         let comments = std::mem::take(&mut app.draft_comments);
-                                        app.persist_draft_comments(mr_iid);
+                                        let project = app
+                                            .diff_view
+                                            .as_ref()
+                                            .filter(|diff| diff.mr_iid == mr_iid)
+                                            .map(|diff| diff.project_path.clone())
+                                            .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
+                                        app.persist_draft_comments(&project, mr_iid);
                                         app.in_review_mode = false;
                                         if let Some(client) = app.gitlab_client.clone() {
-                                            let project = app
+                                            let Some(project) = app
                                                 .diff_view
                                                 .as_ref()
                                                 .filter(|diff| diff.mr_iid == mr_iid)
                                                 .map(|diff| diff.project_path.clone())
-                                                .unwrap_or_else(|| app.project_path_for_mr(mr_iid));
+                                            else {
+                                                app.show_error(format!(
+                                                    "diff for MR #{mr_iid} closed before the review was submitted"
+                                                ));
+                                                continue;
+                                            };
                                             let event = ReviewEvent::from_label(&status);
                                             let body = value.clone();
                                             let tx = events.sender();
@@ -3915,10 +3949,14 @@ async fn main() -> Result<()> {
                                                         }
                                                         _ => {}
                                                     }
-                                                    if let Some(mr_iid) =
-                                                        app.diff_view.as_ref().map(|d| d.mr_iid)
+                                                    if let Some((project, mr_iid)) = app
+                                                        .diff_view
+                                                        .as_ref()
+                                                        .map(|d| (d.project_path.clone(), d.mr_iid))
                                                     {
-                                                        app.persist_draft_comments(mr_iid);
+                                                        app.persist_draft_comments(
+                                                            &project, mr_iid,
+                                                        );
                                                     }
                                                 }
                                                 continue;
@@ -7804,7 +7842,10 @@ async fn main() -> Result<()> {
                                             };
                                             if app.in_review_mode {
                                                 app.draft_comments.push(comment);
-                                                app.persist_draft_comments(diff_view.mr_iid);
+                                                app.persist_draft_comments(
+                                                    &diff_view.project_path,
+                                                    diff_view.mr_iid,
+                                                );
                                                 app.show_notice(format!(
                                                     "Added draft comment. ({} pending)",
                                                     app.draft_comments.len()
@@ -7897,7 +7938,10 @@ async fn main() -> Result<()> {
                                         };
                                         if app.in_review_mode {
                                             app.draft_comments.push(comment);
-                                            app.persist_draft_comments(diff_view.mr_iid);
+                                            app.persist_draft_comments(
+                                                &diff_view.project_path,
+                                                diff_view.mr_iid,
+                                            );
                                             app.show_notice(format!(
                                                 "Added suggestion draft. ({} pending)",
                                                 app.draft_comments.len()

@@ -7748,13 +7748,12 @@ mod tests {
 diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -1,2 +1,5 @@
+@@ -1 +1,5 @@
  fn kept() {}
 +/* added opening
 +   still inside the comment
 +*/
 +let after = 1;
--let removed = 2;
 ";
 
     fn row_styles(line: &DiffLine, theme: &Theme) -> Vec<(Style, String)> {
@@ -7789,15 +7788,30 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn a_removed_line_is_not_swallowed_by_a_comment_opened_on_the_new_side() {
-        let view = DiffView::new(1, "o/r".to_string(), RUST_BLOCK_COMMENT_DIFF.to_string());
+        use crate::syntax::TokenKind::{Constant, Keyword, Plain};
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
+ fn kept() {}
++/* added opening
+ fn also_kept() {}
+-let removed = 2;
++*/
+";
+        let view = DiffView::new(1, "o/r".to_string(), diff.to_string());
         let theme = Theme::default();
-        let removed = row_styles(diff_line(&view, "-let removed = 2;"), &theme);
         assert_eq!(
-            removed[0],
-            (
-                crate::syntax::TokenKind::Keyword.style(&theme),
-                "let".to_string()
-            )
+            row_styles(diff_line(&view, "-let removed = 2;"), &theme),
+            [
+                (Keyword.style(&theme), "let".to_string()),
+                (Plain.style(&theme), " removed ".to_string()),
+                (Keyword.style(&theme), "=".to_string()),
+                (Plain.style(&theme), " ".to_string()),
+                (Constant.style(&theme), "2".to_string()),
+                (Plain.style(&theme), ";".to_string()),
+            ]
         );
     }
 

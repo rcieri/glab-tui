@@ -44,7 +44,6 @@ All notable changes to this project will be documented in this file.
 - **Release tooling** — Hardened `scripts/release.sh` asset verification, phase resumption, and multi-model AI release notes generation.
 
 ---
-</content>
 
 ## [0.9.2] - 2026-09-26
 

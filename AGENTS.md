@@ -416,7 +416,7 @@ Key handlers in [src/main.rs](src/main.rs) and [src/handlers/](src/handlers/) (`
 
 ### CLI Command & Flag Reference
 
-The full list of `glab` and `gh` subcommands and flags (`glab v1.114.0` / `gh v2.98.0`) lives in [docs/cli-reference.md](docs/cli-reference.md). Check it before adding a call, to confirm a native subcommand or flag exists before falling back to `glab api` / `gh api`.
+The `glab` and `gh` subcommands and flags (`glab v1.114.0` / `gh v2.98.0`) are listed in [docs/cli-reference.md](docs/cli-reference.md). Check it before adding a call, to confirm a native subcommand or flag exists before falling back to `glab api` / `gh api`. It does not list the subcommands of `gh issue`, `gh pr`, `gh release`, `gh repo`, `gh org` or `gh discussion`: confirm those with `gh <command> --help`.
 
 ## 7. Development & Quality Standards
 

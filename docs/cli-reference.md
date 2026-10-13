@@ -1,6 +1,6 @@
 # `glab` / `gh` CLI Command & Flag Reference
 
-Every `glab` and `gh` subcommand and option from the installed CLIs (`glab v1.114.0` / `gh v2.98.0`). Which of these glab-tui actually calls, and why, is documented in the "CLI Command Mapping" section of [AGENTS.md](../AGENTS.md).
+Every `glab` and `gh` subcommand and option from the installed CLIs (`glab v1.114.0` / `gh v2.98.0`), except the subcommands of `gh issue`, `gh pr`, `gh release`, `gh repo`, `gh org` and `gh discussion`: their help lists them under GENERAL/TARGETED COMMANDS, which the generator did not pick up. Which of these glab-tui actually calls, and why, is documented in the "CLI Command Mapping" section of [AGENTS.md](../AGENTS.md).
 
 ## GitLab CLI (`glab`) Reference
 

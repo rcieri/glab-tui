@@ -2551,7 +2551,11 @@ async fn main() -> Result<()> {
                                                         tokio::process::Command::new(program);
                                                     cmd.args(args);
 
-                                                    match cmd.output().await {
+                                                    match crate::backend::subprocess::output(
+                                                        &mut cmd, None,
+                                                    )
+                                                    .await
+                                                    {
                                                         Ok(output) => {
                                                             let _ =
                                                                 std::fs::remove_file(&temp_path);

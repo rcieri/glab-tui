@@ -184,6 +184,7 @@ impl<C: ColumnDef> ListTab<C> {
 
     pub(crate) fn set_items(&mut self, items: Vec<C::Row>) {
         self.items = items;
+        self.view.clear();
         self.spec = None;
     }
 
@@ -203,6 +204,7 @@ impl<C: ColumnDef> ListTab<C> {
 
     pub(crate) fn retain(&mut self, keep: impl FnMut(&C::Row) -> bool) {
         self.items.retain(keep);
+        self.view.clear();
         self.spec = None;
     }
 

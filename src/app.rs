@@ -9352,7 +9352,7 @@ new mode 100755
             if let Some(spans) = line.syntax_spans(&Theme::default()) {
                 highlighted_lines += 1;
                 let text: String = spans.map(|(_, t)| t).collect();
-                assert!(!text.contains('\t'), "a span kept its tab: {text:?}");
+                assert_eq!(text, line.code(), "tokens must cover the whole line");
             }
         }
         assert!(

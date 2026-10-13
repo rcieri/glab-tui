@@ -61,7 +61,9 @@ fn wait_for_screen_without(session: &mut TestSession, gone: &str, timeout_ms: u6
     }
 }
 
-fn wait_for_cli_call(session: &TestSession, call: &str, timeout_ms: u64) {
+/// Feeds the app's output to the emulator until `call` has been logged; an
+/// undrained PTY blocks the app mid-redraw.
+fn wait_for_cli_call(session: &mut TestSession, call: &str, timeout_ms: u64) {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     while !session.get_cli_calls().contains(call) {
         assert!(
@@ -69,7 +71,7 @@ fn wait_for_cli_call(session: &TestSession, call: &str, timeout_ms: u64) {
             "expected CLI call {call:?}, got:\n{}",
             session.get_cli_calls()
         );
-        std::thread::sleep(Duration::from_millis(20));
+        session.settle(20);
     }
 }
 
@@ -93,7 +95,7 @@ fn test_todos_list_unread_only_until_read_ones_are_toggled_on() {
     session
         .wait_for_screen_contains("Todos › All", 2000)
         .expect("the title should name the new filter");
-    wait_for_cli_call(&session, "glab api todos?state=done", 2000);
+    wait_for_cli_call(&mut session, "glab api todos?state=done", 2000);
 }
 
 #[test]
@@ -115,7 +117,7 @@ fn test_enter_marks_the_todo_read_and_selects_its_issue_in_the_todo_project() {
 
     session.send_input(b"\r");
 
-    wait_for_cli_call(&session, "glab todo done 1", 5000);
+    wait_for_cli_call(&mut session, "glab todo done 1", 5000);
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         session.settle(50);
@@ -172,7 +174,7 @@ fn test_unsubscribe_and_mark_all_read_run_their_cli_commands() {
 
     session.send_input(b"U");
     wait_for_cli_call(
-        &session,
+        &mut session,
         "glab issue unsubscribe 8 -R test-owner/test-repo",
         5000,
     );
@@ -187,7 +189,7 @@ fn test_unsubscribe_and_mark_all_read_run_their_cli_commands() {
     std::thread::sleep(Duration::from_millis(150));
     session.send_input(b"\r");
 
-    wait_for_cli_call(&session, "glab todo done --all", 5000);
+    wait_for_cli_call(&mut session, "glab todo done --all", 5000);
     wait_for_screen_without(&mut session, FOREIGN_TODO, 5000);
     wait_for_screen_without(&mut session, OWN_TODO, 5000);
 }
@@ -203,12 +205,16 @@ fn test_github_notification_actions_use_the_threads_api() {
 
     session.send_input(b"U");
     wait_for_cli_call(
-        &session,
+        &mut session,
         "gh api -X DELETE notifications/threads/1/subscription",
         5000,
     );
 
     session.send_input(b"d");
-    wait_for_cli_call(&session, "gh api -X DELETE notifications/threads/1\n", 5000);
+    wait_for_cli_call(
+        &mut session,
+        "gh api -X DELETE notifications/threads/1\n",
+        5000,
+    );
     wait_for_screen_without(&mut session, "Todo Item 1", 5000);
 }

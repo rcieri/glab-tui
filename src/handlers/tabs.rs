@@ -1,5 +1,5 @@
 use crate::AppTerminal;
-use crate::app::{App, StatusMessage, Tab};
+use crate::app::{App, Tab};
 use crate::entity_editor::rebuild_edit_menu;
 use crate::event::{Event, ScopedSender};
 use crate::fetch::spawn_refresh_active_tab;
@@ -44,9 +44,7 @@ fn show_selected_all_notice(app: &mut App, added: usize) {
         return;
     }
     let plural = if added == 1 { "" } else { "s" };
-    app.status_message = Some(StatusMessage::notice(format!(
-        "Selected all {added} item{plural}"
-    )));
+    app.show_notice(format!("Selected all {added} item{plural}"));
 }
 
 /// A row whose status was set before the backend confirmed the mutation:
@@ -86,7 +84,7 @@ fn flip_pipeline_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<Optim
                 .pipelines
                 .items
                 .iter_mut()
-                .find(|pipeline| pipeline.id() == id)
+                .find(|pipeline| pipeline.id() == id && pipeline.status != status)
                 .map(|pipeline| std::mem::replace(&mut pipeline.status, status.to_string()));
             (id, previous)
         })
@@ -100,7 +98,7 @@ fn flip_job_statuses(app: &mut App, ids: &[u64], status: &str) -> Vec<Optimistic
                 .jobs
                 .items
                 .iter_mut()
-                .find(|job| job.id() == id)
+                .find(|job| job.id() == id && job.status != status)
                 .map(|job| std::mem::replace(&mut job.status, status.to_string()));
             (id, previous)
         })
@@ -228,10 +226,15 @@ pub(crate) fn maybe_fetch_mr_related_issues(app: &mut App, _tx: &UnboundedSender
     app.pending_mr_related_issues_since = Some(std::time::Instant::now());
 }
 
-/// `view_stack`: open the selector over the PR's stack. When the session does
-/// not know the stack yet it is fetched first and the selector opens once it
-/// lands (see `Event::PrStackFetched`).
-fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &UnboundedSender<Event>) {
+/// Run `action` on the PR once the session knows its stack. When it does not
+/// yet, the stack is fetched first and the action runs once it lands (see
+/// `Event::PrStackFetched`).
+fn with_pr_stack(
+    app: &mut App,
+    mr: &crate::domain::mr::MergeRequest,
+    action: crate::app::StackAction,
+    tx: &UnboundedSender<Event>,
+) {
     use crate::domain::mr::StackLookup;
     let pr = app.mr_ref(mr);
     let is_known = matches!(
@@ -244,20 +247,46 @@ fn view_stack(app: &mut App, mr: &crate::domain::mr::MergeRequest, tx: &Unbounde
     if !is_known && can_be_stacked {
         if let Some(client) = app.gitlab_client.clone() {
             crate::fetch::request_pr_stack(&client, app, pr.clone(), tx);
-            app.status_message = Some(StatusMessage::notice(format!(
-                "Loading the stack of PR #{}…",
-                pr.1
-            )));
-            app.pending_stack_selector = Some(pr);
+            app.show_notice(format!("Loading the stack of PR #{}…", pr.1));
+            app.pending_stack_action = Some((pr, action));
             return;
         }
     }
-    open_stack_selector(app, &pr.0, pr.1);
+    run_stack_action(app, &pr.0, pr.1, action);
+}
+
+/// Run a PR action whose stack the session already knows.
+pub(crate) fn run_stack_action(
+    app: &mut App,
+    project: &str,
+    pr_number: u64,
+    action: crate::app::StackAction,
+) {
+    match action {
+        crate::app::StackAction::Browse => open_stack_selector(app, project, pr_number),
+        crate::app::StackAction::Merge => open_merge_dialog(app, project, pr_number),
+    }
+}
+
+/// A stacked PR merges with every open PR below it through GitHub's stack
+/// merge; any other MR/PR gets the plain merge dialog.
+fn open_merge_dialog(app: &mut App, project: &str, pr_number: u64) {
+    let action = match app.pr_stack(project, pr_number) {
+        Some(crate::domain::mr::StackLookup::Full(_)) => {
+            crate::app::ConfirmAction::MergeStack(pr_number)
+        }
+        _ => crate::app::ConfirmAction::MergeMr(pr_number),
+    };
+    app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
+        action,
+        project.to_string(),
+        app,
+    ));
 }
 
 /// Open the selector over a PR's stack the session already knows, so the
 /// user can jump to another PR in it, or say why there is nothing to open.
-pub(crate) fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
+fn open_stack_selector(app: &mut App, project: &str, pr_number: u64) {
     use crate::domain::mr::StackLookup;
     let Some(StackLookup::Full(stack)) = app.pr_stack(project, pr_number) else {
         app.show_error("This PR is not part of a stack.".to_string());
@@ -1041,11 +1070,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            app.submit_dialog = Some(crate::app::SubmitDialog::build_with_project(
-                                crate::app::ConfirmAction::MergeMr(mr_iid),
-                                app.scope.project_of(&mr.project_path).to_string(),
-                                app,
-                            ));
+                            with_pr_stack(app, &mr, crate::app::StackAction::Merge, &tx);
                         }
                         _ if (key_event.code == KeyCode::Char('D')
                             || keybinding_matches(
@@ -1089,7 +1114,7 @@ pub async fn handle_active_tab_key(
                             key_event,
                         ) =>
                         {
-                            view_stack(app, &mr, &tx);
+                            with_pr_stack(app, &mr, crate::app::StackAction::Browse, &tx);
                         }
                         _ if keybinding_matches(
                             &app.config.keybindings.mrs.open_in_browser,
@@ -1709,10 +1734,10 @@ pub async fn handle_active_tab_key(
                                     .map(|job| job.id())
                                     .collect();
                                 app.selected_jobs.extend(stage_ids);
-                                app.status_message = Some(StatusMessage::notice(format!(
+                                app.show_notice(format!(
                                     "Selected all jobs in stage '{}'",
                                     stage_name
-                                )));
+                                ));
                             }
                         }
                         _ if keybinding_matches(&app.config.keybindings.jobs.cancel, key_event) => {
@@ -1944,17 +1969,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = app.scoped_sender(tx.clone());
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.pause_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));
@@ -1976,17 +2002,18 @@ pub async fn handle_active_tab_key(
                             }
                             if let Some(client) = app.gitlab_client.clone() {
                                 let scope = app.scope.clone();
-                                let tx2 = app.scoped_sender(tx.clone());
+                                let tx = tx.clone();
+                                let scoped_tx = app.scoped_sender(tx.clone());
                                 tokio::spawn(async move {
                                     let result = client.resume_runner(&scope, runner_id).await;
                                     if result.is_err() {
-                                        let _ = tx2.send(Event::RunnerStateRevert {
+                                        let _ = scoped_tx.send(Event::RunnerStateRevert {
                                             runner_id,
                                             status: prev,
                                             active: prev_active,
                                         });
                                     }
-                                    let _ = tx2.send(Event::CommandCompleted(
+                                    let _ = tx.send(Event::CommandCompleted(
                                         crate::app::Tab::Runners,
                                         result.map_err(|e| e.to_string()),
                                     ));
@@ -2566,21 +2593,17 @@ pub async fn handle_active_tab_key(
                 tokio::spawn(async move {
                     match crate::utils::update::perform_self_update().await {
                         Ok(true) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                crate::app::Tab::Todos,
+                            let _ = tx.send(Event::Notice(
                                 "Update complete! Please restart glab-tui.".to_string(),
                             ));
                         }
                         Ok(false) => {
-                            let _ = tx.send(Event::FetchFailed(
-                                crate::app::Tab::Todos,
-                                "Already up to date.".to_string(),
-                            ));
+                            let _ = tx.send(Event::Notice("Already up to date.".to_string()));
                         }
                         Err(e) => {
-                            let _ = tx.send(Event::FetchFailed(
+                            let _ = tx.send(Event::CommandCompleted(
                                 crate::app::Tab::Todos,
-                                format!("Update failed: {}", e),
+                                Err(format!("Update failed: {e}")),
                             ));
                         }
                     }
@@ -3391,6 +3414,34 @@ mod tests {
         .await;
         drop(tx);
         assert!(rx.recv().await.is_none());
+    }
+
+    #[test]
+    fn second_flip_while_in_flight_keeps_the_revert_with_the_first() {
+        let mut app = App::default();
+        app.pipelines.items = vec![crate::domain::pipelines::Pipeline {
+            id: 1,
+            status: "failed".to_string(),
+            r#ref: "main".to_string(),
+            updated_at: String::new(),
+            name: String::new(),
+            display_title: String::new(),
+            event: String::new(),
+            head_sha: String::new(),
+            actor_login: String::new(),
+            duration_seconds: None,
+            created_at: None,
+            source: None,
+            project_path: String::new(),
+            web_url: None,
+        }];
+
+        let first = flip_pipeline_statuses(&mut app, &[1], "running");
+        let second = flip_pipeline_statuses(&mut app, &[1], "running");
+
+        assert_eq!(first, vec![(1, Some("failed".to_string()))]);
+        assert_eq!(second, vec![(1, None)]);
+        assert_eq!(app.pipelines.items[0].status, "running");
     }
 
     /// Constructs the real `AppTerminal` and dispatches `key_event` through

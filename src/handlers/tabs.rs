@@ -3334,17 +3334,17 @@ fn mark_todo_read_and_jump(
     };
     if !found {
         let location = project.map(|p| format!(" in {p}")).unwrap_or_default();
-        app.status_message = Some(StatusMessage::notice(format!(
+        app.show_notice(format!(
             "{kind} #{}{location} isn't loaded here",
             todo.target_iid
-        )));
+        ));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::App;
+    use crate::app::{App, StatusMessage};
     use crate::event::ScopeGeneration;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use std::collections::{HashMap, HashSet};

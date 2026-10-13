@@ -12101,9 +12101,9 @@ index 123456..789012 100644
         let mut app = app_with_todos(BackendKind::GitHub, false);
         app.todos.state.select(Some(2));
 
-        app.apply_todo_change(&TodoChange::MarkedRead("3".to_string()));
+        app.apply_todo_change(&TodoChange::MarkedRead("1".to_string()));
 
-        assert_eq!(todo_states(&app), vec![("1", "pending"), ("2", "pending")]);
+        assert_eq!(todo_states(&app), vec![("2", "pending"), ("3", "read")]);
         assert_eq!(app.todos.state.selected(), Some(1));
     }
 

@@ -1679,8 +1679,10 @@ async fn main() -> Result<()> {
                 Event::ReleaseDeleted => {
                     app.complete_loading_tab(app::Tab::Releases, "Success");
                     app.status_message = None;
-                    if let Some(tag) = app.pending_delete_release_tag.take() {
-                        app.releases.items.retain(|r| r.tag_name != tag);
+                    if let Some((project, tag)) = app.pending_delete_release.take() {
+                        app.releases
+                            .items
+                            .retain(|r| r.tag_name != tag || r.project_or(&app.scope) != project);
                     }
                     app.project_cache.releases = app.releases.items.clone();
                     crate::utils::cache::save_cache(app.scope.as_str(), &app.project_cache);

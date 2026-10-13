@@ -3003,7 +3003,7 @@ pub enum OverlayKind {
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DeleteMilestone(u64),             // milestone iid
-    DeleteRelease(String),            // release tag_name
+    DeleteRelease(String, String),    // (project_path, release tag_name)
     DeleteBranch(String),             // branch name
     DeleteIssue(u64),                 // issue iid
     DeleteMr(u64),                    // mr iid
@@ -3025,7 +3025,7 @@ impl ConfirmAction {
         matches!(
             self,
             Self::DeleteMilestone(_)
-                | Self::DeleteRelease(_)
+                | Self::DeleteRelease(..)
                 | Self::DeleteBranch(_)
                 | Self::DeleteIssue(_)
                 | Self::DeleteMr(_)
@@ -3241,7 +3241,7 @@ impl SubmitDialog {
             ConfirmAction::DeleteMilestone(iid)
             | ConfirmAction::CloseMilestone(iid)
             | ConfirmAction::ReopenMilestone(iid) => app.project_path_for_milestone(*iid),
-            ConfirmAction::DeleteRelease(tag) => app.project_path_for_release(tag),
+            ConfirmAction::DeleteRelease(project, _) => project.clone(),
             ConfirmAction::DeleteBranch(_) => app.scope.as_str().to_string(),
             ConfirmAction::CloseIssue(iid)
             | ConfirmAction::DeleteIssue(iid)
@@ -3273,7 +3273,7 @@ impl SubmitDialog {
                 vec![],
                 true,
             ),
-            ConfirmAction::DeleteRelease(tag_name) => (
+            ConfirmAction::DeleteRelease(_, tag_name) => (
                 format!("Delete Release {tag_name}"),
                 format!("Are you sure you want to delete release {tag_name}?"),
                 "Delete".to_string(),
@@ -3705,7 +3705,7 @@ pub struct App {
     pub cached_members: Vec<String>,
     pub last_attr_refresh: std::time::Instant,
     pub pending_delete_milestone_iid: Option<u64>,
-    pub pending_delete_release_tag: Option<String>,
+    pub pending_delete_release: Option<(String, String)>,
 }
 
 impl Default for App {
@@ -3845,7 +3845,7 @@ impl Default for App {
             cached_members: Vec::new(),
             last_attr_refresh: std::time::Instant::now(),
             pending_delete_milestone_iid: None,
-            pending_delete_release_tag: None,
+            pending_delete_release: None,
         }
     }
 }
@@ -4189,16 +4189,6 @@ impl App {
             .iter()
             .find(|p| p.id() == id)
             .map(|p| p.project_path.clone())
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| self.scope.as_str().to_string())
-    }
-
-    pub fn project_path_for_release(&self, tag_name: &str) -> String {
-        self.releases
-            .items
-            .iter()
-            .find(|r| r.tag_name == tag_name)
-            .map(|r| r.project_path.clone())
             .filter(|p| !p.is_empty())
             .unwrap_or_else(|| self.scope.as_str().to_string())
     }
@@ -7462,17 +7452,13 @@ mod tests {
     }
 
     #[test]
-    fn release_project_resolves_to_the_release_own_project_in_group_scope() {
-        let mut app = App::default();
-        app.scope = crate::scope::Scope::Group("group".to_string());
-        app.releases.items = vec![
-            release_fixture("v1.0.0", "", "group/repo-a"),
-            release_fixture("v2.0.0", "", ""),
-        ];
+    fn release_project_is_its_own_and_falls_back_to_scope_when_unknown() {
+        let scope = crate::scope::Scope::Group("group".to_string());
+        let listed = release_fixture("v1.0.0", "", "group/repo-a");
+        let cached_without_project = release_fixture("v1.0.0", "", "");
 
-        assert_eq!(app.project_path_for_release("v1.0.0"), "group/repo-a");
-        assert_eq!(app.project_path_for_release("v2.0.0"), "group");
-        assert_eq!(app.project_path_for_release("v9.9.9"), "group");
+        assert_eq!(listed.project_or(&scope), "group/repo-a");
+        assert_eq!(cached_without_project.project_or(&scope), "group");
     }
 
     #[test]

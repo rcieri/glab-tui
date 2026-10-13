@@ -1530,17 +1530,8 @@ pub fn rebuild_edit_menu(app: &mut App, entity_type: &str, entity_iid: u64) {
     }
 }
 
-pub fn open_release_edit_menu(app: &mut App, tag_name: &str) {
-    let Some(release) = app
-        .releases
-        .items
-        .iter()
-        .find(|r| r.tag_name == tag_name)
-        .cloned()
-    else {
-        return;
-    };
-    let mut doc = build_release_document(&release);
+pub fn open_release_edit_menu(app: &mut App, release: &crate::domain::releases::Release) {
+    let mut doc = build_release_document(release);
     doc.fields.push(crate::app::Field::text(
         "Release Notes",
         release.description.clone().unwrap_or_default(),
@@ -1548,7 +1539,7 @@ pub fn open_release_edit_menu(app: &mut App, tag_name: &str) {
 
     app.open_edit_menu(crate::app::EditMenu {
         title: format!("Edit Release {}", release.tag_name),
-        entity_project: app.project_path_for_release(&release.tag_name),
+        entity_project: release.project_or(&app.scope).to_string(),
         fields: doc.fields,
         initial_fields: std::collections::HashMap::new(),
         selected_idx: 0,
@@ -2343,5 +2334,35 @@ mod tests {
         } else {
             panic!("Expected Markdown content");
         }
+    }
+
+    #[test]
+    fn release_edit_form_targets_the_selected_row_project_when_tags_repeat() {
+        let release = |project: &str| crate::domain::releases::Release {
+            name: format!("Release in {project}"),
+            tag_name: "v1.0.0".to_string(),
+            released_at: "2026-10-01".to_string(),
+            description: Some(format!("notes for {project}")),
+            author_name: None,
+            commit_id: None,
+            commit_title: None,
+            assets_link: None,
+            project_path: project.to_string(),
+        };
+        let mut app = App::default();
+        app.scope = crate::scope::Scope::Group("group".to_string());
+        app.releases.items = vec![release("group/a"), release("group/b")];
+
+        let selected = app.releases.items[1].clone();
+        open_release_edit_menu(&mut app, &selected);
+
+        let menu = app.edit_menu.as_ref().expect("release edit form opens");
+        let notes = menu
+            .fields
+            .iter()
+            .find(|f| f.label == "Release Notes")
+            .map(|f| f.value.as_str());
+        assert_eq!(menu.entity_project, "group/b");
+        assert_eq!(notes, Some("notes for group/b"));
     }
 }

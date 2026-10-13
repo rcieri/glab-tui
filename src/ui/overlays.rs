@@ -978,7 +978,7 @@ pub(crate) fn render_overlays(f: &mut Frame, app: &mut App, size: Rect) {
         let icon =
             match dialog.action {
                 crate::app::ConfirmAction::DeleteMilestone(_)
-                | crate::app::ConfirmAction::DeleteRelease(_)
+                | crate::app::ConfirmAction::DeleteRelease(..)
                 | crate::app::ConfirmAction::DeleteBranch(_)
                 | crate::app::ConfirmAction::DeleteIssue(_)
                 | crate::app::ConfirmAction::DeleteMr(_) => icons.action_delete.clone(),

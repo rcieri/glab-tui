@@ -2025,12 +2025,12 @@ pub async fn handle_active_tab_key(
             }
             _ if keybinding_matches(&app.config.keybindings.releases.edit_release, key_event) => {
                 if let Some(selected_idx) = app.releases.state.selected() {
-                    let release_tag = {
-                        let filtered = app.filtered_releases();
-                        filtered.get(selected_idx).map(|r| r.tag_name.clone())
-                    };
-                    if let Some(tag_name) = release_tag {
-                        crate::entity_editor::open_release_edit_menu(app, &tag_name);
+                    let release = app
+                        .filtered_releases()
+                        .get(selected_idx)
+                        .map(|r| (*r).clone());
+                    if let Some(release) = release {
+                        crate::entity_editor::open_release_edit_menu(app, &release);
                     }
                 }
             }
@@ -2039,7 +2039,10 @@ pub async fn handle_active_tab_key(
                     let filtered = app.filtered_releases();
                     if let Some(release) = filtered.get(selected_idx) {
                         app.submit_dialog = Some(crate::app::SubmitDialog::build(
-                            crate::app::ConfirmAction::DeleteRelease(release.tag_name.clone()),
+                            crate::app::ConfirmAction::DeleteRelease(
+                                release.project_or(&app.scope).to_string(),
+                                release.tag_name.clone(),
+                            ),
                             app,
                         ));
                     }
@@ -2057,7 +2060,7 @@ pub async fn handle_active_tab_key(
                         let Some(client) = app.gitlab_client.clone() else {
                             return false;
                         };
-                        let project_path = app.project_path_for_release(&release.tag_name);
+                        let project_path = release.project_or(&app.scope).to_string();
                         let tag_name = release.tag_name.clone();
                         let tx2 = tx.clone();
 
@@ -2871,14 +2874,12 @@ pub async fn handle_active_tab_key(
                             }
                             crate::app::Tab::Releases => {
                                 if let Some(selected_idx) = app.releases.state.selected() {
-                                    let release_tag = app
+                                    let release = app
                                         .filtered_releases()
                                         .get(selected_idx)
-                                        .map(|r| r.tag_name.clone());
-                                    if let Some(tag_name) = release_tag {
-                                        crate::entity_editor::open_release_edit_menu(
-                                            app, &tag_name,
-                                        );
+                                        .map(|r| (*r).clone());
+                                    if let Some(release) = release {
+                                        crate::entity_editor::open_release_edit_menu(app, &release);
                                     }
                                 }
                             }

@@ -34,3 +34,22 @@ pub struct DraftComment {
     pub end_old_line_num: Option<u32>,
     pub body: String,
 }
+
+impl DraftComment {
+    /// The diff positions the draft is anchored to: its first line and, for a
+    /// range, its last.
+    pub fn anchor_positions(&self) -> impl Iterator<Item = crate::domain::mr::NotePosition> + '_ {
+        let start = (self.line_num, self.old_line_num);
+        let end = (self.end_line_num, self.end_old_line_num);
+        std::iter::once(start)
+            .chain((end != (None, None)).then_some(end))
+            .map(|(new_line, old_line)| crate::domain::mr::NotePosition {
+                new_path: Some(self.file_path.clone()),
+                old_path: Some(self.file_path.clone()),
+                new_line: new_line.map(u64::from),
+                old_line: old_line.map(u64::from),
+                start_line: None,
+                line_range: None,
+            })
+    }
+}

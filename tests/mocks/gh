@@ -21,6 +21,17 @@ if [[ "$*" == *"run view"* ]] && [[ "$*" == *"--log"* ]]; then
     exit 0
 fi
 
+# Stacked PRs merge through the asynchronous merge endpoint: the request is
+# accepted as pending, and polling its uuid reports the merge done.
+if [[ "$*" == *"/merge-async"* ]]; then
+    if [[ " $* " == *" -X PUT "* ]]; then
+        echo '{"status":"pending","details":{"message":"Merge request accepted","uuid":"mock-merge-uuid","merge_method":"squash","merge_action":"default","expected_head_sha":"0000000000000000000000000000000000000000"}}'
+    else
+        echo '{"status":"merged","details":{"message":"Pull request merged","sha":"1111111111111111111111111111111111111111"}}'
+    fi
+    exit 0
+fi
+
 # Stacked PRs: #10 and #11 form stack #7 (positions 1 and 2), #12 is in no
 # stack. The per-PR query is matched first: it also asks for `stackEntry`.
 if [[ "$*" == "pr list"* ]]; then

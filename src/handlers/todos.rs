@@ -135,10 +135,9 @@ fn jump_to_target(
     todo: &Notification,
     tx: &UnboundedSender<Event>,
 ) -> bool {
-    let open_in_browser = app.config.keybindings.todos.open_in_browser.clone();
     let Some(target) = todo.target() else {
         app.show_error(format!(
-            "{} {}s have no view in glab-tui. Press {open_in_browser} to open this one in the browser.",
+            "{} {}s have no view in glab-tui.",
             todo.target_type,
             app.kind().term("todo").to_lowercase(),
         ));
@@ -151,6 +150,7 @@ fn jump_to_target(
             NotificationTarget::MergeRequest if app.kind().is_gitlab() => "!",
             _ => "#",
         };
+        let open_in_browser = &app.config.keybindings.todos.open_in_browser;
         app.show_error(format!(
             "{project}{marker}{iid} is outside {}. Press {open_in_browser} to open it in the browser.",
             app.scope

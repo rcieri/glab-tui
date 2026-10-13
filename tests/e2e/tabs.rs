@@ -255,6 +255,8 @@ fn test_group_scope_pipeline_cancel_confirms_and_targets_its_own_project() {
     assert!(
         cancel.contains("-R acme/project-b"),
         "cancel targets the pipeline's project: {cancel}"
+    );
+}
 /// The offline badge belongs to the tab whose refresh failed: another tab's
 /// successful refresh must not clear it, and must not show it either.
 #[test]

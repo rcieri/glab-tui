@@ -289,7 +289,7 @@ Every interaction with GitLab/GitHub goes through `glab` or `gh` CLI. This secti
 | Operation | Command |
 |---|---|
 | Create release | `glab release create <tag> -R <repo> -n <name> -N <notes>` |
-| Update release | `glab release update <tag> -R <repo> -n <name> -N <desc>` |
+| Update release | `glab release create <tag> -R <repo> -n <name> -N <desc>` (updates the existing release, since `glab release` has no `update` subcommand) |
 | Delete release | `glab release delete <tag> -R <repo> -y` |
 | Close/reopen milestone | `glab milestone close\|reopen <iid> -R <repo>` |
 | Update milestone | `glab milestone update <iid> -R <repo> --title ... --description ...` |

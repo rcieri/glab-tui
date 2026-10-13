@@ -6,8 +6,9 @@ use crate::domain::notifications::{self, Notification, NotificationTarget, TodoC
 use crate::event::Event;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Marks the highlighted todo read and opens its issue or MR/PR. Bound to
-/// both `keybindings.todos.mark_as_read` and `Enter`.
+/// Opens the highlighted todo's issue or MR/PR and marks the todo read. A
+/// todo with nothing to open here stays unread. Bound to both
+/// `keybindings.todos.mark_as_read` and `Enter`.
 pub fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
     let Some(todo) = app.selected_todo().cloned() else {
         return;
@@ -15,14 +16,13 @@ pub fn open_selected(app: &mut App, tx: &UnboundedSender<Event>) {
     let Some(client) = backend_client(app) else {
         return;
     };
-    if todo.is_unread() {
-        let id = todo.id.clone();
-        let marking = client.clone();
-        spawn_todo_change(tx, TodoChange::MarkedRead(id.clone()), async move {
-            notifications::mark_notification_as_read(&marking, &id).await
-        });
+    if !jump_to_target(app, &client, &todo, tx) || !todo.is_unread() {
+        return;
     }
-    jump_to_target(app, &client, &todo, tx);
+    let id = todo.id.clone();
+    spawn_todo_change(tx, TodoChange::MarkedRead(id.clone()), async move {
+        notifications::mark_notification_as_read(&client, &id).await
+    });
 }
 
 pub fn mark_selected_done(app: &mut App, tx: &UnboundedSender<Event>) {
@@ -128,12 +128,13 @@ fn spawn_todo_change(
 
 /// Selects the todo's issue or MR/PR in its own project, fetching it when the
 /// list does not hold it. Targets outside the scope cannot be listed here.
+/// Returns `false`, after raising the reason, when there is nothing to open.
 fn jump_to_target(
     app: &mut App,
     client: &GitlabClient,
     todo: &Notification,
     tx: &UnboundedSender<Event>,
-) {
+) -> bool {
     let open_in_browser = app.config.keybindings.todos.open_in_browser.clone();
     let Some(target) = todo.target() else {
         app.show_error(format!(
@@ -141,7 +142,7 @@ fn jump_to_target(
             todo.target_type,
             app.kind().term("todo").to_lowercase(),
         ));
-        return;
+        return false;
     };
     let project = todo.project_path.as_str();
     let iid = todo.target_iid;
@@ -154,14 +155,14 @@ fn jump_to_target(
             "{project}{marker}{iid} is outside {}. Press {open_in_browser} to open it in the browser.",
             app.scope
         ));
-        return;
+        return false;
     }
     let is_loaded = match target {
         NotificationTarget::Issue => app.focus_issue_in(project, iid),
         NotificationTarget::MergeRequest => app.focus_mr_in(project, iid),
     };
     if is_loaded {
-        return;
+        return true;
     }
     match target {
         NotificationTarget::Issue => {
@@ -171,4 +172,5 @@ fn jump_to_target(
             crate::fetch::spawn_fetch_mr(client, project, iid, tx.clone());
         }
     }
+    true
 }

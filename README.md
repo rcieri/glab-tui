@@ -732,7 +732,7 @@ On GitLab this tab shows **Todos**, on GitHub it shows **Notifications**. It lis
 
 | Key | Action | Config |
 |---|---|---|
-| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead, open it with `o`) | `mark_as_read` |
+| `Enter` | Mark item as read and jump to its issue / MR in the item's own project (an item outside the current scope reports an error instead and stays unread, open it with `o`) | `mark_as_read` |
 | `d` | Mark item as done (GitHub removes it from the inbox. GitLab has no read state, so read and done are the same there) | `mark_as_done` |
 | `A` | Mark all items as read (with confirmation) | `mark_all_as_read` |
 | `U` | Unsubscribe from the item's thread (GitLab: issues and MRs only) | `unsubscribe` |

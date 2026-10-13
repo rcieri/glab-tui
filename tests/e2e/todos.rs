@@ -134,7 +134,7 @@ fn test_enter_marks_the_todo_read_and_selects_its_issue_in_the_todo_project() {
 }
 
 #[test]
-fn test_jumping_to_a_todo_outside_the_scope_reports_it_instead_of_a_same_numbered_issue() {
+fn test_a_todo_outside_the_scope_is_reported_and_stays_unread() {
     let mut session = session_on_todos(&[]);
 
     session.send_input(b"j");
@@ -147,7 +147,12 @@ fn test_jumping_to_a_todo_outside_the_scope_reports_it_instead_of_a_same_numbere
             5000,
         )
         .expect("a foreign todo must not land on this project's issue #7");
-    wait_for_cli_call(&session, "glab todo done 2", 2000);
+    // The read mark would be spawned by the same keypress that raised the
+    // error, so this window is enough for its CLI call to be logged.
+    session.settle(500);
+    let calls = session.get_cli_calls();
+    assert!(!calls.contains("glab todo done 2"), "{calls}");
+    assert!(session.emulator.get_text().contains(FOREIGN_TODO));
 }
 
 #[test]

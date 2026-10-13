@@ -173,9 +173,11 @@ fn merging_a_stacked_pr_merges_its_downstack_through_the_async_endpoint() {
     session
         .wait_for_screen_contains("Merge Stack #7 through #11", 15000)
         .expect("m on a stacked PR should open the stack merge dialog");
-    let dialog = session.emulator.get_text();
-    assert!(dialog.contains("#10: Stack bottom"), "{dialog}");
-    assert!(dialog.contains("#11: Stack top"), "{dialog}");
+    for entry in ["#10: Stack bottom", "#11: Stack top"] {
+        session
+            .wait_for_screen_contains(entry, 15000)
+            .expect("the stack merge dialog should list every PR it merges");
+    }
 
     session.send_input(b"\r");
     wait_for_calls(&mut session, "merge-async/mock-merge-uuid", 1);

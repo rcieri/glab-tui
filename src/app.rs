@@ -4112,7 +4112,7 @@ impl App {
         self.pending_mr_related_issues_iid = None;
         self.pending_mr_related_issues_since = None;
         self.fetching_pr_stacks.clear();
-        self.pending_stack_selector = None;
+        self.pending_stack_action = None;
         self.pr_stack_candidate = None;
         self.diff_loading = false;
         self.job_trace_loading = false;

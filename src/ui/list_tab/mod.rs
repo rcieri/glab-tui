@@ -599,6 +599,9 @@ mod tests {
         )]);
         list.refresh(inputs("", Some(&filters), None));
         assert_eq!(view_tags(&list), ["v1.0.0"]);
+
+        list.refresh(inputs("first cut", None, None));
+        assert_eq!(view_tags(&list), ["v1.0.0"]);
         assert_eq!(
             list.distinct_filter_values("Release Notes"),
             ["adds widgets", "first cut", "removes widgets"]

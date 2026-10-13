@@ -159,7 +159,8 @@ pub(crate) struct ListTab<C: ColumnDef> {
     /// The cursor's position in `view`, kept so a cursor whose row leaves
     /// the view lands on the row now at the same position.
     cursor_pos: Option<usize>,
-    /// `None` until built, and again whenever `items` changes.
+    /// `None` until built, and again whenever `items` changes or the cursor
+    /// is reset.
     spec: Option<ViewSpec>,
     table_state: TableState,
 }
@@ -184,6 +185,7 @@ impl<C: ColumnDef> ListTab<C> {
 
     pub(crate) fn set_items(&mut self, items: Vec<C::Row>) {
         self.items = items;
+        self.view.clear();
         self.spec = None;
     }
 
@@ -203,6 +205,7 @@ impl<C: ColumnDef> ListTab<C> {
 
     pub(crate) fn retain(&mut self, keep: impl FnMut(&C::Row) -> bool) {
         self.items.retain(keep);
+        self.view.clear();
         self.spec = None;
     }
 
@@ -244,6 +247,7 @@ impl<C: ColumnDef> ListTab<C> {
     pub(crate) fn reset_cursor(&mut self) {
         self.cursor = None;
         self.cursor_pos = None;
+        self.spec = None;
         self.table_state = TableState::default();
     }
 
@@ -574,6 +578,19 @@ mod tests {
     }
 
     #[test]
+    fn reset_cursor_selects_the_first_row_on_a_refresh_with_unchanged_inputs() {
+        let mut list = releases(release_fixture());
+        list.refresh(inputs("", None, None));
+        list.last();
+        assert_eq!(cursor_tag(&list), Some("v3.0.0"));
+
+        list.reset_cursor();
+        list.refresh(inputs("", None, None));
+
+        assert_eq!(cursor_tag(&list), Some("v2.0.0"));
+    }
+
+    #[test]
     fn release_notes_column_is_searched_and_filtered_under_its_own_label() {
         let mut list = releases(release_fixture());
         let filters = HashMap::from([(
@@ -581,6 +598,9 @@ mod tests {
             HashSet::from(["first cut".to_string()]),
         )]);
         list.refresh(inputs("", Some(&filters), None));
+        assert_eq!(view_tags(&list), ["v1.0.0"]);
+
+        list.refresh(inputs("first cut", None, None));
         assert_eq!(view_tags(&list), ["v1.0.0"]);
         assert_eq!(
             list.distinct_filter_values("Release Notes"),

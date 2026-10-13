@@ -40,6 +40,12 @@ if [[ "$*" == *"api"* ]]; then
         else
             echo "[]"
         fi
+    elif [[ "$*" == *"groups/test-group/pipelines"* ]]; then
+        if [[ " $* " == *"&page=1 "* ]]; then
+            cat "$FIXTURES_DIR/group_pipelines.json"
+        else
+            echo "[]"
+        fi
     elif [[ "$*" == *"/issues"* ]]; then
         cat "$FIXTURES_DIR/issues.json"
     elif [[ "$*" == *"/pulls"* ]] || [[ "$*" == *"/merge_requests"* ]]; then
